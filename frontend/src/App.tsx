@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Evidence } from "./api";
+import { Evidence, getToken, onAuthError, setToken } from "./api";
 import { Screen } from "./nav";
 import { C, sans } from "./theme";
 import { Sidebar } from "./components/Sidebar";
@@ -11,6 +11,7 @@ import { FindingReview } from "./screens/FindingReview";
 import { Archive } from "./screens/Archive";
 import { Sources } from "./screens/Sources";
 import { Costs } from "./screens/Costs";
+import { Login } from "./screens/Login";
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("feed");
@@ -18,6 +19,12 @@ export default function App() {
   const [evidence, setEvidence] = useState<Evidence | null>(null);
   const [newCaseOpen, setNewCaseOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const [authed, setAuthed] = useState<boolean>(!!getToken());
+
+  // A 401 anywhere (expired/absent token) bounces back to the login screen.
+  useEffect(() => {
+    onAuthError(() => setAuthed(false));
+  }, []);
 
   // Deep-link support: #case/123 (used by the challenge-reopen redirect).
   useEffect(() => {
@@ -40,6 +47,17 @@ export default function App() {
   };
 
   const go = (s: Screen) => setScreen(s);
+
+  const logout = () => {
+    setToken(null);
+    setAuthed(false);
+  };
+
+  // Not signed in → show the login gate. (In dev mode the backend still lets
+  // reads through, but production needs a token, so we always gate.)
+  if (!authed) {
+    return <Login onAuthed={() => setAuthed(true)} />;
+  }
 
   const running =
     currentInv != null
@@ -64,7 +82,7 @@ export default function App() {
         overflow: "hidden",
       }}
     >
-      <Sidebar screen={screen} go={go} running={running} onOpenCase={() => setNewCaseOpen(true)} />
+      <Sidebar screen={screen} go={go} running={running} onOpenCase={() => setNewCaseOpen(true)} onLogout={logout} />
 
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {screen === "feed" && (

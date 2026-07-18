@@ -6,6 +6,7 @@ interface Props {
   go: (s: Screen) => void;
   running: { label: string; detail: string; color: string; dot: string; pulse: boolean } | null;
   onOpenCase: () => void;
+  onLogout?: () => void;
 }
 
 const NAV: { key: Screen; icon: string; label: string; iconColor?: string }[] = [
@@ -18,7 +19,7 @@ const NAV: { key: Screen; icon: string; label: string; iconColor?: string }[] = 
 // The feed / case / finding screens all keep "Case Feed" highlighted.
 const FEED_GROUP: Screen[] = ["feed", "case", "finding"];
 
-export function Sidebar({ screen, go, running, onOpenCase }: Props) {
+export function Sidebar({ screen, go, running, onOpenCase, onLogout }: Props) {
   return (
     <div
       style={{
@@ -124,6 +125,26 @@ export function Sidebar({ screen, go, running, onOpenCase }: Props) {
           >
             {running.detail}
           </div>
+        </div>
+      )}
+
+      {onLogout && (
+        <div
+          onClick={onLogout}
+          style={{
+            margin: "4px 10px 12px",
+            padding: "8px 10px",
+            borderRadius: 6,
+            cursor: "pointer",
+            color: C.muted,
+            fontSize: 12.5,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          <span style={{ fontFamily: mono, fontSize: 10, width: 16, color: C.faint }}>⎋</span>
+          Sign out
         </div>
       )}
     </div>

@@ -12,13 +12,23 @@ export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onSt
   const [desc, setDesc] = useState("");
   const [tier, setTier] = useState("standard");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const submit = async () => {
     if (!desc.trim()) return;
     setBusy(true);
+    setError(null);
     try {
       const r = await api.startInvestigation({ description: desc, tier });
       onStarted(r.anomaly_id);
+    } catch (e) {
+      // surface the reason instead of silently doing nothing
+      const msg = String(e).replace("Error: ", "");
+      setError(
+        /403|401|token|admin|reviewer/i.test(msg)
+          ? "You need reviewer or admin access to start an investigation."
+          : msg || "Could not start the investigation. Is the backend awake?"
+      );
     } finally {
       setBusy(false);
     }
@@ -69,6 +79,11 @@ export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onSt
             </div>
           ))}
         </div>
+        {error && (
+          <div style={{ marginTop: 14, padding: "9px 12px", borderRadius: 7, background: "rgba(224,88,79,.08)", border: "1px solid rgba(224,88,79,.35)", color: C.bad, fontSize: 12.5 }}>
+            {error}
+          </div>
+        )}
         <button
           onClick={submit}
           disabled={!desc.trim() || busy}

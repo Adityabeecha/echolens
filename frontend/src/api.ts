@@ -4,19 +4,57 @@
 // e.g. VITE_API_BASE=https://echolens-api.onrender.com
 const BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, "") || "/api";
 
+// ── auth token (persisted) ──────────────────────────────────────────────
+const TOKEN_KEY = "echolens_token";
+let _token: string | null = localStorage.getItem(TOKEN_KEY);
+let _onAuthError: (() => void) | null = null;
+
+export function setToken(t: string | null): void {
+  _token = t;
+  if (t) localStorage.setItem(TOKEN_KEY, t);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+export function getToken(): string | null {
+  return _token;
+}
+export function onAuthError(fn: () => void): void {
+  _onAuthError = fn;
+}
+function authHeaders(): Record<string, string> {
+  return _token ? { Authorization: `Bearer ${_token}` } : {};
+}
+function handle(status: number): void {
+  if (status === 401) {
+    setToken(null);
+    _onAuthError?.(); // bounce back to login
+  }
+}
+
 async function get<T>(path: string): Promise<T> {
-  const r = await fetch(BASE + path);
-  if (!r.ok) throw new Error(`${path} → ${r.status}`);
+  const r = await fetch(BASE + path, { headers: authHeaders() });
+  if (!r.ok) {
+    handle(r.status);
+    throw new Error(`${path} → ${r.status}`);
+  }
   return r.json();
 }
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
   const r = await fetch(BASE + path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(`${path} → ${r.status}`);
+  if (!r.ok) {
+    handle(r.status);
+    let detail = "";
+    try {
+      detail = (await r.json())?.detail ?? "";
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail || `${path} → ${r.status}`);
+  }
   return r.json();
 }
 
@@ -151,8 +189,19 @@ export interface CostsSummary {
 
 // ── endpoints ────────────────────────────────────────────────────────
 
+export interface AuthUser {
+  id: number;
+  email: string;
+  role: string;
+}
+
 export const api = {
   health: () => get<{ db: boolean; llm_key_present: boolean; model: string }>("/health"),
+  login: (email: string, password: string) =>
+    post<{ token: string; role: string }>("/auth/login", { email, password }),
+  signup: (email: string, password: string) =>
+    post<{ id: number; email: string; role: string; token: string }>("/auth/signup", { email, password }),
+  me: () => get<AuthUser>("/auth/me"),
   collect: () => post("/collect/run"),
   scan: () => post<{ detected: string[] }>("/anomalies/scan"),
   anomalies: () => get<{ anomalies: Anomaly[] }>("/anomalies"),
