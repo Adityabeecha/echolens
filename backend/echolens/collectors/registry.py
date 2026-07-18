@@ -1,0 +1,65 @@
+"""Collector configuration + a run-all entry point.
+
+Collectors are declared in `SourceConfig` rows (kept simple: an in-code default
+list plus whatever CollectorState rows already exist). `run_all` executes each
+enabled collector and returns per-source results — used by the CLI, the API,
+and the scheduler.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from echolens.collectors.base import Collector, CollectResult
+from echolens.collectors.github import GitHubCollector
+from echolens.collectors.play_store import PlayStoreCollector
+from echolens.db.models import CollectorState
+
+# Reddit was dropped as a live source: Reddit ended free API access in 2026.
+# The search_reddit tool and Post corpus remain (filled via CSV/import later).
+_BUILDERS = {
+    "play_store": lambda ident, product: PlayStoreCollector(ident, product),
+    "github": lambda ident, product: GitHubCollector(ident, product),
+}
+
+
+@dataclass
+class SourceConfig:
+    source: str
+    identifier: str
+    product: str | None = None
+
+    def build(self) -> Collector:
+        return _BUILDERS[self.source](self.identifier, self.product)
+
+
+def configured_sources(session: Session) -> list[SourceConfig]:
+    """Every enabled collector known to the DB (created via `add_source`)."""
+    rows = session.scalars(select(CollectorState).where(CollectorState.enabled == True)).all()  # noqa: E712
+    return [SourceConfig(r.source, r.identifier, r.product) for r in rows]
+
+
+def add_source(session: Session, source: str, identifier: str, product: str | None = None) -> CollectorState:
+    if source not in _BUILDERS:
+        raise ValueError(f"unknown source '{source}' (have {list(_BUILDERS)})")
+    existing = session.scalars(select(CollectorState).where(
+        CollectorState.source == source, CollectorState.identifier == identifier)).first()
+    if existing:
+        existing.enabled = True
+        existing.product = product or existing.product
+        session.flush()
+        return existing
+    st = CollectorState(source=source, identifier=identifier, product=product or identifier,
+                        status="idle", enabled=True)
+    session.add(st)
+    session.flush()
+    return st
+
+
+def run_all(session: Session, limit: int = 200) -> list[CollectResult]:
+    results = []
+    for cfg in configured_sources(session):
+        results.append(cfg.build().run(session, limit=limit))
+    return results

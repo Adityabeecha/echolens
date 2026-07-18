@@ -1,0 +1,217 @@
+"""Deterministic anomaly detector (PRD §4.1). Pure stats, no LLM, unit-tested.
+
+Signals:
+- negative_review_spike  — z-score of daily 1-star volume vs a trailing baseline
+- theme_volume_surge     — jump in a term's share of negative reviews / posts
+- issue_velocity_surge   — jump in GitHub issues/week matching a term
+
+The detector only NOTICES anomalies and scores their severity. Deciding which
+ones deserve an investigation is the orchestrator's judgment call (triage),
+never the detector's — that split is the whole point of the architecture.
+"""
+from __future__ import annotations
+
+import statistics
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from echolens.db.models import AnomalyEvent, Issue, Post, Review
+from echolens.tools._util import match_score, terms_of
+
+AS_OF = datetime(2026, 7, 17, tzinfo=timezone.utc)
+RECENT_DAYS = 7
+BASELINE_DAYS = 28
+
+# What the detector watches. (term, human label). Kept small and explicit.
+THEME_TERMS = [
+    ("battery drain", "battery complaints"),
+    ("shipping cost", "print-shipping cost complaints"),
+    ("crash", "crash reports"),
+]
+POST_TERMS = [("slow", "'app is slow' mentions")]
+ISSUE_TERMS = [("background sync battery", "sync/battery issue reports")]
+
+# Severity thresholds on the z-score.
+SEV1_Z, SEV2_Z, SEV3_Z = 3.0, 2.0, 1.0
+
+
+@dataclass
+class Candidate:
+    slug: str
+    type: str
+    metric: str
+    delta: float
+    z: float
+    window: str
+    description: str
+    severity: str = field(default="SEV3")
+
+
+def _severity(z: float) -> str:
+    if z >= SEV1_Z:
+        return "SEV1"
+    if z >= SEV2_Z:
+        return "SEV2"
+    return "SEV3"
+
+
+def _daily_counts(rows, key, start: datetime, end: datetime) -> list[float]:
+    daily: dict = defaultdict(float)
+    d = start.date()
+    while d <= end.date():
+        daily[d] = 0.0
+        d += timedelta(days=1)
+    for r in rows:
+        day = key(r)
+        if start.date() <= day <= end.date():
+            daily[day] += 1
+    return [daily[d] for d in sorted(daily)]
+
+
+def _zscore(recent: list[float], baseline: list[float]) -> tuple[float, float]:
+    """(z, delta_pct) of the recent mean against the baseline distribution."""
+    if not recent or not baseline:
+        return 0.0, 0.0
+    mean_r, mean_b = statistics.mean(recent), statistics.mean(baseline)
+    std_b = statistics.stdev(baseline) if len(baseline) > 1 else 0.0
+    z = (mean_r - mean_b) / std_b if std_b > 0 else 0.0
+    delta = (mean_r - mean_b) / mean_b if mean_b else 0.0
+    return round(z, 2), round(delta, 3)
+
+
+def detect_volume_spike(session: Session, as_of: datetime = AS_OF) -> Candidate | None:
+    start = as_of - timedelta(days=BASELINE_DAYS + RECENT_DAYS)
+    rows = session.scalars(
+        select(Review).where(Review.rating == 1, Review.created_at >= start)
+    ).all()
+    series = _daily_counts(rows, lambda r: r.created_at.date(), start, as_of)
+    if len(series) <= RECENT_DAYS:
+        return None
+    baseline, recent = series[:-RECENT_DAYS], series[-RECENT_DAYS:]
+    z, delta = _zscore(recent, baseline)
+    if z < SEV3_Z:
+        return None
+    return Candidate(
+        slug="auto-neg-review-spike", type="negative_review_spike",
+        metric="daily 1-star review volume", delta=delta, z=z, window=f"{RECENT_DAYS}d",
+        description=f"1-star reviews {delta:+.0%} vs trailing {BASELINE_DAYS}d baseline "
+                    f"(z={z}); recent window ends {as_of.date()}.",
+        severity=_severity(z),
+    )
+
+
+def _share_series(rows, text_of, day_of, terms, start, as_of, negatives_only):
+    """Per-day share (%) of items mentioning the term."""
+    by_day_total: dict = defaultdict(int)
+    by_day_hit: dict = defaultdict(int)
+    for r in rows:
+        day = day_of(r)
+        if not (start.date() <= day <= as_of.date()):
+            continue
+        if negatives_only and getattr(r, "rating", 1) > 2:
+            continue
+        by_day_total[day] += 1
+        if match_score(text_of(r), terms) > 0:
+            by_day_hit[day] += 1
+    d = start.date()
+    series = []
+    while d <= as_of.date():
+        tot = by_day_total.get(d, 0)
+        series.append(100 * by_day_hit.get(d, 0) / tot if tot else 0.0)
+        d += timedelta(days=1)
+    return series
+
+
+def detect_theme_surges(session: Session, as_of: datetime = AS_OF) -> list[Candidate]:
+    start = as_of - timedelta(days=BASELINE_DAYS + RECENT_DAYS)
+    reviews = session.scalars(select(Review).where(Review.created_at >= start)).all()
+    posts = session.scalars(select(Post).where(Post.created_at >= start)).all()
+    out: list[Candidate] = []
+
+    for term, label in THEME_TERMS:
+        terms = terms_of(term)
+        series = _share_series(reviews, lambda r: r.text, lambda r: r.created_at.date(),
+                               terms, start, as_of, negatives_only=True)
+        baseline, recent = series[:-RECENT_DAYS], series[-RECENT_DAYS:]
+        z, delta = _zscore(recent, baseline)
+        if z < SEV3_Z or statistics.mean(recent) < 3:
+            continue
+        out.append(Candidate(
+            slug=f"auto-theme-{term.replace(' ', '-')}", type="theme_volume_surge",
+            metric=f"{label} share of negative reviews", delta=delta, z=z, window=f"{RECENT_DAYS}d",
+            description=f"{label}: {statistics.mean(recent):.0f}% of recent negatives vs "
+                        f"{statistics.mean(baseline):.0f}% baseline (z={z}).",
+            severity=_severity(z),
+        ))
+
+    for term, label in POST_TERMS:
+        terms = terms_of(term)
+        series = _share_series(posts, lambda p: p.text_snippet, lambda p: p.created_at.date(),
+                               terms, start, as_of, negatives_only=False)
+        baseline, recent = series[:-RECENT_DAYS], series[-RECENT_DAYS:]
+        z, delta = _zscore(recent, baseline)
+        if z < SEV3_Z:
+            continue
+        out.append(Candidate(
+            slug=f"auto-post-{term.replace(' ', '-')}", type="theme_volume_surge",
+            metric=f"{label} on Reddit", delta=delta, z=z, window=f"{RECENT_DAYS}d",
+            description=f"{label}: community chatter up (z={z}); low separation from baseline variance.",
+            severity=_severity(z),
+        ))
+    return out
+
+
+def detect_issue_velocity(session: Session, as_of: datetime = AS_OF) -> list[Candidate]:
+    start = as_of - timedelta(days=BASELINE_DAYS + RECENT_DAYS)
+    issues = session.scalars(select(Issue).where(Issue.created_at >= start)).all()
+    out: list[Candidate] = []
+    for term, label in ISSUE_TERMS:
+        terms = terms_of(term)
+        hits = [i for i in issues if match_score(i.title + " " + i.body_snippet, terms) > 0]
+        series = _daily_counts(hits, lambda i: i.created_at.date(), start, as_of)
+        baseline, recent = series[:-RECENT_DAYS], series[-RECENT_DAYS:]
+        z, delta = _zscore(recent, baseline)
+        recent_count = sum(recent)
+        if recent_count < 2:
+            continue
+        out.append(Candidate(
+            slug=f"auto-issues-{term.split()[0]}", type="issue_velocity_surge",
+            metric=f"{label} per week", delta=delta, z=z, window=f"{RECENT_DAYS}d",
+            description=f"{label}: {recent_count:.0f} new issues this week (z={z}); "
+                        f"same window and theme as the review signal.",
+            severity=_severity(max(z, SEV2_Z)),
+        ))
+    return out
+
+
+def scan(session: Session, as_of: datetime = AS_OF, persist: bool = True) -> list[AnomalyEvent]:
+    """Run every detector, dedupe by slug, and (optionally) persist as pending
+    anomaly_events. Re-running is idempotent: existing slugs are skipped."""
+    candidates: list[Candidate] = []
+    spike = detect_volume_spike(session, as_of)
+    if spike:
+        candidates.append(spike)
+    candidates += detect_theme_surges(session, as_of)
+    candidates += detect_issue_velocity(session, as_of)
+
+    existing = {e.slug for e in session.scalars(select(AnomalyEvent)).all()}
+    events: list[AnomalyEvent] = []
+    for c in candidates:
+        if c.slug in existing:
+            events.append(session.scalars(
+                select(AnomalyEvent).where(AnomalyEvent.slug == c.slug)).first())
+            continue
+        ev = AnomalyEvent(
+            slug=c.slug, type=c.type, metric=c.metric, delta=c.delta, z=c.z,
+            window=c.window, description=c.description, status="pending",
+        )
+        if persist:
+            session.add(ev)
+        events.append(ev)
+    if persist:
+        session.flush()
+    return events

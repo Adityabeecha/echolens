@@ -1,0 +1,51 @@
+# Render blueprint for EchoLens (backend web service + static frontend).
+# Database stays on your existing Supabase — set ECHOLENS_DB_URL as a secret.
+#
+# Deploy: push this repo to GitHub, then in Render → "New +" → "Blueprint" →
+# pick this repo. Render reads this file and creates both services. Fill the
+# secret env vars (marked sync:false) in the dashboard.
+services:
+  - type: web
+    name: echolens-api
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ECHOLENS_ENV
+        value: production
+      # Supabase transaction-pooler URL (Settings → Database → Connection string)
+      - key: ECHOLENS_DB_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      # strong random secret; Render can generate one for you
+      - key: JWT_SECRET
+        generateValue: true
+      # the frontend's public origin (fill after echolens-web gets its URL)
+      - key: CORS_ORIGINS
+        sync: false
+      - key: ECHOLENS_MODEL
+        value: gpt-4o-mini
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: ECHOLENS_LOG_JSON
+        value: "1"
+
+  - type: web
+    name: echolens-web
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    autoDeploy: true
+    envVars:
+      # point the SPA at the backend service's public URL (set after first deploy)
+      - key: VITE_API_BASE
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

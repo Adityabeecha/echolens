@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;padding:0;background:#0e0f13;height:100%}
+*{box-sizing:border-box}
+a{color:#f0a63c;text-decoration:none}a:hover{color:#f7bd6a}
+::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:#2a2d38;border-radius:6px;border:2px solid #0e0f13}::-webkit-scrollbar-track{background:transparent}
+@keyframes elPulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes elGlow{0%,100%{box-shadow:0 0 0 1px rgba(240,166,60,.35),0 0 18px rgba(240,166,60,.10)}50%{box-shadow:0 0 0 1px rgba(240,166,60,.7),0 0 26px rgba(240,166,60,.22)}}
+@keyframes elBar{0%,100%{opacity:1}50%{opacity:.65}}
+textarea:focus,input:focus{outline:1px solid rgba(240,166,60,.5)}
+button{font-family:inherit}
+button:focus-visible,a:focus-visible{outline:2px solid #f0a63c;outline-offset:2px}
+@media (prefers-reduced-motion: reduce){*{animation:none !important;transition:none !important}}
+</style>
+</helmet>
+<div style="display:flex;height:100vh;background:#0e0f13;color:#e9eaee;font-family:'IBM Plex Sans',sans-serif;font-size:14px;overflow:hidden">
+
+  <!-- ══ SIDEBAR ══ -->
+  <div style="width:216px;flex:none;display:flex;flex-direction:column;border-right:1px solid #22242e;background:#101117">
+    <div style="display:flex;align-items:center;gap:10px;padding:18px 18px 16px">
+      <div style="width:26px;height:26px;border-radius:50%;border:2px solid #f0a63c;position:relative;flex:none">
+        <div style="position:absolute;inset:5px;border-radius:50%;background:radial-gradient(circle at 35% 35%, #f7bd6a, #b06f1a)"></div>
+      </div>
+      <div>
+        <div style="font-weight:700;font-size:15px;letter-spacing:.02em">EchoLens</div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:#6b6e7b;letter-spacing:.08em">FEEDBACK FORENSICS</div>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:2px;padding:8px 10px">
+      <div onClick="{{ goFeed }}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;cursor:pointer;background:{{ navFeedBg }};color:{{ navFeedColor }}" style-hover="background:#1b1d26">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;width:16px;color:#f0a63c">◉</span>Case Feed
+      </div>
+      <div onClick="{{ goArchive }}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;cursor:pointer;background:{{ navArchBg }};color:{{ navArchColor }}" style-hover="background:#1b1d26">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;width:16px;color:#6b6e7b">▤</span>Archive
+      </div>
+      <div onClick="{{ goSources }}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;cursor:pointer;background:{{ navSrcBg }};color:{{ navSrcColor }}" style-hover="background:#1b1d26">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;width:16px;color:#6b6e7b">⇄</span>Sources
+      </div>
+      <div onClick="{{ goCosts }}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;cursor:pointer;background:{{ navCostBg }};color:{{ navCostColor }}" style-hover="background:#1b1d26">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;width:16px;color:#6b6e7b">$</span>Costs
+      </div>
+    </div>
+    <div style="flex:1"></div>
+    <div style="margin:10px;padding:10px 12px;border:1px solid #262933;border-radius:8px;background:#14151c">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="width:7px;height:7px;border-radius:50%;background:{{ sbDotColor }};animation:{{ sbDotAnim }};flex:none"></div>
+        <div style="font-size:12px;color:#c6c8d1">{{ sbLabel }}</div>
+      </div>
+      <div onClick="{{ goCase }}" style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:{{ sbDetailColor }};margin-top:4px;margin-left:15px;cursor:pointer" style-hover="color:#f7bd6a">{{ sbDetail }}</div>
+    </div>
+  </div>
+
+  <!-- ══ MAIN ══ -->
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden">
+
+  <!-- ─── SCREEN: CASE FEED ─── -->
+  <sc-if value="{{ isFeed }}" hint-placeholder-val="{{ true }}">
+    <div style="display:flex;flex-direction:column;height:100%;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:20px;padding:16px 28px;border-bottom:1px solid #22242e;flex:none">
+        <div style="font-size:17px;font-weight:600">Case Feed</div>
+        <div style="flex:1"></div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="display:flex;gap:3px">
+            <div style="width:18px;height:6px;border-radius:2px;background:#f0a63c"></div>
+            <div style="width:18px;height:6px;border-radius:2px;background:#f0a63c"></div>
+            <div style="width:18px;height:6px;border-radius:2px;background:#f0a63c"></div>
+            <div style="width:18px;height:6px;border-radius:2px;background:#2a2d38"></div>
+            <div style="width:18px;height:6px;border-radius:2px;background:#2a2d38"></div>
+          </div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#9a9daa">3/5 investigations today · $0.42 spent</div>
+        </div>
+        <button onClick="{{ openNewCase }}" style="background:#f0a63c;color:#17130a;border:none;border-radius:6px;padding:8px 14px;font-weight:600;font-size:13px;cursor:pointer" style-hover="background:#f7bd6a">New case</button>
+      </div>
+      <div style="flex:1;overflow:auto;padding:22px 28px">
+        <sc-if value="{{ approvedBanner }}" hint-placeholder-val="{{ false }}">
+          <div style="max-width:880px;margin-bottom:14px;padding:11px 16px;border:1px solid rgba(76,192,119,.4);background:rgba(76,192,119,.07);border-radius:8px;font-size:13px;color:#4cc077;display:flex;align-items:center;gap:10px"><span>✓</span>Case #14 finding approved — ticket LUMO-2841 created, case moved to archive.</div>
+        </sc-if>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.1em;color:#6b6e7b;margin-bottom:12px">DETECTED ANOMALIES · LUMO · LAST 7 DAYS</div>
+        <sc-if value="{{ feedEmpty }}" hint-placeholder-val="{{ false }}">
+          <div style="max-width:880px;padding:46px 20px;border:1px dashed #3a3e4d;border-radius:12px;text-align:center">
+            <div style="font-size:15px;font-weight:600;color:#c6c8d1">All quiet</div>
+            <div style="font-size:13px;color:#7c7f8c;margin-top:6px">No anomalies detected in the last 7 days. Monitoring 4 sources every 6 hours.</div>
+            <button onClick="{{ openNewCase }}" style="margin-top:16px;background:transparent;color:#f0a63c;border:1px solid rgba(240,166,60,.4);border-radius:6px;padding:8px 16px;font-size:13px;font-weight:500;cursor:pointer" style-hover="background:rgba(240,166,60,.08)">Open a case manually</button>
+          </div>
+        </sc-if>
+        <div style="display:flex;flex-direction:column;gap:10px;max-width:880px">
+          <sc-for list="{{ anomalies }}" as="a" hint-placeholder-count="4">
+            <div onClick="{{ a.onOpen }}" style="display:grid;grid-template-columns:70px 1fr auto;gap:16px;align-items:center;padding:16px 18px;background:#15161c;border:1px solid #262933;border-radius:10px;cursor:{{ a.cursor }};opacity:{{ a.dimmed }}" style-hover="border-color:{{ a.hoverBorder }}">
+              <div>
+                <div style="display:flex;align-items:center;gap:6px">
+                  <div style="width:8px;height:8px;border-radius:2px;background:{{ a.sevColor }};flex:none"></div>
+                  <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:{{ a.sevColor }}">{{ a.sev }}</div>
+                </div>
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#6b6e7b;margin-top:5px">{{ a.time }}</div>
+              </div>
+              <div style="min-width:0">
+                <div style="font-size:14.5px;font-weight:600;color:#e9eaee">{{ a.title }}</div>
+                <div style="display:flex;align-items:center;gap:10px;margin-top:7px;flex-wrap:wrap">
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;padding:2px 7px;border:1px solid #2e3140;border-radius:4px;color:#9a9daa">{{ a.source }}</span>
+                  <svg width="84" height="22" viewBox="0 0 84 22" style="flex:none"><polyline points="{{ a.spark }}" fill="none" stroke="{{ a.sparkColor }}" stroke-width="1.5"></polyline></svg>
+                  <sc-if value="{{ a.hasReason }}" hint-placeholder-val="{{ false }}">
+                    <span style="font-size:12px;color:#7c7f8c;font-style:italic">{{ a.reason }}</span>
+                  </sc-if>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:20px;background:{{ a.chipBg }};border:1px solid {{ a.chipBorder }}">
+                <sc-if value="{{ a.chipPulse }}" hint-placeholder-val="{{ false }}">
+                  <div style="width:6px;height:6px;border-radius:50%;background:#f0a63c;animation:elPulse 1.4s infinite"></div>
+                </sc-if>
+                <span style="font-size:12px;font-weight:500;color:{{ a.chipColor }};white-space:nowrap">{{ a.chip }}</span>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ─── SCREEN: INVESTIGATION ─── -->
+  <sc-if value="{{ isCase }}" hint-placeholder-val="{{ false }}">
+    <div style="display:flex;flex-direction:column;height:100%;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:14px;padding:14px 24px;border-bottom:1px solid #22242e;flex:none">
+        <span onClick="{{ goFeed }}" style="color:#7c7f8c;cursor:pointer;font-size:13px" style-hover="color:#e9eaee">← Feed</span>
+        <div style="width:1px;height:18px;background:#262933"></div>
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#f0a63c">CASE #14</span>
+        <div style="font-size:15px;font-weight:600">Battery complaint spike after v3.2</div>
+        <div style="display:flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;background:{{ caseStateBg }};border:1px solid {{ caseStateBorder }}">
+          <sc-if value="{{ notPaused }}" hint-placeholder-val="{{ true }}">
+            <div style="width:6px;height:6px;border-radius:50%;background:#f0a63c;animation:elPulse 1.4s infinite"></div>
+          </sc-if>
+          <span style="font-size:11.5px;font-weight:500;color:{{ caseStateColor }}">{{ caseStateLabel }}</span>
+        </div>
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#565968">opened from anomaly: <span style="color:#9a9daa">1★ reviews +23% WoW</span></span>
+        <div style="flex:1"></div>
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#9a9daa">elapsed {{ elapsed }}</span>
+      </div>
+      <div style="flex:1;display:grid;grid-template-columns:minmax(200px,296px) minmax(320px,1fr) minmax(180px,252px);overflow-x:auto">
+
+        <!-- left: hypotheses -->
+        <div style="border-right:1px solid #22242e;overflow:auto;padding:16px">
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.1em;color:#6b6e7b;margin-bottom:12px">HYPOTHESES · 4</div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <sc-for list="{{ hypotheses }}" as="h" hint-placeholder-count="4">
+              <div onClick="{{ h.onPick }}" style="padding:13px 14px;background:#15161c;border:1px solid {{ h.border }};border-radius:9px;opacity:{{ h.opacity }};cursor:pointer" style-hover="border-color:rgba(240,166,60,.45)">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:{{ h.color }}">{{ h.id }}</span>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.06em;padding:2px 6px;border-radius:3px;background:{{ h.tagBg }};color:{{ h.color }}">{{ h.tag }}</span>
+                </div>
+                <div style="font-size:13px;line-height:1.45;color:#d7d9e0">{{ h.text }}</div>
+                <div style="display:flex;align-items:center;gap:9px;margin-top:11px">
+                  <div style="flex:1;height:5px;border-radius:3px;background:#23252f;overflow:hidden">
+                    <div style="height:100%;border-radius:3px;background:{{ h.color }};width:{{ h.pct }};transition:width 1.2s cubic-bezier(.2,.8,.2,1);animation:{{ h.barAnim }}"></div>
+                  </div>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:{{ h.color }};width:32px;text-align:right">{{ h.conf }}</span>
+                </div>
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#7c7f8c;margin-top:7px">evidence  +{{ h.pro }} for · −{{ h.con }} against</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <!-- center: reasoning trace -->
+        <div ref="{{ traceRef }}" style="overflow:auto;padding:18px 26px;background:#0e0f13">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;max-width:640px">
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.1em;color:#6b6e7b">REASONING TRACE</div>
+            <div style="flex:1"></div>
+            <sc-for list="{{ traceFilters }}" as="tf" hint-placeholder-count="5">
+              <div onClick="{{ tf.onPick }}" style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.06em;padding:3px 8px;border-radius:4px;border:1px solid {{ tf.border }};color:{{ tf.color }};background:{{ tf.bg }};cursor:pointer" style-hover="border-color:rgba(240,166,60,.45)">{{ tf.name }}</div>
+            </sc-for>
+            <div onClick="{{ toggleFollow }}" style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.06em;padding:3px 8px;border-radius:4px;color:{{ followColor }};cursor:pointer;margin-left:4px" style-hover="color:#f0a63c">{{ followLabel }}</div>
+          </div>
+          <sc-if value="{{ selHypHint }}" hint-placeholder-val="{{ false }}">
+            <div style="max-width:640px;margin-bottom:12px;padding:7px 12px;border:1px solid rgba(240,166,60,.3);background:rgba(240,166,60,.05);border-radius:6px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#f0a63c">Highlighting steps for {{ selHyp }} — click the hypothesis again to clear</div>
+          </sc-if>
+          <div style="display:flex;flex-direction:column;max-width:640px">
+            <sc-for list="{{ steps }}" as="s" hint-placeholder-count="6">
+              <div style="display:grid;grid-template-columns:52px 1fr;column-gap:14px;opacity:{{ s.dim }};transition:opacity .25s">
+                <div style="display:flex;flex-direction:column;align-items:center">
+                  <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.05em;padding:3px 0;width:44px;text-align:center;border-radius:4px;border:1px solid {{ s.color }};color:{{ s.color }};background:#101117;flex:none">{{ s.tag }}</div>
+                  <div style="width:1px;flex:1;background:{{ s.lineBg }};min-height:14px"></div>
+                </div>
+                <div style="padding-bottom:16px;min-width:0">
+                  <div style="padding:11px 14px;background:#15161c;border:1px solid #262933;border-radius:8px;animation:{{ s.anim }}">
+                    <sc-if value="{{ s.isThought }}" hint-placeholder-val="{{ false }}">
+                      <div style="font-size:13px;line-height:1.5;color:#c6c8d1">{{ s.text }}</div>
+                    </sc-if>
+                    <sc-if value="{{ s.isTool }}" hint-placeholder-val="{{ false }}">
+                      <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#8fd0ff;word-break:break-all">{{ s.code }}</div>
+                      <div onClick="{{ s.onToggle }}" style="display:flex;align-items:center;gap:7px;margin-top:8px;cursor:pointer;color:#9a9daa;font-size:12px" style-hover="color:#e9eaee">
+                        <span style="font-family:'IBM Plex Mono',monospace;font-size:10px">{{ s.caret }}</span>
+                        <span style="font-family:'IBM Plex Mono',monospace;font-size:11px">→ {{ s.preview }}</span>
+                      </div>
+                      <sc-if value="{{ s.expanded }}" hint-placeholder-val="{{ false }}">
+                        <div style="margin-top:8px;padding:9px 12px;background:#101117;border:1px solid #22242e;border-radius:6px;font-family:'IBM Plex Mono',monospace;font-size:11px;line-height:1.6;color:#9a9daa;white-space:pre-wrap">{{ s.detail }}</div>
+                      </sc-if>
+                    </sc-if>
+                    <sc-if value="{{ s.isEv }}" hint-placeholder-val="{{ false }}">
+                      <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+                        <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#f0a63c">{{ s.evId }}</span>
+                        <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;padding:2px 7px;border:1px solid #2e3140;border-radius:4px;color:#9a9daa">{{ s.evSource }}</span>
+                        <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#4cc077;margin-left:auto">supports {{ s.supports }}</span>
+                      </div>
+                      <div style="font-size:13px;line-height:1.5;color:#d7d9e0;border-left:2px solid #3a3e4d;padding-left:10px">“{{ s.text }}”</div>
+                    </sc-if>
+                    <sc-if value="{{ s.isUp }}" hint-placeholder-val="{{ false }}">
+                      <div style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:{{ s.upColor }}">{{ s.code }}</div>
+                      <div style="font-size:12.5px;color:#9a9daa;margin-top:5px">{{ s.text }}</div>
+                    </sc-if>
+                    <sc-if value="{{ s.isFail }}" hint-placeholder-val="{{ false }}">
+                      <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#8fd0ff;word-break:break-all">{{ s.code }}</div>
+                      <div style="margin-top:8px;padding:8px 11px;background:rgba(224,88,79,.07);border:1px solid rgba(224,88,79,.35);border-radius:6px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#e0584f">✕ {{ s.error }}</div>
+                      <div style="font-size:12px;color:#9a9daa;margin-top:6px">{{ s.text }}</div>
+                    </sc-if>
+                    <sc-if value="{{ s.live }}" hint-placeholder-val="{{ false }}">
+                      <div style="display:flex;align-items:center;gap:6px;margin-top:9px">
+                        <div style="width:6px;height:6px;border-radius:50%;background:{{ liveDotColor }};animation:{{ liveDotAnim }}"></div>
+                        <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:{{ liveDotColor }}">{{ liveLabel }}</span>
+                      </div>
+                    </sc-if>
+                  </div>
+                  <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#565968;margin-top:5px">{{ s.time }}</div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <!-- right: case status -->
+        <div style="border-left:1px solid #22242e;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:16px">
+          <div>
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.1em;color:#6b6e7b;margin-bottom:10px">BUDGET</div>
+            <div style="display:flex;flex-direction:column;gap:11px">
+              <div>
+                <div style="display:flex;justify-content:space-between;font-size:12px;color:#9a9daa;margin-bottom:4px"><span>Iterations</span><span style="font-family:'IBM Plex Mono',monospace">7 / 12</span></div>
+                <div style="height:5px;border-radius:3px;background:#23252f"><div style="height:100%;width:58%;border-radius:3px;background:#f0a63c"></div></div>
+              </div>
+              <div>
+                <div style="display:flex;justify-content:space-between;font-size:12px;color:#9a9daa;margin-bottom:4px"><span>Tokens</span><span style="font-family:'IBM Plex Mono',monospace">48.2k / 120k</span></div>
+                <div style="height:5px;border-radius:3px;background:#23252f"><div style="height:100%;width:40%;border-radius:3px;background:#8fd0ff"></div></div>
+              </div>
+              <div>
+                <div style="display:flex;justify-content:space-between;font-size:12px;color:#9a9daa;margin-bottom:4px"><span>Wall-clock</span><span style="font-family:'IBM Plex Mono',monospace">14m / 45m</span></div>
+                <div style="height:5px;border-radius:3px;background:#23252f"><div style="height:100%;width:31%;border-radius:3px;background:#9a9daa"></div></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:12px;color:#9a9daa"><span>Cost so far</span><span style="font-family:'IBM Plex Mono',monospace;color:#e9eaee">$0.31</span></div>
+            </div>
+          </div>
+          <div style="height:1px;background:#22242e"></div>
+          <div>
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.1em;color:#6b6e7b;margin-bottom:10px">SOURCES TOUCHED</div>
+            <div style="display:flex;flex-direction:column;gap:7px;font-size:12.5px">
+              <div style="display:flex;justify-content:space-between;color:#c6c8d1"><span>Play Store reviews</span><span style="font-family:'IBM Plex Mono',monospace;color:#4cc077">3 queries</span></div>
+              <div style="display:flex;justify-content:space-between;color:#c6c8d1"><span>GitHub issues</span><span style="font-family:'IBM Plex Mono',monospace;color:#4cc077">2 queries</span></div>
+              <div style="display:flex;justify-content:space-between;color:#c6c8d1"><span>Release notes</span><span style="font-family:'IBM Plex Mono',monospace;color:#4cc077">1 query</span></div>
+              <div style="display:flex;justify-content:space-between;color:#565968"><span>Reddit</span><span style="font-family:'IBM Plex Mono',monospace">—</span></div>
+            </div>
+          </div>
+          <div style="height:1px;background:#22242e"></div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <button onClick="{{ togglePause }}" style="width:100%;padding:9px 0;border-radius:7px;border:1px solid #3a3e4d;background:#1b1d26;color:#e9eaee;font-size:13px;font-weight:500;cursor:pointer" style-hover="border-color:#f0a63c">{{ pauseLabel }}</button>
+            <sc-if value="{{ escalated }}" hint-placeholder-val="{{ false }}">
+              <div style="padding:10px 12px;border-radius:7px;border:1px solid rgba(76,192,119,.4);background:rgba(76,192,119,.07);font-size:12px;color:#4cc077;line-height:1.5">✓ Escalated — case digest (hypotheses, evidence, trace) sent to you. Agent continues until you respond.</div>
+            </sc-if>
+            <sc-if value="{{ notEscalated }}" hint-placeholder-val="{{ true }}">
+              <button onClick="{{ escalate }}" style="width:100%;padding:9px 0;border-radius:7px;border:1px solid rgba(240,166,60,.4);background:rgba(240,166,60,.08);color:#f0a63c;font-size:13px;font-weight:500;cursor:pointer" style-hover="background:rgba(240,166,60,.16)">Escalate to me</button>
+            </sc-if>
+            <button onClick="{{ goFinding }}" style="width:100%;padding:9px 0;border-radius:7px;border:none;background:#f0a63c;color:#17130a;font-size:13px;font-weight:600;cursor:pointer" style-hover="background:#f7bd6a">Draft finding →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ─── SCREEN: FINDING REVIEW ─── -->
+  <sc-if value="{{ isFinding }}" hint-placeholder-val="{{ false }}">
+    <div style="height:100%;overflow:auto">
+      <div style="display:flex;align-items:center;gap:14px;padding:14px 28px;border-bottom:1px solid #22242e;position:sticky;top:0;background:#0e0f13;z-index:5">
+        <span onClick="{{ goCase }}" style="color:#7c7f8c;cursor:pointer;font-size:13px" style-hover="color:#e9eaee">← Investigation</span>
+        <div style="width:1px;height:18px;background:#262933"></div>
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#f0a63c">CASE #14</span>
+        <div style="font-size:15px;font-weight:600">Finding Review</div>
+        <div style="flex:1"></div>
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#565968">drafted Jul 16 · 14:23 · iteration 9/12</span>
+      </div>
+      <div style="max-width:820px;padding:26px 28px 60px">
+        <sc-if value="{{ challenged }}" hint-placeholder-val="{{ false }}">
+          <div style="margin-bottom:18px;padding:12px 16px;border:1px solid rgba(240,166,60,.4);background:rgba(240,166,60,.07);border-radius:8px;font-size:13px;color:#f0a63c">Investigation re-opened with your note. The agent will address it in the next iterations.</div>
+        </sc-if>
+        <div style="padding:22px 24px;background:#15161c;border:1px solid #262933;border-radius:12px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;color:#6b6e7b">FINDING</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;padding:3px 9px;border-radius:4px;background:rgba(76,192,119,.12);border:1px solid rgba(76,192,119,.4);color:#4cc077">HIGH CONFIDENCE · 0.85</span>
+          </div>
+          <div style="font-size:20px;font-weight:700;line-height:1.35;letter-spacing:-.01em">Background sync shipped in v3.2 is driving the battery complaint spike.</div>
+          <div style="font-size:14px;line-height:1.75;color:#c6c8d1;margin-top:14px">
+            Lumo v3.2 (Jul 8) enabled automatic background photo sync by default<sup onClick="{{ ev009 }}" style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#f0a63c;cursor:pointer;padding:1px 4px;background:rgba(240,166,60,.1);border-radius:3px;margin-left:2px" style-hover="background:rgba(240,166,60,.25)">ev_009</sup>.
+            The sync worker holds a wakelock that is never released when the upload queue is empty, draining battery even while idle<sup onClick="{{ ev007 }}" style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#f0a63c;cursor:pointer;padding:1px 4px;background:rgba(240,166,60,.1);border-radius:3px;margin-left:2px" style-hover="background:rgba(240,166,60,.25)">ev_007</sup>.
+            Battery mentions in 1-star reviews rose from 4% to 61% within three days of rollout<sup onClick="{{ ev003 }}" style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#f0a63c;cursor:pointer;padding:1px 4px;background:rgba(240,166,60,.1);border-radius:3px;margin-left:2px" style-hover="background:rgba(240,166,60,.25)">ev_003</sup>.
+            The concurrent Android 15 update was ruled out: v3.1 users on Android 15 show flat battery mentions<sup onClick="{{ ev012 }}" style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#f0a63c;cursor:pointer;padding:1px 4px;background:rgba(240,166,60,.1);border-radius:3px;margin-left:2px" style-hover="background:rgba(240,166,60,.25)">ev_012</sup>.
+          </div>
+        </div>
+
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.1em;color:#6b6e7b;margin:26px 0 10px">EVIDENCE · 4 ITEMS</div>
+        <div style="border:1px solid #262933;border-radius:10px;overflow:hidden">
+          <div style="display:grid;grid-template-columns:76px 120px 1fr 140px;gap:12px;padding:9px 16px;background:#14151c;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.08em;color:#6b6e7b;border-bottom:1px solid #22242e"><span>ID</span><span>SOURCE</span><span>SNIPPET</span><span>SUPPORTS</span></div>
+          <sc-for list="{{ evidence }}" as="e" hint-placeholder-count="4">
+            <div onClick="{{ e.onOpen }}" style="display:grid;grid-template-columns:76px 120px 1fr 140px;gap:12px;padding:12px 16px;border-bottom:1px solid #1c1e27;cursor:pointer;background:#15161c" style-hover="background:#1b1d26">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#f0a63c">{{ e.id }}</span>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9a9daa">{{ e.source }}</span>
+              <span style="font-size:12.5px;color:#c6c8d1;line-height:1.45">“{{ e.snippet }}”</span>
+              <span style="font-size:12px;color:#4cc077">{{ e.supports }}</span>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.1em;color:#6b6e7b;margin:26px 0 10px">RECOMMENDED ACTIONS</div>
+        <div style="display:flex;flex-direction:column;gap:9px">
+          <sc-for list="{{ actions }}" as="ac" hint-placeholder-count="3">
+            <div style="display:flex;align-items:center;gap:14px;padding:14px 16px;background:#15161c;border:1px solid #262933;border-radius:9px">
+              <div style="width:26px;height:26px;border-radius:6px;background:#1b1d26;border:1px solid #2e3140;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:12px;color:#f0a63c;flex:none">{{ ac.rank }}</div>
+              <div style="flex:1;font-size:13.5px;font-weight:500">{{ ac.text }}</div>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;padding:3px 8px;border-radius:4px;background:rgba(76,192,119,.1);color:#4cc077;border:1px solid rgba(76,192,119,.3)">{{ ac.impact }} impact</span>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;padding:3px 8px;border-radius:4px;background:#1b1d26;color:#9a9daa;border:1px solid #2e3140">{{ ac.effort }} effort</span>
+            </div>
+          </sc-for>
+        </div>
+
+        <sc-if value="{{ approved }}" hint-placeholder-val="{{ false }}">
+          <div style="margin-top:26px;padding:14px 18px;border:1px solid rgba(76,192,119,.4);background:rgba(76,192,119,.07);border-radius:9px;font-size:13px;color:#4cc077;line-height:1.6;max-width:560px">✓ Finding approved · Jul 16, 14:26<br><span style="color:#9a9daa">Ticket <span style="font-family:'IBM Plex Mono',monospace;color:#8fd0ff">LUMO-2841</span> created with actions attached · case moved to archive as RESOLVED · anomaly card on feed updated.</span></div>
+        </sc-if>
+        <div style="display:flex;gap:12px;margin-top:26px;align-items:flex-start">
+          <button onClick="{{ approve }}" style="padding:12px 26px;border-radius:8px;border:none;background:{{ approveBg }};color:{{ approveColor }};font-size:14px;font-weight:600;cursor:pointer" style-hover="filter:brightness(1.1)">{{ approveLabel }}</button>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <button onClick="{{ toggleChallenge }}" style="padding:12px 26px;border-radius:8px;border:1px solid #3a3e4d;background:transparent;color:#e9eaee;font-size:14px;font-weight:500;cursor:pointer" style-hover="border-color:#f0a63c;color:#f0a63c">Challenge</button>
+            <span style="font-size:11px;color:#6b6e7b">challenging re-opens the investigation with your note</span>
+          </div>
+        </div>
+        <sc-if value="{{ challengeOpen }}" hint-placeholder-val="{{ false }}">
+          <div style="margin-top:14px;padding:16px;background:#15161c;border:1px solid #262933;border-radius:10px;max-width:560px">
+            <div style="font-size:12.5px;color:#9a9daa;margin-bottom:8px">What does this finding get wrong, or what should the agent check?</div>
+            <textarea value="{{ challengeText }}" onChange="{{ onChallengeText }}" placeholder="e.g. Battery complaints also mention charging speed — check charger-related reviews before pinning this on sync." style="width:100%;height:76px;background:#101117;border:1px solid #2e3140;border-radius:7px;color:#e9eaee;font-family:inherit;font-size:13px;padding:10px;resize:vertical"></textarea>
+            <button onClick="{{ submitChallenge }}" style="margin-top:10px;padding:8px 18px;border-radius:7px;border:none;background:#f0a63c;color:#17130a;font-size:13px;font-weight:600;cursor:{{ challengeCursor }};opacity:{{ challengeOpacity }}" style-hover="background:#f7bd6a">Submit &amp; re-open investigation</button>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ showFailureInset }}" hint-placeholder-val="{{ false }}">
+          <div style="margin-top:40px;max-width:620px">
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.1em;color:#6b6e7b;margin-bottom:10px">ELSEWHERE · CASE #11 CLOSED HONESTLY</div>
+            <div style="padding:18px 20px;background:#121319;border:1px dashed #3a3e4d;border-radius:10px">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9a9daa">CASE #11 · Shipping-cost complaints</span>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;padding:3px 9px;border-radius:4px;background:#1b1d26;border:1px solid #3a3e4d;color:#c6c8d1">INSUFFICIENT EVIDENCE</span>
+              </div>
+              <div style="font-size:14px;font-weight:600;margin-bottom:8px">No hypothesis passed the bar — best reached 0.40.</div>
+              <div style="font-size:12.5px;line-height:1.7;color:#9a9daa">
+                <span style="color:#c6c8d1">Checked:</span> reviews, GitHub issues, release notes.<br>
+                <span style="color:#c6c8d1">What would settle it:</span> version-segmented crash logs and the pricing-experiment flag history.
+              </div>
+              <div style="font-size:11.5px;color:#6b6e7b;margin-top:10px;font-style:italic">EchoLens reports uncertainty instead of guessing. This case cost $0.29 and stopped itself.</div>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ─── SCREEN: ARCHIVE ─── -->
+  <sc-if value="{{ isArchive }}" hint-placeholder-val="{{ false }}">
+    <div style="display:flex;flex-direction:column;height:100%;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:16px;padding:16px 28px;border-bottom:1px solid #22242e;flex:none">
+        <div style="font-size:17px;font-weight:600">Case Archive</div>
+        <div style="flex:1"></div>
+        <input value="{{ query }}" onChange="{{ onQuery }}" placeholder="Search cases…" style="width:260px;background:#15161c;border:1px solid #2e3140;border-radius:7px;color:#e9eaee;font-family:inherit;font-size:13px;padding:8px 12px">
+      </div>
+      <div style="flex:1;overflow:auto;padding:22px 28px">
+        <div style="border:1px solid #262933;border-radius:10px;overflow-x:auto;max-width:1060px">
+        <div style="min-width:820px">
+          <div style="display:grid;grid-template-columns:64px 1.6fr 150px 70px 110px 70px 70px;gap:12px;padding:10px 16px;background:#14151c;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.08em;color:#6b6e7b;border-bottom:1px solid #22242e">
+            <span>CASE</span><span>ROOT CAUSE</span><span>STATUS</span><span>CONF</span><span>HUMAN</span><span>COST</span><span>TIME</span>
+          </div>
+          <sc-if value="{{ archiveEmpty }}" hint-placeholder-val="{{ false }}">
+            <div style="padding:36px 20px;text-align:center;background:#15161c">
+              <div style="font-size:13.5px;color:#c6c8d1">No cases match “{{ query }}”</div>
+              <div style="font-size:12px;color:#6b6e7b;margin-top:5px">Try a case number, status, or root-cause keyword.</div>
+            </div>
+          </sc-if>
+          <sc-for list="{{ archiveRows }}" as="r" hint-placeholder-count="6">
+            <div onClick="{{ r.onOpen }}" style="display:grid;grid-template-columns:64px 1.6fr 150px 70px 110px 70px 70px;gap:12px;padding:13px 16px;border-bottom:1px solid #1c1e27;align-items:center;background:#15161c;cursor:pointer" style-hover="background:#1b1d26">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#f0a63c">{{ r.id }}</span>
+              <span style="font-size:13px;color:#d7d9e0;line-height:1.4">{{ r.cause }}</span>
+              <span><span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.04em;padding:3px 8px;border-radius:4px;background:{{ r.badgeBg }};color:{{ r.badgeColor }};border:1px solid {{ r.badgeBorder }}">{{ r.status }}</span></span>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:{{ r.confColor }}">{{ r.conf }}</span>
+              <span style="font-size:12px;color:{{ r.humanColor }}">{{ r.human }}</span>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#9a9daa">{{ r.cost }}</span>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#9a9daa">{{ r.time }}</span>
+            </div>
+          </sc-for>
+        </div>
+        </div>
+        <div style="font-size:12px;color:#6b6e7b;margin-top:12px">{{ archiveCount }} cases · 71% resolved with human approval · median cost $0.38</div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ─── SCREEN: SOURCES ─── -->
+  <sc-if value="{{ isSources }}" hint-placeholder-val="{{ false }}">
+    <div style="display:flex;flex-direction:column;height:100%;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:16px;padding:16px 28px;border-bottom:1px solid #22242e;flex:none">
+        <div style="font-size:17px;font-weight:600">Sources</div>
+        <div style="flex:1"></div>
+        <button style="background:transparent;color:#f0a63c;border:1px solid rgba(240,166,60,.4);border-radius:6px;padding:8px 14px;font-weight:500;font-size:13px;cursor:pointer" style-hover="background:rgba(240,166,60,.08)">+ Connect source</button>
+      </div>
+      <div style="flex:1;overflow:auto;padding:22px 28px">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.1em;color:#6b6e7b;margin-bottom:12px">CONNECTED · MONITORED EVERY 6H</div>
+        <div style="display:flex;flex-direction:column;gap:10px;max-width:880px">
+          <sc-for list="{{ sources }}" as="src" hint-placeholder-count="5">
+            <div style="display:grid;grid-template-columns:minmax(180px,1.2fr) 110px minmax(140px,1fr) 120px 90px;gap:14px;align-items:center;padding:15px 18px;background:#15161c;border:1px solid #262933;border-radius:10px" style-hover="border-color:#3a3e4d">
+              <div style="display:flex;align-items:center;gap:11px;min-width:0">
+                <div style="width:30px;height:30px;border-radius:7px;background:#1b1d26;border:1px solid #2e3140;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:12px;color:{{ src.iconColor }};flex:none">{{ src.icon }}</div>
+                <div style="min-width:0">
+                  <div style="font-size:14px;font-weight:600">{{ src.name }}</div>
+                  <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#6b6e7b;margin-top:2px">{{ src.detail }}</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:7px">
+                <div style="width:7px;height:7px;border-radius:50%;background:{{ src.dotColor }};flex:none;animation:{{ src.dotAnim }}"></div>
+                <span style="font-size:12px;color:{{ src.statusColor }}">{{ src.status }}</span>
+              </div>
+              <div style="font-size:12px;color:#9a9daa">{{ src.lastPull }}</div>
+              <div style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#c6c8d1">{{ src.volume }}</div>
+              <sc-if value="{{ src.connected }}" hint-placeholder-val="{{ true }}">
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:{{ src.evColor }};text-align:right">{{ src.evCount }} ev</div>
+              </sc-if>
+              <sc-if value="{{ src.needsConnect }}" hint-placeholder-val="{{ false }}">
+                <button onClick="{{ src.onConnect }}" style="justify-self:end;padding:6px 13px;border-radius:6px;border:1px solid rgba(240,166,60,.4);background:transparent;color:#f0a63c;font-size:12px;font-weight:500;cursor:pointer" style-hover="background:rgba(240,166,60,.08)">{{ src.connectLabel }}</button>
+              </sc-if>
+            </div>
+          </sc-for>
+        </div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.1em;color:#6b6e7b;margin:28px 0 12px">AVAILABLE</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;max-width:880px">
+          <sc-for list="{{ availSources }}" as="av" hint-placeholder-count="4">
+            <div onClick="{{ av.onRequest }}" style="display:flex;align-items:center;gap:9px;padding:10px 16px;border:1px dashed {{ av.border }};border-radius:9px;color:{{ av.color }};font-size:13px;cursor:pointer" style-hover="border-color:#f0a63c;color:#e9eaee">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6b6e7b">{{ av.icon }}</span>{{ av.label }}
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ─── SCREEN: COSTS ─── -->
+  <sc-if value="{{ isCosts }}" hint-placeholder-val="{{ false }}">
+    <div style="display:flex;flex-direction:column;height:100%;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:16px;padding:16px 28px;border-bottom:1px solid #22242e;flex:none">
+        <div style="font-size:17px;font-weight:600">Costs</div>
+        <div style="flex:1"></div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#9a9daa">JULY 2026 · BUDGET $25.00</div>
+      </div>
+      <div style="flex:1;overflow:auto;padding:22px 28px">
+        <div style="display:flex;gap:12px;max-width:880px;flex-wrap:wrap">
+          <sc-for list="{{ costStats }}" as="cs" hint-placeholder-count="4">
+            <div style="flex:1;min-width:170px;padding:16px 18px;background:#15161c;border:1px solid #262933;border-radius:10px">
+              <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.1em;color:#6b6e7b">{{ cs.label }}</div>
+              <div style="font-size:24px;font-weight:700;margin-top:8px;font-family:'IBM Plex Mono',monospace;color:{{ cs.color }}">{{ cs.value }}</div>
+              <div style="font-size:11.5px;color:#7c7f8c;margin-top:4px">{{ cs.sub }}</div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="max-width:880px;margin-top:22px;padding:18px 20px;background:#15161c;border:1px solid #262933;border-radius:10px">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.1em;color:#6b6e7b">MONTH-TO-DATE SPEND</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#e9eaee">$7.84 / $25.00</span>
+          </div>
+          <div style="height:8px;border-radius:4px;background:#23252f;overflow:hidden"><div style="height:100%;width:31%;border-radius:4px;background:linear-gradient(90deg,#b06f1a,#f0a63c)"></div></div>
+          <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#565968;margin-top:6px"><span>Jul 1</span><span>projected month-end: $15.20</span><span>Jul 31</span></div>
+        </div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.1em;color:#6b6e7b;margin:26px 0 10px">LIMITS</div>
+        <div style="display:flex;gap:12px;max-width:880px;flex-wrap:wrap">
+          <sc-for list="{{ limits }}" as="lm" hint-placeholder-count="3">
+            <div style="flex:1;min-width:200px;display:flex;align-items:center;gap:12px;padding:13px 16px;background:#15161c;border:1px solid #262933;border-radius:10px">
+              <div style="flex:1">
+                <div style="font-size:12.5px;color:#c6c8d1">{{ lm.name }}</div>
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:15px;color:#e9eaee;margin-top:3px">{{ lm.value }}</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:3px">
+                <button onClick="{{ lm.onUp }}" style="width:22px;height:20px;border-radius:4px;border:1px solid #2e3140;background:#1b1d26;color:#9a9daa;font-size:10px;cursor:pointer;line-height:1" style-hover="border-color:#f0a63c;color:#f0a63c">▲</button>
+                <button onClick="{{ lm.onDown }}" style="width:22px;height:20px;border-radius:4px;border:1px solid #2e3140;background:#1b1d26;color:#9a9daa;font-size:10px;cursor:pointer;line-height:1" style-hover="border-color:#f0a63c;color:#f0a63c">▼</button>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.1em;color:#6b6e7b;margin:26px 0 10px">COST PER CASE</div>
+        <div style="border:1px solid #262933;border-radius:10px;overflow-x:auto;max-width:880px">
+        <div style="min-width:700px">
+          <div style="display:grid;grid-template-columns:64px 1.5fr 90px 90px 90px 100px;gap:12px;padding:10px 16px;background:#14151c;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.08em;color:#6b6e7b;border-bottom:1px solid #22242e">
+            <span>CASE</span><span>OUTCOME</span><span>TOKENS</span><span>QUERIES</span><span>TIME</span><span style="text-align:right">COST</span>
+          </div>
+          <sc-for list="{{ costRows }}" as="cr" hint-placeholder-count="6">
+            <div style="display:grid;grid-template-columns:64px 1.5fr 90px 90px 90px 100px;gap:12px;padding:12px 16px;border-bottom:1px solid #1c1e27;align-items:center;background:#15161c" style-hover="background:#1b1d26">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#f0a63c">{{ cr.id }}</span>
+              <span style="font-size:12.5px;color:{{ cr.outcomeColor }}">{{ cr.outcome }}</span>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#9a9daa">{{ cr.tokens }}</span>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#9a9daa">{{ cr.queries }}</span>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#9a9daa">{{ cr.time }}</span>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#e9eaee;text-align:right">{{ cr.cost }}</span>
+            </div>
+          </sc-for>
+        </div>
+        </div>
+        <div style="font-size:12px;color:#6b6e7b;margin-top:12px">Cheapest resolved case $0.21 · most expensive $0.60 (budget-exhausted) · dead-end cases capped by iteration limit</div>
+      </div>
+    </div>
+  </sc-if>
+
+  </div>
+
+  <!-- evidence side sheet -->
+  <sc-if value="{{ sheetOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeSheet }}" style="position:fixed;inset:0;background:rgba(6,7,10,.55);z-index:20"></div>
+    <div style="position:fixed;top:0;right:0;bottom:0;width:400px;background:#14151c;border-left:1px solid #2e3140;z-index:21;padding:22px;display:flex;flex-direction:column;gap:14px;box-shadow:-20px 0 50px rgba(0,0,0,.45)">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#f0a63c">{{ sheet.id }}</span>
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;padding:2px 8px;border:1px solid #2e3140;border-radius:4px;color:#9a9daa">{{ sheet.source }}</span>
+        <button onClick="{{ closeSheet }}" style="margin-left:auto;background:none;border:none;color:#9a9daa;font-size:16px;cursor:pointer" style-hover="color:#e9eaee">✕</button>
+      </div>
+      <div style="padding:16px;background:#101117;border:1px solid #22242e;border-radius:9px;font-size:13.5px;line-height:1.65;color:#d7d9e0">“{{ sheet.full }}”</div>
+      <div style="font-size:12px;color:#9a9daa;line-height:1.7">
+        <div><span style="color:#6b6e7b">Origin</span> — {{ sheet.origin }}</div>
+        <div><span style="color:#6b6e7b">Logged</span> — {{ sheet.logged }}</div>
+        <div><span style="color:#6b6e7b">Supports</span> — <span style="color:#4cc077">{{ sheet.supports }}</span></div>
+      </div>
+      <a href="#" onClick="{{ noopLink }}" style="font-size:12.5px;color:#f0a63c" style-hover="color:#f7bd6a">View original source ↗</a>
+      <div style="font-size:11.5px;color:#6b6e7b;font-style:italic">Raw source preserved verbatim. EchoLens never paraphrases evidence into the record. Press Esc to close.</div>
+    </div>
+  </sc-if>
+
+  <!-- case detail sheet (archive) -->
+  <sc-if value="{{ caseSheetOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeCaseSheet }}" style="position:fixed;inset:0;background:rgba(6,7,10,.55);z-index:20"></div>
+    <div style="position:fixed;top:0;right:0;bottom:0;width:440px;background:#14151c;border-left:1px solid #2e3140;z-index:21;padding:22px;display:flex;flex-direction:column;gap:14px;box-shadow:-20px 0 50px rgba(0,0,0,.45);overflow:auto">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#f0a63c">CASE {{ caseSheet.id }}</span>
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;padding:3px 8px;border-radius:4px;background:{{ caseSheet.badgeBg }};color:{{ caseSheet.badgeColor }};border:1px solid {{ caseSheet.badgeBorder }}">{{ caseSheet.status }}</span>
+        <button onClick="{{ closeCaseSheet }}" style="margin-left:auto;background:none;border:none;color:#9a9daa;font-size:16px;cursor:pointer" style-hover="color:#e9eaee">✕</button>
+      </div>
+      <div style="font-size:16px;font-weight:600;line-height:1.4">{{ caseSheet.cause }}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div style="padding:11px 13px;background:#101117;border:1px solid #22242e;border-radius:8px"><div style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.08em;color:#6b6e7b">CONFIDENCE</div><div style="font-family:'IBM Plex Mono',monospace;font-size:16px;color:{{ caseSheet.confColor }};margin-top:4px">{{ caseSheet.conf }}</div></div>
+        <div style="padding:11px 13px;background:#101117;border:1px solid #22242e;border-radius:8px"><div style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.08em;color:#6b6e7b">COST · TIME</div><div style="font-family:'IBM Plex Mono',monospace;font-size:16px;color:#e9eaee;margin-top:4px">{{ caseSheet.cost }} · {{ caseSheet.time }}</div></div>
+      </div>
+      <div style="font-size:12.5px;line-height:1.7;color:#9a9daa">
+        <div><span style="color:#6b6e7b">Human review</span> — <span style="color:{{ caseSheet.humanColor }}">{{ caseSheet.human }}</span></div>
+        <div><span style="color:#6b6e7b">Summary</span> — {{ caseSheet.summary }}</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:auto">
+        <button onClick="{{ caseSheet.onReopen }}" style="flex:1;padding:9px 0;border-radius:7px;border:1px solid #3a3e4d;background:#1b1d26;color:#e9eaee;font-size:13px;font-weight:500;cursor:pointer" style-hover="border-color:#f0a63c">Re-open investigation</button>
+        <button onClick="{{ caseSheet.onViewTrace }}" style="flex:1;padding:9px 0;border-radius:7px;border:none;background:#f0a63c;color:#17130a;font-size:13px;font-weight:600;cursor:pointer" style-hover="background:#f7bd6a">View full trace</button>
+      </div>
+      <div style="font-size:11px;color:#565968;font-style:italic">Trace, evidence, and finding are preserved verbatim for every closed case.</div>
+    </div>
+  </sc-if>
+
+  <!-- new case modal -->
+  <sc-if value="{{ newCaseOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeNewCase }}" style="position:fixed;inset:0;background:rgba(6,7,10,.6);z-index:30"></div>
+    <div style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:520px;max-width:92vw;background:#14151c;border:1px solid #2e3140;border-radius:14px;z-index:31;padding:24px;box-shadow:0 30px 80px rgba(0,0,0,.55)">
+      <sc-if value="{{ newCaseSubmitted }}" hint-placeholder-val="{{ false }}">
+        <div style="text-align:center;padding:18px 0">
+          <div style="width:44px;height:44px;border-radius:50%;border:2px solid #f0a63c;margin:0 auto 14px;display:flex;align-items:center;justify-content:center"><div style="width:8px;height:8px;border-radius:50%;background:#f0a63c;animation:elPulse 1.4s infinite"></div></div>
+          <div style="font-size:16px;font-weight:600">Case #15 opened</div>
+          <div style="font-size:13px;color:#9a9daa;margin-top:6px;line-height:1.6">The investigator is forming initial hypotheses.<br>Budget: 12 iterations · $0.75 · 45 min cap.</div>
+          <button onClick="{{ closeNewCase }}" style="margin-top:16px;padding:9px 22px;border-radius:7px;border:none;background:#f0a63c;color:#17130a;font-size:13px;font-weight:600;cursor:pointer" style-hover="background:#f7bd6a">Back to feed</button>
+        </div>
+      </sc-if>
+      <sc-if value="{{ newCaseForm }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+          <div style="font-size:16px;font-weight:600">Open a case</div>
+          <button onClick="{{ closeNewCase }}" style="margin-left:auto;background:none;border:none;color:#9a9daa;font-size:16px;cursor:pointer" style-hover="color:#e9eaee">✕</button>
+        </div>
+        <div style="font-size:12.5px;color:#9a9daa;margin-bottom:6px">What should the investigator look into?</div>
+        <textarea value="{{ ncDesc }}" onChange="{{ onNcDesc }}" placeholder="e.g. Users report the share sheet freezing on Samsung devices since last week" style="width:100%;height:70px;background:#101117;border:1px solid #2e3140;border-radius:7px;color:#e9eaee;font-family:inherit;font-size:13px;padding:10px;resize:vertical"></textarea>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px">
+          <div>
+            <div style="font-size:12.5px;color:#9a9daa;margin-bottom:6px">Sources to search</div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <sc-for list="{{ newCaseSources }}" as="ns" hint-placeholder-count="4">
+                <div onClick="{{ ns.onToggle }}" style="display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid {{ ns.border }};border-radius:6px;cursor:pointer;background:{{ ns.bg }}" style-hover="border-color:#f0a63c">
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:{{ ns.checkColor }}">{{ ns.check }}</span>
+                  <span style="font-size:12.5px;color:#d7d9e0">{{ ns.name }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:12.5px;color:#9a9daa;margin-bottom:6px">Budget</div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <sc-for list="{{ newCaseBudgets }}" as="nb" hint-placeholder-count="3">
+                <div onClick="{{ nb.onPick }}" style="padding:7px 10px;border:1px solid {{ nb.border }};border-radius:6px;cursor:pointer;background:{{ nb.bg }}" style-hover="border-color:#f0a63c">
+                  <div style="font-size:12.5px;font-weight:500;color:#d7d9e0">{{ nb.name }}</div>
+                  <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#6b6e7b;margin-top:2px">{{ nb.detail }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+        <button onClick="{{ submitNewCase }}" style="margin-top:18px;width:100%;padding:11px 0;border-radius:8px;border:none;background:#f0a63c;color:#17130a;font-size:14px;font-weight:600;cursor:{{ ncCursor }};opacity:{{ ncOpacity }}" style-hover="background:#f7bd6a">Start investigation</button>
+        <div style="font-size:11px;color:#565968;margin-top:8px;text-align:center">{{ ncHint }}</div>
+      </sc-if>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;startScreen&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;feed&quot;,&quot;options&quot;:[&quot;feed&quot;,&quot;case&quot;,&quot;finding&quot;,&quot;archive&quot;,&quot;sources&quot;,&quot;costs&quot;],&quot;tsType&quot;:&quot;'feed'|'case'|'finding'|'archive'|'sources'|'costs'&quot;,&quot;section&quot;:&quot;Prototype&quot;},&quot;showFailureInset&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Prototype&quot;},&quot;demoEmptyFeed&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Prototype&quot;}}">
+class Component extends DCLogic {
+  state = {
+    screen: this.props.startScreen ?? 'feed',
+    expanded: {}, sheet: null, challengeOpen: false, challenged: false, approved: false, paused: false,
+    h3: 0.55, extra: false, elapsedS: 872,
+    escalated: false, newCaseOpen: false, newCaseSubmitted: false,
+    ncSources: { play: true, github: true, notes: true, reddit: false }, ncBudget: 'standard',
+    caseSheet: null, requested: {}, zendesk: 'idle',
+    limits: { daily: 5, budget: 0.75, wall: 45 },
+    traceFilter: 'ALL', selHyp: null, follow: true, challengeText: '', ncDesc: '',
+  };
+  componentDidMount() {
+    this.traceEl = null;
+    this.t1 = setInterval(() => this.setState(s => (s.paused || s.approved) ? null : { elapsedS: s.elapsedS + 1 }), 1000);
+    this.t2 = setInterval(() => this.setState(s => (s.paused || s.approved) ? null : { h3: s.h3 === 0.55 ? 0.61 : 0.55 }), 5000);
+    this.t3 = setTimeout(() => {
+      this.setState({ extra: true }, () => { if (this.traceEl && this.state.follow) this.traceEl.scrollTop = this.traceEl.scrollHeight; });
+    }, 7000);
+    this.onKey = e => { if (e.key === 'Escape') this.setState({ sheet: null, caseSheet: null, newCaseOpen: false, newCaseSubmitted: false }); };
+    window.addEventListener('keydown', this.onKey);
+  }
+  componentWillUnmount() { clearInterval(this.t1); clearInterval(this.t2); clearTimeout(this.t3); window.removeEventListener('keydown', this.onKey); }
+
+  archiveData() {
+    return [
+      { id: '#13', cause: 'Checkout crash on iPad — null cart state after coupon removal', status: 'Resolved', conf: 0.91, human: 'Approved', cost: '$0.38', time: '22m', summary: 'Coupon removal left a null cart object that only the iPad layout dereferenced. Fixed in 3.1.4; crash-free sessions recovered in 48h.' },
+      { id: '#12', cause: 'EU login failures — expired intermediate cert on auth CDN', status: 'Resolved', conf: 0.88, human: 'Approved', cost: '$0.51', time: '41m', summary: 'Login failures were EU-only and began at cert-expiry timestamp. Rotated cert; complaint volume returned to baseline same day.' },
+      { id: '#11', cause: 'Print-shipping cost complaints — no version or release correlation found', status: 'Insufficient evidence', conf: 0.40, human: '—', cost: '$0.29', time: '30m', summary: 'No hypothesis passed the bar; best reached 0.40. Would settle it: version-segmented crash logs and the pricing-experiment flag history. Case stopped itself under budget.' },
+      { id: '#10', cause: 'Ratings dip after gallery redesign — mixed sentiment, low separation', status: 'Needs human', conf: 0.57, human: 'Challenged', cost: '$0.44', time: '38m', summary: 'Sentiment split between navigation confusion and slower load. Reviewer challenged the load-time hypothesis; awaiting instrumented perf data.' },
+      { id: '#9', cause: 'Push notifications ignored — hypothesis space too broad', status: 'Budget exhausted', conf: 0.33, human: '—', cost: '$0.60', time: '45m', summary: 'Hit the 45-minute wall-clock cap with 5 open hypotheses. Recommend re-opening with a narrower prompt (specific notification type or cohort).' },
+      { id: '#8', cause: 'Dark-mode contrast complaints — OLED dimming in 3.0 theme tokens', status: 'Resolved', conf: 0.79, human: 'Approved', cost: '$0.21', time: '12m', summary: 'Theme tokens shipped in 3.0 dropped contrast below 3:1 on OLED dimming. Token fix shipped in 3.0.2.' },
+    ];
+  }
+
+  evidenceData() {
+    return [
+      { id: 'ev_003', source: 'PLAY STORE', snippet: 'Phone dies by 2pm since the last update. Uninstalling.', full: 'Phone dies by 2pm since the last update. Never had battery problems before v3.2. Uninstalling until this is fixed.', supports: 'H1 · battery drain', origin: '1★ review · Pixel 8 · Lumo 3.2.0 · Jul 12', logged: 'iteration 3 · fetch_play_reviews' },
+      { id: 'ev_007', source: 'GITHUB', snippet: 'BackgroundSyncWorker wakelock never released when queue empty', full: 'Issue #2841 — BackgroundSyncWorker acquires a partial wakelock on start but only releases it after a successful upload. With an empty queue it spins holding the lock indefinitely. Repro on 3.2.0.', supports: 'H1 · battery drain', origin: 'GitHub issue #2841 · opened Jul 11 · 14 👍', logged: 'iteration 5 · search_github_issues' },
+      { id: 'ev_009', source: 'RELEASE NOTES', snippet: 'v3.2 — Added automatic background photo sync (default ON)', full: 'Lumo v3.2.0 (Jul 8) — New: automatic background photo sync, enabled by default for all users. Improved: album sharing. Fixed: crash on RTL locales.', supports: 'H1 · battery drain', origin: 'Lumo changelog · v3.2.0 · Jul 8', logged: 'iteration 6 · fetch_release_notes' },
+      { id: 'ev_012', source: 'PLAY STORE', snippet: 'v3.1 users on Android 15: battery mentions flat at 2%', full: 'Segmented query result — reviews from users still on Lumo 3.1.x running Android 15: battery mentioned in 2% of reviews (baseline 2–4%). No spike. Rules out the OS update as the driver.', supports: 'H2 rejection', origin: 'Segmented review query · n=214 · Jul 14', logged: 'iteration 7 · query_reviews' },
+    ];
+  }
+
+  renderVals() {
+    const st = this.state;
+    const go = sc => () => this.setState({ screen: sc, sheet: null });
+    const scr = st.screen;
+    const ev = this.evidenceData();
+    const openEv = id => () => this.setState({ sheet: ev.find(e => e.id === id) });
+    const openArch = id => () => this.setState({ caseSheet: id });
+    const m = Math.floor(st.elapsedS / 60), s2 = String(st.elapsedS % 60).padStart(2, '0');
+
+    const sparks = {
+      up: [4,5,4,6,7,9,12,16], mid: [8,7,9,8,10,9,13,14], noise: [9,11,8,10,9,11,10,9], ship: [6,7,7,9,10,11,11,12],
+    };
+    const spark = arr => arr.map((v, i) => `${4 + i * 11},${20 - v}`).join(' ');
+
+    const anomalies = [
+      st.approved
+        ? { sev: 'SEV1', sevColor: '#e0584f', time: '2h ago', title: '1-star reviews +23% WoW', source: 'PLAY STORE', spark: spark(sparks.up), sparkColor: '#e0584f', chip: 'Resolved ✓', chipPulse: false, chipColor: '#4cc077', chipBg: 'rgba(76,192,119,.1)', chipBorder: 'rgba(76,192,119,.35)', hasReason: true, reason: 'Root cause: v3.2 background sync · ticket LUMO-2841', onOpen: go('finding'), cursor: 'pointer' }
+        : { sev: 'SEV1', sevColor: '#e0584f', time: '2h ago', title: '1-star reviews +23% WoW', source: 'PLAY STORE', spark: spark(sparks.up), sparkColor: '#e0584f', chip: st.paused ? 'Paused' : 'Investigating', chipPulse: !st.paused, chipColor: st.paused ? '#9a9daa' : '#f0a63c', chipBg: st.paused ? '#1b1d26' : 'rgba(240,166,60,.1)', chipBorder: st.paused ? '#2e3140' : 'rgba(240,166,60,.35)', hasReason: true, reason: 'Case #14 · 7 iterations in', onOpen: go('case'), cursor: 'pointer' },
+      { sev: 'SEV2', sevColor: '#f0a63c', time: '5h ago', title: 'GitHub issue velocity +4/wk on “battery”', source: 'GITHUB', spark: spark(sparks.mid), sparkColor: '#f0a63c', chip: 'Merged into Case #14', chipPulse: false, chipColor: '#8fd0ff', chipBg: 'rgba(143,208,255,.08)', chipBorder: 'rgba(143,208,255,.3)', hasReason: true, reason: 'Same signal, same window as the review spike', onOpen: go('case'), cursor: 'pointer' },
+      { sev: 'SEV3', sevColor: '#7c7f8c', time: '1d ago', title: 'Reddit mentions of “Lumo slow” +8', source: 'REDDIT', spark: spark(sparks.noise), sparkColor: '#7c7f8c', chip: 'Ignored — noise', chipPulse: false, chipColor: '#9a9daa', chipBg: '#1b1d26', chipBorder: '#2e3140', hasReason: true, reason: 'Within 30-day variance; no version correlation', onOpen: null, cursor: 'default' },
+      { sev: 'SEV2', sevColor: '#f0a63c', time: '3d ago', title: 'Print-shipping cost complaints +12%', source: 'PLAY STORE', spark: spark(sparks.ship), sparkColor: '#f0a63c', chip: 'Closed — insufficient evidence', chipPulse: false, chipColor: '#c6c8d1', chipBg: '#1b1d26', chipBorder: '#3a3e4d', hasReason: true, reason: 'Case #11 · best hypothesis 0.40 · see archive', onOpen: openArch('#11'), cursor: 'pointer' },
+    ].map(a => ({ ...a, hoverBorder: a.cursor === 'pointer' ? '#3a3e4d' : '#262933', dimmed: a.cursor === 'pointer' ? 1 : .72 }));
+
+    const hyp = (id, text, conf, tag, color, tagBg, pro, con, opacity, anim) => ({ id, text, conf: conf.toFixed(2), pct: `${Math.round(conf * 100)}%`, tag, color, tagBg, pro, con, opacity, border: tag === 'ACTIVE' ? 'rgba(240,166,60,.45)' : '#262933', barAnim: anim });
+    const hypotheses = [
+      hyp('H1', 'Background sync service shipped in v3.2 is causing battery drain', 0.85, 'SUPPORTED', '#4cc077', 'rgba(76,192,119,.12)', 4, 0, 1, 'none'),
+      hyp('H3', 'Photo-upload retry loop drains battery on flaky networks', st.h3, 'ACTIVE', '#f0a63c', 'rgba(240,166,60,.12)', 2, 1, 1, 'elBar 2.4s infinite'),
+      hyp('H2', 'Android 15 OS update increased battery drain, not the app', 0.22, 'REJECTED', '#e0584f', 'rgba(224,88,79,.12)', 1, 3, .62, 'none'),
+      hyp('H4', 'Review-bombing after the print-pricing change', 0.08, 'REJECTED', '#e0584f', 'rgba(224,88,79,.12)', 0, 2, .62, 'none'),
+    ].map(h => ({ ...h, border: st.selHyp === h.id ? '#f0a63c' : h.border, opacity: st.selHyp === h.id ? 1 : h.opacity, onPick: () => this.setState(s => ({ selHyp: s.selHyp === h.id ? null : h.id })) }));
+
+    const toggle = i => () => this.setState(s => ({ expanded: { ...s.expanded, [i]: !s.expanded[i] } }));
+    const base = { isThought: false, isTool: false, isEv: false, isUp: false, live: false, anim: 'none' };
+    const th = (time, text) => ({ ...base, isThought: true, tag: 'THINK', color: '#9a9daa', time, text });
+    const tool = (i, time, code, preview, detail) => ({ ...base, isTool: true, tag: 'TOOL', color: '#8fd0ff', time, code, preview, detail, expanded: !!st.expanded[i], caret: st.expanded[i] ? '▾' : '▸', onToggle: toggle(i) });
+    const evs = (time, evId, evSource, text, supports) => ({ ...base, isEv: true, tag: 'EVID', color: '#f0a63c', time, evId, evSource, text, supports });
+    const up = (time, code, text, good) => ({ ...base, isUp: true, tag: 'UPDT', color: good ? '#4cc077' : '#e0584f', upColor: good ? '#4cc077' : '#e0584f', time, code, text });
+    const fail = (time, code, error, text) => ({ ...base, isFail: true, tag: 'FAIL', color: '#e0584f', time, code, error, text });
+
+    const steps = [
+      th('14:02:11 · iter 1', 'Spike began Jul 11 — three days after the v3.2 rollout (Jul 8). Battery is mentioned in 61% of new 1-star reviews vs a 4% baseline. Forming four hypotheses; v3.2 changes and the concurrent Android 15 rollout are both plausible.'),
+      tool('t1', '14:02:40 · iter 2', 'fetch_play_reviews("Lumo", since="2026-07-08", stars<=2)', '142 reviews · 87 mention battery', '142 reviews returned\n87 contain battery terms (61%)\ntop co-terms: "drain" (54), "hot" (21), "background" (19)\nversion mix: 91% on 3.2.x'),
+      evs('14:03:05 · iter 3', 'ev_003', 'PLAY STORE', 'Phone dies by 2pm since the last update. Uninstalling.', 'H1'),
+      up('14:03:12 · iter 3', 'H1  0.50 → 0.62', 'Review language ties drain to the update window, not the OS. Based on ev_003.', true),
+      tool('t2', '14:05:30 · iter 4', 'search_github_issues("background sync battery")', '4 issues found', '#2841 BackgroundSyncWorker wakelock never released (14 👍)\n#2836 Battery drain after 3.2 update\n#2829 Sync runs on metered connection\n#2814 [pre-3.2] sync toggle missing'),
+      evs('14:06:02 · iter 5', 'ev_007', 'GITHUB #2841', 'BackgroundSyncWorker acquires a wakelock on start but only releases it after a successful upload — with an empty queue it holds the lock indefinitely.', 'H1'),
+      up('14:06:10 · iter 5', 'H1  0.62 → 0.78', 'Independent mechanism confirmed in code-adjacent report. Based on ev_007.', true),
+      fail('14:07:18 · iter 6', 'fetch_reddit_mentions("Lumo battery drain")', 'RATE_LIMITED — Reddit API 429, retry in 40m', 'Marked non-blocking: Reddit is a corroborating source, not required for H1/H2. Continuing with Play Store segmentation.'),
+      th('14:08:44 · iter 6', 'Decoy check: Android 15 rolled out the same week. If the OS were the cause, v3.1 users on Android 15 would complain too. Segmenting reviews by app version × OS.'),
+      tool('t3', '14:09:20 · iter 7', 'query_reviews(version="3.1.x", os="Android 15")', 'flat baseline · 2% battery mentions', 'n=214 reviews from 3.1.x users on Android 15\nbattery mentions: 2% (baseline 2–4%)\nno post-Jul-8 slope'),
+      up('14:09:31 · iter 7', 'H2  0.45 → 0.22', 'OS update ruled out — v3.1 users on Android 15 show flat battery mentions (ev_012).', false),
+    ];
+    const liveAnim = (st.paused || st.approved) ? 'none' : 'elGlow 2s infinite';
+    if (st.extra) steps.push({ ...th('14:11:07 · iter 7', 'Cross-checking H3: of 11 reviews mentioning retries, 8 also mention background sync — retry loop may be a symptom of the sync worker, not a separate cause. Fetching release notes to confirm the sync default.'), live: !st.approved, anim: liveAnim });
+    else { steps[steps.length - 1] = { ...steps[steps.length - 1], live: !st.approved, anim: liveAnim }; }
+    steps.forEach(s3 => { s3.hyp = s3.supports || (s3.code && /^H\d/.test(s3.code) ? s3.code.slice(0, 2) : null); });
+    let traceSteps = st.traceFilter === 'ALL' ? steps : steps.filter(s3 => st.traceFilter === 'TOOL' ? (s3.tag === 'TOOL' || s3.tag === 'FAIL') : s3.tag === st.traceFilter);
+    traceSteps = traceSteps.map((s3, i, arr) => ({ ...s3, dim: !st.selHyp ? 1 : s3.hyp === st.selHyp ? 1 : s3.hyp ? .3 : .55, lineBg: i === arr.length - 1 ? 'transparent' : '#262933' }));
+    const traceFilters = ['ALL', 'THINK', 'TOOL', 'EVID', 'UPDT'].map(f => ({ name: f, onPick: () => this.setState({ traceFilter: f }), border: st.traceFilter === f ? 'rgba(240,166,60,.45)' : '#2e3140', color: st.traceFilter === f ? '#f0a63c' : '#6b6e7b', bg: st.traceFilter === f ? 'rgba(240,166,60,.07)' : 'transparent' }));
+
+    const actions = [
+      { rank: '1', text: 'Make background sync opt-in (flag flip, hotfix 3.2.1)', impact: 'HIGH', effort: 'LOW' },
+      { rank: '2', text: 'Fix wakelock release in BackgroundSyncWorker (GitHub #2841)', impact: 'HIGH', effort: 'MED' },
+      { rank: '3', text: 'Defer sync to charging + Wi-Fi via battery-saver mode', impact: 'MED', effort: 'MED' },
+    ];
+
+    const badge = (status) => ({
+      'Resolved': { bg: 'rgba(76,192,119,.1)', c: '#4cc077', b: 'rgba(76,192,119,.35)' },
+      'Insufficient evidence': { bg: '#1b1d26', c: '#c6c8d1', b: '#3a3e4d' },
+      'Needs human': { bg: 'rgba(240,166,60,.1)', c: '#f0a63c', b: 'rgba(240,166,60,.35)' },
+      'Budget exhausted': { bg: 'rgba(224,88,79,.1)', c: '#e0584f', b: 'rgba(224,88,79,.35)' },
+    })[status];
+    let rawArchive = this.archiveData();
+    if (st.approved) rawArchive = [{ id: '#14', cause: 'Battery complaint spike — v3.2 background sync wakelock', status: 'Resolved', conf: 0.85, human: 'Approved', cost: '$0.31', time: '14m', summary: 'Background sync shipped in v3.2 holds a wakelock indefinitely on an empty queue. Approved Jul 16; ticket LUMO-2841 created with three ranked actions.' }, ...rawArchive];
+    const archive = rawArchive.map(r => { const b = badge(r.status); return { ...r, status: r.status.toUpperCase(), badgeBg: b.bg, badgeColor: b.c, badgeBorder: b.b, conf: r.conf.toFixed(2), confColor: r.conf >= 0.7 ? '#4cc077' : r.conf >= 0.5 ? '#f0a63c' : '#9a9daa', humanColor: r.human === 'Approved' ? '#4cc077' : r.human === 'Challenged' ? '#f0a63c' : '#565968', onOpen: openArch(r.id) }; });
+    const q = (st.query || '').toLowerCase();
+    const archiveRows = q ? archive.filter(r => (r.cause + r.id + r.status).toLowerCase().includes(q)) : archive;
+    const csRow = st.caseSheet ? archive.find(r => r.id === st.caseSheet) : null;
+    const caseSheet = csRow ? { ...csRow, onReopen: () => this.setState({ caseSheet: null, screen: 'case' }), onViewTrace: () => this.setState({ caseSheet: null, screen: 'case' }) } : {};
+
+    const sources = [
+      { icon: '▶', iconColor: '#4cc077', name: 'Google Play reviews', detail: 'app: com.lumo.photos · 1–2★ prioritized', status: 'Healthy', statusColor: '#4cc077', dotColor: '#4cc077', dotAnim: 'none', lastPull: 'pulled 12m ago', volume: '1.4k/wk', evCount: 31, evColor: '#f0a63c' },
+      { icon: '⌥', iconColor: '#8fd0ff', name: 'GitHub issues', detail: 'lumo-app/lumo-android · issues + reactions', status: 'Healthy', statusColor: '#4cc077', dotColor: '#4cc077', dotAnim: 'none', lastPull: 'pulled 12m ago', volume: '38/wk', evCount: 12, evColor: '#f0a63c' },
+      { icon: '≡', iconColor: '#9a9daa', name: 'Release notes', detail: 'changelog feed · versions + rollout dates', status: 'Healthy', statusColor: '#4cc077', dotColor: '#4cc077', dotAnim: 'none', lastPull: 'pulled 1h ago', volume: '2/wk', evCount: 4, evColor: '#f0a63c' },
+      { icon: 'r/', iconColor: '#f0a63c', name: 'Reddit', detail: 'r/LumoApp + keyword search', status: 'Rate-limited', statusColor: '#f0a63c', dotColor: '#f0a63c', dotAnim: 'elPulse 1.6s infinite', lastPull: 'retrying · 40m ago', volume: '210/wk', evCount: 3, evColor: '#9a9daa' },
+      st.zendesk === 'connected'
+        ? { icon: '✉', iconColor: '#4cc077', name: 'Support inbox', detail: 'Zendesk export · authorized just now', status: 'Syncing…', statusColor: '#f0a63c', dotColor: '#f0a63c', dotAnim: 'elPulse 1.6s infinite', lastPull: 'initial backfill', volume: '—', evCount: 0, evColor: '#565968', connected: true, needsConnect: false }
+        : { icon: '✉', iconColor: '#565968', name: 'Support inbox', detail: 'Zendesk export · not yet authorized', status: 'Disconnected', statusColor: '#e0584f', dotColor: '#e0584f', dotAnim: 'none', lastPull: '—', volume: '—', connected: false, needsConnect: true, connectLabel: 'Connect', onConnect: () => this.setState({ zendesk: 'connected' }) },
+    ].map(s3 => ({ connected: true, needsConnect: false, ...s3 }));
+    const availSources = [['', 'App Store reviews'], ['𝕏', 'X / Twitter mentions'], ['◈', 'Discord community'], ['⚑', 'In-app feedback']].map(([icon, name]) => {
+      const req = !!st.requested[name];
+      return { icon, label: req ? name + ' · requested ✓' : name, color: req ? '#4cc077' : '#9a9daa', border: req ? 'rgba(76,192,119,.4)' : '#3a3e4d', onRequest: () => this.setState(s => ({ requested: { ...s.requested, [name]: true } })) };
+    });
+    const ncs = st.ncSources;
+    const newCaseSources = [['play', 'Play Store reviews'], ['github', 'GitHub issues'], ['notes', 'Release notes'], ['reddit', 'Reddit']].map(([k, name]) => ({
+      name, check: ncs[k] ? '■' : '□', checkColor: ncs[k] ? '#f0a63c' : '#565968',
+      border: ncs[k] ? 'rgba(240,166,60,.35)' : '#2e3140', bg: ncs[k] ? 'rgba(240,166,60,.05)' : 'transparent',
+      onToggle: () => this.setState(s => ({ ncSources: { ...s.ncSources, [k]: !s.ncSources[k] } })),
+    }));
+    const newCaseBudgets = [['quick', 'Quick look', '5 iter · $0.25 · 15 min'], ['standard', 'Standard', '12 iter · $0.75 · 45 min'], ['deep', 'Deep dive', '30 iter · $2.00 · 2 h']].map(([k, name, detail]) => ({
+      name, detail, border: st.ncBudget === k ? 'rgba(240,166,60,.45)' : '#2e3140', bg: st.ncBudget === k ? 'rgba(240,166,60,.06)' : 'transparent',
+      onPick: () => this.setState({ ncBudget: k }),
+    }));
+    const adj = (k, d, min, max) => () => this.setState(s => ({ limits: { ...s.limits, [k]: Math.min(max, Math.max(min, +(s.limits[k] + d).toFixed(2))) } }));
+    const limits = [
+      { name: 'Daily investigations', value: `${st.limits.daily} / day`, onUp: adj('daily', 1, 1, 20), onDown: adj('daily', -1, 1, 20) },
+      { name: 'Per-case budget', value: `$${st.limits.budget.toFixed(2)}`, onUp: adj('budget', 0.25, 0.25, 5), onDown: adj('budget', -0.25, 0.25, 5) },
+      { name: 'Per-case wall-clock', value: `${st.limits.wall} min`, onUp: adj('wall', 5, 10, 120), onDown: adj('wall', -5, 10, 120) },
+    ];
+
+    const costStats = [
+      { label: 'SPENT TODAY', value: '$0.42', sub: '3 of 5 daily investigations used', color: '#e9eaee' },
+      { label: 'AVG PER RESOLVED CASE', value: '$0.37', sub: 'across 10 resolved cases', color: '#4cc077' },
+      { label: 'SPENT ON DEAD ENDS', value: '$1.33', sub: '18% of total · capped by budgets', color: '#f0a63c' },
+      { label: 'EST. ANALYST HOURS SAVED', value: '31h', sub: 'vs manual triage this month', color: '#8fd0ff' },
+    ];
+    const costRows = [
+      { id: '#14', outcome: 'Investigating — battery spike', outcomeColor: '#f0a63c', tokens: '48.2k', queries: 6, time: '14m', cost: '$0.31' },
+      { id: '#13', outcome: 'Resolved — iPad checkout crash', outcomeColor: '#4cc077', tokens: '61.0k', queries: 8, time: '22m', cost: '$0.38' },
+      { id: '#12', outcome: 'Resolved — EU cert expiry', outcomeColor: '#4cc077', tokens: '80.4k', queries: 11, time: '41m', cost: '$0.51' },
+      { id: '#11', outcome: 'Insufficient evidence — shipping costs', outcomeColor: '#9a9daa', tokens: '46.8k', queries: 7, time: '30m', cost: '$0.29' },
+      { id: '#10', outcome: 'Needs human — gallery redesign dip', outcomeColor: '#f0a63c', tokens: '70.1k', queries: 9, time: '38m', cost: '$0.44' },
+      { id: '#9', outcome: 'Budget exhausted — push notifications', outcomeColor: '#e0584f', tokens: '96.0k', queries: 14, time: '45m', cost: '$0.60' },
+      { id: '#8', outcome: 'Resolved — dark-mode contrast', outcomeColor: '#4cc077', tokens: '33.5k', queries: 4, time: '12m', cost: '$0.21' },
+    ];
+
+    return {
+      isFeed: scr === 'feed', isCase: scr === 'case', isFinding: scr === 'finding', isArchive: scr === 'archive',
+      isSources: scr === 'sources', isCosts: scr === 'costs',
+      goFeed: go('feed'), goCase: go('case'), goFinding: go('finding'), goArchive: go('archive'),
+      goSources: go('sources'), goCosts: go('costs'),
+      navSrcBg: scr === 'sources' ? '#1e202b' : 'transparent', navSrcColor: scr === 'sources' ? '#e9eaee' : '#9a9daa',
+      navCostBg: scr === 'costs' ? '#1e202b' : 'transparent', navCostColor: scr === 'costs' ? '#e9eaee' : '#9a9daa',
+      sources, availSources, costStats, costRows, limits,
+      feedEmpty: this.props.demoEmptyFeed ?? false,
+      approvedBanner: st.approved && scr === 'feed',
+      archiveEmpty: !!q && archiveRows.length === 0,
+      caseSheetOpen: !!csRow, caseSheet, closeCaseSheet: () => this.setState({ caseSheet: null }),
+      openNewCase: () => this.setState({ newCaseOpen: true, newCaseSubmitted: false }),
+      closeNewCase: () => this.setState({ newCaseOpen: false, newCaseSubmitted: false }),
+      newCaseOpen: st.newCaseOpen, newCaseSubmitted: st.newCaseSubmitted, newCaseForm: !st.newCaseSubmitted,
+      submitNewCase: () => { if (this.state.ncDesc.trim()) this.setState({ newCaseSubmitted: true }); },
+      newCaseSources, newCaseBudgets,
+      escalate: () => this.setState({ escalated: true }),
+      escalated: st.escalated, notEscalated: !st.escalated,
+      notPaused: !st.paused && !st.approved,
+      caseStateLabel: st.approved ? 'RESOLVED' : st.paused ? 'PAUSED' : 'INVESTIGATING',
+      caseStateColor: st.approved ? '#4cc077' : st.paused ? '#9a9daa' : '#f0a63c',
+      caseStateBg: st.approved ? 'rgba(76,192,119,.1)' : st.paused ? '#1b1d26' : 'rgba(240,166,60,.1)',
+      caseStateBorder: st.approved ? 'rgba(76,192,119,.35)' : st.paused ? '#2e3140' : 'rgba(240,166,60,.35)',
+      liveLabel: st.paused ? 'PAUSED — TIMERS STOPPED' : 'LIVE · STEP IN PROGRESS',
+      liveDotColor: st.paused ? '#565968' : '#f0a63c',
+      liveDotAnim: st.paused ? 'none' : 'elPulse 1.2s infinite',
+      sbLabel: st.approved ? 'Investigator idle' : st.paused ? 'Investigation paused' : 'Investigator running',
+      sbDetail: st.approved ? 'case #14 resolved · $0.31' : 'case #14 · iter 7/12',
+      sbDetailColor: st.approved ? '#4cc077' : st.paused ? '#9a9daa' : '#f0a63c',
+      sbDotColor: st.approved ? '#4cc077' : st.paused ? '#565968' : '#f0a63c',
+      sbDotAnim: (st.approved || st.paused) ? 'none' : 'elPulse 1.6s infinite',
+      noopLink: e => e.preventDefault(),
+      navFeedBg: scr === 'feed' || scr === 'case' || scr === 'finding' ? '#1e202b' : 'transparent',
+      navFeedColor: scr === 'feed' || scr === 'case' || scr === 'finding' ? '#e9eaee' : '#9a9daa',
+      navArchBg: scr === 'archive' ? '#1e202b' : 'transparent', navArchColor: scr === 'archive' ? '#e9eaee' : '#9a9daa',
+      anomalies: (this.props.demoEmptyFeed ?? false) ? [] : anomalies,
+      hypotheses, steps: traceSteps, actions, archiveRows, archiveCount: archiveRows.length,
+      traceFilters, selHyp: st.selHyp, selHypHint: !!st.selHyp,
+      toggleFollow: () => this.setState(s => ({ follow: !s.follow })),
+      followLabel: st.follow ? '◉ FOLLOW' : '○ FOLLOW', followColor: st.follow ? '#f0a63c' : '#565968',
+      challengeText: st.challengeText, onChallengeText: e => this.setState({ challengeText: e.target.value }),
+      challengeCursor: st.challengeText.trim() ? 'pointer' : 'not-allowed', challengeOpacity: st.challengeText.trim() ? 1 : .45,
+      ncDesc: st.ncDesc, onNcDesc: e => this.setState({ ncDesc: e.target.value }),
+      ncCursor: st.ncDesc.trim() ? 'pointer' : 'not-allowed', ncOpacity: st.ncDesc.trim() ? 1 : .45,
+      ncHint: st.ncDesc.trim() ? 'Runs within your daily and per-case limits.' : 'Describe the signal to start.',
+      evidence: ev.map(e => ({ ...e, onOpen: openEv(e.id) })),
+      elapsed: `${m}m ${s2}s`,
+      traceRef: el => { this.traceEl = el; },
+      togglePause: () => this.setState(s => ({ paused: !s.paused })),
+      pauseLabel: st.paused ? '▸ Resume investigation' : '⏸ Pause investigation',
+      ev003: openEv('ev_003'), ev007: openEv('ev_007'), ev009: openEv('ev_009'), ev012: openEv('ev_012'),
+      sheetOpen: !!st.sheet, sheet: st.sheet || {}, closeSheet: () => this.setState({ sheet: null }),
+      approve: () => this.setState({ approved: true, challenged: false, challengeOpen: false, paused: false }),
+      approved: st.approved,
+      approveLabel: st.approved ? 'Finding approved ✓' : 'Approve finding',
+      approveBg: st.approved ? 'rgba(76,192,119,.15)' : '#f0a63c',
+      approveColor: st.approved ? '#4cc077' : '#17130a',
+      toggleChallenge: () => this.setState(s => ({ challengeOpen: !s.challengeOpen })),
+      challengeOpen: st.challengeOpen,
+      submitChallenge: () => { if (this.state.challengeText.trim()) this.setState({ challenged: true, challengeOpen: false, approved: false, challengeText: '' }); },
+      challenged: st.challenged,
+      showFailureInset: this.props.showFailureInset ?? true,
+      query: st.query || '', onQuery: e => this.setState({ query: e.target.value }),
+    };
+  }
+}
+</script>
+</body>
+</html>
