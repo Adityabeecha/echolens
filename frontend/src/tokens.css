@@ -104,3 +104,47 @@ a:focus-visible {
     transition: none !important;
   }
 }
+
+/* Interactive case-file cards: hover lift + border warm-up. Border/background
+   live here (not inline) so :hover can override them. */
+.el-card {
+  background: var(--el-bg-card);
+  border: 1px solid var(--el-border-2);
+  border-radius: 10px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
+}
+.el-card--click {
+  cursor: pointer;
+}
+.el-card--click:hover {
+  border-color: var(--el-border-4);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+  transform: translateY(-1px);
+}
+/* Primary/ghost buttons: subtle brighten on hover. */
+.el-btn {
+  transition: filter 0.15s ease, background 0.15s ease;
+}
+.el-btn:hover {
+  filter: brightness(1.08);
+}
+/* Clickable table rows: background warms on hover. */
+.el-row {
+  background: var(--el-bg-card);
+  transition: background 0.12s ease;
+}
+.el-row--click {
+  cursor: pointer;
+}
+.el-row--click:hover {
+  background: var(--el-bg-hover);
+}
+@keyframes elSkeleton {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}

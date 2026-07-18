@@ -105,6 +105,7 @@ export function PrimaryButton({
   return (
     <button
       onClick={onClick}
+      className="el-btn"
       style={{
         background: C.accent,
         color: C.onAccent,
@@ -134,6 +135,7 @@ export function GhostButton({
   return (
     <button
       onClick={onClick}
+      className="el-btn"
       style={{
         background: "transparent",
         color: C.accent,

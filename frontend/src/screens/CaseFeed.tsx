@@ -1,7 +1,7 @@
 import { Anomaly, api } from "../api";
 import { useAsync } from "../hooks";
 import { C, mono } from "../theme";
-import { Centered, Chip, Label, PrimaryButton, Spark, sparkFor } from "../ui";
+import { Chip, Label, Spark, sparkFor } from "../ui";
 
 interface Props {
   onOpenInvestigation: (id: number) => void;
@@ -47,48 +47,63 @@ export function CaseFeed({ onOpenInvestigation, onNewCase, reloadKey }: Props) {
           flex: "none",
         }}
       >
-        <div style={{ fontSize: 17, fontWeight: 600 }}>Case Feed</div>
+        <div>
+          <div style={{ fontSize: 17, fontWeight: 600, letterSpacing: "-0.01em" }}>Case Feed</div>
+          <div style={{ fontFamily: mono, fontSize: 10.5, color: C.faint, letterSpacing: ".04em", marginTop: 2 }}>
+            SIGNALS WORTH A LOOK · LAST 7 DAYS
+          </div>
+        </div>
         <div style={{ flex: 1 }} />
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5 }}>
           <div style={{ display: "flex", gap: 3 }}>
             {Array.from({ length: limit }).map((_, i) => (
               <div
                 key={i}
-                style={{ width: 18, height: 6, borderRadius: 2, background: i < used ? C.accent : "#2a2d38" }}
+                style={{ width: 20, height: 5, borderRadius: 2, background: i < used ? C.accent : C.track }}
               />
             ))}
           </div>
-          <div style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>
-            {used}/{limit} investigations today · ${(summary.data?.spent_today ?? 0).toFixed(2)} spent
+          <div style={{ fontFamily: mono, fontSize: 11, color: C.muted, fontVariantNumeric: "tabular-nums" }}>
+            {used}/{limit} today · ${(summary.data?.spent_today ?? 0).toFixed(2)} spent
           </div>
         </div>
-        <PrimaryButton onClick={onNewCase}>New case</PrimaryButton>
+        <button onClick={onNewCase} className="el-btn" style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: 7, padding: "9px 16px", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+          + New case
+        </button>
       </div>
 
       <div style={{ flex: 1, overflow: "auto", padding: "22px 28px" }}>
-        <Label style={{ marginBottom: 12 }}>DETECTED ANOMALIES · LUMO · LAST 7 DAYS</Label>
+        <Label style={{ marginBottom: 12 }}>
+          {anomalies.data ? `${anomalies.data.anomalies.length} SIGNALS` : "SIGNALS"} · SEVERITY FIRST
+        </Label>
 
-        {anomalies.loading && <Centered>Loading anomalies…</Centered>}
+        {anomalies.loading && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 880 }}>
+            {[0, 1, 2].map((i) => (
+              <div key={i} style={{ height: 74, borderRadius: 10, background: C.card, border: `1px solid ${C.border2}`, animation: "elSkeleton 1.4s infinite", animationDelay: `${i * 0.15}s` }} />
+            ))}
+          </div>
+        )}
         {anomalies.error && (
-          <Centered>
-            Backend unavailable — start it with <code style={{ margin: "0 6px", color: C.accent }}>echolens serve</code>{" "}
-            then run <code style={{ marginLeft: 6, color: C.accent }}>scan</code>.
-          </Centered>
+          <div style={{ maxWidth: 880, padding: "30px 22px", border: `1px solid ${C.border3}`, borderRadius: 12, background: C.card }}>
+            <div style={{ fontSize: 14.5, fontWeight: 600, color: C.text3 }}>Can't reach the investigator</div>
+            <div style={{ fontSize: 13, color: C.dim, marginTop: 6, lineHeight: 1.5 }}>
+              The backend may be waking up (free tier sleeps after a while). Give it ~30 seconds, then retry.
+            </div>
+            <button onClick={anomalies.reload} className="el-btn" style={{ marginTop: 14, background: "transparent", color: C.accent, border: `1px solid rgba(240,166,60,.4)`, borderRadius: 7, padding: "8px 16px", fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
+              Retry
+            </button>
+          </div>
         )}
         {anomalies.data && anomalies.data.anomalies.length === 0 && (
-          <div
-            style={{
-              maxWidth: 880,
-              padding: "46px 20px",
-              border: `1px dashed ${C.border4}`,
-              borderRadius: 12,
-              textAlign: "center",
-            }}
-          >
-            <div style={{ fontSize: 15, fontWeight: 600, color: C.text3 }}>All quiet</div>
-            <div style={{ fontSize: 13, color: C.dim, marginTop: 6 }}>
-              No anomalies detected. Run the detector: <code style={{ color: C.accent }}>echolens scan</code>.
+          <div style={{ maxWidth: 880, padding: "48px 24px", border: `1px dashed ${C.border4}`, borderRadius: 12, textAlign: "center" }}>
+            <div style={{ fontSize: 15.5, fontWeight: 600, color: C.text3 }}>Nothing needs investigating</div>
+            <div style={{ fontSize: 13, color: C.dim, marginTop: 6, lineHeight: 1.55, maxWidth: 420, margin: "6px auto 0" }}>
+              No anomalies in the last 7 days. Open a case yourself, or connect a source and run a scan.
             </div>
+            <button onClick={onNewCase} className="el-btn" style={{ marginTop: 18, background: "transparent", color: C.accent, border: `1px solid rgba(240,166,60,.4)`, borderRadius: 7, padding: "9px 18px", fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
+              + Open a case
+            </button>
           </div>
         )}
 
@@ -101,31 +116,30 @@ export function CaseFeed({ onOpenInvestigation, onNewCase, reloadKey }: Props) {
             // Manual cases carry their real name in `description`; detected
             // anomalies describe themselves via `metric`.
             const title = isManual ? a.description : a.metric;
+            const stripe = isManual ? C.info : sev.color;
             return (
               <div
                 key={a.slug}
                 onClick={() => clickable && onOpenInvestigation(a.investigation_id!)}
+                className={clickable ? "el-card el-card--click" : "el-card"}
                 style={{
-                  display: "grid",
-                  gridTemplateColumns: "70px 1fr auto",
-                  gap: 16,
-                  alignItems: "center",
-                  padding: "16px 18px",
-                  background: C.card,
-                  border: `1px solid ${C.border2}`,
-                  borderRadius: 10,
-                  cursor: clickable ? "pointer" : "default",
-                  opacity: clickable ? 1 : 0.72,
+                  display: "flex",
+                  alignItems: "stretch",
+                  overflow: "hidden",
+                  opacity: clickable ? 1 : 0.68,
                 }}
               >
+                {/* signature: severity stripe — encodes state in form, reads like a case tag */}
+                <div style={{ width: 3, flex: "none", background: stripe }} />
+                <div style={{ display: "grid", gridTemplateColumns: "66px 1fr auto", gap: 16, alignItems: "center", padding: "16px 18px", flex: 1, minWidth: 0 }}>
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <div style={{ width: 8, height: 8, borderRadius: 2, background: isManual ? C.info : sev.color, flex: "none" }} />
-                    <div style={{ fontFamily: mono, fontSize: 11, color: isManual ? C.info : sev.color }}>
+                    <div style={{ width: 7, height: 7, borderRadius: "50%", background: stripe, flex: "none", animation: a.status === "investigating" ? "elPulse 1.4s infinite" : "none" }} />
+                    <div style={{ fontFamily: mono, fontSize: 10.5, letterSpacing: ".03em", color: stripe }}>
                       {isManual ? "MANUAL" : sev.label}
                     </div>
                   </div>
-                  <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginTop: 5 }}>
+                  <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginTop: 5, fontVariantNumeric: "tabular-nums" }}>
                     {isManual ? "you opened" : `z=${a.z}`}
                   </div>
                 </div>
@@ -154,6 +168,7 @@ export function CaseFeed({ onOpenInvestigation, onNewCase, reloadKey }: Props) {
                   </div>
                 </div>
                 <Chip {...chip} />
+                </div>
               </div>
             );
           })}

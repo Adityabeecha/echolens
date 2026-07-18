@@ -60,7 +60,8 @@ export function Archive({ onOpenInvestigation }: { onOpenInvestigation: (id: num
                 <div
                   key={r.id}
                   onClick={() => onOpenInvestigation(idNum)}
-                  style={{ display: "grid", gridTemplateColumns: COLS, gap: 12, padding: "13px 16px", borderBottom: `1px solid #1c1e27`, alignItems: "center", background: C.card, cursor: "pointer" }}
+                  className="el-row el-row--click"
+                  style={{ display: "grid", gridTemplateColumns: COLS, gap: 12, padding: "13px 16px", borderBottom: `1px solid #1c1e27`, alignItems: "center" }}
                 >
                   <span style={{ fontFamily: mono, fontSize: 11.5, color: C.accent }}>{r.id}</span>
                   <span style={{ fontSize: 13, color: C.text2, lineHeight: 1.4 }}>{r.cause}</span>
