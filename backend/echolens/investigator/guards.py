@@ -24,20 +24,41 @@ EVIDENCE_REF = re.compile(r"\bev_\d+\b")
 
 
 def budget_exceeded(budget: Budget) -> list[str]:
-    """Return the list of exhausted limits (empty = within budget)."""
+    """Return the list of exhausted limits (empty = within budget). Caps are
+    scaled by the one-time extension factor (v2.0)."""
     t = budget.tier
+    f = budget.extension_factor
     reasons = []
-    if budget.iterations >= t.max_iterations:
-        reasons.append(f"iterations {budget.iterations}/{t.max_iterations}")
-    if budget.tool_calls >= t.max_tool_calls:
-        reasons.append(f"tool_calls {budget.tool_calls}/{t.max_tool_calls}")
-    if budget.tokens >= t.max_tokens:
-        reasons.append(f"tokens {budget.tokens}/{t.max_tokens}")
-    if budget.cost_usd >= t.max_cost_usd:
-        reasons.append(f"cost ${budget.cost_usd:.2f}/${t.max_cost_usd:.2f}")
-    if budget.started_at and (time.monotonic() - budget.started_at) >= t.max_wall_clock_s:
-        reasons.append(f"wall_clock >= {t.max_wall_clock_s}s")
+    if budget.iterations >= t.max_iterations * f:
+        reasons.append(f"iterations {budget.iterations}/{int(t.max_iterations * f)}")
+    if budget.tool_calls >= t.max_tool_calls * f:
+        reasons.append(f"tool_calls {budget.tool_calls}/{int(t.max_tool_calls * f)}")
+    if budget.tokens >= t.max_tokens * f:
+        reasons.append(f"tokens {budget.tokens}/{int(t.max_tokens * f)}")
+    if budget.cost_usd >= t.max_cost_usd * f:
+        reasons.append(f"cost ${budget.cost_usd:.2f}/${t.max_cost_usd * f:.2f}")
+    if budget.started_at and (time.monotonic() - budget.started_at) >= t.max_wall_clock_s * f:
+        reasons.append(f"wall_clock >= {int(t.max_wall_clock_s * f)}s")
     return reasons
+
+
+# v2.0 Bayesian update: the LLM proposes how strongly evidence bears on a
+# hypothesis (a likelihood label); the math enforces a consistent posterior from
+# the prior, so confidence can't drift arbitrarily.
+_LIKELIHOOD_RATIOS = {
+    "strong_support": 6.0, "moderate_support": 3.0, "weak_support": 1.5,
+    "neutral": 1.0,
+    "weak_against": 1 / 1.5, "moderate_against": 1 / 3.0, "strong_against": 1 / 6.0,
+}
+
+
+def bayesian_update(prior: float, likelihood_label: str) -> float:
+    """posterior from prior × likelihood ratio, in odds space. Clamped."""
+    lr = _LIKELIHOOD_RATIOS.get(likelihood_label, 1.0)
+    prior = min(max(prior, 0.01), 0.99)
+    odds = prior / (1 - prior) * lr
+    posterior = odds / (1 + odds)
+    return round(min(max(posterior, 0.01), 0.99), 3)
 
 
 def two_source_rule(hypothesis: dict, evidence: list[dict]) -> bool:

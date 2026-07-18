@@ -42,6 +42,11 @@ anecdotes into rates.
 Available tools:
 {catalog}
 
+Specialists you may `delegate` to for analysis the tools can't do (each is a single expert pass):
+- sentiment_analyst: breaks a set of negative reviews into distinct complaint themes and tone.
+- timeline_reconstructor: orders scattered dated events and pinpoints when the problem began.
+Delegation gives you ANALYSIS, not evidence — hypothesis confidence still only moves on cited evidence.
+
 Example of a good tool step:
 {{"thought": "If v3.2 caused this, negative reviews after Jul 8 should name the new feature; testing H1.",
   "action": "call_tool",
@@ -55,7 +60,17 @@ PLAN_SCHEMA = {
     "type": "object",
     "properties": {
         "thought": {"type": "string", "description": "your reasoning for this step, 1-3 sentences"},
-        "action": {"type": "string", "enum": ["call_tool", "revise_hypotheses", "conclude"]},
+        "action": {"type": "string", "enum": ["call_tool", "revise_hypotheses", "delegate", "conclude"]},
+        "delegate": {
+            "type": "object",
+            "description": "when action=delegate: hand a hard sub-analysis to a specialist",
+            "properties": {
+                "specialist": {"type": "string", "enum": ["sentiment_analyst", "timeline_reconstructor"]},
+                "focus": {"type": "string", "description": "the term/theme to analyze"},
+                "tests_hypothesis": {"type": "string"},
+            },
+            "required": ["specialist", "focus"],
+        },
         "tool": {
             "type": "object",
             "properties": {
@@ -76,6 +91,11 @@ PLAN_SCHEMA = {
                     "confidence": {"type": "number"},
                     "status": {"type": "string", "enum": ["active", "supported", "rejected"]},
                     "next_test": {"type": "string"},
+                    "boost_if_rejected": {
+                        "type": "array", "items": {"type": "string"},
+                        "description": "ids of competing hypotheses whose REJECTION should raise "
+                                       "this one's confidence (mutually-exclusive explanations)",
+                    },
                 },
                 "required": ["id", "statement", "confidence", "status"],
             },
@@ -128,12 +148,19 @@ UPDATE_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "id": {"type": "string"},
-                    "new_confidence": {"type": "number"},
+                    "likelihood": {
+                        "type": "string",
+                        "enum": ["strong_support", "moderate_support", "weak_support", "neutral",
+                                 "weak_against", "moderate_against", "strong_against"],
+                        "description": "how strongly THIS evidence bears on the hypothesis; the "
+                                       "posterior confidence is computed from it (preferred)",
+                    },
+                    "new_confidence": {"type": "number", "description": "optional direct override"},
                     "new_status": {"type": "string", "enum": ["active", "supported", "rejected"]},
                     "based_on_refs": {"type": "array", "items": {"type": "string"}},
                     "note": {"type": "string"},
                 },
-                "required": ["id", "new_confidence", "based_on_refs", "note"],
+                "required": ["id", "based_on_refs", "note"],
             },
         },
     },

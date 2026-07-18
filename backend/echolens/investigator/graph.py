@@ -15,7 +15,12 @@ from typing import Callable
 from langgraph.graph import END, StateGraph
 from sqlalchemy.orm import Session
 
-from echolens.config import MAX_ACTIVE_HYPOTHESES, SUPPORT_CONFIDENCE
+from echolens.config import (
+    EXTENSION_CONFIDENCE,
+    EXTENSION_FACTOR,
+    MAX_ACTIVE_HYPOTHESES,
+    SUPPORT_CONFIDENCE,
+)
 from echolens.db.models import (
     AnomalyEvent,
     EvidenceRow,
@@ -123,6 +128,7 @@ class Investigator:
 
     def _plan(self, state: InvState) -> InvState:
         state["pending_tool"] = None
+        state["pending_delegate"] = None
         prompt = render_state(
             state["trigger"], state["hypotheses"],
             [{k: e[k] for k in ("id", "source", "ref", "snippet", "supports", "contradicts")}
@@ -170,7 +176,61 @@ class Investigator:
                     "error": "action=conclude requires conclusion{status,reason}",
                     "text": "Step wasted. Next plan MUST include the conclusion payload.",
                 })
+        elif action == "delegate":
+            from echolens.investigator.specialists import SPECIALISTS
+            deleg = out.get("delegate") or {}
+            if deleg.get("specialist") in SPECIALISTS:
+                state["pending_delegate"] = deleg
+            else:
+                self._trace("FAIL", {
+                    "code": f"plan → delegate {deleg.get('specialist')}",
+                    "error": f"unknown specialist; choose from {list(SPECIALISTS)}",
+                    "text": "Step wasted.",
+                })
         return state
+
+    def _delegate(self, state: InvState) -> InvState:
+        """v2.0: run a single-pass specialist and fold its analysis into the
+        investigator's context (not as evidence — analysis only)."""
+        from echolens.investigator.specialists import run_specialist
+
+        deleg = state.get("pending_delegate") or {}
+        state["pending_delegate"] = None
+        name = deleg.get("specialist")
+        focus = deleg.get("focus", "")
+        context = self._specialist_context(name, focus)
+        result = run_specialist(self.llm, name, context)
+        if result is None:
+            self._trace("FAIL", {"code": f"specialist {name}",
+                                 "error": "specialist produced no usable analysis",
+                                 "text": "Continuing without it."})
+            return state
+        self._trace("SPEC", {"specialist": name, "focus": focus,
+                             "text": result.get("takeaway", ""), "detail": json.dumps(result)})
+        return state
+
+    def _specialist_context(self, name: str, focus: str) -> str:
+        """Gather a compact, deterministic data slice for the specialist."""
+        from echolens.tools.get_release_notes import get_release_notes
+        from echolens.tools.review_stats import review_stats
+        from echolens.tools.search_github_issues import search_github_issues
+        from echolens.tools.search_reviews import search_reviews
+
+        if name == "sentiment_analyst":
+            reviews = search_reviews(self.session, query=focus or "issue", rating_max=2, limit=8)
+            return ("Negative reviews to analyze:\n" +
+                    "\n".join(f"- ({r['rating']}★, {r['version']}) {r['snippet']}"
+                              for r in reviews["reviews"]))
+        # timeline_reconstructor
+        releases = get_release_notes(self.session)
+        issues = search_github_issues(self.session, query=focus or "bug")
+        stats = review_stats(self.session, term=focus or "issue")
+        events = ["RELEASES:"] + [f"  {r['released_at']}: {r['version']} — {r['notes'][:80]}"
+                                  for r in releases["releases"]]
+        events += ["ISSUES:"] + [f"  {i['date']}: {i['title']}" for i in issues["issues"][:6]]
+        events += ["COMPLAINT-RATE (recent days):"] + [
+            f"  {d['date']}: {d['term_neg']} negatives mention it" for d in stats.get("daily_tail", [])]
+        return "Dated events to order:\n" + "\n".join(events)
 
     def _apply_hypothesis_revision(self, state: InvState, proposed: list[dict]) -> list[dict]:
         existing = {h["id"]: h for h in state["hypotheses"]}
@@ -194,6 +254,8 @@ class Investigator:
                 "evidence_for": old.get("evidence_for", []),
                 "evidence_against": old.get("evidence_against", []),
                 "next_test": p.get("next_test", ""),
+                # v2.0: hypotheses this one gains from if THEY are rejected
+                "boost_if_rejected": p.get("boost_if_rejected", old.get("boost_if_rejected", [])),
             })
         self._persist_hypotheses(merged)
         self._trace("UPDT", {
@@ -291,6 +353,7 @@ class Investigator:
                                  "contradicts": ev["contradicts"]},
                         tokens=res.total_tokens, ms=res.ms)
 
+        newly_rejected: list[str] = []
         for upd in res.parsed.get("hypothesis_updates", []):
             h = next((x for x in state["hypotheses"] if x["id"] == upd.get("id")), None)
             if h is None:
@@ -298,8 +361,13 @@ class Investigator:
             cited = [ref_to_eid[r] for r in upd.get("based_on_refs", []) if r in ref_to_eid]
             if not cited:  # confidence may only move on cited evidence (PRD §5.2)
                 continue
-            old_conf = h["confidence"]
-            h["confidence"] = max(0.0, min(1.0, float(upd["new_confidence"])))
+            old_conf, old_status = h["confidence"], h["status"]
+            if upd.get("likelihood"):  # v2.0 Bayesian: posterior from prior × likelihood
+                h["confidence"] = guards.bayesian_update(old_conf, upd["likelihood"])
+            elif "new_confidence" in upd and upd["new_confidence"] is not None:
+                h["confidence"] = max(0.0, min(1.0, float(upd["new_confidence"])))
+            else:
+                continue  # no confidence signal in this update
             if not guards.two_source_rule(h, state["evidence"]):
                 # deterministic cap: no near-certainty without cross-source corroboration
                 h["confidence"] = min(h["confidence"], 0.75)
@@ -307,14 +375,40 @@ class Investigator:
             if new_status == "supported" and not guards.two_source_rule(h, state["evidence"]):
                 new_status = "active"  # guard: two-source rule not met
             h["status"] = new_status
+            if new_status == "rejected" and old_status != "rejected":
+                newly_rejected.append(h["id"])
             self._trace("UPDT", {
                 "code": f"{h['id']}  {old_conf:.2f} → {h['confidence']:.2f}",
                 "text": f"{upd.get('note', '')} Based on {', '.join(cited)}.",
                 "good": h["confidence"] >= old_conf,
             })
 
+        self._apply_dependencies(state, newly_rejected)
         self._persist_hypotheses(state["hypotheses"])
         return state
+
+    def _apply_dependencies(self, state: InvState, newly_rejected: list[str]) -> None:
+        """v2.0 hypothesis dependency tracking: when a competing hypothesis is
+        rejected, hypotheses that named it in `boost_if_rejected` gain confidence
+        (bounded, and never past the single-source clamp)."""
+        if not newly_rejected:
+            return
+        for h in state["hypotheses"]:
+            if h["status"] == "rejected":
+                continue
+            triggers = [r for r in h.get("boost_if_rejected", []) if r in newly_rejected]
+            if not triggers:
+                continue
+            old = h["confidence"]
+            h["confidence"] = min(1.0, h["confidence"] + 0.1 * len(triggers))
+            if not guards.two_source_rule(h, state["evidence"]):
+                h["confidence"] = min(h["confidence"], 0.75)
+            if h["confidence"] != old:
+                self._trace("UPDT", {
+                    "code": f"{h['id']}  {old:.2f} → {h['confidence']:.2f}",
+                    "text": f"Auto-boosted: it depended on {', '.join(triggers)} being false, and that was just rejected.",
+                    "good": True,
+                })
 
     def _check(self, state: InvState) -> InvState:
         self.budget.iterations += 1
@@ -345,8 +439,20 @@ class Investigator:
         if status == "running":
             exhausted = guards.budget_exceeded(self.budget)
             if exhausted:
-                status, reason = guards.classify_end_state(state["hypotheses"])
-                reason += f" (budget exhausted: {', '.join(exhausted)})"
+                best = guards.best_confidence(state["hypotheses"])
+                # v2.0: if we're close, grant ONE capped extension instead of quitting.
+                if not self.budget.extended and best >= EXTENSION_CONFIDENCE:
+                    self.budget.extended = True
+                    self.budget.extension_factor = EXTENSION_FACTOR
+                    self._trace("CHECK", {
+                        "text": f"Budget hit but best hypothesis is promising ({best:.2f} ≥ "
+                                f"{EXTENSION_CONFIDENCE}); granting a one-time {int((EXTENSION_FACTOR - 1) * 100)}% "
+                                "budget extension to try to close it.",
+                        "budget": self.budget.as_dict(),
+                    })
+                else:
+                    status, reason = guards.classify_end_state(state["hypotheses"])
+                    reason += f" (budget exhausted: {', '.join(exhausted)})"
 
         if status == "resolved" and winner:
             winner["status"] = "supported"
@@ -458,12 +564,18 @@ class Investigator:
         graph = StateGraph(InvState)
         graph.add_node("plan", self._plan)
         graph.add_node("act", self._act)
+        graph.add_node("delegate", self._delegate)
         graph.add_node("update", self._update)
         graph.add_node("check", self._check)
         graph.set_entry_point("plan")
         graph.add_conditional_edges(
-            "plan", lambda s: "act" if s.get("pending_tool") else "check")
+            "plan",
+            lambda s: "act" if s.get("pending_tool")
+            else "delegate" if s.get("pending_delegate")
+            else "check",
+        )
         graph.add_edge("act", "update")
+        graph.add_edge("delegate", "check")
         graph.add_edge("update", "check")
         graph.add_conditional_edges(
             "check", lambda s: END if s["status"] != "running" else "plan")
@@ -480,12 +592,20 @@ class Investigator:
                 "text": f"Investigation re-opened by a human challenge: “{self.context_note}”. "
                         "I must address this specifically before concluding again.",
             })
+        # v2.0 cross-investigation memory: seed with related past confirmed causes.
+        if seed_state is None:
+            from echolens.investigator.memory import digest_text
+            prior = digest_text(self.session, self.anomaly, exclude_investigation_id=self.inv.id)
+            if prior:
+                trigger["prior_findings"] = prior
+                self._trace("THINK", {"text": "Recalled related past cases:\n" + prior})
         init: InvState = {
             "trigger": (seed_state or {}).get("trigger") or trigger,
             "hypotheses": (seed_state or {}).get("hypotheses", []),
             "evidence": (seed_state or {}).get("evidence", []),
             "status": "running",
-            "status_reason": "", "finding": None, "pending_tool": None, "last_tool": None,
+            "status_reason": "", "finding": None, "pending_tool": None,
+            "pending_delegate": None, "last_tool": None,
         }
         final: InvState = graph.compile().invoke(init, config={"recursion_limit": 400})
 

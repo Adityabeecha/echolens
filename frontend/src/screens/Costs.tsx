@@ -13,6 +13,9 @@ const ROW_STATUS_COLOR: Record<string, string> = {
 
 const COLS = "64px 1.5fr 90px 90px 90px 100px";
 
+// Costs are fractions of a cent per call — show enough precision to be real.
+const money = (x: number) => (x > 0 && x < 1 ? `$${x.toFixed(4)}` : `$${x.toFixed(2)}`);
+
 export function Costs() {
   const { data, loading, error } = useAsync(() => api.costsSummary(), []);
   if (loading) return <Centered>Loading costs…</Centered>;
@@ -21,9 +24,9 @@ export function Costs() {
   const st = data.stats;
   const pct = data.budget ? (data.month_to_date / data.budget) * 100 : 0;
   const tiles = [
-    { label: "SPENT TODAY", value: `$${st.spent_today.toFixed(2)}`, color: C.text },
-    { label: "AVG PER RESOLVED CASE", value: `$${st.avg_per_resolved.toFixed(2)}`, color: C.good },
-    { label: "SPENT ON DEAD ENDS", value: `$${st.dead_end_spend.toFixed(2)}`, color: C.accent },
+    { label: "SPENT TODAY", value: money(st.spent_today), color: C.text },
+    { label: "AVG PER RESOLVED CASE", value: money(st.avg_per_resolved), color: C.good },
+    { label: "SPENT ON DEAD ENDS", value: money(st.dead_end_spend), color: C.accent },
     { label: "EST. ANALYST HOURS SAVED", value: `${st.analyst_hours_saved}h`, color: C.info },
   ];
 
@@ -48,7 +51,7 @@ export function Costs() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
             <Label>MONTH-TO-DATE SPEND</Label>
             <span style={{ fontFamily: mono, fontSize: 12, color: C.text }}>
-              ${data.month_to_date.toFixed(2)} / ${data.budget.toFixed(2)}
+              {money(data.month_to_date)} / ${data.budget.toFixed(2)}
             </span>
           </div>
           <div style={{ height: 8, borderRadius: 4, background: C.track, overflow: "hidden" }}>

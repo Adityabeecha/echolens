@@ -38,6 +38,7 @@ export const KIND_COLOR: Record<string, string> = {
   UPDT: C.good,
   FAIL: C.bad,
   CHECK: C.faint,
+  SPEC: C.accentHi, // v2.0 specialist delegation
 };
 
 export function statusColor(status: string): string {

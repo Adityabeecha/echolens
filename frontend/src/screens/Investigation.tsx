@@ -361,6 +361,17 @@ function TraceRow({
               <div style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>{c.text}</div>
             </>
           )}
+          {step.kind === "SPEC" && (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <span style={{ fontFamily: mono, fontSize: 11, color: C.accentHi }}>
+                  {String(c.specialist ?? "specialist").replace(/_/g, " ")}
+                </span>
+                {c.focus ? <span style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>· {String(c.focus)}</span> : null}
+              </div>
+              <div style={{ fontSize: 13, lineHeight: 1.5, color: C.text3 }}>{c.text}</div>
+            </>
+          )}
           {step.kind === "CHECK" && <div style={{ fontFamily: mono, fontSize: 11.5, color: C.faint }}>{c.text}</div>}
         </div>
       </div>

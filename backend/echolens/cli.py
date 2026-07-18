@@ -29,6 +29,7 @@ KIND_STYLE = {
     "UPDT": "green3",
     "FAIL": "red",
     "CHECK": "grey42",
+    "SPEC": "gold1",
 }
 
 

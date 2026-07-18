@@ -48,6 +48,11 @@ INSUFFICIENT_CONFIDENCE = 0.50     # below this at budget end -> insufficient_ev
 MIN_INDEPENDENT_EVIDENCE = 2       # two-source rule: >=2 items ...
 MIN_DISTINCT_SOURCES = 2           # ... from >=2 distinct sources
 
+# v2.0 budget extension: if the agent is THIS close at budget end, grant one
+# extra allowance rather than giving up (capped, logged, once).
+EXTENSION_CONFIDENCE = 0.65        # best hypothesis must be at least this promising
+EXTENSION_FACTOR = 1.5             # one-time cap multiplier
+
 # Tool output discipline (PRD §5.4): truncation lives in the tool layer.
 TOOL_RESULT_MAX_ITEMS = 8
 TOOL_SNIPPET_MAX_CHARS = 240

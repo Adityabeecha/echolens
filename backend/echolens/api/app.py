@@ -499,6 +499,13 @@ TODAY = date(2026, 7, 17)  # the synthetic corpus's "now"
 _HUMAN_BY_STATUS = {"resolved": "Approved"}
 
 
+def _money(x: float) -> str:
+    """Costs are fractions of a cent per call — show enough precision to be real
+    (a $0.0031 case must not display as $0.00)."""
+    x = float(x or 0)
+    return f"${x:.4f}" if 0 < x < 1 else f"${x:.2f}"
+
+
 def _cost_by_investigation(session) -> dict[int, dict]:
     agg: dict[int, dict] = {}
     for c in session.scalars(select(LLMCall)).all():
@@ -602,10 +609,10 @@ def costs_summary() -> dict:
         resolved = [i for i in invs if i.status == "resolved"]
         dead = [i for i in invs if i.status in ("insufficient_evidence", "budget_exhausted")]
         spent_today = sum(c.cost for c in calls if c.created_at and c.created_at.date() == TODAY)
-        total = round(sum(c.cost for c in calls), 2)
-        avg_resolved = (round(sum(costs.get(i.id, {}).get("cost", 0) for i in resolved) / len(resolved), 2)
+        total = round(sum(c.cost for c in calls), 4)
+        avg_resolved = (round(sum(costs.get(i.id, {}).get("cost", 0) for i in resolved) / len(resolved), 4)
                         if resolved else 0.0)
-        dead_spend = round(sum(costs.get(i.id, {}).get("cost", 0) for i in dead), 2)
+        dead_spend = round(sum(costs.get(i.id, {}).get("cost", 0) for i in dead), 4)
         rows = []
         for inv in session.scalars(select(Investigation).order_by(Investigation.id.desc())).all():
             finding = session.scalars(select(Finding).where(
@@ -618,11 +625,11 @@ def costs_summary() -> dict:
                 "tokens": f"{c.get('tokens', 0) / 1000:.1f}k",
                 "queries": c.get("queries", 0),
                 "time": f"{c.get('minutes', 0)}m",
-                "cost": f"${c.get('cost', 0):.2f}",
+                "cost": _money(c.get("cost", 0)),
             })
         return {
             "stats": {
-                "spent_today": round(spent_today, 2),
+                "spent_today": round(spent_today, 4),
                 "avg_per_resolved": avg_resolved,
                 "dead_end_spend": dead_spend,
                 "analyst_hours_saved": len(resolved) * 3,
