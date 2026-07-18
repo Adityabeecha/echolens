@@ -97,6 +97,14 @@ class CollectorState(Base):
     enabled: Mapped[bool] = mapped_column(default=True)
 
 
+class Setting(Base):
+    """Workspace-level key/value settings (e.g. adjustable budget limits)."""
+    __tablename__ = "settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
 class User(Base):
     """Auth principal with an RBAC role (v1.0). Passwords are bcrypt-hashed."""
     __tablename__ = "users"

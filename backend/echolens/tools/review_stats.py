@@ -16,10 +16,13 @@ def review_stats(
     date_to: str | None = None,
     version_prefix: str | None = None,
     os_version: str | None = None,
+    product: str | None = None,
 ) -> dict:
     """Daily counts of reviews mentioning `term`, share of negatives (<=2★),
-    segmentable by version/OS. Pure counting — the agent interprets."""
+    segmentable by version/OS/product. Pure counting — the agent interprets."""
     stmt = select(Review)
+    if product:
+        stmt = stmt.where(Review.product == product)
     if date_from:
         stmt = stmt.where(Review.created_at >= parse_date(date_from))
     if date_to:

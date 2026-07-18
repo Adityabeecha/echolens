@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Evidence, Investigation, api } from "../api";
+import { Evidence, Investigation, api, canReview } from "../api";
 import { useAsync } from "../hooks";
 import { C, mono, statusColor } from "../theme";
 import { Centered, Label } from "../ui";
@@ -249,7 +249,12 @@ export function FindingReview({ investigationId, onBack, onOpenEvidence, onRevie
           </div>
         )}
 
-        {!approved && !challenged && (
+        {!approved && !challenged && !canReview() && (
+          <div style={{ marginTop: 26, fontSize: 12.5, color: C.faint }}>
+            You have viewer access — approving or challenging findings needs a reviewer role.
+          </div>
+        )}
+        {!approved && !challenged && canReview() && (
           <div style={{ display: "flex", gap: 12, marginTop: 26, alignItems: "flex-start" }}>
             <button
               onClick={approve}

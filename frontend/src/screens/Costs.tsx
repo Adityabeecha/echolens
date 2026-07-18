@@ -1,7 +1,56 @@
-import { api } from "../api";
+import { useEffect, useState } from "react";
+import { api, isAdmin } from "../api";
 import { useAsync } from "../hooks";
 import { C, mono } from "../theme";
 import { Centered, Label } from "../ui";
+
+function LimitsPanel({ limits }: { limits: { daily_investigations: number; per_case_budget: number; per_case_wall_min: number } }) {
+  const [state, setState] = useState(limits);
+  useEffect(() => setState(limits), [limits]);
+  const admin = isAdmin();
+
+  const adjust = async (key: keyof typeof state, delta: number, min: number, max: number) => {
+    const next = Math.min(max, Math.max(min, +(state[key] + delta).toFixed(2)));
+    const updated = { ...state, [key]: next };
+    setState(updated);
+    try {
+      await api.setLimits({ [key]: next });
+    } catch {
+      /* revert on failure */
+      setState(state);
+    }
+  };
+
+  const fields: { key: keyof typeof state; name: string; fmt: (v: number) => string; step: number; min: number; max: number }[] = [
+    { key: "daily_investigations", name: "Daily investigations", fmt: (v) => `${v} / day`, step: 1, min: 1, max: 50 },
+    { key: "per_case_budget", name: "Per-case budget", fmt: (v) => `$${v.toFixed(2)}`, step: 0.25, min: 0.25, max: 10 },
+    { key: "per_case_wall_min", name: "Per-case wall-clock", fmt: (v) => `${v} min`, step: 5, min: 5, max: 240 },
+  ];
+
+  return (
+    <div style={{ display: "flex", gap: 12, maxWidth: 880, flexWrap: "wrap" }}>
+      {fields.map((f) => (
+        <div key={f.key} style={{ flex: 1, minWidth: 210, display: "flex", alignItems: "center", gap: 12, padding: "13px 16px", background: C.card, border: `1px solid ${C.border2}`, borderRadius: 10 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12.5, color: C.text3 }}>{f.name}</div>
+            <div style={{ fontFamily: mono, fontSize: 15, color: C.text, marginTop: 3 }}>{f.fmt(state[f.key])}</div>
+          </div>
+          {admin && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+              <button className="el-btn" onClick={() => adjust(f.key, f.step, f.min, f.max)} style={stepBtn}>▲</button>
+              <button className="el-btn" onClick={() => adjust(f.key, -f.step, f.min, f.max)} style={stepBtn}>▼</button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const stepBtn: React.CSSProperties = {
+  width: 22, height: 20, borderRadius: 4, border: `1px solid ${C.border3}`, background: C.hover,
+  color: C.muted, fontSize: 10, cursor: "pointer", lineHeight: 1,
+};
 
 const ROW_STATUS_COLOR: Record<string, string> = {
   resolved: C.good,
@@ -59,19 +108,8 @@ export function Costs() {
           </div>
         </div>
 
-        <Label style={{ margin: "26px 0 10px" }}>LIMITS</Label>
-        <div style={{ display: "flex", gap: 12, maxWidth: 880, flexWrap: "wrap" }}>
-          {[
-            { name: "Daily investigations", value: `${data.limits.daily_investigations} / day` },
-            { name: "Per-case budget", value: `$${data.limits.per_case_budget.toFixed(2)}` },
-            { name: "Per-case wall-clock", value: `${data.limits.per_case_wall_min} min` },
-          ].map((l) => (
-            <div key={l.name} style={{ flex: 1, minWidth: 200, padding: "13px 16px", background: C.card, border: `1px solid ${C.border2}`, borderRadius: 10 }}>
-              <div style={{ fontSize: 12.5, color: C.text3 }}>{l.name}</div>
-              <div style={{ fontFamily: mono, fontSize: 15, color: C.text, marginTop: 3 }}>{l.value}</div>
-            </div>
-          ))}
-        </div>
+        <Label style={{ margin: "26px 0 10px" }}>LIMITS{isAdmin() ? "" : " (admin can adjust)"}</Label>
+        <LimitsPanel limits={data.limits} />
 
         <Label style={{ margin: "26px 0 10px" }}>COST PER CASE</Label>
         <div style={{ border: `1px solid ${C.border2}`, borderRadius: 10, overflowX: "auto", maxWidth: 880 }}>

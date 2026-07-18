@@ -22,9 +22,19 @@ from sqlalchemy.orm import Session
 from echolens.db.models import AnomalyEvent, Issue, Post, Review
 from echolens.tools._util import match_score, terms_of
 
-AS_OF = datetime(2026, 7, 17, tzinfo=timezone.utc)
+AS_OF = datetime(2026, 7, 17, tzinfo=timezone.utc)  # fallback only
 RECENT_DAYS = 7
 BASELINE_DAYS = 28
+
+
+def reference_now(session: Session) -> datetime:
+    """The 'now' the detector reasons from: the latest review timestamp in the
+    corpus. Works for both the frozen synthetic set and live real data — never
+    a hardcoded date."""
+    latest = session.scalar(select(Review.created_at).order_by(Review.created_at.desc()).limit(1))
+    if latest is None:
+        return AS_OF
+    return latest if latest.tzinfo else latest.replace(tzinfo=timezone.utc)
 
 # What the detector watches. (term, human label). Kept small and explicit.
 THEME_TERMS = [
@@ -126,13 +136,44 @@ def _share_series(rows, text_of, day_of, terms, start, as_of, negatives_only):
     return series
 
 
+def detect_rating_drop(session: Session, as_of: datetime = AS_OF) -> Candidate | None:
+    """Theme-agnostic: a real drop in average star rating. Works for ANY app,
+    no keyword list required."""
+    start = as_of - timedelta(days=BASELINE_DAYS + RECENT_DAYS)
+    rows = session.scalars(select(Review).where(Review.created_at >= start)).all()
+    daily: dict = defaultdict(list)
+    for r in rows:
+        if start.date() <= r.created_at.date() <= as_of.date():
+            daily[r.created_at.date()].append(r.rating)
+    days = sorted(daily)
+    series = [statistics.mean(daily[d]) for d in days if daily[d]]
+    if len(series) <= RECENT_DAYS:
+        return None
+    baseline, recent = series[:-RECENT_DAYS], series[-RECENT_DAYS:]
+    mean_b, mean_r = statistics.mean(baseline), statistics.mean(recent)
+    std_b = statistics.stdev(baseline) if len(baseline) > 1 else 0.0
+    drop = mean_b - mean_r
+    z = round(drop / std_b, 2) if std_b > 0 else 0.0
+    if drop < 0.3 or z < SEV3_Z:   # not a meaningful drop
+        return None
+    return Candidate(
+        slug="auto-rating-drop", type="rating_drop",
+        metric="average star rating", delta=round(-drop / mean_b, 3), z=z, window=f"{RECENT_DAYS}d",
+        description=f"Average rating fell from {mean_b:.2f}★ to {mean_r:.2f}★ over the last "
+                    f"{RECENT_DAYS} days (z={z}).",
+        severity=_severity(z),
+    )
+
+
 def detect_theme_surges(session: Session, as_of: datetime = AS_OF) -> list[Candidate]:
     start = as_of - timedelta(days=BASELINE_DAYS + RECENT_DAYS)
     reviews = session.scalars(select(Review).where(Review.created_at >= start)).all()
     posts = session.scalars(select(Post).where(Post.created_at >= start)).all()
     out: list[Candidate] = []
 
-    for term, label in THEME_TERMS:
+    from echolens.config import settings
+    theme_terms = THEME_TERMS + [(t, f"'{t}' complaints") for t in settings.extra_theme_terms]
+    for term, label in theme_terms:
         terms = terms_of(term)
         series = _share_series(reviews, lambda r: r.text, lambda r: r.created_at.date(),
                                terms, start, as_of, negatives_only=True)
@@ -188,13 +229,19 @@ def detect_issue_velocity(session: Session, as_of: datetime = AS_OF) -> list[Can
     return out
 
 
-def scan(session: Session, as_of: datetime = AS_OF, persist: bool = True) -> list[AnomalyEvent]:
+def scan(session: Session, as_of: datetime | None = None, persist: bool = True) -> list[AnomalyEvent]:
     """Run every detector, dedupe by slug, and (optionally) persist as pending
-    anomaly_events. Re-running is idempotent: existing slugs are skipped."""
+    anomaly_events. Re-running is idempotent: existing slugs are skipped.
+    `as_of` defaults to the latest data timestamp (not a hardcoded date)."""
+    if as_of is None:
+        as_of = reference_now(session)
     candidates: list[Candidate] = []
     spike = detect_volume_spike(session, as_of)
     if spike:
         candidates.append(spike)
+    drop = detect_rating_drop(session, as_of)
+    if drop:
+        candidates.append(drop)
     candidates += detect_theme_surges(session, as_of)
     candidates += detect_issue_velocity(session, as_of)
 

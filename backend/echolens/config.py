@@ -118,6 +118,13 @@ class Settings(BaseSettings):
     embedding_backend: str = "hash"
     embedding_dim: int = 256
 
+    # extra complaint themes to watch, comma-separated (adds to the built-in list)
+    detector_extra_terms: str = ""
+
+    @property
+    def extra_theme_terms(self) -> list[str]:
+        return [t.strip() for t in self.detector_extra_terms.split(",") if t.strip()]
+
     @property
     def auth_required(self) -> bool:
         return self.echolens_env != "dev"

@@ -86,7 +86,12 @@ export default function App() {
 
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {screen === "feed" && (
-          <CaseFeed onOpenInvestigation={openInvestigation} onNewCase={() => setNewCaseOpen(true)} reloadKey={reloadKey} />
+          <CaseFeed
+            onOpenInvestigation={openInvestigation}
+            onNewCase={() => setNewCaseOpen(true)}
+            reloadKey={reloadKey}
+            bumpReload={() => setReloadKey((k) => k + 1)}
+          />
         )}
         {screen === "case" && currentInv != null && (
           <Investigation

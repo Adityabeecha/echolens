@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Evidence, Hypothesis, TraceStep, api } from "../api";
+import { Evidence, Hypothesis, TraceStep, api, canReview } from "../api";
 import { useTrace } from "../hooks";
 import { C, KIND_COLOR, mono, statusColor } from "../theme";
 import { Bar, Label } from "../ui";
@@ -201,6 +201,21 @@ export function Investigation({ investigationId, onBack, onDraftFinding, onOpenE
           </div>
           <div style={{ height: 1, background: C.border }} />
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {canReview() && running && (
+              <div style={{ display: "flex", gap: 8 }}>
+                {inv?.paused ? (
+                  <SecondaryBtn onClick={() => api.resume(investigationId)}>▸ Resume</SecondaryBtn>
+                ) : (
+                  <SecondaryBtn onClick={() => api.pause(investigationId)}>⏸ Pause</SecondaryBtn>
+                )}
+                <SecondaryBtn
+                  onClick={() => api.escalate(investigationId)}
+                  active={inv?.escalated}
+                >
+                  {inv?.escalated ? "✓ Escalated" : "Escalate"}
+                </SecondaryBtn>
+              </div>
+            )}
             <button
               onClick={onDraftFinding}
               disabled={!inv?.finding}
@@ -222,6 +237,36 @@ export function Investigation({ investigationId, onBack, onDraftFinding, onOpenE
         </div>
       </div>
     </div>
+  );
+}
+
+function SecondaryBtn({ children, onClick, active }: { children: React.ReactNode; onClick: () => void; active?: boolean }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      onClick={async () => {
+        try {
+          await onClick();
+          setDone(true);
+        } catch {
+          /* ignore */
+        }
+      }}
+      className="el-btn"
+      style={{
+        flex: 1,
+        padding: "8px 0",
+        borderRadius: 7,
+        border: `1px solid ${active || done ? "rgba(76,192,119,.4)" : C.border4}`,
+        background: active || done ? "rgba(76,192,119,.08)" : C.hover,
+        color: active || done ? C.good : C.text,
+        fontSize: 12.5,
+        fontWeight: 500,
+        cursor: "pointer",
+      }}
+    >
+      {children}
+    </button>
   );
 }
 

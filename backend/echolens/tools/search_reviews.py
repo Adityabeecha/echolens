@@ -16,11 +16,15 @@ def search_reviews(
     rating_min: int | None = None,
     version_prefix: str | None = None,
     os_version: str | None = None,
+    product: str | None = None,
     limit: int | None = None,
 ) -> dict:
     """Keyword search over reviews; supports version/OS segmentation
-    (the decoy-killer: e.g. version_prefix='3.1', os_version='Android 15')."""
+    (the decoy-killer: e.g. version_prefix='3.1', os_version='Android 15') and
+    optional product scoping for multi-app workspaces."""
     stmt = select(Review)
+    if product:
+        stmt = stmt.where(Review.product == product)
     if date_from:
         stmt = stmt.where(Review.created_at >= parse_date(date_from))
     if date_to:

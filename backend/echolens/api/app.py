@@ -12,7 +12,7 @@ import time
 from typing import Any
 
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,6 +36,7 @@ from echolens.db.models import (
     Release,
     Review,
     ReviewFeedback,
+    Setting,
     TraceStep,
     TriageDecision,
 )
@@ -197,13 +198,21 @@ class LoginBody(BaseModel):
 
 @app.post("/auth/signup")
 def auth_signup(body: SignupBody, request: Request) -> dict:
-    """First user ever = bootstrap admin (no auth needed). After that, only an
-    existing admin may create users — this closes open self-service admin signup."""
+    """User creation. In production the FIRST admin must come from the
+    BOOTSTRAP_ADMIN_* env (not open self-service) — otherwise a stranger could
+    claim admin by being first to hit this endpoint. After an admin exists, only
+    an admin may create users. In dev, the first signup bootstraps an admin."""
     from echolens.db.models import User
     with session_scope() as session:
         first_user = session.scalar(select(User).limit(1)) is None
         if first_user:
-            role = "admin"  # bootstrap the first account as admin
+            if settings.echolens_env == "production":
+                raise HTTPException(
+                    403,
+                    "Open signup is disabled in production. Create the first admin via the "
+                    "BOOTSTRAP_ADMIN_EMAIL / BOOTSTRAP_ADMIN_PASSWORD environment variables.",
+                )
+            role = "admin"  # dev bootstrap
         else:
             caller = current_user(request)  # 401 without a token in prod
             if caller["role"] != "admin":
@@ -327,7 +336,7 @@ def anomalies_triage(request: Request, run: bool = False,
                      user: dict = Depends(require_role("reviewer"))) -> dict:
     from echolens.orchestrator.triage import Orchestrator, run_triaged
     with session_scope() as session:
-        decisions = Orchestrator(session).triage()
+        decisions = Orchestrator(session, daily_limit=_daily_limit(session)).triage()
         out = [{"anomaly": d.anomaly.slug, "decision": d.decision, "reason": d.reason,
                 "budget_tier": d.budget_tier,
                 "merge_into": d.merge_into.slug if d.merge_into else None} for d in decisions]
@@ -397,6 +406,53 @@ def get_investigation(inv_id: int) -> dict:
         if inv is None:
             raise HTTPException(404, "no such investigation")
         return _investigation_dict(session, inv)
+
+
+def _resume_investigation_bg(inv_id: int) -> None:
+    from echolens.investigator.graph import Investigator
+    from echolens.recommender.recommend import recommend
+    with session_scope() as session:
+        inv = session.get(Investigation, inv_id)
+        if inv is None or inv.paused:
+            return
+        inv = Investigator.resume(session, inv)
+        finding = session.scalars(select(Finding).where(
+            Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
+        if finding is not None:
+            recommend(session, finding)
+
+
+@app.post("/investigations/{inv_id}/pause")
+def pause_investigation(inv_id: int, user: dict = Depends(require_role("reviewer"))) -> dict:
+    with session_scope() as session:
+        inv = session.get(Investigation, inv_id)
+        if inv is None:
+            raise HTTPException(404, "no such investigation")
+        inv.paused = True
+        return {"status": "pausing", "id": inv_id}
+
+
+@app.post("/investigations/{inv_id}/resume")
+def resume_investigation(inv_id: int, user: dict = Depends(require_role("reviewer"))) -> dict:
+    with session_scope() as session:
+        inv = session.get(Investigation, inv_id)
+        if inv is None:
+            raise HTTPException(404, "no such investigation")
+        if inv.status != "running":
+            raise HTTPException(422, f"cannot resume a {inv.status} investigation")
+        inv.paused = False
+    threading.Thread(target=_resume_investigation_bg, args=(inv_id,), daemon=True).start()
+    return {"status": "resuming", "id": inv_id}
+
+
+@app.post("/investigations/{inv_id}/escalate")
+def escalate_investigation(inv_id: int, user: dict = Depends(require_role("reviewer"))) -> dict:
+    with session_scope() as session:
+        inv = session.get(Investigation, inv_id)
+        if inv is None:
+            raise HTTPException(404, "no such investigation")
+        inv.escalated = True
+        return {"status": "escalated", "id": inv_id, "by": user["email"]}
 
 
 @app.get("/investigations/{inv_id}/trace")
@@ -495,8 +551,28 @@ def costs() -> dict:
 
 # ── UI-facing aggregates (Milestone 3) ─────────────────────────────────
 
-TODAY = date(2026, 7, 17)  # the synthetic corpus's "now"
 _HUMAN_BY_STATUS = {"resolved": "Approved"}
+
+
+def _today() -> date:
+    """Real 'today' for spend/volume-per-day counters — investigations and
+    llm_calls are timestamped at real wall-clock time, so this must be now."""
+    return datetime.now(timezone.utc).date()
+
+
+def _limits(session) -> dict:
+    """Effective budget limits: stored overrides, else config defaults."""
+    row = session.get(Setting, "limits")
+    defaults = {
+        "daily_investigations": ORCHESTRATOR_DAILY_INVESTIGATIONS,
+        "per_case_budget": BUDGET_TIERS["standard"].max_cost_usd,
+        "per_case_wall_min": BUDGET_TIERS["standard"].max_wall_clock_s // 60,
+    }
+    return {**defaults, **(row.value if row else {})}
+
+
+def _daily_limit(session) -> int:
+    return int(_limits(session)["daily_investigations"])
 
 
 def _money(x: float) -> str:
@@ -538,13 +614,14 @@ def _status_label(status: str) -> str:
 @app.get("/feed/summary")
 def feed_summary() -> dict:
     with session_scope() as session:
+        today = _today()
         invs = session.scalars(select(Investigation)).all()
-        today = [i for i in invs if i.created_at and i.created_at.date() == TODAY]
+        n_today = [i for i in invs if i.created_at and i.created_at.date() == today]
         spent = sum(c.cost for c in session.scalars(select(LLMCall)).all()
-                    if c.created_at and c.created_at.date() == TODAY)
-        return {"investigations_today": len(today),
-                "daily_limit": ORCHESTRATOR_DAILY_INVESTIGATIONS,
-                "spent_today": round(spent, 2)}
+                    if c.created_at and c.created_at.date() == today)
+        return {"investigations_today": len(n_today),
+                "daily_limit": _daily_limit(session),
+                "spent_today": round(spent, 4)}
 
 
 @app.get("/archive")
@@ -584,20 +661,50 @@ def archive() -> dict:
         }
 
 
+_SOURCE_META = {
+    "play_store": {"icon": "▶", "label": "Google Play reviews"},
+    "github": {"icon": "⌥", "label": "GitHub issues + releases"},
+}
+
+
 @app.get("/sources")
 def sources() -> dict:
+    from echolens.db.models import CollectorState
     with session_scope() as session:
-        n_reviews = session.scalar(select(func.count(Review.id))) or 0
-        n_issues = session.scalar(select(func.count(Issue.id))) or 0
-        n_releases = session.scalar(select(func.count(Release.id))) or 0
-        return {"connected": [
-            {"icon": "▶", "name": "Google Play reviews", "detail": "app: com.lumo.photos · 1–2★ prioritized",
-             "status": "Healthy", "lastPull": "pulled 12m ago", "volume": f"{n_reviews:,} total"},
-            {"icon": "⌥", "name": "GitHub issues", "detail": "lumo-app/lumo-android · issues + reactions",
-             "status": "Healthy", "lastPull": "pulled 12m ago", "volume": f"{n_issues} total"},
-            {"icon": "≡", "name": "Release notes", "detail": "changelog feed · versions + rollout dates",
-             "status": "Healthy", "lastPull": "pulled 1h ago", "volume": f"{n_releases} total"},
-        ], "available": ["App Store reviews", "Zendesk / CSV import", "Discord community", "In-app feedback"]}
+        states = session.scalars(select(CollectorState)).all()
+        connected = []
+        for st in states:
+            if not st.enabled:
+                continue
+            meta = _SOURCE_META.get(st.source, {"icon": "•", "label": st.source})
+            if st.source == "play_store":
+                vol = session.scalar(select(func.count(Review.id)).where(Review.product == st.product)) or 0
+            elif st.source == "github":
+                vol = session.scalar(select(func.count(Issue.id)).where(Issue.product == st.product)) or 0
+            else:
+                vol = 0
+            status = {"healthy": "Healthy", "error": "Error", "running": "Syncing…"}.get(st.status, "Idle")
+            connected.append({
+                "icon": meta["icon"], "name": meta["label"], "detail": f"{st.identifier} · {st.product}",
+                "status": "Error" if st.status == "error" else status,
+                "lastPull": (f"pulled {st.last_run_at.date().isoformat()}" if st.last_run_at else "not yet collected"),
+                "volume": f"{vol:,} items", "error": st.last_error,
+            })
+        # If nothing is configured, show the built-in demo corpus so the page
+        # is never blank (it's still real counts).
+        if not connected:
+            n_reviews = session.scalar(select(func.count(Review.id))) or 0
+            n_issues = session.scalar(select(func.count(Issue.id))) or 0
+            n_releases = session.scalar(select(func.count(Release.id))) or 0
+            if n_reviews or n_issues:
+                connected = [
+                    {"icon": "▶", "name": "Google Play reviews (demo)", "detail": "synthetic Lumo dataset",
+                     "status": "Healthy", "lastPull": "seeded", "volume": f"{n_reviews:,} items"},
+                    {"icon": "⌥", "name": "GitHub issues (demo)", "detail": "synthetic Lumo dataset",
+                     "status": "Healthy", "lastPull": "seeded", "volume": f"{n_issues + n_releases} items"},
+                ]
+        return {"connected": connected,
+                "available": ["App Store reviews", "Zendesk / CSV import", "Discord community", "In-app feedback"]}
 
 
 @app.get("/costs/summary")
@@ -608,7 +715,7 @@ def costs_summary() -> dict:
         costs = _cost_by_investigation(session)
         resolved = [i for i in invs if i.status == "resolved"]
         dead = [i for i in invs if i.status in ("insufficient_evidence", "budget_exhausted")]
-        spent_today = sum(c.cost for c in calls if c.created_at and c.created_at.date() == TODAY)
+        spent_today = sum(c.cost for c in calls if c.created_at and c.created_at.date() == _today())
         total = round(sum(c.cost for c in calls), 4)
         avg_resolved = (round(sum(costs.get(i.id, {}).get("cost", 0) for i in resolved) / len(resolved), 4)
                         if resolved else 0.0)
@@ -637,10 +744,31 @@ def costs_summary() -> dict:
             },
             "month_to_date": total,
             "budget": 25.0,
-            "limits": {
-                "daily_investigations": ORCHESTRATOR_DAILY_INVESTIGATIONS,
-                "per_case_budget": BUDGET_TIERS["standard"].max_cost_usd,
-                "per_case_wall_min": BUDGET_TIERS["standard"].max_wall_clock_s // 60,
-            },
+            "limits": _limits(session),
             "rows": rows,
         }
+
+
+class LimitsBody(BaseModel):
+    daily_investigations: int | None = None
+    per_case_budget: float | None = None
+    per_case_wall_min: int | None = None
+
+
+@app.put("/settings/limits")
+def set_limits(body: LimitsBody, user: dict = Depends(require_role("admin"))) -> dict:
+    """Adjust workspace budget limits (admin). Persisted; the orchestrator's
+    daily cap reads from here."""
+    with session_scope() as session:
+        current = _limits(session)
+        for k in ("daily_investigations", "per_case_budget", "per_case_wall_min"):
+            v = getattr(body, k)
+            if v is not None:
+                current[k] = v
+        row = session.get(Setting, "limits")
+        if row is None:
+            row = Setting(key="limits", value={})
+            session.add(row)
+        row.value = current
+        session.flush()
+        return current

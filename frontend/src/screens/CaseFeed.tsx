@@ -1,4 +1,5 @@
-import { Anomaly, api } from "../api";
+import { useState } from "react";
+import { Anomaly, api, canReview } from "../api";
 import { useAsync } from "../hooks";
 import { C, mono } from "../theme";
 import { Chip, Label, Spark, sparkFor } from "../ui";
@@ -7,6 +8,7 @@ interface Props {
   onOpenInvestigation: (id: number) => void;
   onNewCase: () => void;
   reloadKey: number;
+  bumpReload: () => void;
 }
 
 function severity(z: number) {
@@ -28,12 +30,26 @@ function chipFor(a: Anomaly): { label: string; color: string; bg: string; border
   return { label: "Pending triage", color: C.text3, bg: C.hover, border: C.border4 };
 }
 
-export function CaseFeed({ onOpenInvestigation, onNewCase, reloadKey }: Props) {
+export function CaseFeed({ onOpenInvestigation, onNewCase, reloadKey, bumpReload }: Props) {
   const anomalies = useAsync(() => api.anomalies(), [reloadKey]);
   const summary = useAsync(() => api.feedSummary(), [reloadKey]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const reviewer = canReview();
 
   const used = summary.data?.investigations_today ?? 0;
   const limit = summary.data?.daily_limit ?? 5;
+
+  const run = async (label: string, fn: () => Promise<unknown>) => {
+    setBusy(label);
+    try {
+      await fn();
+      bumpReload();
+    } catch {
+      /* errors surface via the reloaded views */
+    } finally {
+      setBusy(null);
+    }
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -67,9 +83,23 @@ export function CaseFeed({ onOpenInvestigation, onNewCase, reloadKey }: Props) {
             {used}/{limit} today · ${(summary.data?.spent_today ?? 0).toFixed(2)} spent
           </div>
         </div>
-        <button onClick={onNewCase} className="el-btn" style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: 7, padding: "9px 16px", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
-          + New case
-        </button>
+        {reviewer && (
+          <>
+            <button onClick={() => run("scan", () => api.scan())} disabled={!!busy} className="el-btn"
+              style={{ background: "transparent", color: C.muted, border: `1px solid ${C.border3}`, borderRadius: 7, padding: "9px 14px", fontSize: 13, cursor: "pointer" }}>
+              {busy === "scan" ? "Scanning…" : "Scan now"}
+            </button>
+            <button onClick={() => run("triage", () => api.triage(true))} disabled={!!busy} className="el-btn"
+              style={{ background: "transparent", color: C.muted, border: `1px solid ${C.border3}`, borderRadius: 7, padding: "9px 14px", fontSize: 13, cursor: "pointer" }}>
+              {busy === "triage" ? "Triaging…" : "Run triage"}
+            </button>
+          </>
+        )}
+        {reviewer && (
+          <button onClick={onNewCase} className="el-btn" style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: 7, padding: "9px 16px", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+            + New case
+          </button>
+        )}
       </div>
 
       <div style={{ flex: 1, overflow: "auto", padding: "22px 28px" }}>

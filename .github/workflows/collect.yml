@@ -1,0 +1,35 @@
+# Free-tier scheduled monitoring for EchoLens.
+# Render's cron is paid; GitHub Actions cron is free. This pings the deployed
+# backend every 6 hours to collect new data, scan for anomalies, and triage —
+# so the "watch feedback → investigate" loop runs without you.
+#
+# Setup: in the repo settings → Secrets and variables → Actions, add:
+#   ECHOLENS_API   = https://your-echolens-api.onrender.com
+#   ECHOLENS_EMAIL / ECHOLENS_PASSWORD = a reviewer/admin login (for the token)
+name: EchoLens scheduled collect + scan
+
+on:
+  schedule:
+    - cron: "0 */6 * * *" # every 6 hours
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in and run the pipeline
+        env:
+          API: ${{ secrets.ECHOLENS_API }}
+          EMAIL: ${{ secrets.ECHOLENS_EMAIL }}
+          PASSWORD: ${{ secrets.ECHOLENS_PASSWORD }}
+        run: |
+          set -e
+          if [ -z "$API" ]; then echo "ECHOLENS_API secret not set"; exit 1; fi
+          TOKEN=$(curl -sf -X POST "$API/auth/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}" | python3 -c "import sys,json;print(json.load(sys.stdin)['token'])")
+          auth="Authorization: Bearer $TOKEN"
+          echo "→ collect"; curl -sf -X POST "$API/collectors/run" -H "$auth" || true
+          echo "→ scan";    curl -sf -X POST "$API/anomalies/scan"
+          echo "→ triage";  curl -sf -X POST "$API/anomalies/triage" -H "$auth" || true
+          echo "done"

@@ -475,6 +475,16 @@ class Investigator:
             "recent": self._recent[-6:],
         }
         self.session.flush()
+
+        # v2.0 cooperative pause: if a human paused this case (set on another
+        # connection), stop between iterations. The checkpoint above lets Resume
+        # continue exactly where we left off — no finding is drafted.
+        if status == "running":
+            self.session.refresh(self.inv, ["paused"])
+            if self.inv.paused:
+                state["status"] = "paused"
+                self._trace("CHECK", {"text": "Paused by reviewer — state checkpointed; resume to continue.",
+                                      "budget": self.budget.as_dict()})
         return state
 
     # ── persistence helpers ────────────────────────────────────────────
@@ -608,6 +618,14 @@ class Investigator:
             "pending_delegate": None, "last_tool": None,
         }
         final: InvState = graph.compile().invoke(init, config={"recursion_limit": 400})
+
+        # Paused mid-loop: leave it resumable (status stays running), no finding.
+        if final["status"] == "paused":
+            self.inv.status = "running"
+            self.inv.budget_json = self.budget.as_dict()
+            self.session.flush()
+            self._final_state = final
+            return self.inv
 
         finding = self._draft_finding(final)
         final["finding"] = finding

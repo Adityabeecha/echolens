@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, setToken } from "../api";
+import { api, setRole, setToken } from "../api";
 import { C, mono, sans } from "../theme";
 
 // A branded split sign-in: the left panel is a taste of the product (the lens
@@ -28,6 +28,7 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
         ? await api.login(email.trim(), password)
         : await api.signup(email.trim(), password);
       setToken(r.token);
+      setRole(r.role);
       onAuthed();
     } catch (e) {
       setError(

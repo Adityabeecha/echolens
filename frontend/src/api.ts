@@ -9,6 +9,9 @@ const TOKEN_KEY = "echolens_token";
 let _token: string | null = localStorage.getItem(TOKEN_KEY);
 let _onAuthError: (() => void) | null = null;
 
+const ROLE_KEY = "echolens_role";
+let _role: string = localStorage.getItem(ROLE_KEY) || "viewer";
+
 export function setToken(t: string | null): void {
   _token = t;
   if (t) localStorage.setItem(TOKEN_KEY, t);
@@ -16,6 +19,20 @@ export function setToken(t: string | null): void {
 }
 export function getToken(): string | null {
   return _token;
+}
+export function setRole(r: string): void {
+  _role = r;
+  localStorage.setItem(ROLE_KEY, r);
+}
+export function getRole(): string {
+  return _role;
+}
+const RANK: Record<string, number> = { viewer: 0, reviewer: 1, admin: 2 };
+export function canReview(): boolean {
+  return (RANK[_role] ?? 0) >= RANK.reviewer;
+}
+export function isAdmin(): boolean {
+  return _role === "admin";
 }
 export function onAuthError(fn: () => void): void {
   _onAuthError = fn;
@@ -159,6 +176,7 @@ export interface SourcesResp {
     status: string;
     lastPull: string;
     volume: string;
+    error?: string | null;
   }[];
   available: string[];
 }
@@ -222,9 +240,26 @@ export const api = {
       action,
       note,
     }),
+  pause: (id: number) => post(`/investigations/${id}/pause`),
+  resume: (id: number) => post(`/investigations/${id}/resume`),
+  escalate: (id: number) => post(`/investigations/${id}/escalate`),
   archive: () => get<{ rows: ArchiveRow[]; count: number; resolved_pct: number }>("/archive"),
   sources: () => get<SourcesResp>("/sources"),
+  connectSource: (source: string, identifier: string, product?: string) =>
+    post<{ connected: { source: string; identifier: string; product: string } }>("/sources/connect", {
+      source,
+      identifier,
+      product,
+    }),
+  collectorsRun: () => post<{ results: { source: string; identifier: string; fetched: number; inserted: number; error: string | null }[] }>("/collectors/run"),
+  embed: () => post<{ embedded: Record<string, number> }>("/search/embed"),
   costsSummary: () => get<CostsSummary>("/costs/summary"),
+  setLimits: (limits: { daily_investigations?: number; per_case_budget?: number; per_case_wall_min?: number }) =>
+    fetch(`${BASE}/settings/limits`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
+      body: JSON.stringify(limits),
+    }).then((r) => r.json()),
   // SSE URL for the live trace (EventSource cannot go through fetch)
   traceStreamUrl: (id: number) => `${BASE}/investigations/${id}/trace/stream`,
 };
