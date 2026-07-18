@@ -80,8 +80,14 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 60 * 24
 
     # CORS: comma-separated allowed origins for the browser frontend.
-    # e.g. "https://echolens-web.onrender.com"
+    # e.g. "https://echolens.vercel.app"
     cors_origins: str = ""
+
+    # Free-tier bootstrap (no shell needed): on startup, if the DB has no users
+    # and these are set, create the first admin. Seed demo data if requested.
+    bootstrap_admin_email: str = ""
+    bootstrap_admin_password: str = ""
+    seed_on_start: bool = False
 
     @property
     def cors_list(self) -> list[str]:

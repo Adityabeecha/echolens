@@ -49,6 +49,7 @@ async def lifespan(_app: FastAPI):
     if problems:
         raise RuntimeError("refusing to start in production: " + "; ".join(problems))
     init_db()
+    _bootstrap()  # free-tier: seed + first admin from env, no shell needed
     # v1.0: resume any investigation interrupted by the last shutdown.
     try:
         from echolens.investigator.recover import resume_running
@@ -59,6 +60,27 @@ async def lifespan(_app: FastAPI):
     except Exception as err:  # never block startup on recovery
         log.error("startup_recovery_failed", error=str(err))
     yield
+
+
+def _bootstrap() -> None:
+    """Seed demo data and/or create the first admin from env vars, so a shell-
+    less free-tier deploy is self-sufficient. Both steps are idempotent."""
+    from echolens.auth import create_user
+    from echolens.db.models import Review, User
+
+    try:
+        with session_scope() as s:
+            if settings.seed_on_start and s.scalar(select(Review).limit(1)) is None:
+                from echolens.synthetic.generate import generate
+                generate(s)
+                log.info("bootstrap_seeded")
+            if settings.bootstrap_admin_email and settings.bootstrap_admin_password:
+                if s.scalar(select(User).limit(1)) is None:
+                    create_user(s, settings.bootstrap_admin_email,
+                                settings.bootstrap_admin_password, "admin")
+                    log.info("bootstrap_admin_created", email=settings.bootstrap_admin_email)
+    except Exception as err:
+        log.error("bootstrap_failed", error=str(err))
 
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["240/minute"])
@@ -165,10 +187,21 @@ class LoginBody(BaseModel):
 
 
 @app.post("/auth/signup")
-def auth_signup(body: SignupBody) -> dict:
+def auth_signup(body: SignupBody, request: Request) -> dict:
+    """First user ever = bootstrap admin (no auth needed). After that, only an
+    existing admin may create users — this closes open self-service admin signup."""
+    from echolens.db.models import User
     with session_scope() as session:
+        first_user = session.scalar(select(User).limit(1)) is None
+        if first_user:
+            role = "admin"  # bootstrap the first account as admin
+        else:
+            caller = current_user(request)  # 401 without a token in prod
+            if caller["role"] != "admin":
+                raise HTTPException(403, "only an admin can create users")
+            role = body.role
         try:
-            user = create_user(session, body.email, body.password, body.role)
+            user = create_user(session, body.email, body.password, role)
         except ValueError as err:
             raise HTTPException(422, str(err))
         return {"id": user.id, "email": user.email, "role": user.role,
