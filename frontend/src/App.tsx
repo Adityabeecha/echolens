@@ -113,10 +113,10 @@ export default function App() {
       {newCaseOpen && (
         <NewCaseModal
           onClose={() => setNewCaseOpen(false)}
-          onStarted={() => {
+          onStarted={(investigationId) => {
             setNewCaseOpen(false);
             setReloadKey((k) => k + 1);
-            setScreen("feed");
+            openInvestigation(investigationId); // jump straight to the live trace
           }}
         />
       )}

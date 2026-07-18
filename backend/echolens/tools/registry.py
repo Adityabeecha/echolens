@@ -10,6 +10,8 @@ from typing import Callable
 
 from sqlalchemy.orm import Session
 
+from echolens.tools.analyze_trend import analyze_trend
+from echolens.tools.compare_cohorts import compare_cohorts
 from echolens.tools.compare_periods import compare_periods
 from echolens.tools.get_release_notes import get_release_notes
 from echolens.tools.search_github_issues import search_github_issues
@@ -118,6 +120,40 @@ TOOLS: dict[str, ToolSpec] = {
                 "required": ["query"],
             },
             "reddit",
+        ),
+        ToolSpec(
+            "compare_cohorts", compare_cohorts,
+            "Prove version/OS-specific causation in ONE call: compares a term's complaint "
+            "rate across cohorts (dimension='version' or 'os'), optionally holding the other "
+            "dimension fixed (os_version=..., version_prefix=...). Returns the highest cohort "
+            "and how many times worse it is than the next — the fastest decoy-killer.",
+            {
+                "type": "object",
+                "properties": {
+                    "term": {"type": "string"},
+                    "dimension": {"type": "string", "enum": ["version", "os"]},
+                    "date_from": _DATE, "date_to": _DATE,
+                    "os_version": {"type": "string"}, "version_prefix": {"type": "string"},
+                },
+                "required": ["term"],
+            },
+            "play_store",
+        ),
+        ToolSpec(
+            "analyze_trend", analyze_trend,
+            "Statistical decomposition of a term's daily signal: baseline, peak, and a "
+            "deterministic changepoint (the date the rate shifted and by how many x). Stronger "
+            "than a single z-score for pinpointing WHEN a problem started.",
+            {
+                "type": "object",
+                "properties": {
+                    "term": {"type": "string"},
+                    "date_from": _DATE, "date_to": _DATE,
+                    "negatives_only": {"type": "boolean"},
+                },
+                "required": ["term"],
+            },
+            "play_store",
         ),
     ]
 }

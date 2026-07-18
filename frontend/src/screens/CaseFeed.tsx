@@ -97,6 +97,10 @@ export function CaseFeed({ onOpenInvestigation, onNewCase, reloadKey }: Props) {
             const sev = severity(a.z);
             const chip = chipFor(a);
             const clickable = a.investigation_id != null;
+            const isManual = a.type === "manual";
+            // Manual cases carry their real name in `description`; detected
+            // anomalies describe themselves via `metric`.
+            const title = isManual ? a.description : a.metric;
             return (
               <div
                 key={a.slug}
@@ -116,15 +120,19 @@ export function CaseFeed({ onOpenInvestigation, onNewCase, reloadKey }: Props) {
               >
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <div style={{ width: 8, height: 8, borderRadius: 2, background: sev.color, flex: "none" }} />
-                    <div style={{ fontFamily: mono, fontSize: 11, color: sev.color }}>{sev.label}</div>
+                    <div style={{ width: 8, height: 8, borderRadius: 2, background: isManual ? C.info : sev.color, flex: "none" }} />
+                    <div style={{ fontFamily: mono, fontSize: 11, color: isManual ? C.info : sev.color }}>
+                      {isManual ? "MANUAL" : sev.label}
+                    </div>
                   </div>
                   <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginTop: 5 }}>
-                    z={a.z}
+                    {isManual ? "you opened" : `z=${a.z}`}
                   </div>
                 </div>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 14.5, fontWeight: 600, color: C.text }}>{a.metric}</div>
+                  <div style={{ fontSize: 14.5, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {title}
+                  </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 7, flexWrap: "wrap" }}>
                     <span
                       style={{
@@ -137,9 +145,9 @@ export function CaseFeed({ onOpenInvestigation, onNewCase, reloadKey }: Props) {
                         textTransform: "uppercase",
                       }}
                     >
-                      {a.type.replace(/_/g, " ")}
+                      {isManual ? "manual case" : a.type.replace(/_/g, " ")}
                     </span>
-                    <Spark points={sparkFor(a.z)} color={sev.color} />
+                    {!isManual && <Spark points={sparkFor(a.z)} color={sev.color} />}
                     {a.triage?.reason && (
                       <span style={{ fontSize: 12, color: C.dim, fontStyle: "italic" }}>{a.triage.reason}</span>
                     )}

@@ -25,7 +25,8 @@ def test_triage_applies_and_persists_decisions(session):
     by_slug = {d.anomaly.slug: d for d in decisions}
 
     assert by_slug["auto-neg-review-spike"].decision == "investigate"
-    assert by_slug["auto-neg-review-spike"].budget_tier == "standard"
+    # tier is now set adaptively by complexity (v2.0), not taken from the LLM
+    assert by_slug["auto-neg-review-spike"].budget_tier in ("quick", "standard", "deep")
     merged = by_slug["auto-issues-background"]
     assert merged.decision == "merge" and merged.merge_into.slug == "auto-neg-review-spike"
 

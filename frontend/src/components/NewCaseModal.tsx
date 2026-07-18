@@ -8,7 +8,7 @@ const TIERS: { key: string; name: string; detail: string }[] = [
   { key: "deep", name: "Deep dive", detail: "30 iter · $2.00 · 2 h" },
 ];
 
-export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onStarted: (anomalyId: number) => void }) {
+export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onStarted: (investigationId: number) => void }) {
   const [desc, setDesc] = useState("");
   const [tier, setTier] = useState("standard");
   const [busy, setBusy] = useState(false);
@@ -20,7 +20,7 @@ export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onSt
     setError(null);
     try {
       const r = await api.startInvestigation({ description: desc, tier });
-      onStarted(r.anomaly_id);
+      onStarted(r.investigation_id);
     } catch (e) {
       // surface the reason instead of silently doing nothing
       const msg = String(e).replace("Error: ", "");

@@ -133,8 +133,13 @@ def _investigation_dict(session, inv: Investigation) -> dict:
     if finding is not None:
         recs = session.scalars(select(Recommendation).where(
             Recommendation.finding_id == finding.id).order_by(Recommendation.rank)).all()
+    anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv.anomaly_id else None
+    title = "Investigation"
+    if anomaly is not None:
+        title = anomaly.description if anomaly.type == "manual" else anomaly.metric
     return {
         "id": inv.id, "anomaly_id": inv.anomaly_id, "status": inv.status,
+        "title": title,
         "opened_by": inv.opened_by, "budget_tier": inv.budget_tier,
         "budget": inv.budget_json, "paused": inv.paused, "escalated": inv.escalated,
         "reopens_investigation_id": inv.reopens_investigation_id,
@@ -156,14 +161,18 @@ def _trace_dict(t: TraceStep) -> dict:
 
 # ── background investigation runner ────────────────────────────────────
 
-def _run_investigation_bg(anomaly_id: int, tier: str, opened_by: str) -> None:
+def _run_investigation_bg(investigation_id: int, tier: str) -> None:
+    """Run the loop on an investigation row that was already created (so the
+    POST could return its id immediately for the UI to jump to)."""
     from echolens.investigator.graph import Investigator
     from echolens.recommender.recommend import recommend
 
     with session_scope() as session:
-        anomaly = session.get(AnomalyEvent, anomaly_id)
+        inv_row = session.get(Investigation, investigation_id)
+        anomaly = session.get(AnomalyEvent, inv_row.anomaly_id)
         anomaly.status = "investigating"
-        inv = Investigator(session, anomaly, tier=tier, opened_by=opened_by).run()
+        inv = Investigator(session, anomaly, tier=tier,
+                           existing_investigation=inv_row).run()
         finding = session.scalars(select(Finding).where(
             Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
         if finding is not None:
@@ -353,16 +362,23 @@ def start_investigation(request: Request, body: NewCase,
             anomaly = AnomalyEvent(
                 slug=f"manual-{int(time.time())}", type="manual",
                 metric="manual case", delta=0.0, z=0.0, window="n/a",
-                description=body.description, status="pending")
+                description=body.description.strip(), status="pending")
             session.add(anomaly)
             session.flush()
         else:
             raise HTTPException(422, "provide anomaly_slug or description")
-        anomaly_id = anomaly.id
+        # Create the investigation row NOW so we can return its id and the UI can
+        # jump straight to the live trace; the loop itself runs in the background.
+        inv = Investigation(anomaly_id=anomaly.id, status="running",
+                            opened_by=opened_by, budget_tier=body.tier, budget_json={})
+        session.add(inv)
+        anomaly.status = "investigating"
+        session.flush()
+        investigation_id, anomaly_id = inv.id, anomaly.id
 
     threading.Thread(target=_run_investigation_bg,
-                     args=(anomaly_id, body.tier, opened_by), daemon=True).start()
-    return {"status": "started", "anomaly_id": anomaly_id}
+                     args=(investigation_id, body.tier), daemon=True).start()
+    return {"status": "started", "investigation_id": investigation_id, "anomaly_id": anomaly_id}
 
 
 @app.get("/investigations")

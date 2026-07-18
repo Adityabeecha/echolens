@@ -117,6 +117,7 @@ export interface Investigation {
   id: number;
   anomaly_id: number | null;
   status: string;
+  title: string;
   opened_by: string;
   budget_tier: string;
   budget: Record<string, string>;
@@ -215,7 +216,7 @@ export const api = {
   trace: (id: number, after = 0) =>
     get<{ status: string; steps: TraceStep[] }>(`/investigations/${id}/trace?after=${after}`),
   startInvestigation: (body: { anomaly_slug?: string; description?: string; tier?: string }) =>
-    post<{ status: string; anomaly_id: number }>("/investigations", body),
+    post<{ status: string; investigation_id: number; anomaly_id: number }>("/investigations", body),
   review: (findingId: number, action: "approve" | "challenge", note = "") =>
     post<{ status: string; reopened_investigation_id?: number }>(`/findings/${findingId}/review`, {
       action,

@@ -65,6 +65,36 @@ class Decision:
     merge_into: AnomalyEvent | None = None
 
 
+def adaptive_tier(anomaly: AnomalyEvent, session: Session) -> str:
+    """Pick a budget by anomaly complexity, not just severity (v2.0).
+
+    A sharp single-source spike is cheap to confirm → quick. A multi-source or
+    ambiguous signal needs more room → standard/deep. Deterministic so the same
+    anomaly always gets the same scope.
+    """
+    from echolens.db.models import Issue, Post
+
+    score = 0
+    if abs(anomaly.z) >= 3:              # very strong signal, easy to pin
+        score -= 1
+    if anomaly.type == "theme_volume_surge":
+        score += 1                       # themes are fuzzier than volume spikes
+    # is the same theme echoed in other sources? more sources = more to weigh
+    term = anomaly.metric.split()[0] if anomaly.metric else ""
+    if term:
+        if session.query(Issue).filter(Issue.title.contains(term)).first():
+            score += 1
+        if session.query(Post).filter(Post.text_snippet.contains(term)).first():
+            score += 1
+    if anomaly.type == "manual":         # free-text cases start wide
+        score += 1
+    if score <= -1:
+        return "quick"
+    if score >= 2:
+        return "deep"
+    return "standard"
+
+
 class Orchestrator:
     def __init__(self, session: Session, llm: LLMClient | None = None,
                  daily_limit: int = ORCHESTRATOR_DAILY_INVESTIGATIONS):
@@ -132,6 +162,9 @@ class Orchestrator:
         for a in pending:  # default for anything the model skipped
             decisions.setdefault(a.slug, Decision(a, "ignore", "not selected by orchestrator"))
 
+        for d in decisions.values():  # v2.0: adaptive budget by complexity
+            if d.decision == "investigate":
+                d.budget_tier = adaptive_tier(d.anomaly, self.session)
         self._enforce_daily_cap(list(decisions.values()), as_of)
         self._persist(list(decisions.values()))
         return list(decisions.values())

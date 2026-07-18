@@ -83,8 +83,8 @@ export function Investigation({ investigationId, onBack, onDraftFinding, onOpenE
         </span>
         <div style={{ width: 1, height: 18, background: C.border2 }} />
         <span style={{ fontFamily: mono, fontSize: 12, color: C.accent }}>CASE #{investigationId}</span>
-        <div style={{ fontSize: 15, fontWeight: 600 }}>
-          {inv?.finding?.summary ?? "Investigation in progress"}
+        <div style={{ fontSize: 15, fontWeight: 600, maxWidth: 520, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {inv?.finding?.summary || inv?.title || "Investigation in progress"}
         </div>
         <div
           style={{
