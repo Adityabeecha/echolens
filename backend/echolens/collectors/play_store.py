@@ -14,12 +14,23 @@ from echolens.collectors.base import Collector, iso
 from echolens.db.models import Review
 
 
-def _default_fetch(app_id: str, count: int) -> list[dict]:
+def _default_fetch(app_id: str, count: int, retries: int = 3) -> list[dict]:
     # Lazy import: the heavy/unofficial dep is only needed for a live pull.
+    import time as _t
+
     from google_play_scraper import Sort, reviews  # type: ignore
 
-    result, _ = reviews(app_id, lang="en", country="us", sort=Sort.NEWEST, count=count)
-    return result
+    # google-play-scraper is an unofficial scraper — transient failures (throttling,
+    # flaky network) are common, so retry with backoff before giving up.
+    last: Exception | None = None
+    for attempt in range(retries):
+        try:
+            result, _ = reviews(app_id, lang="en", country="us", sort=Sort.NEWEST, count=count)
+            return result
+        except Exception as err:  # noqa: BLE001 — retry any scraper failure
+            last = err
+            _t.sleep(1.5 * (attempt + 1))
+    raise last if last else RuntimeError("play store fetch failed")
 
 
 class PlayStoreCollector(Collector):

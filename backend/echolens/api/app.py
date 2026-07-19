@@ -490,6 +490,14 @@ def start_investigation(request: Request, body: NewCase,
                 AnomalyEvent.slug == body.anomaly_slug)).first()
             if anomaly is None:
                 raise HTTPException(404, f"no anomaly '{body.anomaly_slug}'")
+            # Concurrency guard: don't spawn a second investigation for an anomaly
+            # that already has one running — return the in-flight one instead.
+            running = session.scalars(select(Investigation).where(
+                Investigation.anomaly_id == anomaly.id,
+                Investigation.status == "running")).first()
+            if running is not None:
+                return {"status": "already_running", "investigation_id": running.id,
+                        "anomaly_id": anomaly.id}
         elif body.description:
             opened_by = "manual"
             anomaly = AnomalyEvent(
@@ -531,6 +539,26 @@ def get_investigation(inv_id: int) -> dict:
         if inv is None:
             raise HTTPException(404, "no such investigation")
         return _investigation_dict(session, inv)
+
+
+def _run_challenge_bg(inv_id: int, note: str) -> None:
+    """Run a challenge re-investigation (created synchronously by the review
+    endpoint) off the request path so the HTTP call returns immediately."""
+    from echolens.investigator.graph import Investigator
+    from echolens.recommender.recommend import recommend
+    with session_scope() as session:
+        inv_row = session.get(Investigation, inv_id)
+        if inv_row is None:
+            return
+        anomaly = session.get(AnomalyEvent, inv_row.anomaly_id)
+        inv = Investigator(session, anomaly, tier=inv_row.budget_tier, opened_by="challenge",
+                           context_note=note, reopens_investigation_id=inv_row.reopens_investigation_id,
+                           existing_investigation=inv_row).run()
+        finding = session.scalars(select(Finding).where(
+            Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
+        if finding is not None:
+            recommend(session, finding)
+            _try_notify(session, finding)
 
 
 def _resume_investigation_bg(inv_id: int) -> None:
@@ -637,9 +665,17 @@ def review_finding(finding_id: int, body: ReviewBody,
         if body.action == "challenge":
             if not body.note.strip():
                 raise HTTPException(422, "challenge requires a note")
-            reopened = review.challenge(session, finding, body.note, user_id=user["id"], reason=body.reason)
-            return {"status": "challenged", "reopened_investigation_id": reopened.id, "by": user["email"]}
-        raise HTTPException(422, "action must be approve or challenge")
+            # Create the re-opened row synchronously, then run the loop in the
+            # background so the HTTP request returns immediately (a full
+            # investigation can take many minutes — it must not block the request).
+            reopened = review.record_challenge(session, finding, body.note,
+                                               reason=body.reason, user_id=user["id"])
+            reopened_id = reopened.id
+            note = body.note
+    if body.action == "challenge":
+        threading.Thread(target=_run_challenge_bg, args=(reopened_id, note), daemon=True).start()
+        return {"status": "challenged", "reopened_investigation_id": reopened_id, "by": user["email"]}
+    raise HTTPException(422, "action must be approve or challenge")
 
 
 @app.get("/calibration")

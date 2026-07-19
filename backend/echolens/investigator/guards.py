@@ -5,7 +5,6 @@ These run in code, never in prompts. The agent cannot talk its way past them.
 from __future__ import annotations
 
 import re
-import time
 
 from echolens.config import (
     INSUFFICIENT_CONFIDENCE,
@@ -37,7 +36,9 @@ def budget_exceeded(budget: Budget) -> list[str]:
         reasons.append(f"tokens {budget.tokens}/{int(t.max_tokens * f)}")
     if budget.cost_usd >= t.max_cost_usd * f:
         reasons.append(f"cost ${budget.cost_usd:.2f}/${t.max_cost_usd * f:.2f}")
-    if budget.started_at and (time.monotonic() - budget.started_at) >= t.max_wall_clock_s * f:
+    # elapsed includes wall-clock spent before a restart (restored from checkpoint),
+    # so a resumed investigation can't get its full time budget over again.
+    if budget.elapsed_s() >= t.max_wall_clock_s * f:
         reasons.append(f"wall_clock >= {int(t.max_wall_clock_s * f)}s")
     return reasons
 

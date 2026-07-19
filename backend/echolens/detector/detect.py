@@ -128,13 +128,15 @@ def _zscore(recent: list[float], baseline: list[float]) -> tuple[float, float]:
     return round(z, 2), round(delta, 3)
 
 
-def detect_volume_spike(session: Session, as_of: datetime = AS_OF,
-                        win: Windows | None = None) -> Candidate | None:
+def detect_volume_spike(session: Session, as_of: datetime | None = None,
+                        win: Windows | None = None, product: str | None = None) -> Candidate | None:
+    as_of = as_of or reference_now(session)
     win = win or Windows()
     start = as_of - timedelta(days=win.baseline + win.recent)
-    rows = session.scalars(
-        select(Review).where(Review.rating == 1, Review.created_at >= start)
-    ).all()
+    stmt = select(Review).where(Review.rating == 1, Review.created_at >= start)
+    if product:
+        stmt = stmt.where(Review.product == product)
+    rows = session.scalars(stmt).all()
     series = _daily_counts(rows, lambda r: r.created_at.date(), start, as_of)
     if len(series) <= win.recent:
         return None
@@ -173,13 +175,17 @@ def _share_series(rows, text_of, day_of, terms, start, as_of, negatives_only):
     return series
 
 
-def detect_rating_drop(session: Session, as_of: datetime = AS_OF,
-                       win: Windows | None = None) -> Candidate | None:
+def detect_rating_drop(session: Session, as_of: datetime | None = None,
+                       win: Windows | None = None, product: str | None = None) -> Candidate | None:
     """Theme-agnostic: a real drop in average star rating. Works for ANY app,
     no keyword list required."""
+    as_of = as_of or reference_now(session)
     win = win or Windows()
     start = as_of - timedelta(days=win.baseline + win.recent)
-    rows = session.scalars(select(Review).where(Review.created_at >= start)).all()
+    stmt = select(Review).where(Review.created_at >= start)
+    if product:
+        stmt = stmt.where(Review.product == product)
+    rows = session.scalars(stmt).all()
     daily: dict = defaultdict(list)
     for r in rows:
         if start.date() <= r.created_at.date() <= as_of.date():
@@ -204,16 +210,25 @@ def detect_rating_drop(session: Session, as_of: datetime = AS_OF,
     )
 
 
-def detect_theme_surges(session: Session, as_of: datetime = AS_OF,
-                        win: Windows | None = None) -> list[Candidate]:
+def detect_theme_surges(session: Session, as_of: datetime | None = None,
+                        win: Windows | None = None, product: str | None = None) -> list[Candidate]:
+    as_of = as_of or reference_now(session)
     win = win or Windows()
     start = as_of - timedelta(days=win.baseline + win.recent)
-    reviews = session.scalars(select(Review).where(Review.created_at >= start)).all()
-    posts = session.scalars(select(Post).where(Post.created_at >= start)).all()
+    r_stmt = select(Review).where(Review.created_at >= start)
+    p_stmt = select(Post).where(Post.created_at >= start)
+    if product:
+        r_stmt = r_stmt.where(Review.product == product)
+        p_stmt = p_stmt.where(Post.product == product)
+    reviews = session.scalars(r_stmt).all()
+    posts = session.scalars(p_stmt).all()
     out: list[Candidate] = []
 
     from echolens.config import settings
-    theme_terms = THEME_TERMS + [(t, f"'{t}' complaints") for t in settings.extra_theme_terms]
+    # A real product supplies its OWN themes; the built-in Lumo terms are only the
+    # demo default and are dropped once a real operator configures their terms.
+    extra = settings.extra_theme_terms
+    theme_terms = ([(t, f"'{t}' complaints") for t in extra] if extra else THEME_TERMS)
     for term, label in theme_terms:
         terms = terms_of(term)
         series = _share_series(reviews, lambda r: r.text, lambda r: r.created_at.date(),
@@ -230,7 +245,8 @@ def detect_theme_surges(session: Session, as_of: datetime = AS_OF,
             severity=_severity(z),
         ))
 
-    for term, label in POST_TERMS:
+    # POST_TERMS are Lumo-demo specific; skip them for a real configured product.
+    for term, label in ([] if extra else POST_TERMS):
         terms = terms_of(term)
         series = _share_series(posts, lambda p: p.text_snippet, lambda p: p.created_at.date(),
                                terms, start, as_of, negatives_only=False)
@@ -247,13 +263,21 @@ def detect_theme_surges(session: Session, as_of: datetime = AS_OF,
     return out
 
 
-def detect_issue_velocity(session: Session, as_of: datetime = AS_OF,
-                          win: Windows | None = None) -> list[Candidate]:
+def detect_issue_velocity(session: Session, as_of: datetime | None = None,
+                          win: Windows | None = None, product: str | None = None) -> list[Candidate]:
+    as_of = as_of or reference_now(session)
     win = win or Windows()
     start = as_of - timedelta(days=win.baseline + win.recent)
-    issues = session.scalars(select(Issue).where(Issue.created_at >= start)).all()
+    stmt = select(Issue).where(Issue.created_at >= start)
+    if product:
+        stmt = stmt.where(Issue.product == product)
+    issues = session.scalars(stmt).all()
     out: list[Candidate] = []
-    for term, label in ISSUE_TERMS:
+    from echolens.config import settings
+    # ISSUE_TERMS are Lumo-demo specific; a real product uses its own themes.
+    issue_terms = ([(t, f"'{t}' issue reports") for t in settings.extra_theme_terms]
+                   if settings.extra_theme_terms else ISSUE_TERMS)
+    for term, label in issue_terms:
         terms = terms_of(term)
         hits = [i for i in issues if match_score(i.title + " " + i.body_snippet, terms) > 0]
         series = _daily_counts(hits, lambda i: i.created_at.date(), start, as_of)
@@ -272,22 +296,23 @@ def detect_issue_velocity(session: Session, as_of: datetime = AS_OF,
     return out
 
 
-def scan(session: Session, as_of: datetime | None = None, persist: bool = True) -> list[AnomalyEvent]:
+def scan(session: Session, as_of: datetime | None = None, persist: bool = True,
+         product: str | None = None) -> list[AnomalyEvent]:
     """Run every detector, dedupe by slug, and (optionally) persist as pending
     anomaly_events. Re-running is idempotent: existing slugs are skipped.
     `as_of` defaults to the latest data timestamp (not a hardcoded date)."""
     if as_of is None:
         as_of = reference_now(session)
-    win = choose_windows(session, as_of)
+    win = choose_windows(session, as_of, product)
     candidates: list[Candidate] = []
-    spike = detect_volume_spike(session, as_of, win)
+    spike = detect_volume_spike(session, as_of, win, product)
     if spike:
         candidates.append(spike)
-    drop = detect_rating_drop(session, as_of, win)
+    drop = detect_rating_drop(session, as_of, win, product)
     if drop:
         candidates.append(drop)
-    candidates += detect_theme_surges(session, as_of, win)
-    candidates += detect_issue_velocity(session, as_of, win)
+    candidates += detect_theme_surges(session, as_of, win, product)
+    candidates += detect_issue_velocity(session, as_of, win, product)
 
     existing = {e.slug for e in session.scalars(select(AnomalyEvent)).all()}
     events: list[AnomalyEvent] = []

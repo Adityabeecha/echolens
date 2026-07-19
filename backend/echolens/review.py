@@ -38,13 +38,13 @@ def approve(session: Session, finding: Finding, note: str = "", user_id: int | N
 CHALLENGE_REASONS = {"wrong_cause", "weak_evidence", "wrong_severity", "already_knew"}
 
 
-def challenge(session: Session, finding: Finding, note: str,
-              llm: LLMClient | None = None, on_step=None,
-              tier: str | None = None, user_id: int | None = None,
-              reason: str | None = None) -> Investigation:
-    """Record the challenge and re-open the investigation with the note injected.
-    `reason` is a structured autopsy category (v5.0) that rolls up into the
-    visible 'known weak spots' panel and future prompt guidance."""
+def record_challenge(session: Session, finding: Finding, note: str,
+                     reason: str | None = None, user_id: int | None = None,
+                     tier: str | None = None) -> Investigation:
+    """The SYNCHRONOUS part of a challenge: record the feedback, mark the finding
+    challenged, and create the re-opened investigation ROW (running, not yet
+    executed). Returns it so the API can respond immediately and run the loop in
+    the background — a full investigation must not block the HTTP request."""
     if not note.strip():
         raise ValueError("a challenge requires a note explaining what to reconsider")
     if reason is not None and reason not in CHALLENGE_REASONS:
@@ -52,16 +52,29 @@ def challenge(session: Session, finding: Finding, note: str,
     session.add(ReviewFeedback(finding_id=finding.id, action="challenge", note=note,
                                user_id=user_id, reason=reason))
     finding.status = "challenged"
-
     old_inv = session.get(Investigation, finding.investigation_id)
     anomaly = session.get(AnomalyEvent, old_inv.anomaly_id)
     anomaly.status = "investigating"
+    new_inv = Investigation(anomaly_id=anomaly.id, status="running", opened_by="challenge",
+                            budget_tier=tier or old_inv.budget_tier, budget_json={},
+                            reopens_investigation_id=old_inv.id)
+    session.add(new_inv)
     session.flush()
+    return new_inv
 
+
+def challenge(session: Session, finding: Finding, note: str,
+              llm: LLMClient | None = None, on_step=None,
+              tier: str | None = None, user_id: int | None = None,
+              reason: str | None = None) -> Investigation:
+    """Record the challenge AND run the re-investigation synchronously (used by
+    tests and off-request background workers, never inside a request handler)."""
+    new_inv = record_challenge(session, finding, note, reason=reason, user_id=user_id, tier=tier)
+    anomaly = session.get(AnomalyEvent, new_inv.anomaly_id)
     from echolens.investigator.graph import Investigator
-    reopened = Investigator(
-        session, anomaly, llm=llm, tier=tier or old_inv.budget_tier,
+    return Investigator(
+        session, anomaly, llm=llm, tier=new_inv.budget_tier,
         opened_by="challenge", context_note=note,
-        reopens_investigation_id=old_inv.id, on_step=on_step,
+        reopens_investigation_id=new_inv.reopens_investigation_id, on_step=on_step,
+        existing_investigation=new_inv,
     ).run()
-    return reopened

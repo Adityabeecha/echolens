@@ -15,7 +15,25 @@ from echolens.config import settings
 from echolens.db.models import Issue, Release
 
 
-def _default_fetch(repo: str, since: str | None, per_page: int) -> dict:
+def _ensure_list(resp, what: str) -> list:
+    """GitHub returns a JSON list on success but an object {"message": ...} on
+    error (bad repo, invalid token, rate limit). Turn those into a clear error the
+    collector framework records, instead of crashing in the iteration loop."""
+    if resp.status_code >= 300:
+        msg = ""
+        try:
+            msg = resp.json().get("message", "")
+        except Exception:
+            pass
+        raise RuntimeError(f"GitHub {what} HTTP {resp.status_code}: {msg or resp.text[:120]}")
+    data = resp.json()
+    if not isinstance(data, list):
+        msg = data.get("message", "") if isinstance(data, dict) else ""
+        raise RuntimeError(f"GitHub {what}: unexpected response — {msg or str(data)[:120]}")
+    return data
+
+
+def _default_fetch(repo: str, since: str | None, per_page: int, max_pages: int = 5) -> dict:
     import httpx
 
     headers = {"Accept": "application/vnd.github+json"}
@@ -25,10 +43,21 @@ def _default_fetch(repo: str, since: str | None, per_page: int) -> dict:
     params = {"state": "all", "per_page": min(per_page, 100), "sort": "updated", "direction": "desc"}
     if since:
         params["since"] = since
+    issues: list = []
     with httpx.Client(timeout=20, headers=headers) as c:
-        issues = c.get(f"https://api.github.com/repos/{repo}/issues", params=params).json()
-        releases = c.get(f"https://api.github.com/repos/{repo}/releases",
-                         params={"per_page": 30}).json()
+        # paginate via the Link header (bounded) so big repos aren't truncated to 100
+        url: str | None = f"https://api.github.com/repos/{repo}/issues"
+        page_params: dict | None = dict(params)
+        for _ in range(max_pages):
+            resp = c.get(url, params=page_params)
+            page = _ensure_list(resp, "issues")
+            issues.extend(page)
+            nxt = resp.links.get("next", {}).get("url")
+            if not nxt or not page:
+                break
+            url, page_params = nxt, None  # the next link already carries the query
+        releases = _ensure_list(
+            c.get(f"https://api.github.com/repos/{repo}/releases", params={"per_page": 30}), "releases")
     return {"issues": issues, "releases": releases}
 
 

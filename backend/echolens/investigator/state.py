@@ -14,9 +14,17 @@ class Budget:
     tool_calls: int = 0
     tokens: int = 0
     cost_usd: float = 0.0
-    started_at: float = 0.0  # time.monotonic()
+    started_at: float = 0.0  # time.monotonic() of THIS process's run segment
+    # wall-clock already spent in PRIOR segments (restored from checkpoint on resume)
+    # so the wall-clock guard survives a server restart.
+    prior_elapsed_s: float = 0.0
     extension_factor: float = 1.0  # v2.0: one-time extension multiplier on caps
     extended: bool = False
+
+    def elapsed_s(self) -> float:
+        import time
+        live = (time.monotonic() - self.started_at) if self.started_at else 0.0
+        return self.prior_elapsed_s + live
 
     @classmethod
     def for_tier(cls, name: str) -> "Budget":

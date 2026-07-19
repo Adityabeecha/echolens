@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -65,12 +65,15 @@ class Decision:
     merge_into: AnomalyEvent | None = None
 
 
-def adaptive_tier(anomaly: AnomalyEvent, session: Session) -> str:
-    """Pick a budget by anomaly complexity, not just severity (v2.0).
+_TIER_ORDER = ["quick", "standard", "deep"]
 
-    A sharp single-source spike is cheap to confirm → quick. A multi-source or
-    ambiguous signal needs more room → standard/deep. Deterministic so the same
-    anomaly always gets the same scope.
+
+def adaptive_tier(anomaly: AnomalyEvent, session: Session, proposed: str = "standard") -> str:
+    """Adjust the orchestrator's PROPOSED budget by anomaly complexity (v2.0).
+
+    The LLM's tier choice is the starting point (not discarded); a sharp
+    single-source spike nudges it cheaper, a multi-source/ambiguous signal nudges
+    it more expensive. Deterministic so the same inputs always give the same scope.
     """
     from echolens.db.models import Issue, Post
 
@@ -88,11 +91,13 @@ def adaptive_tier(anomaly: AnomalyEvent, session: Session) -> str:
             score += 1
     if anomaly.type == "manual":         # free-text cases start wide
         score += 1
+
+    base = _TIER_ORDER.index(proposed) if proposed in _TIER_ORDER else 1
     if score <= -1:
-        return "quick"
-    if score >= 2:
-        return "deep"
-    return "standard"
+        base -= 1
+    elif score >= 2:
+        base += 1
+    return _TIER_ORDER[max(0, min(len(_TIER_ORDER) - 1, base))]
 
 
 class Orchestrator:
@@ -112,7 +117,12 @@ class Orchestrator:
         ))
 
     def _investigations_today(self, as_of: datetime) -> int:
-        rows = self.session.scalars(select(Investigation)).all()
+        # Bound the scan to recent rows (don't load every investigation ever), then
+        # match the exact local date in Python — robust across SQLite (naive) and
+        # Postgres (aware) storage without a dialect-specific date cast.
+        cutoff = as_of.replace(tzinfo=None) - timedelta(days=2)
+        rows = self.session.scalars(select(Investigation).where(
+            Investigation.created_at >= cutoff)).all()
         return sum(1 for r in rows if r.created_at and r.created_at.date() == as_of.date())
 
     def triage(self, as_of: datetime = AS_OF) -> list[Decision]:
@@ -162,9 +172,9 @@ class Orchestrator:
         for a in pending:  # default for anything the model skipped
             decisions.setdefault(a.slug, Decision(a, "ignore", "not selected by orchestrator"))
 
-        for d in decisions.values():  # v2.0: adaptive budget by complexity
+        for d in decisions.values():  # v2.0: nudge the LLM's tier by complexity
             if d.decision == "investigate":
-                d.budget_tier = adaptive_tier(d.anomaly, self.session)
+                d.budget_tier = adaptive_tier(d.anomaly, self.session, d.budget_tier or "standard")
         self._enforce_daily_cap(list(decisions.values()), as_of)
         self._persist(list(decisions.values()))
         return list(decisions.values())

@@ -516,7 +516,8 @@ class Investigator:
             "evidence": state["evidence"],
             "trigger": state["trigger"],
             "budget": {"iterations": self.budget.iterations, "tool_calls": self.budget.tool_calls,
-                       "tokens": self.budget.tokens, "cost_usd": self.budget.cost_usd},
+                       "tokens": self.budget.tokens, "cost_usd": self.budget.cost_usd,
+                       "elapsed_s": self.budget.elapsed_s()},
             "executed_calls": sorted(self._executed_calls),
             "recent": self._recent[-6:],
         }
@@ -638,6 +639,7 @@ class Investigator:
         inv.budget.tool_calls = b.get("tool_calls", 0)
         inv.budget.tokens = b.get("tokens", 0)
         inv.budget.cost_usd = b.get("cost_usd", 0.0)
+        inv.budget.prior_elapsed_s = b.get("elapsed_s", 0.0)  # wall-clock survives restart
         inv._executed_calls = set(ckpt.get("executed_calls", []))
         inv._recent = list(ckpt.get("recent", []))
         inv._trace("THINK", {"text": f"Resumed after interruption at iteration {inv.budget.iterations}; "
@@ -669,11 +671,14 @@ class Investigator:
         graph.add_conditional_edges(
             "check", lambda s: END if s["status"] != "running" else "plan")
 
+        from echolens.detector.detect import reference_now
         trigger = {
             "type": self.anomaly.type, "metric": self.anomaly.metric,
             "delta": self.anomaly.delta, "z": self.anomaly.z,
             "window": self.anomaly.window, "description": self.anomaly.description,
-            "today": "2026-07-17",
+            # the reference date the agent reasons from = the latest data point, so
+            # "complaints started 3 days ago" is correct on live data (not a frozen date).
+            "today": reference_now(self.session).date().isoformat(),
         }
         if self.context_note:
             trigger["reviewer_challenge"] = self.context_note
@@ -739,7 +744,9 @@ class Investigator:
         self.inv.status = final["status"]
         self.inv.budget_json = self.budget.as_dict()
         self.inv.resolved_at = datetime.now(timezone.utc)
-        self.anomaly.status = "closed"
+        # Only a resolved case is truly closed; needs_human / insufficient_evidence
+        # keep their outcome as the anomaly status so they still read as open work.
+        self.anomaly.status = "closed" if final["status"] == "resolved" else final["status"]
         self.session.flush()
         self._final_state = final
         return self.inv
