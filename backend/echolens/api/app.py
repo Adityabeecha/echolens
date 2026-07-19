@@ -144,6 +144,7 @@ def _investigation_dict(session, inv: Investigation) -> dict:
         "opened_by": inv.opened_by, "budget_tier": inv.budget_tier,
         "budget": inv.budget_json, "paused": inv.paused, "escalated": inv.escalated,
         "reopens_investigation_id": inv.reopens_investigation_id,
+        "data_notes": inv.data_notes or [],
         "hypotheses": [{"id": h.hid, "statement": h.statement, "confidence": h.confidence,
                         "status": h.status, **h.json} for h in hyps],
         "evidence": [{"id": e.eid, "source": e.source, "ref": e.ref, "snippet": e.snippet,
@@ -307,6 +308,92 @@ def collectors_health() -> dict:
              "enabled": c.enabled} for c in rows]}
 
 
+def _data_notes(session) -> list[str]:
+    """Disclosure strings for any source that is stale RIGHT NOW, captured when an
+    investigation starts so its finding can say what was unavailable."""
+    from echolens.collectors.registry import source_health
+    notes = []
+    for h in source_health(session):
+        if h["stale"]:
+            label = _SOURCE_META.get(h["source"], {}).get("label", h["source"])
+            when = f" since {h['stale_since']}" if h.get("stale_since") else ""
+            notes.append(f"{label} ({h['identifier']}) was unavailable{when} during this "
+                         f"investigation — conclusions may be incomplete.")
+    return notes
+
+
+def _onboard_bg(product: str) -> None:
+    """Hands-off backfill: pull every configured source once, then scan. Runs in
+    a thread so POST /onboard returns immediately and the wizard can poll."""
+    from echolens.collectors.registry import run_all
+    from echolens.detector.detect import scan
+    try:
+        with session_scope() as session:
+            run_all(session, limit=300)  # 90-day-ish backfill for a first run
+        with session_scope() as session:
+            scan(session)
+        log.info("onboard_backfill_done", product=product)
+    except Exception as err:  # never crash the worker; the source shows its error
+        log.error("onboard_backfill_failed", product=product, error=str(err))
+
+
+class OnboardBody(BaseModel):
+    play_store: str
+    github: str | None = None
+    product: str | None = None
+
+
+@app.post("/onboard")
+def onboard(body: OnboardBody, user: dict = Depends(require_role("admin"))) -> dict:
+    """Add a real product in one shot: validate the inputs, register the sources,
+    and kick off a hands-off backfill. The wizard then polls /onboard/status."""
+    from echolens.collectors.registry import add_source
+    from echolens.onboarding.validate import normalize_github_repo, validate_play_store_package
+
+    err = validate_play_store_package(body.play_store)
+    if err:
+        raise HTTPException(422, err)
+    repo, gerr = normalize_github_repo(body.github)
+    if gerr:
+        raise HTTPException(422, gerr)
+    product = (body.product or "").strip() or body.play_store.strip()
+    with session_scope() as session:
+        add_source(session, "play_store", body.play_store.strip(), product)
+        if repo:
+            add_source(session, "github", repo, product)
+    threading.Thread(target=_onboard_bg, args=(product,), daemon=True).start()
+    return {"status": "backfilling", "product": product, "play_store": body.play_store.strip(),
+            "github": repo}
+
+
+@app.get("/onboard/status")
+def onboard_status(product: str) -> dict:
+    """Live view for the onboarding wait screen: source health, whether the
+    backfill is still running, the health snapshot so far, and any anomalies
+    already surfaced."""
+    from echolens.collectors.registry import source_health
+    from echolens.onboarding.snapshot import health_snapshot
+    with session_scope() as session:
+        health = source_health(session, product=product)
+        # "backfilling" until every source has at least completed one run
+        backfilling = any(h["status"] in ("idle", "running") and h["never_collected"]
+                          for h in health) or any(h["status"] == "running" for h in health)
+        snap = health_snapshot(session, product=product)
+        anomalies = [_anomaly_dict(session, a) for a in session.scalars(
+            select(AnomalyEvent).where(AnomalyEvent.status == "pending").order_by(AnomalyEvent.id)).all()]
+        return {"product": product, "backfilling": backfilling, "sources": health,
+                "snapshot": snap, "anomalies": anomalies}
+
+
+@app.get("/snapshot")
+def snapshot(product: str | None = None, days: int = 90) -> dict:
+    """Health snapshot for a product (or the whole corpus) — powers the
+    'Investigate now on anything' entry point outside onboarding."""
+    from echolens.onboarding.snapshot import health_snapshot
+    with session_scope() as session:
+        return health_snapshot(session, product=product, days=days)
+
+
 @app.post("/search/embed")
 def search_embed(user: dict = Depends(require_role("admin"))) -> dict:
     """Backfill embeddings over the corpus so semantic search activates (v1.0)."""
@@ -379,7 +466,8 @@ def start_investigation(request: Request, body: NewCase,
         # Create the investigation row NOW so we can return its id and the UI can
         # jump straight to the live trace; the loop itself runs in the background.
         inv = Investigation(anomaly_id=anomaly.id, status="running",
-                            opened_by=opened_by, budget_tier=body.tier, budget_json={})
+                            opened_by=opened_by, budget_tier=body.tier, budget_json={},
+                            data_notes=_data_notes(session))
         session.add(inv)
         anomaly.status = "investigating"
         session.flush()
@@ -669,9 +757,11 @@ _SOURCE_META = {
 
 @app.get("/sources")
 def sources() -> dict:
+    from echolens.collectors.registry import source_health
     from echolens.db.models import CollectorState
     with session_scope() as session:
         states = session.scalars(select(CollectorState)).all()
+        health = {(h["source"], h["identifier"]): h for h in source_health(session)}
         connected = []
         for st in states:
             if not st.enabled:
@@ -683,10 +773,15 @@ def sources() -> dict:
                 vol = session.scalar(select(func.count(Issue.id)).where(Issue.product == st.product)) or 0
             else:
                 vol = 0
+            h = health.get((st.source, st.identifier), {})
+            stale = bool(h.get("stale"))
             status = {"healthy": "Healthy", "error": "Error", "running": "Syncing…"}.get(st.status, "Idle")
+            if stale and st.status != "error":
+                status = "Stale"
             connected.append({
                 "icon": meta["icon"], "name": meta["label"], "detail": f"{st.identifier} · {st.product}",
                 "status": "Error" if st.status == "error" else status,
+                "stale": stale, "staleSince": h.get("stale_since"),
                 "lastPull": (f"pulled {st.last_run_at.date().isoformat()}" if st.last_run_at else "not yet collected"),
                 "volume": f"{vol:,} items", "error": st.last_error,
             })

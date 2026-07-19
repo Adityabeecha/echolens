@@ -18,6 +18,7 @@ _SessionLocal: sessionmaker | None = None
 _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("investigations", "reopens_investigation_id", "INTEGER"),
     ("investigations", "checkpoint_json", "JSON"),
+    ("investigations", "data_notes", "JSON"),
     ("review_feedback", "user_id", "INTEGER"),
     ("reviews", "product", "VARCHAR"),
     ("issues", "product", "VARCHAR"),

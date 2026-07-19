@@ -165,6 +165,9 @@ class Investigation(Base):
     reopens_investigation_id: Mapped[int | None] = mapped_column(nullable=True)
     # v1.0 recovery: serialized loop state, refreshed each iteration
     checkpoint_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # v3.0: data-availability caveats captured at start (e.g. a stale source), so
+    # the finding can disclose what was unavailable during the investigation.
+    data_notes: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(nullable=True)
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Evidence, getToken, onAuthError, setToken } from "./api";
+import { Evidence, api, getToken, isAdmin, onAuthError, setToken } from "./api";
 import { Screen } from "./nav";
 import { C, sans } from "./theme";
 import { Sidebar } from "./components/Sidebar";
@@ -12,6 +12,7 @@ import { Archive } from "./screens/Archive";
 import { Sources } from "./screens/Sources";
 import { Costs } from "./screens/Costs";
 import { Login } from "./screens/Login";
+import { Onboarding } from "./screens/Onboarding";
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("feed");
@@ -25,6 +26,25 @@ export default function App() {
   useEffect(() => {
     onAuthError(() => setAuthed(false));
   }, []);
+
+  // First run: an admin with no real product connected lands on the wizard, not
+  // an empty feed. (Demo rows report a "(demo)" name; those don't count.)
+  useEffect(() => {
+    if (!authed || !isAdmin()) return;
+    let alive = true;
+    api
+      .sources()
+      .then((s) => {
+        const hasReal = s.connected.some((c) => !c.name.includes("(demo)"));
+        if (alive && !hasReal) setScreen("onboarding");
+      })
+      .catch(() => {
+        /* backend down — stay on feed, it shows its own error state */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [authed]);
 
   // Deep-link support: #case/123 (used by the challenge-reopen redirect).
   useEffect(() => {
@@ -109,8 +129,19 @@ export default function App() {
             onReviewed={() => setReloadKey((k) => k + 1)}
           />
         )}
+        {screen === "onboarding" && (
+          <Onboarding
+            canSkip
+            onCancel={() => setScreen("feed")}
+            onDone={() => {
+              setReloadKey((k) => k + 1);
+              setScreen("feed");
+            }}
+            onOpenInvestigation={openInvestigation}
+          />
+        )}
         {screen === "archive" && <Archive onOpenInvestigation={openInvestigation} />}
-        {screen === "sources" && <Sources />}
+        {screen === "sources" && <Sources onAddProduct={() => setScreen("onboarding")} />}
         {screen === "costs" && <Costs />}
       </div>
 

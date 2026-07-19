@@ -9,11 +9,12 @@ const STATUS_COLOR: Record<string, string> = {
   "Rate-limited": C.accent,
   Disconnected: C.bad,
   Error: C.bad,
+  Stale: C.accent,
   "Syncing…": C.accent,
   Idle: C.muted,
 };
 
-export function Sources() {
+export function Sources({ onAddProduct }: { onAddProduct?: () => void }) {
   const { data, loading, error, reload } = useAsync(() => api.sources(), []);
   const [showConnect, setShowConnect] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -50,6 +51,12 @@ export function Sources() {
                 {busy === "collect" ? "Collecting…" : "Collect now"}
               </button>
               <GhostButton onClick={() => setShowConnect((s) => !s)}>+ Connect source</GhostButton>
+              {onAddProduct && (
+                <button onClick={onAddProduct} className="el-btn"
+                  style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: 6, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                  Add a product
+                </button>
+              )}
             </div>
           ) : undefined
         }
@@ -89,8 +96,8 @@ export function Sources() {
                   <div style={{ width: 7, height: 7, borderRadius: "50%", background: col, flex: "none" }} />
                   <span style={{ fontSize: 12, color: col }}>{s.status}</span>
                 </div>
-                <div style={{ fontSize: 12, color: s.error ? C.bad : C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {s.error || s.lastPull}
+                <div style={{ fontSize: 12, color: s.error ? C.bad : s.stale ? C.accent : C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {s.error || (s.stale && s.staleSince ? `stale since ${s.staleSince}` : s.lastPull)}
                 </div>
                 <div style={{ fontFamily: mono, fontSize: 11.5, color: C.text3, textAlign: "right" }}>{s.volume}</div>
               </div>

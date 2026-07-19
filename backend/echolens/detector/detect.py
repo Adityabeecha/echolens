@@ -16,7 +16,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from echolens.db.models import AnomalyEvent, Issue, Post, Review
@@ -25,6 +25,13 @@ from echolens.tools._util import match_score, terms_of
 AS_OF = datetime(2026, 7, 17, tzinfo=timezone.utc)  # fallback only
 RECENT_DAYS = 7
 BASELINE_DAYS = 28
+
+# v3.0 baseline quality guard: below this average daily review volume, a 7-day
+# window is too noisy to trust, so the detector honestly WIDENS its windows
+# instead of firing on statistical noise (and says so).
+LOW_VOLUME_PER_DAY = 3
+LOW_VOLUME_RECENT_DAYS = 14
+LOW_VOLUME_BASELINE_DAYS = 56
 
 
 def reference_now(session: Session) -> datetime:
@@ -35,6 +42,34 @@ def reference_now(session: Session) -> datetime:
     if latest is None:
         return AS_OF
     return latest if latest.tzinfo else latest.replace(tzinfo=timezone.utc)
+
+
+@dataclass
+class Windows:
+    """The recent/baseline window sizes a scan should use, widened automatically
+    when the corpus is too sparse for a 7-day window to be meaningful."""
+    recent: int = RECENT_DAYS
+    baseline: int = BASELINE_DAYS
+    low_volume: bool = False
+
+    @property
+    def note(self) -> str:
+        return (f" (low review volume — widened to {self.recent}d/{self.baseline}d windows)"
+                if self.low_volume else "")
+
+
+def choose_windows(session: Session, as_of: datetime, product: str | None = None) -> Windows:
+    """Pick window sizes from the corpus density near `as_of` (v3.0)."""
+    span = BASELINE_DAYS + RECENT_DAYS
+    start = as_of - timedelta(days=span)
+    stmt = select(func.count(Review.id)).where(
+        Review.created_at >= start, Review.created_at <= as_of)
+    if product:
+        stmt = stmt.where(Review.product == product)
+    n = session.scalar(stmt) or 0
+    if n / span < LOW_VOLUME_PER_DAY:
+        return Windows(LOW_VOLUME_RECENT_DAYS, LOW_VOLUME_BASELINE_DAYS, low_volume=True)
+    return Windows()
 
 # What the detector watches. (term, human label). Kept small and explicit.
 THEME_TERMS = [
@@ -93,23 +128,25 @@ def _zscore(recent: list[float], baseline: list[float]) -> tuple[float, float]:
     return round(z, 2), round(delta, 3)
 
 
-def detect_volume_spike(session: Session, as_of: datetime = AS_OF) -> Candidate | None:
-    start = as_of - timedelta(days=BASELINE_DAYS + RECENT_DAYS)
+def detect_volume_spike(session: Session, as_of: datetime = AS_OF,
+                        win: Windows | None = None) -> Candidate | None:
+    win = win or Windows()
+    start = as_of - timedelta(days=win.baseline + win.recent)
     rows = session.scalars(
         select(Review).where(Review.rating == 1, Review.created_at >= start)
     ).all()
     series = _daily_counts(rows, lambda r: r.created_at.date(), start, as_of)
-    if len(series) <= RECENT_DAYS:
+    if len(series) <= win.recent:
         return None
-    baseline, recent = series[:-RECENT_DAYS], series[-RECENT_DAYS:]
+    baseline, recent = series[:-win.recent], series[-win.recent:]
     z, delta = _zscore(recent, baseline)
     if z < SEV3_Z:
         return None
     return Candidate(
         slug="auto-neg-review-spike", type="negative_review_spike",
-        metric="daily 1-star review volume", delta=delta, z=z, window=f"{RECENT_DAYS}d",
-        description=f"1-star reviews {delta:+.0%} vs trailing {BASELINE_DAYS}d baseline "
-                    f"(z={z}); recent window ends {as_of.date()}.",
+        metric="daily 1-star review volume", delta=delta, z=z, window=f"{win.recent}d",
+        description=f"1-star reviews {delta:+.0%} vs trailing {win.baseline}d baseline "
+                    f"(z={z}); recent window ends {as_of.date()}.{win.note}",
         severity=_severity(z),
     )
 
@@ -136,10 +173,12 @@ def _share_series(rows, text_of, day_of, terms, start, as_of, negatives_only):
     return series
 
 
-def detect_rating_drop(session: Session, as_of: datetime = AS_OF) -> Candidate | None:
+def detect_rating_drop(session: Session, as_of: datetime = AS_OF,
+                       win: Windows | None = None) -> Candidate | None:
     """Theme-agnostic: a real drop in average star rating. Works for ANY app,
     no keyword list required."""
-    start = as_of - timedelta(days=BASELINE_DAYS + RECENT_DAYS)
+    win = win or Windows()
+    start = as_of - timedelta(days=win.baseline + win.recent)
     rows = session.scalars(select(Review).where(Review.created_at >= start)).all()
     daily: dict = defaultdict(list)
     for r in rows:
@@ -147,9 +186,9 @@ def detect_rating_drop(session: Session, as_of: datetime = AS_OF) -> Candidate |
             daily[r.created_at.date()].append(r.rating)
     days = sorted(daily)
     series = [statistics.mean(daily[d]) for d in days if daily[d]]
-    if len(series) <= RECENT_DAYS:
+    if len(series) <= win.recent:
         return None
-    baseline, recent = series[:-RECENT_DAYS], series[-RECENT_DAYS:]
+    baseline, recent = series[:-win.recent], series[-win.recent:]
     mean_b, mean_r = statistics.mean(baseline), statistics.mean(recent)
     std_b = statistics.stdev(baseline) if len(baseline) > 1 else 0.0
     drop = mean_b - mean_r
@@ -158,15 +197,17 @@ def detect_rating_drop(session: Session, as_of: datetime = AS_OF) -> Candidate |
         return None
     return Candidate(
         slug="auto-rating-drop", type="rating_drop",
-        metric="average star rating", delta=round(-drop / mean_b, 3), z=z, window=f"{RECENT_DAYS}d",
+        metric="average star rating", delta=round(-drop / mean_b, 3), z=z, window=f"{win.recent}d",
         description=f"Average rating fell from {mean_b:.2f}★ to {mean_r:.2f}★ over the last "
-                    f"{RECENT_DAYS} days (z={z}).",
+                    f"{win.recent} days (z={z}).{win.note}",
         severity=_severity(z),
     )
 
 
-def detect_theme_surges(session: Session, as_of: datetime = AS_OF) -> list[Candidate]:
-    start = as_of - timedelta(days=BASELINE_DAYS + RECENT_DAYS)
+def detect_theme_surges(session: Session, as_of: datetime = AS_OF,
+                        win: Windows | None = None) -> list[Candidate]:
+    win = win or Windows()
+    start = as_of - timedelta(days=win.baseline + win.recent)
     reviews = session.scalars(select(Review).where(Review.created_at >= start)).all()
     posts = session.scalars(select(Post).where(Post.created_at >= start)).all()
     out: list[Candidate] = []
@@ -177,15 +218,15 @@ def detect_theme_surges(session: Session, as_of: datetime = AS_OF) -> list[Candi
         terms = terms_of(term)
         series = _share_series(reviews, lambda r: r.text, lambda r: r.created_at.date(),
                                terms, start, as_of, negatives_only=True)
-        baseline, recent = series[:-RECENT_DAYS], series[-RECENT_DAYS:]
+        baseline, recent = series[:-win.recent], series[-win.recent:]
         z, delta = _zscore(recent, baseline)
         if z < SEV3_Z or statistics.mean(recent) < 3:
             continue
         out.append(Candidate(
             slug=f"auto-theme-{term.replace(' ', '-')}", type="theme_volume_surge",
-            metric=f"{label} share of negative reviews", delta=delta, z=z, window=f"{RECENT_DAYS}d",
+            metric=f"{label} share of negative reviews", delta=delta, z=z, window=f"{win.recent}d",
             description=f"{label}: {statistics.mean(recent):.0f}% of recent negatives vs "
-                        f"{statistics.mean(baseline):.0f}% baseline (z={z}).",
+                        f"{statistics.mean(baseline):.0f}% baseline (z={z}).{win.note}",
             severity=_severity(z),
         ))
 
@@ -193,28 +234,30 @@ def detect_theme_surges(session: Session, as_of: datetime = AS_OF) -> list[Candi
         terms = terms_of(term)
         series = _share_series(posts, lambda p: p.text_snippet, lambda p: p.created_at.date(),
                                terms, start, as_of, negatives_only=False)
-        baseline, recent = series[:-RECENT_DAYS], series[-RECENT_DAYS:]
+        baseline, recent = series[:-win.recent], series[-win.recent:]
         z, delta = _zscore(recent, baseline)
         if z < SEV3_Z:
             continue
         out.append(Candidate(
             slug=f"auto-post-{term.replace(' ', '-')}", type="theme_volume_surge",
-            metric=f"{label} on Reddit", delta=delta, z=z, window=f"{RECENT_DAYS}d",
+            metric=f"{label} on Reddit", delta=delta, z=z, window=f"{win.recent}d",
             description=f"{label}: community chatter up (z={z}); low separation from baseline variance.",
             severity=_severity(z),
         ))
     return out
 
 
-def detect_issue_velocity(session: Session, as_of: datetime = AS_OF) -> list[Candidate]:
-    start = as_of - timedelta(days=BASELINE_DAYS + RECENT_DAYS)
+def detect_issue_velocity(session: Session, as_of: datetime = AS_OF,
+                          win: Windows | None = None) -> list[Candidate]:
+    win = win or Windows()
+    start = as_of - timedelta(days=win.baseline + win.recent)
     issues = session.scalars(select(Issue).where(Issue.created_at >= start)).all()
     out: list[Candidate] = []
     for term, label in ISSUE_TERMS:
         terms = terms_of(term)
         hits = [i for i in issues if match_score(i.title + " " + i.body_snippet, terms) > 0]
         series = _daily_counts(hits, lambda i: i.created_at.date(), start, as_of)
-        baseline, recent = series[:-RECENT_DAYS], series[-RECENT_DAYS:]
+        baseline, recent = series[:-win.recent], series[-win.recent:]
         z, delta = _zscore(recent, baseline)
         recent_count = sum(recent)
         if recent_count < 2:
@@ -235,15 +278,16 @@ def scan(session: Session, as_of: datetime | None = None, persist: bool = True) 
     `as_of` defaults to the latest data timestamp (not a hardcoded date)."""
     if as_of is None:
         as_of = reference_now(session)
+    win = choose_windows(session, as_of)
     candidates: list[Candidate] = []
-    spike = detect_volume_spike(session, as_of)
+    spike = detect_volume_spike(session, as_of, win)
     if spike:
         candidates.append(spike)
-    drop = detect_rating_drop(session, as_of)
+    drop = detect_rating_drop(session, as_of, win)
     if drop:
         candidates.append(drop)
-    candidates += detect_theme_surges(session, as_of)
-    candidates += detect_issue_velocity(session, as_of)
+    candidates += detect_theme_surges(session, as_of, win)
+    candidates += detect_issue_velocity(session, as_of, win)
 
     existing = {e.slug for e in session.scalars(select(AnomalyEvent)).all()}
     events: list[AnomalyEvent] = []

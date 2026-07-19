@@ -141,6 +141,7 @@ export interface Investigation {
   paused: boolean;
   escalated: boolean;
   reopens_investigation_id: number | null;
+  data_notes: string[];
   hypotheses: Hypothesis[];
   evidence: Evidence[];
   finding: Finding | null;
@@ -174,11 +175,54 @@ export interface SourcesResp {
     name: string;
     detail: string;
     status: string;
+    stale?: boolean;
+    staleSince?: string | null;
     lastPull: string;
     volume: string;
     error?: string | null;
   }[];
   available: string[];
+}
+
+// v3.0 onboarding + health snapshot
+export interface SnapshotTheme {
+  label: string;
+  count: number;
+}
+export interface Snapshot {
+  product: string | null;
+  reviews: number;
+  window_days: number;
+  date_from: string;
+  date_to: string;
+  avg_per_day: number;
+  negatives: number;
+  rating_now: number | null;
+  rating_prev: number | null;
+  rating_delta: number | null;
+  weekly: { week_start: string; count: number; avg_rating: number | null }[];
+  top_themes: SnapshotTheme[];
+  non_english: number;
+  data_quality: { low_volume: boolean; note: string | null; non_english_note: string | null };
+}
+export interface SourceHealth {
+  source: string;
+  identifier: string;
+  product: string | null;
+  status: string;
+  items_last_run: number;
+  last_run_at: string | null;
+  last_error: string | null;
+  stale: boolean;
+  stale_since: string | null;
+  never_collected: boolean;
+}
+export interface OnboardStatus {
+  product: string;
+  backfilling: boolean;
+  sources: SourceHealth[];
+  snapshot: Snapshot;
+  anomalies: Anomaly[];
 }
 export interface CostsSummary {
   stats: {
@@ -253,6 +297,12 @@ export const api = {
     }),
   collectorsRun: () => post<{ results: { source: string; identifier: string; fetched: number; inserted: number; error: string | null }[] }>("/collectors/run"),
   embed: () => post<{ embedded: Record<string, number> }>("/search/embed"),
+  onboard: (body: { play_store: string; github?: string; product?: string }) =>
+    post<{ status: string; product: string; play_store: string; github: string | null }>("/onboard", body),
+  onboardStatus: (product: string) =>
+    get<OnboardStatus>(`/onboard/status?product=${encodeURIComponent(product)}`),
+  snapshot: (product?: string) =>
+    get<Snapshot>(`/snapshot${product ? `?product=${encodeURIComponent(product)}` : ""}`),
   costsSummary: () => get<CostsSummary>("/costs/summary"),
   setLimits: (limits: { daily_investigations?: number; per_case_budget?: number; per_case_wall_min?: number }) =>
     fetch(`${BASE}/settings/limits`, {

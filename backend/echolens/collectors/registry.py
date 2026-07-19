@@ -8,14 +8,16 @@ and the scheduler.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from echolens.collectors.base import Collector, CollectResult
+from echolens.config import settings
+from echolens.db.models import CollectorState
 from echolens.collectors.github import GitHubCollector
 from echolens.collectors.play_store import PlayStoreCollector
-from echolens.db.models import CollectorState
 
 # Reddit was dropped as a live source: Reddit ended free API access in 2026.
 # The search_reddit tool and Post corpus remain (filled via CSV/import later).
@@ -63,3 +65,37 @@ def run_all(session: Session, limit: int = 200) -> list[CollectResult]:
     for cfg in configured_sources(session):
         results.append(cfg.build().run(session, limit=limit))
     return results
+
+
+def _aware(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def source_health(session: Session, product: str | None = None) -> list[dict]:
+    """One health record per enabled collector, with a v3.0 staleness verdict: a
+    source is STALE if it errored or hasn't pulled in over 2× the collection
+    interval. Findings disclose stale sources so a conclusion is never presented
+    as if every source was available (real-data honesty)."""
+    now = datetime.now(timezone.utc)
+    ttl = timedelta(hours=max(1, settings.collector_interval_hours) * 2)
+    out: list[dict] = []
+    q = select(CollectorState).where(CollectorState.enabled == True)  # noqa: E712
+    if product:
+        q = q.where(CollectorState.product == product)
+    for st in session.scalars(q).all():
+        last = _aware(st.last_run_at)
+        errored = st.status == "error"
+        overdue = last is not None and (now - last) > ttl
+        stale = errored or overdue
+        out.append({
+            "source": st.source, "identifier": st.identifier, "product": st.product,
+            "status": st.status, "items_last_run": st.items_last_run,
+            "last_run_at": last.isoformat() if last else None,
+            "last_error": st.last_error,
+            "stale": stale,
+            "stale_since": last.date().isoformat() if (overdue and last) else None,
+            "never_collected": last is None,
+        })
+    return out

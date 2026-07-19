@@ -1,1 +1,1 @@
-export type Screen = "feed" | "case" | "finding" | "archive" | "sources" | "costs";
+export type Screen = "feed" | "case" | "finding" | "archive" | "sources" | "costs" | "onboarding";

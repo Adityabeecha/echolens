@@ -119,6 +119,17 @@ export function FindingReview({ investigationId, onBack, onOpenEvidence, onRevie
           </div>
         )}
 
+        {inv.data_notes && inv.data_notes.length > 0 && (
+          <div style={{ marginBottom: 18, padding: "12px 16px", border: `1px solid ${C.bad}44`, background: `${C.bad}12`, borderRadius: 8 }}>
+            <div style={{ fontFamily: mono, fontSize: 10.5, letterSpacing: ".1em", color: C.bad, marginBottom: 6 }}>
+              DATA AVAILABILITY
+            </div>
+            {inv.data_notes.map((n, i) => (
+              <div key={i} style={{ fontSize: 12.5, color: C.text3, lineHeight: 1.55 }}>{n}</div>
+            ))}
+          </div>
+        )}
+
         <div style={{ padding: "22px 24px", background: C.card, border: `1px solid ${C.border2}`, borderRadius: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
             <Label style={{ letterSpacing: ".12em" }}>FINDING</Label>
