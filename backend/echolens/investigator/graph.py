@@ -684,6 +684,19 @@ class Investigator:
         # v5.0: make the learned guidance visible in the trace (trust, not a hidden knob).
         if self._guidance:
             self._trace("THINK", {"text": "Applying guidance learned from past reviews:\n" + self._guidance})
+        # v6.0: a regression/persist follow-up starts from prior context, not scratch.
+        if getattr(self.anomaly, "parent_case_id", None):
+            self._trace("THINK", {"text": f"Follow-up on case #{self.anomaly.parent_case_id} "
+                                          "— starting from the prior investigation's context rather than scratch."})
+        # v6.0: seed with a validated pattern if this anomaly matches one (a proven prior).
+        if seed_state is None:
+            from echolens.patterns import matching_pattern
+            pat = matching_pattern(self.session, self.anomaly)
+            if pat:
+                trigger["matching_pattern"] = pat
+                self._trace("THINK", {"text": f"This matches a pattern verified {pat['verified_count']}× "
+                                              f"(cause: {pat['cause']} → fix that worked: {pat['fix']}). "
+                                              "Testing that hypothesis first before exploring alternatives."})
         # v2.0 cross-investigation memory: seed with related past confirmed causes.
         if seed_state is None:
             from echolens.investigator.memory import digest_text

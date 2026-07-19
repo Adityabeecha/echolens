@@ -153,21 +153,31 @@ def _investigation_dict(session, inv: Investigation) -> dict:
                       "retrieved_by": e.retrieved_by, **e.json} for e in evs],
         "finding": None if finding is None else {
             "id": finding.id, "status": finding.status, **finding.json,
-            **_finding_extras(finding, recs, inv.status)},
+            **_finding_extras(session, finding, recs, inv.status)},
         "recommendations": [{"rank": r.rank, "action": r.action, "impact": r.impact,
                              "effort": r.effort, "rationale": r.rationale} for r in recs],
     }
 
 
-def _finding_extras(finding, recs, status: str) -> dict:
-    """The decision doc + severity, computed from the finding's impact + actions
-    (v4.0) so the UI answers What's broken / How bad / What to do above the fold."""
+def _finding_extras(session, finding, recs, status: str) -> dict:
+    """The decision doc + severity (v4.0) plus the fix-verification status (v6.0),
+    so the UI can show What's broken / How bad / What to do and — once a fix
+    ships — a confirmed-fix badge with a before/after chart."""
+    from echolens.db.models import FixWatch
     from echolens.impact import decision_doc, severity
     fj = finding.json or {}
     impact = fj.get("impact", {})
+    watch = session.scalars(select(FixWatch).where(
+        FixWatch.finding_id == finding.id).order_by(FixWatch.id.desc())).first()
+    fix = None
+    if watch is not None:
+        fix = {"status": watch.status, "issue_number": watch.issue_number,
+               "issue_url": watch.issue_url, "chart": watch.chart_json,
+               "baseline_rate": watch.baseline_rate, "post_rate": watch.post_rate}
     return {
         "decision": decision_doc(fj, list(recs), impact, status),
         "severity": severity(float(fj.get("confidence", 0.0)), impact),
+        "fix": fix,
     }
 
 
@@ -702,6 +712,9 @@ def finding_github_issue(finding_id: int, user: dict = Depends(require_role("rev
             issue = create_issue(repo, ticket["title"], ticket["body"])
         except GitHubIssueError as err:
             raise HTTPException(422, str(err))
+        from echolens.fixwatch import link_issue
+        if issue.get("number"):
+            link_issue(session, finding, repo, int(issue["number"]), issue.get("url", ""))
         return {"repo": repo, **issue}
 
 
@@ -825,9 +838,13 @@ def _auto_issue(session, finding) -> dict:
     inv = session.get(Investigation, finding.investigation_id)
     ticket = finding_ticket(session, finding, repo=repo, deep_link=deep_link(inv.id) if inv else None)
     try:
-        return create_issue(repo, ticket["title"], ticket["body"])
+        issue = create_issue(repo, ticket["title"], ticket["body"])
     except GitHubIssueError as err:
         return {"error": str(err)}
+    from echolens.fixwatch import link_issue
+    if issue.get("number"):
+        link_issue(session, finding, repo, int(issue["number"]), issue.get("url", ""))
+    return issue
 
 
 @app.post("/alerts/digest")
@@ -856,6 +873,127 @@ def alerts_digest(hours: int = 24, user: dict = Depends(require_role("reviewer")
         ]}
         ok = _send_slack(payload)
         return {"sent": ok, "count": len(findings)}
+
+
+# ── v6.0: closed-loop verification (fix watch, patterns, product health) ─
+
+@app.post("/webhooks/github")
+async def github_webhook(request: Request) -> dict:
+    """GitHub issue events. When a finding's issue CLOSES, start a fix-watch on
+    the metric it was meant to fix (verified signature if a secret is set)."""
+    raw = await request.body()
+    secret = settings.github_webhook_secret
+    if secret:
+        import hashlib
+        import hmac
+        sig = request.headers.get("x-hub-signature-256", "")
+        expected = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            raise HTTPException(401, "invalid webhook signature")
+    event = request.headers.get("x-github-event", "")
+    try:
+        payload = json.loads(raw or b"{}")
+    except json.JSONDecodeError:
+        raise HTTPException(400, "invalid JSON")
+    if event == "issues" and payload.get("action") == "closed":
+        issue = payload.get("issue", {})
+        repo = (payload.get("repository") or {}).get("full_name", "")
+        closed_at = None
+        if issue.get("closed_at"):
+            try:
+                closed_at = datetime.fromisoformat(str(issue["closed_at"]).replace("Z", "+00:00"))
+            except ValueError:
+                pass
+        from echolens.fixwatch import on_issue_closed
+        with session_scope() as session:
+            watch = on_issue_closed(session, repo, int(issue.get("number", 0)), closed_at)
+            return {"ok": True, "watch_id": watch.id if watch else None,
+                    "status": watch.status if watch else "no_matching_finding"}
+    return {"ok": True, "ignored": event or "unknown"}
+
+
+@app.post("/fixwatch/evaluate")
+def fixwatch_evaluate(user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Advance every fix-watch: confirm fixes that worked, re-open the ones that
+    didn't, and catch regressions. Called by the scheduled job (unprompted)."""
+    from echolens.fixwatch import check_regressions, evaluate
+    with session_scope() as session:
+        return {"evaluated": evaluate(session), "regressions": check_regressions(session)}
+
+
+@app.get("/fixwatch")
+def fixwatch_list() -> dict:
+    from echolens.db.models import FixWatch
+    with session_scope() as session:
+        rows = session.scalars(select(FixWatch).order_by(FixWatch.id.desc())).all()
+        return {"watches": [
+            {"id": w.id, "finding_id": w.finding_id, "investigation_id": w.investigation_id,
+             "repo": w.repo, "issue_number": w.issue_number, "issue_url": w.issue_url,
+             "status": w.status, "metric": w.metric, "baseline_rate": w.baseline_rate,
+             "post_rate": w.post_rate,
+             "fix_date": w.fix_date.isoformat() if w.fix_date else None} for w in rows]}
+
+
+@app.get("/patterns")
+def patterns_view() -> dict:
+    """The validated pattern library — (trigger, cause, fix) proven by confirmed fixes."""
+    from echolens.patterns import patterns
+    with session_scope() as session:
+        return {"patterns": patterns(session)}
+
+
+@app.get("/overview")
+def overview() -> dict:
+    """Outcome-oriented product-health dashboard (the PM's monthly review)."""
+    import statistics as _stats
+    from echolens.db.models import FixWatch
+    with session_scope() as session:
+        watches = session.scalars(select(FixWatch)).all()
+        confirmed = [w for w in watches if w.status == "confirmed"]
+        in_verification = [w for w in watches if w.status in ("issue_open", "watching")]
+        regressed = [w for w in watches if w.status == "regressed"]
+        confirmed_inv = {w.investigation_id for w in confirmed}
+
+        q_start = _quarter_start(datetime.now(timezone.utc))
+        confirmed_q = [w for w in confirmed if w.confirmed_at and aware_utc(w.confirmed_at) >= q_start]
+
+        mttrs = []
+        for w in confirmed:
+            inv = session.get(Investigation, w.investigation_id)
+            if inv and inv.created_at and w.confirmed_at:
+                mttrs.append((aware_utc(w.confirmed_at) - aware_utc(inv.created_at)).days)
+        mttr = round(_stats.mean(mttrs), 1) if mttrs else None
+
+        # open problems = resolved cases not yet confirmed-fixed, ranked by impact
+        open_problems = []
+        for inv in session.scalars(select(Investigation).where(Investigation.status == "resolved")).all():
+            if inv.id in confirmed_inv:
+                continue
+            finding = session.scalars(select(Finding).where(
+                Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
+            if finding is None:
+                continue
+            impact = (finding.json or {}).get("impact", {})
+            open_problems.append({
+                "investigation_id": inv.id, "summary": finding.summary,
+                "impact_score": impact.get("impact_score", 0.0),
+                "affected_pct": impact.get("affected_pct", 0.0),
+            })
+        open_problems.sort(key=lambda p: -p["impact_score"])
+        return {
+            "open_problems": open_problems[:10],
+            "open_problem_count": len(open_problems),
+            "in_verification": len(in_verification),
+            "confirmed_fixes_total": len(confirmed),
+            "confirmed_fixes_quarter": len(confirmed_q),
+            "regressions": len(regressed),
+            "mean_days_to_confirmed_fix": mttr,
+        }
+
+
+def _quarter_start(now: datetime) -> datetime:
+    q_month = 3 * ((now.month - 1) // 3) + 1
+    return now.replace(month=q_month, day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
 @app.get("/costs")

@@ -135,6 +135,8 @@ class Settings(BaseSettings):
     auto_create_issue_on_approve: bool = False
     # Fallback repo for issue creation when a product has no GitHub source.
     github_default_repo: str = ""
+    # Optional secret to verify GitHub webhook signatures (X-Hub-Signature-256).
+    github_webhook_secret: str = ""
     # Email (optional). If smtp_host is unset, email delivery is skipped.
     smtp_host: str = ""
     smtp_port: int = 587

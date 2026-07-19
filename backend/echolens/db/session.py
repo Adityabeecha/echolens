@@ -28,6 +28,7 @@ _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("posts", "product", "VARCHAR"),
     ("posts", "embedding", "JSON"),
     ("releases", "product", "VARCHAR"),
+    ("anomaly_events", "parent_case_id", "INTEGER"),
 ]
 
 

@@ -131,6 +131,34 @@ class AnomalyEvent(Base):
     window: Mapped[str] = mapped_column(String(64))
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(32), default="pending")  # pending|triaged|investigating|closed
+    # v6.0: for a regression anomaly, the original resolved case it re-opens.
+    parent_case_id: Mapped[int | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class FixWatch(Base):
+    """v6.0 closed-loop verification: links a finding's GitHub issue to the metric
+    it should fix, then watches whether the fix actually worked.
+
+    Lifecycle: issue_open → (issue closes) watching → confirmed | persists_reopened,
+    and later possibly → regressed if the fixed theme re-spikes."""
+    __tablename__ = "fix_watches"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    finding_id: Mapped[int] = mapped_column(ForeignKey("findings.id"), index=True)
+    investigation_id: Mapped[int] = mapped_column(ForeignKey("investigations.id"), index=True)
+    repo: Mapped[str] = mapped_column(String(256))
+    issue_number: Mapped[int] = mapped_column(Integer, index=True)
+    issue_url: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(24), default="issue_open")
+    terms: Mapped[list] = mapped_column(JSON, default=list)   # theme keywords being watched
+    metric: Mapped[str] = mapped_column(String(160), default="")
+    window_days: Mapped[int] = mapped_column(Integer, default=14)
+    fix_date: Mapped[datetime | None] = mapped_column(nullable=True)      # when the issue closed
+    baseline_rate: Mapped[float | None] = mapped_column(Float, nullable=True)  # pre-fix complaint rate
+    post_rate: Mapped[float | None] = mapped_column(Float, nullable=True)      # post-fix complaint rate
+    confirmed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    chart_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # before/after series
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 

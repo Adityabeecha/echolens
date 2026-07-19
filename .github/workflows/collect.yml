@@ -33,4 +33,5 @@ jobs:
           echo "→ scan";    curl -sf -X POST "$API/anomalies/scan"
           echo "→ triage";  curl -sf -X POST "$API/anomalies/triage" -H "$auth" || true
           echo "→ digest";  curl -sf -X POST "$API/alerts/digest?hours=24" -H "$auth" || true
+          echo "→ fixwatch"; curl -sf -X POST "$API/fixwatch/evaluate" -H "$auth" || true
           echo "done"

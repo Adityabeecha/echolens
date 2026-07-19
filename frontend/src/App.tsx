@@ -14,6 +14,8 @@ import { Costs } from "./screens/Costs";
 import { Login } from "./screens/Login";
 import { Onboarding } from "./screens/Onboarding";
 import { Calibration } from "./screens/Calibration";
+import { Overview } from "./screens/Overview";
+import { Patterns } from "./screens/Patterns";
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("feed");
@@ -142,6 +144,8 @@ export default function App() {
           />
         )}
         {screen === "archive" && <Archive onOpenInvestigation={openInvestigation} />}
+        {screen === "overview" && <Overview onOpenInvestigation={openInvestigation} />}
+        {screen === "patterns" && <Patterns />}
         {screen === "calibration" && <Calibration />}
         {screen === "sources" && <Sources onAddProduct={() => setScreen("onboarding")} />}
         {screen === "costs" && <Costs />}

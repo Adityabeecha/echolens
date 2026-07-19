@@ -134,6 +134,27 @@ export interface Severity {
   score: number;
   band: "high" | "medium" | "low";
 }
+export interface FixChartPoint {
+  date: string;
+  count: number;
+}
+export interface FixStatus {
+  status: string; // issue_open | watching | confirmed | persists_reopened | regressed
+  issue_number: number;
+  issue_url: string;
+  baseline_rate: number | null;
+  post_rate: number | null;
+  chart: {
+    fix_date: string;
+    window_days: number;
+    before: FixChartPoint[];
+    after: FixChartPoint[];
+    before_rate: number | null;
+    after_rate: number | null;
+    metric: string;
+    terms: string[];
+  } | null;
+}
 export interface Finding {
   id: number;
   status: string;
@@ -146,6 +167,7 @@ export interface Finding {
   impact?: Impact;
   decision?: Decision;
   severity?: Severity;
+  fix?: FixStatus | null;
 }
 export interface Recommendation {
   rank: number;
@@ -299,6 +321,25 @@ export interface Calibration {
   weak_spots: { total_challenges: number; spots: WeakSpot[] };
 }
 
+// v6.0 patterns + product-health overview
+export interface Pattern {
+  terms: string[];
+  trigger: string;
+  cause: string;
+  fix: string;
+  verified_count: number;
+  cases: number[];
+}
+export interface Overview {
+  open_problems: { investigation_id: number; summary: string; impact_score: number; affected_pct: number }[];
+  open_problem_count: number;
+  in_verification: number;
+  confirmed_fixes_total: number;
+  confirmed_fixes_quarter: number;
+  regressions: number;
+  mean_days_to_confirmed_fix: number | null;
+}
+
 // ── endpoints ────────────────────────────────────────────────────────
 
 export interface AuthUser {
@@ -335,6 +376,8 @@ export const api = {
       reason,
     }),
   calibration: () => get<Calibration>("/calibration"),
+  patterns: () => get<{ patterns: Pattern[] }>("/patterns"),
+  overview: () => get<Overview>("/overview"),
   pause: (id: number) => post(`/investigations/${id}/pause`),
   resume: (id: number) => post(`/investigations/${id}/resume`),
   escalate: (id: number) => post(`/investigations/${id}/escalate`),

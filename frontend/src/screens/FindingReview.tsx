@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Decision, Evidence, Impact, Investigation, Severity, api, canReview } from "../api";
+import { Decision, Evidence, FixStatus, Impact, Investigation, Severity, api, canReview } from "../api";
 import { useAsync } from "../hooks";
 import { C, mono, statusColor } from "../theme";
 import { Centered, Label } from "../ui";
@@ -137,6 +137,8 @@ export function FindingReview({ investigationId, onBack, onOpenEvidence, onRevie
         {f.decision && (
           <DecisionCard decision={f.decision} impact={f.impact} severity={f.severity} findingId={f.id} canCreate={canReview() && inv.status === "resolved"} />
         )}
+
+        {f.fix && <FixCard fix={f.fix} />}
 
         <div style={{ padding: "22px 24px", background: C.card, border: `1px solid ${C.border2}`, borderRadius: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
@@ -514,6 +516,73 @@ function WhyNotPanel({ inv, onOpenEvidence }: { inv: Investigation; onOpenEviden
         })}
       </div>
     </>
+  );
+}
+
+// v6.0: did the fix work? Verification badge + before/after complaint chart.
+const FIX_META: Record<string, { label: string; color: string }> = {
+  issue_open: { label: "Fix issue open — awaiting close", color: C.info },
+  watching: { label: "In verification — 14-day watch", color: C.accent },
+  confirmed: { label: "✓ Confirmed fix", color: C.good },
+  persists_reopened: { label: "Fix didn't hold — re-opened", color: C.bad },
+  regressed: { label: "⚠ Regressed — re-spiked after fix", color: C.bad },
+};
+
+function FixCard({ fix }: { fix: FixStatus }) {
+  const meta = FIX_META[fix.status] ?? { label: fix.status, color: C.muted };
+  return (
+    <div style={{ marginBottom: 18, padding: "16px 18px", background: C.card, border: `1px solid ${meta.color}55`, borderRadius: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <Label style={{ letterSpacing: ".12em" }}>FIX STATUS</Label>
+        <span style={{ fontFamily: mono, fontSize: 11, padding: "3px 10px", borderRadius: 20, background: `${meta.color}1f`, border: `1px solid ${meta.color}66`, color: meta.color }}>
+          {meta.label}
+        </span>
+        {fix.issue_url && (
+          <a href={fix.issue_url} target="_blank" rel="noreferrer" style={{ fontFamily: mono, fontSize: 11.5, color: C.info, marginLeft: "auto", textDecoration: "none" }}>
+            issue #{fix.issue_number} ↗
+          </a>
+        )}
+      </div>
+      {fix.chart && (fix.chart.before.length > 0 || fix.chart.after.length > 0) && (
+        <BeforeAfterChart chart={fix.chart} />
+      )}
+    </div>
+  );
+}
+
+function BeforeAfterChart({ chart }: { chart: NonNullable<FixStatus["chart"]> }) {
+  const max = Math.max(1, ...chart.before.map((p) => p.count), ...chart.after.map((p) => p.count));
+  const Bars = ({ points, color }: { points: { date: string; count: number }[]; color: string }) => (
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 60 }}>
+        {points.map((p) => (
+          <div key={p.date} title={`${p.date}: ${p.count}`} style={{ flex: 1, height: `${Math.max(2, (p.count / max) * 100)}%`, background: color, borderRadius: "2px 2px 0 0", opacity: 0.85 }} />
+        ))}
+      </div>
+    </div>
+  );
+  const rate = (r: number | null) => (r == null ? "—" : `${r.toFixed(1)}/day`);
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div style={{ fontSize: 12.5, color: C.muted, marginBottom: 10 }}>
+        Complaint volume for “{chart.terms.join(", ")}” around the fix ({chart.fix_date}).
+      </div>
+      <div style={{ display: "flex", gap: 16, alignItems: "stretch" }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginBottom: 6 }}>
+            BEFORE · {rate(chart.before_rate)}
+          </div>
+          <Bars points={chart.before} color={C.bad} />
+        </div>
+        <div style={{ width: 1, background: C.border3, alignSelf: "stretch" }} />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginBottom: 6 }}>
+            AFTER · {rate(chart.after_rate)}
+          </div>
+          <Bars points={chart.after} color={C.good} />
+        </div>
+      </div>
+    </div>
   );
 }
 
