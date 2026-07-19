@@ -49,6 +49,7 @@ export function FindingReview({ investigationId, onBack, onOpenEvidence, onRevie
   const { data: inv, loading, reload } = useAsync<Investigation>(() => api.investigation(investigationId), [investigationId]);
   const [challengeOpen, setChallengeOpen] = useState(false);
   const [note, setNote] = useState("");
+  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
   if (loading) return <Centered>Loading finding…</Centered>;
@@ -70,10 +71,11 @@ export function FindingReview({ investigationId, onBack, onOpenEvidence, onRevie
   const submitChallenge = async () => {
     if (!note.trim()) return;
     setBusy(true);
-    const r = await api.review(f.id, "challenge", note);
+    const r = await api.review(f.id, "challenge", note, reason || undefined);
     setBusy(false);
     setChallengeOpen(false);
     setNote("");
+    setReason("");
     onReviewed();
     if (r.reopened_investigation_id) window.location.hash = `#case/${r.reopened_investigation_id}`;
     await reload();
@@ -248,6 +250,8 @@ export function FindingReview({ investigationId, onBack, onOpenEvidence, onRevie
           </>
         )}
 
+        <WhyNotPanel inv={inv} onOpenEvidence={onOpenEvidence} />
+
         {approved && (
           <div
             style={{
@@ -295,7 +299,32 @@ export function FindingReview({ investigationId, onBack, onOpenEvidence, onRevie
         {challengeOpen && (
           <div style={{ marginTop: 14, padding: 16, background: C.card, border: `1px solid ${C.border2}`, borderRadius: 10, maxWidth: 560 }}>
             <div style={{ fontSize: 12.5, color: C.muted, marginBottom: 8 }}>
-              What does this finding get wrong, or what should the agent check?
+              What's wrong with this finding? Your reason feeds the Calibration page and steers future investigations.
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 10 }}>
+              {[
+                ["wrong_cause", "Wrong root cause"],
+                ["weak_evidence", "Evidence too weak"],
+                ["wrong_severity", "Severity/impact off"],
+                ["already_knew", "Already knew this"],
+              ].map(([val, label]) => (
+                <button
+                  key={val}
+                  onClick={() => setReason((r) => (r === val ? "" : val))}
+                  className="el-btn"
+                  style={{
+                    fontSize: 12,
+                    padding: "6px 11px",
+                    borderRadius: 20,
+                    cursor: "pointer",
+                    border: `1px solid ${reason === val ? C.accent : C.border3}`,
+                    background: reason === val ? "rgba(240,166,60,.12)" : "transparent",
+                    color: reason === val ? C.accent : C.muted,
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
             <textarea
               value={note}
@@ -438,6 +467,53 @@ function DecisionCard({
         {msg && <span style={{ fontSize: 12.5, color: C.muted }}>{msg}</span>}
       </div>
     </div>
+  );
+}
+
+// "Why not X?": the hypotheses that were ruled out, with the evidence that
+// killed them. Half of trust is seeing what was considered and rejected.
+function WhyNotPanel({ inv, onOpenEvidence }: { inv: Investigation; onOpenEvidence: (e: Evidence) => void }) {
+  const rejected = inv.hypotheses.filter((h) => h.status === "rejected");
+  if (rejected.length === 0) return null;
+  const byId = new Map(inv.evidence.map((e) => [e.id, e]));
+
+  return (
+    <>
+      <Label style={{ margin: "26px 0 10px" }}>WHY NOT? · {rejected.length} RULED OUT</Label>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {rejected.map((h) => {
+          const killers = h.evidence_against.map((id) => byId.get(id)).filter((e): e is Evidence => !!e);
+          return (
+            <div key={h.id} style={{ padding: "14px 16px", background: C.card, border: `1px solid ${C.border2}`, borderRadius: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <span style={{ fontFamily: mono, fontSize: 11, color: C.bad }}>{h.id}</span>
+                <span style={{ fontFamily: mono, fontSize: 9.5, padding: "2px 7px", borderRadius: 4, background: `${C.bad}1f`, color: C.bad, textTransform: "uppercase" }}>
+                  ruled out
+                </span>
+                <span style={{ fontSize: 13.5, color: C.text3, textDecoration: "line-through", textDecorationColor: C.ghost }}>
+                  {h.statement}
+                </span>
+              </div>
+              {killers.length > 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {killers.map((e) => (
+                    <div
+                      key={e.id}
+                      onClick={() => onOpenEvidence(e)}
+                      style={{ fontSize: 12.5, color: C.text3, lineHeight: 1.45, borderLeft: `2px solid ${C.bad}66`, paddingLeft: 10, cursor: "pointer" }}
+                    >
+                      <span style={{ fontFamily: mono, fontSize: 10.5, color: C.bad, marginRight: 6 }}>{e.id}</span>“{e.snippet}”
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: C.faint }}>Rejected as the leading cause was corroborated instead.</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </>
   );
 }
 

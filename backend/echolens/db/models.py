@@ -242,6 +242,9 @@ class ReviewFeedback(Base):
     action: Mapped[str] = mapped_column(String(16))  # approve|challenge
     note: Mapped[str] = mapped_column(Text, default="")
     user_id: Mapped[int | None] = mapped_column(nullable=True)  # v1.0 audit: who acted
+    # v5.0 challenge autopsy: structured reason category (wrong_cause|weak_evidence|
+    # wrong_severity|already_knew) so failure modes roll up into visible weak spots.
+    reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 

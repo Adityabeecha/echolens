@@ -39,6 +39,7 @@ export const KIND_COLOR: Record<string, string> = {
   FAIL: C.bad,
   CHECK: C.faint,
   SPEC: C.accentHi, // v2.0 specialist delegation
+  REFUTE: C.info, // v5.0 counter-evidence duty (attempted refutation)
 };
 
 export function statusColor(status: string): string {

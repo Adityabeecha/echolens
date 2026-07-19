@@ -30,6 +30,10 @@ export function Investigation({ investigationId, onBack, onDraftFinding, onOpenE
   const [selHyp, setSelHyp] = useState<string | null>(null);
   const [follow, setFollow] = useState(true);
   const traceRef = useRef<HTMLDivElement | null>(null);
+  // v5.0 replay: step the finished trace back for skeptics/audit (null = live/full)
+  const [replayIdx, setReplayIdx] = useState<number | null>(null);
+  const [speed, setSpeed] = useState(1);
+  const [playing, setPlaying] = useState(false);
 
   // Poll investigation detail while running; refetch on status change.
   useEffect(() => {
@@ -54,7 +58,30 @@ export function Investigation({ investigationId, onBack, onDraftFinding, onOpenE
 
   useEffect(() => {
     if (follow && traceRef.current) traceRef.current.scrollTop = traceRef.current.scrollHeight;
-  }, [steps, follow]);
+  }, [steps, follow, replayIdx]);
+
+  // replay clock: advance one step at 850ms / speed while playing
+  useEffect(() => {
+    if (!playing || replayIdx === null) return;
+    if (replayIdx >= steps.length) {
+      setPlaying(false);
+      return;
+    }
+    const t = setTimeout(() => setReplayIdx((i) => (i === null ? null : i + 1)), 850 / speed);
+    return () => clearTimeout(t);
+  }, [playing, replayIdx, speed, steps.length]);
+
+  const shownSteps = replayIdx === null ? steps : steps.slice(0, replayIdx);
+  const canReplay = (inv?.status ?? liveStatus) !== "running" && steps.length > 0;
+  const startReplay = () => {
+    setReplayIdx(0);
+    setPlaying(true);
+    setFollow(true);
+  };
+  const exitReplay = () => {
+    setReplayIdx(null);
+    setPlaying(false);
+  };
 
   const status = inv?.status ?? liveStatus;
   const [iter, iterMax] = parseFrac(inv?.budget?.iterations);
@@ -129,20 +156,42 @@ export function Investigation({ investigationId, onBack, onDraftFinding, onOpenE
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 14, maxWidth: 640 }}>
             <Label>REASONING TRACE</Label>
             <div style={{ flex: 1 }} />
-            <div
-              onClick={() => setFollow((f) => !f)}
-              style={{
-                fontFamily: mono,
-                fontSize: 9.5,
-                letterSpacing: ".06em",
-                padding: "3px 8px",
-                borderRadius: 4,
-                color: follow ? C.accent : C.ghost,
-                cursor: "pointer",
-              }}
-            >
-              {follow ? "◉ FOLLOW" : "○ FOLLOW"}
-            </div>
+            {canReplay && replayIdx === null && (
+              <div onClick={startReplay} className="el-btn" style={replayBtn(false)}>
+                ▸ Replay
+              </div>
+            )}
+            {replayIdx !== null && (
+              <>
+                <div onClick={() => setPlaying((p) => !p)} className="el-btn" style={replayBtn(true)}>
+                  {playing ? "⏸" : "▸"} {replayIdx}/{steps.length}
+                </div>
+                {[1, 2, 5].map((sp) => (
+                  <div key={sp} onClick={() => setSpeed(sp)} className="el-btn" style={replayBtn(speed === sp)}>
+                    {sp}×
+                  </div>
+                ))}
+                <div onClick={exitReplay} className="el-btn" style={replayBtn(false)}>
+                  ✕
+                </div>
+              </>
+            )}
+            {replayIdx === null && (
+              <div
+                onClick={() => setFollow((f) => !f)}
+                style={{
+                  fontFamily: mono,
+                  fontSize: 9.5,
+                  letterSpacing: ".06em",
+                  padding: "3px 8px",
+                  borderRadius: 4,
+                  color: follow ? C.accent : C.ghost,
+                  cursor: "pointer",
+                }}
+              >
+                {follow ? "◉ FOLLOW" : "○ FOLLOW"}
+              </div>
+            )}
           </div>
           {selHyp && (
             <div
@@ -162,8 +211,8 @@ export function Investigation({ investigationId, onBack, onDraftFinding, onOpenE
             </div>
           )}
           <div style={{ display: "flex", flexDirection: "column", maxWidth: 640 }}>
-            {steps.map((s, i) => (
-              <TraceRow key={s.seq} step={s} last={i === steps.length - 1} selHyp={selHyp} onOpenEvidence={onOpenEvidence} evidence={inv?.evidence ?? []} />
+            {shownSteps.map((s, i) => (
+              <TraceRow key={s.seq} step={s} last={i === shownSteps.length - 1} selHyp={selHyp} onOpenEvidence={onOpenEvidence} evidence={inv?.evidence ?? []} />
             ))}
             {steps.length === 0 && (
               <div style={{ color: C.dim, fontSize: 13 }}>Waiting for the first reasoning step…</div>
@@ -238,6 +287,20 @@ export function Investigation({ investigationId, onBack, onDraftFinding, onOpenE
       </div>
     </div>
   );
+}
+
+function replayBtn(active: boolean): React.CSSProperties {
+  return {
+    fontFamily: mono,
+    fontSize: 9.5,
+    letterSpacing: ".04em",
+    padding: "3px 8px",
+    borderRadius: 4,
+    border: `1px solid ${active ? C.accent : C.border3}`,
+    background: active ? "rgba(240,166,60,.12)" : "transparent",
+    color: active ? C.accent : C.muted,
+    cursor: "pointer",
+  };
 }
 
 function SecondaryBtn({ children, onClick, active }: { children: React.ReactNode; onClick: () => void; active?: boolean }) {
@@ -413,6 +476,19 @@ function TraceRow({
                   {String(c.specialist ?? "specialist").replace(/_/g, " ")}
                 </span>
                 {c.focus ? <span style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>· {String(c.focus)}</span> : null}
+              </div>
+              <div style={{ fontSize: 13, lineHeight: 1.5, color: C.text3 }}>{c.text}</div>
+            </>
+          )}
+          {step.kind === "REFUTE" && (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <span style={{ fontFamily: mono, fontSize: 11, color: C.info }}>
+                  attempted refutation{c.hypothesis ? ` · ${c.hypothesis}` : ""}
+                </span>
+                <span style={{ fontFamily: mono, fontSize: 9.5, padding: "2px 7px", borderRadius: 4, marginLeft: "auto", background: c.contradicted ? `${C.bad}1f` : `${C.good}1f`, color: c.contradicted ? C.bad : C.good }}>
+                  {c.contradicted ? "counter-evidence found" : "hypothesis survived"}
+                </span>
               </div>
               <div style={{ fontSize: 13, lineHeight: 1.5, color: C.text3 }}>{c.text}</div>
             </>

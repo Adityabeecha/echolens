@@ -20,6 +20,7 @@ _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("investigations", "checkpoint_json", "JSON"),
     ("investigations", "data_notes", "JSON"),
     ("review_feedback", "user_id", "INTEGER"),
+    ("review_feedback", "reason", "VARCHAR"),
     ("reviews", "product", "VARCHAR"),
     ("issues", "product", "VARCHAR"),
     ("issues", "labels", "JSON"),

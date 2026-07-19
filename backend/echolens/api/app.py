@@ -610,6 +610,7 @@ def stream_trace(inv_id: int) -> StreamingResponse:
 class ReviewBody(BaseModel):
     action: str  # approve | challenge
     note: str = ""
+    reason: str | None = None  # v5.0 structured challenge category
 
 
 @app.post("/findings/{finding_id}/review")
@@ -626,9 +627,17 @@ def review_finding(finding_id: int, body: ReviewBody,
         if body.action == "challenge":
             if not body.note.strip():
                 raise HTTPException(422, "challenge requires a note")
-            reopened = review.challenge(session, finding, body.note, user_id=user["id"])
+            reopened = review.challenge(session, finding, body.note, user_id=user["id"], reason=body.reason)
             return {"status": "challenged", "reopened_investigation_id": reopened.id, "by": user["email"]}
         raise HTTPException(422, "action must be approve or challenge")
+
+
+@app.get("/calibration")
+def calibration_view() -> dict:
+    """v5.0 trust page: stated-confidence-vs-approval curve + known weak spots."""
+    from echolens.calibration import calibration, weak_spots
+    with session_scope() as session:
+        return {**calibration(session), "weak_spots": weak_spots(session)}
 
 
 @app.post("/findings/{finding_id}/recommend")

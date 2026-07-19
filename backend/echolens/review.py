@@ -35,13 +35,22 @@ def approve(session: Session, finding: Finding, note: str = "", user_id: int | N
     return finding
 
 
+CHALLENGE_REASONS = {"wrong_cause", "weak_evidence", "wrong_severity", "already_knew"}
+
+
 def challenge(session: Session, finding: Finding, note: str,
               llm: LLMClient | None = None, on_step=None,
-              tier: str | None = None, user_id: int | None = None) -> Investigation:
-    """Record the challenge and re-open the investigation with the note injected."""
+              tier: str | None = None, user_id: int | None = None,
+              reason: str | None = None) -> Investigation:
+    """Record the challenge and re-open the investigation with the note injected.
+    `reason` is a structured autopsy category (v5.0) that rolls up into the
+    visible 'known weak spots' panel and future prompt guidance."""
     if not note.strip():
         raise ValueError("a challenge requires a note explaining what to reconsider")
-    session.add(ReviewFeedback(finding_id=finding.id, action="challenge", note=note, user_id=user_id))
+    if reason is not None and reason not in CHALLENGE_REASONS:
+        reason = None
+    session.add(ReviewFeedback(finding_id=finding.id, action="challenge", note=note,
+                               user_id=user_id, reason=reason))
     finding.status = "challenged"
 
     old_inv = session.get(Investigation, finding.investigation_id)

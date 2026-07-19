@@ -274,6 +274,31 @@ export interface CostsSummary {
   }[];
 }
 
+// v5.0 calibration + weak spots
+export interface CalibrationPoint {
+  range: string;
+  midpoint: number;
+  count: number;
+  approval_rate: number | null;
+}
+export interface WeakSpot {
+  reason: string;
+  label: string;
+  count: number;
+  guidance: string;
+}
+export interface Calibration {
+  n_reviewed: number;
+  sufficient: boolean;
+  points: CalibrationPoint[];
+  overall_approval_rate: number | null;
+  mean_stated_confidence: number | null;
+  overconfidence_gap: number | null;
+  overconfident: boolean;
+  headline: string | null;
+  weak_spots: { total_challenges: number; spots: WeakSpot[] };
+}
+
 // ── endpoints ────────────────────────────────────────────────────────
 
 export interface AuthUser {
@@ -303,11 +328,13 @@ export const api = {
     get<{ status: string; steps: TraceStep[] }>(`/investigations/${id}/trace?after=${after}`),
   startInvestigation: (body: { anomaly_slug?: string; description?: string; tier?: string }) =>
     post<{ status: string; investigation_id: number; anomaly_id: number }>("/investigations", body),
-  review: (findingId: number, action: "approve" | "challenge", note = "") =>
+  review: (findingId: number, action: "approve" | "challenge", note = "", reason?: string) =>
     post<{ status: string; reopened_investigation_id?: number }>(`/findings/${findingId}/review`, {
       action,
       note,
+      reason,
     }),
+  calibration: () => get<Calibration>("/calibration"),
   pause: (id: number) => post(`/investigations/${id}/pause`),
   resume: (id: number) => post(`/investigations/${id}/resume`),
   escalate: (id: number) => post(`/investigations/${id}/escalate`),

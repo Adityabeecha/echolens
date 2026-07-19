@@ -84,6 +84,14 @@ class Investigator:
         self.context_note = context_note  # injected on challenge-reopen (PRD §4.1)
         self._recent: list[str] = []
         self._executed_calls: set[str] = set()
+        self._refuted: set[str] = set()   # v5.0 counter-evidence duty (per hypothesis)
+        # v5.0 trust loop: past human verdicts (calibration + weak spots) become a
+        # corrective note injected into this investigation's planning prompt.
+        try:
+            from echolens.calibration import guidance_text
+            self._guidance = guidance_text(session)
+        except Exception:
+            self._guidance = ""
 
         if llm is None:
             from echolens.llm.openai_client import OpenAIClient
@@ -139,7 +147,7 @@ class Investigator:
             self.budget.as_dict(), self._recent,
         )
         try:
-            res = self.llm.complete_json(plan_system(), prompt, PLAN_SCHEMA, "investigator.plan")
+            res = self.llm.complete_json(plan_system(self._guidance), prompt, PLAN_SCHEMA, "investigator.plan")
         except LLMFormatError as err:
             self._trace("FAIL", {"code": "plan", "error": str(err),
                                  "text": "Plan step produced malformed output; iteration burned."})
@@ -332,6 +340,13 @@ class Investigator:
                 continue
             if ref in ref_to_eid:  # already on record; don't double-count
                 continue
+            dup = self._near_duplicate(item.get("snippet", ""), source, state["evidence"])
+            if dup:  # v5.0 quality: near-identical evidence merges, never double-counts
+                ref_to_eid[ref] = dup
+                self._trace("EVID", {"id": dup, "source": source.upper(), "ref": ref,
+                                     "text": f"(merged) near-duplicate of {dup}; counted once, not twice.",
+                                     "supports": [], "contradicts": []})
+                continue
             eid = f"ev_{len(state['evidence']) + 1:03d}"
             ev = {
                 "id": eid, "source": source, "ref": ref,
@@ -389,6 +404,25 @@ class Investigator:
         self._apply_dependencies(state, newly_rejected)
         self._persist_hypotheses(state["hypotheses"])
         return state
+
+    @staticmethod
+    def _near_duplicate(snippet: str, source: str, evidence: list[dict]) -> str | None:
+        """v5.0: is this snippet a near-duplicate of same-source evidence already on
+        record? Token-set overlap (Jaccard ≥ 0.9, a cheap cosine proxy) so a rephrased
+        one-line rant doesn't inflate the count. Returns the existing eid or None."""
+        from echolens.textkit import tokenize
+        a = set(tokenize(snippet))
+        if len(a) < 3:
+            return None
+        for e in evidence:
+            if e["source"] != source:
+                continue
+            b = set(tokenize(e["snippet"]))
+            if not b:
+                continue
+            if len(a & b) / len(a | b) >= 0.9:
+                return e["id"]
+        return None
 
     def _apply_dependencies(self, state: InvState, newly_rejected: list[str]) -> None:
         """v2.0 hypothesis dependency tracking: when a competing hypothesis is
@@ -458,8 +492,17 @@ class Investigator:
                     reason += f" (budget exhausted: {', '.join(exhausted)})"
 
         if status == "resolved" and winner:
-            winner["status"] = "supported"
-            self._persist_hypotheses(state["hypotheses"])
+            # v5.0 counter-evidence duty: before confirming, actively try to REFUTE
+            # the leading hypothesis. This turns the two-source rule adversarial and
+            # is logged in the trace of every resolved investigation.
+            if winner["id"] not in self._refuted:
+                self._refuted.add(winner["id"])
+                if self._attempt_refutation(winner):
+                    status = "needs_human"
+                    reason = "a refutation query surfaced counter-evidence against the leading cause"
+            if status == "resolved":
+                winner["status"] = "supported"
+                self._persist_hypotheses(state["hypotheses"])
 
         state["status"] = status
         state["status_reason"] = reason
@@ -489,6 +532,39 @@ class Investigator:
                 self._trace("CHECK", {"text": "Paused by reviewer — state checkpointed; resume to continue.",
                                       "budget": self.budget.as_dict()})
         return state
+
+    def _attempt_refutation(self, winner: dict) -> bool:
+        """v5.0: run one deterministic query that COULD disprove the leading
+        hypothesis (does the effect ALSO show up where it shouldn't?). Logs a
+        REFUTE trace step in every resolved investigation. Returns True if it
+        surfaced real counter-evidence (→ the conclusion is downgraded)."""
+        from echolens.impact import theme_terms
+        from echolens.tools.compare_cohorts import compare_cohorts
+
+        terms = theme_terms(self.anomaly, {"summary": winner["statement"], "prose": ""})
+        query = " ".join(terms[:3]) or winner["statement"][:40]
+        contradicted = False
+        try:
+            res = compare_cohorts(self.session, term=query, dimension="version")
+            ratio, exclusive, top = (res.get("highest_vs_next_ratio"),
+                                     res.get("only_in_top_cohort"), res.get("highest_cohort"))
+            if exclusive:
+                detail = f"'{query}' appears only in {top} — a version-specific cause survives refutation."
+            elif ratio is not None and ratio >= 1.5:
+                detail = f"'{query}' is {ratio}× more common in {top} than the next version — cause survives refutation."
+            elif ratio is not None:
+                detail = (f"'{query}' is spread roughly evenly across versions (ratio {ratio}) — "
+                          "this UNDERCUTS a version-specific cause.")
+                contradicted = True
+            else:
+                detail = f"No cohort separation available for '{query}'; refutation inconclusive."
+        except Exception as err:  # never let the adversarial check crash the run
+            detail = f"refutation query failed ({err}); proceeding without it."
+        self._trace("REFUTE", {
+            "text": f"Attempted refutation of {winner['id']} — {detail}",
+            "query": query, "hypothesis": winner["id"], "contradicted": contradicted,
+        })
+        return contradicted
 
     # ── persistence helpers ────────────────────────────────────────────
 
@@ -605,6 +681,9 @@ class Investigator:
                 "text": f"Investigation re-opened by a human challenge: “{self.context_note}”. "
                         "I must address this specifically before concluding again.",
             })
+        # v5.0: make the learned guidance visible in the trace (trust, not a hidden knob).
+        if self._guidance:
+            self._trace("THINK", {"text": "Applying guidance learned from past reviews:\n" + self._guidance})
         # v2.0 cross-investigation memory: seed with related past confirmed causes.
         if seed_state is None:
             from echolens.investigator.memory import digest_text

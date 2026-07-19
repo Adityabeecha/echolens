@@ -13,6 +13,7 @@ import { Sources } from "./screens/Sources";
 import { Costs } from "./screens/Costs";
 import { Login } from "./screens/Login";
 import { Onboarding } from "./screens/Onboarding";
+import { Calibration } from "./screens/Calibration";
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("feed");
@@ -141,6 +142,7 @@ export default function App() {
           />
         )}
         {screen === "archive" && <Archive onOpenInvestigation={openInvestigation} />}
+        {screen === "calibration" && <Calibration />}
         {screen === "sources" && <Sources onAddProduct={() => setScreen("onboarding")} />}
         {screen === "costs" && <Costs />}
       </div>

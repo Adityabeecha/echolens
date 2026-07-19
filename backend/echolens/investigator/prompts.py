@@ -190,8 +190,12 @@ FINDING_SCHEMA = {
 }
 
 
-def plan_system() -> str:
-    return PLAN_SYSTEM.format(catalog=tool_catalog())
+def plan_system(guidance: str = "") -> str:
+    base = PLAN_SYSTEM.format(catalog=tool_catalog())
+    if guidance.strip():
+        base += ("\n\nLEARNED GUIDANCE (from past human reviews of your findings — apply it):\n"
+                 + guidance.strip())
+    return base
 
 
 def render_state(trigger: dict, hypotheses: list[dict], evidence: list[dict],

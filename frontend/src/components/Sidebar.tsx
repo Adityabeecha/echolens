@@ -12,6 +12,7 @@ interface Props {
 const NAV: { key: Screen; icon: string; label: string; iconColor?: string }[] = [
   { key: "feed", icon: "◉", label: "Case Feed", iconColor: C.accent },
   { key: "archive", icon: "▤", label: "Archive" },
+  { key: "calibration", icon: "◑", label: "Calibration" },
   { key: "sources", icon: "⇄", label: "Sources" },
   { key: "costs", icon: "$", label: "Costs" },
 ];

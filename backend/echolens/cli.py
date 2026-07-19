@@ -30,6 +30,7 @@ KIND_STYLE = {
     "FAIL": "red",
     "CHECK": "grey42",
     "SPEC": "gold1",
+    "REFUTE": "magenta",
 }
 
 
