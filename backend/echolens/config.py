@@ -54,8 +54,12 @@ EXTENSION_CONFIDENCE = 0.65        # best hypothesis must be at least this promi
 EXTENSION_FACTOR = 1.5             # one-time cap multiplier
 
 # Tool output discipline (PRD §5.4): truncation lives in the tool layer.
-TOOL_RESULT_MAX_ITEMS = 8
+# Raised so each search surfaces MORE reviews for the agent to reason over —
+# deeper evidence, less "guessing from a handful".
+TOOL_RESULT_MAX_ITEMS = 12
 TOOL_SNIPPET_MAX_CHARS = 240
+# Max evidence items the update step keeps from a single tool result.
+MAX_EVIDENCE_PER_UPDATE = 5
 
 # Orchestrator daily caps (PRD §5.7). LLM proposes, code enforces.
 ORCHESTRATOR_DAILY_INVESTIGATIONS = 5

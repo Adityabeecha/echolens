@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from echolens.collectors.base import Collector, CollectResult
 from echolens.config import settings
 from echolens.db.models import CollectorState
+from echolens.collectors.app_store import AppStoreCollector
 from echolens.collectors.github import GitHubCollector
 from echolens.collectors.play_store import PlayStoreCollector
 from echolens.timeutil import aware_utc
@@ -24,6 +25,7 @@ from echolens.timeutil import aware_utc
 # The search_reddit tool and Post corpus remain (filled via CSV/import later).
 _BUILDERS = {
     "play_store": lambda ident, product: PlayStoreCollector(ident, product),
+    "app_store": lambda ident, product: AppStoreCollector(ident, product),
     "github": lambda ident, product: GitHubCollector(ident, product),
 }
 

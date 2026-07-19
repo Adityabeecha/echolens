@@ -424,6 +424,20 @@ export const api = {
   escalate: (id: number) => post(`/investigations/${id}/escalate`),
   archive: () => get<{ rows: ArchiveRow[]; count: number; resolved_pct: number }>("/archive"),
   sources: () => get<SourcesResp>("/sources"),
+  importReviews: (file: File, product?: string, source = "csv") => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const qs = new URLSearchParams({ source });
+    if (product) qs.set("product", product);
+    return fetch(`${BASE}/import/reviews?${qs.toString()}`, {
+      method: "POST",
+      headers: { ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
+      body: fd,
+    }).then(async (r) => {
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.detail || `import → ${r.status}`);
+      return r.json() as Promise<{ imported: number; skipped: number; total: number }>;
+    });
+  },
   connectSource: (source: string, identifier: string, product?: string) =>
     post<{ connected: { source: string; identifier: string; product: string } }>("/sources/connect", {
       source,

@@ -14,7 +14,7 @@ from typing import Any
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -420,6 +420,22 @@ def onboard_status(product: str) -> dict:
             select(AnomalyEvent).where(AnomalyEvent.status == "pending").order_by(AnomalyEvent.id)).all()]
         return {"product": product, "backfilling": backfilling, "sources": health,
                 "snapshot": snap, "anomalies": anomalies}
+
+
+@app.post("/import/reviews")
+async def import_reviews(file: UploadFile = File(...), product: str = "", source: str = "csv",
+                        user: dict = Depends(require_role("admin"))) -> dict:
+    """Import a CSV of reviews from any export (App Store, Zendesk, spreadsheet).
+    Widens the evidence base beyond the live scrapers. Idempotent by content hash."""
+    from echolens.importers.csv_reviews import import_reviews_csv
+    raw = await file.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1", errors="replace")
+    with session_scope() as session:
+        result = import_reviews_csv(session, text, product=(product or None), source=(source or "csv"))
+    return result
 
 
 @app.get("/snapshot")
@@ -1282,7 +1298,9 @@ def archive() -> dict:
 
 _SOURCE_META = {
     "play_store": {"icon": "▶", "label": "Google Play reviews"},
+    "app_store": {"icon": "⌘", "label": "App Store reviews"},
     "github": {"icon": "⌥", "label": "GitHub issues + releases"},
+    "csv": {"icon": "⇪", "label": "Imported reviews (CSV)"},
 }
 
 
@@ -1298,8 +1316,9 @@ def sources() -> dict:
             if not st.enabled:
                 continue
             meta = _SOURCE_META.get(st.source, {"icon": "•", "label": st.source})
-            if st.source == "play_store":
-                vol = session.scalar(select(func.count(Review.id)).where(Review.product == st.product)) or 0
+            if st.source in ("play_store", "app_store"):
+                vol = session.scalar(select(func.count(Review.id)).where(
+                    Review.product == st.product, Review.source == st.source)) or 0
             elif st.source == "github":
                 vol = session.scalar(select(func.count(Issue.id)).where(Issue.product == st.product)) or 0
             else:
@@ -1316,6 +1335,15 @@ def sources() -> dict:
                 "lastPull": (f"pulled {st.last_run_at.date().isoformat()}" if st.last_run_at else "not yet collected"),
                 "volume": f"{vol:,} items", "error": st.last_error,
             })
+        # Imported (CSV) reviews aren't a pull collector, so surface them from the
+        # corpus directly whenever any exist (identified by the import ext_id prefix,
+        # regardless of the source label the user chose).
+        n_csv = session.scalar(select(func.count(Review.id)).where(Review.ext_id.like("csv_%"))) or 0
+        if n_csv:
+            connected.append({
+                "icon": _SOURCE_META["csv"]["icon"], "name": _SOURCE_META["csv"]["label"],
+                "detail": "uploaded exports", "status": "Healthy", "stale": False, "staleSince": None,
+                "lastPull": "imported", "volume": f"{n_csv:,} items", "error": None})
         # If nothing is configured, show the built-in demo corpus so the page
         # is never blank (it's still real counts).
         if not connected:

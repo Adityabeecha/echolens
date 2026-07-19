@@ -37,7 +37,11 @@ export function Chat({ onOpenInvestigation }: { onOpenInvestigation: (id: number
         investigationId: r.type === "investigation" ? r.investigation_id : undefined,
       }]);
     } catch (e) {
-      setTurns((t) => [...t, { role: "echolens", text: String(e).replace("Error: ", "") }]);
+      const raw = String(e).replace("Error: ", "");
+      const text = /404/.test(raw)
+        ? "Chat isn't available on this server yet — the backend is still deploying the latest version. Try again in a minute."
+        : raw;
+      setTurns((t) => [...t, { role: "echolens", text }]);
     } finally {
       setBusy(false);
       requestAnimationFrame(() => {

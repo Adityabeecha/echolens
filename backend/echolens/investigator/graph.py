@@ -331,7 +331,8 @@ class Investigator:
         known_h = {h["id"] for h in state["hypotheses"]}
         ref_to_eid: dict[str, str] = {e["ref"]: e["id"] for e in state["evidence"]}
 
-        for item in res.parsed.get("evidence", [])[:3]:
+        from echolens.config import MAX_EVIDENCE_PER_UPDATE
+        for item in res.parsed.get("evidence", [])[:MAX_EVIDENCE_PER_UPDATE]:
             ref = item.get("ref", "")
             if ref not in valid_refs:  # not re-retrievable -> rejected by guard
                 self._trace("FAIL", {"code": f"evidence ref '{ref}'",
