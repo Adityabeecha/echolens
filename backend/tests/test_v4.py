@@ -193,6 +193,31 @@ def test_slack_act_rejects_bad_token(client, monkeypatch):
     assert r.status_code == 401
 
 
+def test_slack_note_extracts_input():
+    from echolens.api.app import _slack_note
+    payload = {"state": {"values": {"blk": {"note_input": {"type": "plain_text_input", "value": "  check chargers  "}}}}}
+    assert _slack_note(payload) == "check chargers"
+    assert _slack_note({}) == ""
+
+
+def test_slack_form_approve_works(client, monkeypatch):
+    """The real Slack button path (form-encoded payload), not just JSON."""
+    import json as _json
+    monkeypatch.setattr(settings, "slack_action_token", "s3cret")
+    monkeypatch.setattr(settings, "auto_create_issue_on_approve", False)
+    payload = {"token": "s3cret", "actions": [{"value": "approve:1"}]}
+    r = client.post("/integrations/slack/act", data={"payload": _json.dumps(payload)})
+    assert r.status_code == 200 and r.json()["status"] == "approved"
+
+
+def test_slack_form_malformed_value_is_422_not_500(client, monkeypatch):
+    import json as _json
+    monkeypatch.setattr(settings, "slack_action_token", "s3cret")
+    payload = {"token": "s3cret", "actions": [{"value": "garbage"}]}
+    r = client.post("/integrations/slack/act", data={"payload": _json.dumps(payload)})
+    assert r.status_code == 422  # not an unhandled 500
+
+
 def test_finding_dict_exposes_decision_and_severity(client):
     f = client.get("/investigations/1").json()["finding"]
     assert f["decision"]["whats_broken"] and "score" in f["severity"]

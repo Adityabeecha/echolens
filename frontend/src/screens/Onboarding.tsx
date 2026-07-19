@@ -54,7 +54,7 @@ export function Onboarding({ onDone, onOpenInvestigation, canSkip, onCancel }: P
 function Logo() {
   return (
     <div style={{ width: 24, height: 24, borderRadius: "50%", border: `2px solid ${C.accent}`, position: "relative", flex: "none" }}>
-      <div style={{ position: "absolute", inset: 4, borderRadius: "50%", background: "radial-gradient(circle at 35% 35%, #f7bd6a, #b06f1a)" }} />
+      <div style={{ position: "absolute", inset: 4, borderRadius: "50%", background: `radial-gradient(circle at 35% 35%, ${C.accentHi}, ${C.accentDeep})` }} />
     </div>
   );
 }
@@ -295,7 +295,7 @@ function SnapshotView({ snap }: { snap: Snapshot }) {
         <div style={{ display: "flex", alignItems: "flex-end", gap: 5, height: 56 }}>
           {snap.weekly.map((w) => (
             <div key={w.week_start} title={`${w.week_start}: ${w.count}`}
-              style={{ flex: 1, height: `${Math.max(4, (w.count / max) * 100)}%`, borderRadius: "3px 3px 0 0", background: "linear-gradient(180deg,#f0a63c,#b06f1a)", opacity: 0.9 }} />
+              style={{ flex: 1, height: `${Math.max(4, (w.count / max) * 100)}%`, borderRadius: "3px 3px 0 0", background: `linear-gradient(180deg,${C.accent},${C.accentDeep})`, opacity: 0.9 }} />
           ))}
         </div>
       </div>

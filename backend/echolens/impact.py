@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from echolens.db.models import Review
 from echolens.detector.detect import reference_now
 from echolens.textkit import tokenize
+from echolens.timeutil import aware_utc
 from echolens.tools._util import match_score
 
 # words that are structural to a finding, not the theme itself
@@ -61,11 +62,8 @@ def quantify(session: Session, anomaly, finding_json: dict, product: str | None 
         stmt = stmt.where(Review.product == product)
     rows = session.scalars(stmt).all()
 
-    def _at(r):
-        return r.created_at if r.created_at.tzinfo else r.created_at.replace(tzinfo=now.tzinfo)
-
-    recent = [r for r in rows if _at(r) > recent_start]
-    baseline = [r for r in rows if base_start <= _at(r) <= recent_start]
+    recent = [r for r in rows if aware_utc(r.created_at) > recent_start]
+    baseline = [r for r in rows if base_start <= aware_utc(r.created_at) <= recent_start]
     recent_neg = [r for r in recent if r.rating <= 2]
     matching = [r for r in recent_neg if terms and match_score(r.text, terms) > 0]
 
@@ -75,7 +73,7 @@ def quantify(session: Session, anomaly, finding_json: dict, product: str | None 
     rating_impact = (round(max(0.0, base_avg - recent_avg), 2)
                      if base_avg is not None and recent_avg is not None else 0.0)
 
-    blast = _blast_radius(session, terms, recent_start, now, product)
+    blast = _blast_radius(session, terms, recent_start)
 
     # a single 0..1 impact score used for severity + alert routing
     impact_score = min(1.0, 0.5 * (affected_pct / 100) + 0.3 * min(1.0, len(matching) / 40)
@@ -95,7 +93,7 @@ def quantify(session: Session, anomaly, finding_json: dict, product: str | None 
     }
 
 
-def _blast_radius(session, terms, recent_start, now, product) -> dict:
+def _blast_radius(session, terms, recent_start) -> dict:
     """Which app version the complaint concentrates in (the decoy-killer, reused
     for prioritisation). Deterministic cohort counting."""
     if not terms:

@@ -18,6 +18,7 @@ from echolens.config import settings
 from echolens.db.models import CollectorState
 from echolens.collectors.github import GitHubCollector
 from echolens.collectors.play_store import PlayStoreCollector
+from echolens.timeutil import aware_utc
 
 # Reddit was dropped as a live source: Reddit ended free API access in 2026.
 # The search_reddit tool and Post corpus remain (filled via CSV/import later).
@@ -67,12 +68,6 @@ def run_all(session: Session, limit: int = 200) -> list[CollectResult]:
     return results
 
 
-def _aware(dt: datetime | None) -> datetime | None:
-    if dt is None:
-        return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-
-
 def source_health(session: Session, product: str | None = None) -> list[dict]:
     """One health record per enabled collector, with a v3.0 staleness verdict: a
     source is STALE if it errored or hasn't pulled in over 2× the collection
@@ -85,7 +80,7 @@ def source_health(session: Session, product: str | None = None) -> list[dict]:
     if product:
         q = q.where(CollectorState.product == product)
     for st in session.scalars(q).all():
-        last = _aware(st.last_run_at)
+        last = aware_utc(st.last_run_at)
         errored = st.status == "error"
         overdue = last is not None and (now - last) > ttl
         stale = errored or overdue

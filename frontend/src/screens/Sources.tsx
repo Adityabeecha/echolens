@@ -45,7 +45,7 @@ export function Sources({ onAddProduct }: { onAddProduct?: () => void }) {
         title="Sources"
         right={
           reviewer ? (
-            <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
               <button onClick={collect} disabled={!!busy} className="el-btn"
                 style={{ background: "transparent", color: C.muted, border: `1px solid ${C.border3}`, borderRadius: 6, padding: "8px 14px", fontSize: 13, cursor: "pointer" }}>
                 {busy === "collect" ? "Collecting…" : "Collect now"}

@@ -133,7 +133,7 @@ export function FindingReview({ investigationId, onBack, onOpenEvidence, onRevie
         )}
 
         {f.decision && (
-          <DecisionCard decision={f.decision} impact={f.impact} severity={f.severity} findingId={f.id} canCreate={canReview()} />
+          <DecisionCard decision={f.decision} impact={f.impact} severity={f.severity} findingId={f.id} canCreate={canReview() && inv.status === "resolved"} />
         )}
 
         <div style={{ padding: "22px 24px", background: C.card, border: `1px solid ${C.border2}`, borderRadius: 12 }}>

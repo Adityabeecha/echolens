@@ -40,7 +40,7 @@ def finding_ticket(session: Session, finding: Finding, repo: str | None = None,
     impact = fj.get("impact", {})
     decision = decision_doc(fj, list(recs), impact, inv.status if inv else "")
 
-    title = f"[EchoLens] {fj.get('summary', 'Finding')}"
+    title = f"[EchoLens] {fj.get('summary') or 'Finding'}"
 
     top = recs[0] if recs else None
     acceptance = []

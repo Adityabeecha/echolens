@@ -9,7 +9,7 @@ so this works on any app, not a keyword list tuned for Lumo.
 from __future__ import annotations
 
 import statistics
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -17,14 +17,13 @@ from sqlalchemy.orm import Session
 from echolens.db.models import Review
 from echolens.detector.detect import LOW_VOLUME_PER_DAY, reference_now
 from echolens.textkit import is_probably_english, top_themes
+from echolens.timeutil import aware_utc
 
 WEEKS = 12  # how much recent history to chart
 
 
-def _at(r: Review) -> datetime:
-    """SQLite drops tzinfo on round-trip; normalize to UTC-aware for comparisons."""
-    dt = r.created_at
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+def _at(r: Review):
+    return aware_utc(r.created_at)
 
 
 def _weekly_series(reviews: list[Review], now, weeks: int) -> list[dict]:

@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -42,6 +43,7 @@ from echolens.db.models import (
 )
 from echolens.db.session import init_db, session_scope
 from echolens.logging import get_logger
+from echolens.timeutil import aware_utc
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -705,56 +707,103 @@ def finding_notify(finding_id: int, user: dict = Depends(require_role("reviewer"
         return notify_finding(session, finding, force=True)
 
 
+def _slack_note(payload: dict) -> str:
+    """Pull the reviewer's note out of a Slack interactive payload's input
+    blocks (payload.state.values → first non-empty plain_text_input)."""
+    values = (payload.get("state") or {}).get("values") or {}
+    for block in values.values():
+        if not isinstance(block, dict):
+            continue
+        for field in block.values():
+            if isinstance(field, dict) and field.get("value"):
+                return str(field["value"]).strip()
+    return ""
+
+
+def _do_approve(finding_id: int, note: str) -> dict:
+    from echolens import review as review_mod
+    with session_scope() as session:
+        finding = session.get(Finding, finding_id)
+        if finding is None:
+            raise HTTPException(404, "no such finding")
+        review_mod.approve(session, finding, note)
+        result = {"status": "approved", "finding_id": finding.id}
+        if settings.auto_create_issue_on_approve:
+            result["issue"] = _auto_issue(session, finding)
+        return result
+
+
+def _do_challenge(finding_id: int, note: str) -> int:
+    from echolens import review as review_mod
+    with session_scope() as session:
+        finding = session.get(Finding, finding_id)
+        if finding is None:
+            raise HTTPException(404, "no such finding")
+        return review_mod.challenge(session, finding, note).id
+
+
+def _slack_challenge_bg(finding_id: int, note: str) -> None:
+    try:
+        _do_challenge(finding_id, note)
+    except Exception as err:
+        log.error("slack_challenge_failed", finding_id=finding_id, error=str(err))
+
+
 @app.post("/integrations/slack/act")
 async def slack_act(request: Request) -> dict:
     """Reply-to-act from Slack: an approve/challenge button (or a simple JSON
     body) maps to the review endpoint. No dashboard visit required.
 
     Accepts either Slack's interactive `payload` form field or a JSON body
-    {token, action, finding_id, note}. Guarded by SLACK_ACTION_TOKEN."""
-    from echolens import review as review_mod
+    {token, action, finding_id, note}. Guarded by SLACK_ACTION_TOKEN.
+
+    The blocking review work runs off the event loop (a challenge re-runs a full
+    investigation): the JSON path awaits it in a worker thread; the Slack path
+    acknowledges immediately (within Slack's 3s window) and finishes in the
+    background."""
     from echolens.notify import parse_action_value
 
     ctype = request.headers.get("content-type", "")
-    action = note = None
-    finding_id = None
-    token = ""
-    if "application/json" in ctype:
+    is_slack = "application/json" not in ctype
+    action, finding_id, note, token = None, None, "", ""
+    if not is_slack:
         body = await request.json()
         token = body.get("token", "")
         action = body.get("action")
         finding_id = body.get("finding_id")
-        note = body.get("note", "")
+        note = body.get("note", "") or ""
     else:  # Slack interactivity: form-encoded `payload`
         form = await request.form()
-        token = form.get("token", "") or request.headers.get("x-echolens-token", "")
         payload = json.loads(form.get("payload", "{}"))
-        token = token or payload.get("token", "")
+        token = form.get("token", "") or request.headers.get("x-echolens-token", "") or payload.get("token", "")
         actions = payload.get("actions", [])
         if actions:
-            action, finding_id = parse_action_value(actions[0].get("value", ""))
-        note = (payload.get("state", {}).get("values") and "") or ""
+            try:
+                action, finding_id = parse_action_value(actions[0].get("value", ""))
+            except ValueError:
+                raise HTTPException(422, "unrecognized Slack action value")
+        note = _slack_note(payload)
 
     expected = settings.slack_action_token
     if not expected or token != expected:
         raise HTTPException(401, "invalid or missing slack action token")
     if action not in ("approve", "challenge") or finding_id is None:
         raise HTTPException(422, "provide action (approve|challenge) and finding_id")
+    finding_id = int(finding_id)
 
-    with session_scope() as session:
-        finding = session.get(Finding, int(finding_id))
-        if finding is None:
-            raise HTTPException(404, "no such finding")
-        if action == "approve":
-            review_mod.approve(session, finding, note or "approved from Slack")
-            result = {"status": "approved", "finding_id": finding.id}
-            if settings.auto_create_issue_on_approve:
-                result["issue"] = _auto_issue(session, finding)
-            return result
-        if not (note or "").strip():
+    if action == "challenge":
+        if is_slack and not note.strip():
+            # a button carries no note; keep the challenge functional
+            note = "Challenged from Slack — please re-examine this finding."
+        if not note.strip():
             raise HTTPException(422, "a challenge needs a note")
-        reopened = review_mod.challenge(session, finding, note)
-        return {"status": "challenged", "reopened_investigation_id": reopened.id}
+        if is_slack:
+            threading.Thread(target=_slack_challenge_bg, args=(finding_id, note), daemon=True).start()
+            return {"status": "challenge_started", "finding_id": finding_id}
+        reopened = await run_in_threadpool(_do_challenge, finding_id, note)
+        return {"status": "challenged", "reopened_investigation_id": reopened}
+
+    return await run_in_threadpool(_do_approve, finding_id, note or "approved from Slack")
 
 
 def _auto_issue(session, finding) -> dict:
@@ -782,7 +831,7 @@ def alerts_digest(hours: int = 24, user: dict = Depends(require_role("reviewer")
     with session_scope() as session:
         since = datetime.now(timezone.utc) - timedelta(hours=hours)
         findings = [f for f in session.scalars(select(Finding).order_by(Finding.id.desc())).all()
-                    if f.created_at and _aware(f.created_at) >= since]
+                    if f.created_at and aware_utc(f.created_at) >= since]
         if not findings:
             return {"sent": False, "reason": "no findings in window"}
         lines = []
@@ -790,7 +839,7 @@ def alerts_digest(hours: int = 24, user: dict = Depends(require_role("reviewer")
             fj = f.json or {}
             sev = severity(float(fj.get("confidence", 0.0)), fj.get("impact", {}))
             link = deep_link(f.investigation_id)
-            label = fj.get("summary", "finding")
+            label = fj.get("summary") or "finding"
             lines.append(f"• *{sev['band']}* — {label}" + (f" (<{link}|case #{f.investigation_id}>)" if link else ""))
         payload = {"blocks": [
             {"type": "header", "text": {"type": "plain_text", "text": f"EchoLens digest · {len(findings)} findings"}},
@@ -798,10 +847,6 @@ def alerts_digest(hours: int = 24, user: dict = Depends(require_role("reviewer")
         ]}
         ok = _send_slack(payload)
         return {"sent": ok, "count": len(findings)}
-
-
-def _aware(dt):
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 @app.get("/costs")

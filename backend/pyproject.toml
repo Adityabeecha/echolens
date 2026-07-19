@@ -22,6 +22,8 @@ dependencies = [
     "slowapi>=0.1.9",
     "python-jose[cryptography]>=3.3",
     "bcrypt>=4.0",
+    # v4.0: Slack interactivity posts form-encoded payloads (request.form())
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
