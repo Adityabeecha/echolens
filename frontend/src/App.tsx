@@ -31,10 +31,12 @@ export default function App() {
     onAuthError(() => setAuthed(false));
   }, []);
 
-  // First run: an admin with no real product connected lands on the wizard, not
-  // an empty feed. (Demo rows report a "(demo)" name; those don't count.)
+  // First run ONLY: an admin with no real product connected, who hasn't seen
+  // the wizard yet, lands on it once. After they connect a product or dismiss it,
+  // we never auto-open it again (they can reach it via Sources → "Add a product").
   useEffect(() => {
     if (!authed || !isAdmin()) return;
+    if (localStorage.getItem("echolens_seen_onboarding")) return;
     let alive = true;
     api
       .sources()
@@ -136,8 +138,12 @@ export default function App() {
         {screen === "onboarding" && (
           <Onboarding
             canSkip
-            onCancel={() => setScreen("feed")}
+            onCancel={() => {
+              localStorage.setItem("echolens_seen_onboarding", "1");
+              setScreen("feed");
+            }}
             onDone={() => {
+              localStorage.setItem("echolens_seen_onboarding", "1");
               setReloadKey((k) => k + 1);
               setScreen("feed");
             }}

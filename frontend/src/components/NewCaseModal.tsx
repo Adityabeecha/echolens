@@ -3,9 +3,9 @@ import { api } from "../api";
 import { C, mono } from "../theme";
 
 const TIERS: { key: string; name: string; detail: string }[] = [
-  { key: "quick", name: "Quick look", detail: "5 iter · $0.25 · 15 min" },
-  { key: "standard", name: "Standard", detail: "12 iter · $0.75 · 45 min" },
-  { key: "deep", name: "Deep dive", detail: "30 iter · $2.00 · 2 h" },
+  { key: "quick", name: "Quick look", detail: "5 iter · $0.25 · shallow — may only skim a few reviews" },
+  { key: "standard", name: "Standard", detail: "12 iter · $0.75 · gathers evidence across sources (recommended)" },
+  { key: "deep", name: "Deep dive", detail: "30 iter · $2.00 · widest search, strongest corroboration" },
 ];
 
 export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onStarted: (investigationId: number) => void }) {

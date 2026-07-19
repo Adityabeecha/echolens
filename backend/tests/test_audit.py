@@ -144,6 +144,32 @@ def test_concurrent_investigation_guard(client):
 
 # ── #4 challenge returns immediately (does not run the loop inline) ──────
 
+def test_triage_run_does_not_duplicate_cases(client, monkeypatch):
+    """Re-running triage must not open a second case for an anomaly that already
+    has one (the duplicate-cases bug), and it returns immediately."""
+    tc, Session = client
+    import echolens.orchestrator.triage as triage_mod
+    from echolens.orchestrator.triage import Decision
+
+    class FakeOrch:
+        def __init__(self, session, daily_limit=5):
+            self.session = session
+
+        def triage(self):
+            a = self.session.scalars(select(AnomalyEvent).where(AnomalyEvent.slug == "demo1")).first()
+            a.status = "pending"  # pretend it's re-detected each run
+            self.session.flush()
+            return [Decision(anomaly=a, decision="investigate", reason="x", budget_tier="quick")]
+
+    monkeypatch.setattr(triage_mod, "Orchestrator", FakeOrch)
+    assert tc.post("/anomalies/triage?run=true").status_code == 200
+    assert tc.post("/anomalies/triage?run=true").status_code == 200
+    with Session() as s:
+        a = s.scalars(select(AnomalyEvent).where(AnomalyEvent.slug == "demo1")).first()
+        count = len(s.scalars(select(Investigation).where(Investigation.anomaly_id == a.id)).all())
+    assert count == 1  # exactly one case, not a duplicate
+
+
 def test_challenge_returns_immediately(client):
     tc, Session = client
     with Session() as s:

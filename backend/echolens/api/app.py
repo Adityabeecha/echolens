@@ -458,17 +458,36 @@ def list_anomalies() -> dict:
 @limiter.limit("10/minute")
 def anomalies_triage(request: Request, run: bool = False,
                      user: dict = Depends(require_role("reviewer"))) -> dict:
-    from echolens.orchestrator.triage import Orchestrator, run_triaged
+    from echolens.orchestrator.triage import Orchestrator
+    to_run: list[tuple[int, str]] = []
     with session_scope() as session:
         decisions = Orchestrator(session, daily_limit=_daily_limit(session)).triage()
         out = [{"anomaly": d.anomaly.slug, "decision": d.decision, "reason": d.reason,
                 "budget_tier": d.budget_tier,
                 "merge_into": d.merge_into.slug if d.merge_into else None} for d in decisions]
-        started = []
         if run:
-            for inv in run_triaged(session, decisions):
-                started.append(inv.id)
-        return {"decisions": out, "started_investigations": started}
+            for d in decisions:
+                if d.decision != "investigate":
+                    continue
+                # Idempotency guard: never open a SECOND case for an anomaly that
+                # already has one (this is what caused duplicate cases on re-triage).
+                existing = session.scalars(select(Investigation).where(
+                    Investigation.anomaly_id == d.anomaly.id)).first()
+                if existing is not None:
+                    continue
+                tier = d.budget_tier or "standard"
+                inv = Investigation(anomaly_id=d.anomaly.id, status="running", opened_by="anomaly",
+                                    budget_tier=tier, budget_json={})
+                session.add(inv)
+                d.anomaly.status = "investigating"
+                session.flush()
+                to_run.append((inv.id, tier))
+    # Run the investigations in the background AFTER the triage commit — so the
+    # request returns immediately (no proxy timeout that left cases stuck as
+    # "pending triage") and the rows are visible to the worker sessions.
+    for inv_id, tier in to_run:
+        threading.Thread(target=_run_investigation_bg, args=(inv_id, tier), daemon=True).start()
+    return {"decisions": out, "started_investigations": [i for i, _ in to_run]}
 
 
 class NewCase(BaseModel):
