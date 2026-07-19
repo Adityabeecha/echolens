@@ -140,6 +140,8 @@ export function FindingReview({ investigationId, onBack, onOpenEvidence, onRevie
 
         {f.fix && <FixCard fix={f.fix} />}
 
+        {canReview() && <FollowupCard findingId={f.id} addenda={f.addenda} onAdded={reload} />}
+
         <div style={{ padding: "22px 24px", background: C.card, border: `1px solid ${C.border2}`, borderRadius: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
             <Label style={{ letterSpacing: ".12em" }}>FINDING</Label>
@@ -581,6 +583,48 @@ function BeforeAfterChart({ chart }: { chart: NonNullable<FixStatus["chart"]> })
           </div>
           <Bars points={chart.after} color={C.good} />
         </div>
+      </div>
+    </div>
+  );
+}
+
+// v7.0: ask a targeted follow-up ("does this affect iOS too?") → cohort answer
+// appended as an addendum, no full re-investigation.
+function FollowupCard({ findingId, addenda, onAdded }: { findingId: number; addenda?: { question: string; answer: string; dimension: string }[]; onAdded: () => void }) {
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+  const ask = async () => {
+    if (!q.trim() || busy) return;
+    setBusy(true);
+    try {
+      await api.findingFollowup(findingId, q.trim());
+      setQ("");
+      onAdded();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div style={{ marginTop: 26 }}>
+      <Label style={{ marginBottom: 10 }}>FOLLOW-UP</Label>
+      {addenda && addenda.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 9, marginBottom: 12 }}>
+          {addenda.map((a, i) => (
+            <div key={i} style={{ padding: "12px 15px", background: C.card, border: `1px solid ${C.border2}`, borderRadius: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: C.text2 }}>{a.question}</div>
+              <div style={{ fontSize: 13, color: C.text3, marginTop: 6, lineHeight: 1.5 }}>{a.answer}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 9, maxWidth: 560 }}>
+        <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && ask()}
+          placeholder="Does this affect iOS too? Which version?"
+          style={{ flex: 1, background: C.bgRaised, border: `1px solid ${C.border3}`, borderRadius: 8, color: C.text, fontFamily: "inherit", fontSize: 13, padding: "9px 12px" }} />
+        <button onClick={ask} disabled={!q.trim() || busy} className="el-btn"
+          style={{ background: "transparent", color: C.accent, border: `1px solid ${C.accent}66`, borderRadius: 8, padding: "0 16px", fontSize: 13, cursor: q.trim() && !busy ? "pointer" : "not-allowed", opacity: q.trim() && !busy ? 1 : 0.5 }}>
+          {busy ? "…" : "Ask"}
+        </button>
       </div>
     </div>
   );

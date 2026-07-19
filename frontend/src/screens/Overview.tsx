@@ -3,9 +3,28 @@ import { useAsync } from "../hooks";
 import { C, mono } from "../theme";
 import { Centered, Label, ScreenHeader } from "../ui";
 
+// Split "…case #12…" into clickable case links.
+function Cited({ text, onOpen }: { text: string; onOpen: (id: number) => void }) {
+  const parts = text.split(/(case #\d+)/g);
+  return (
+    <>
+      {parts.map((p, i) => {
+        const m = p.match(/^case #(\d+)$/);
+        if (!m) return <span key={i}>{p}</span>;
+        return (
+          <span key={i} onClick={() => onOpen(parseInt(m[1], 10))} style={{ color: C.accent, cursor: "pointer", fontFamily: mono, fontSize: 12.5 }}>
+            {p}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
 // The PM's monthly review, auto-written: outcomes, not alerts.
 export function Overview({ onOpenInvestigation }: { onOpenInvestigation: (id: number) => void }) {
   const { data, loading, error } = useAsync(() => api.overview(), []);
+  const { data: brief } = useAsync(() => api.brief(), []);
   if (loading) return <Centered>Loading product health…</Centered>;
   if (error || !data) return <Centered>Backend unavailable.</Centered>;
 
@@ -26,6 +45,43 @@ export function Overview({ onOpenInvestigation }: { onOpenInvestigation: (id: nu
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <ScreenHeader title="Product Health" right={<span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>OUTCOMES, NOT ALERTS</span>} />
       <div style={{ flex: 1, overflow: "auto", padding: "22px 28px" }}>
+        {brief && brief.lines.length > 0 && (
+          <div style={{ maxWidth: 980, marginBottom: 20, padding: "16px 20px", background: C.card, border: `1px solid ${C.border2}`, borderRadius: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+              <Label style={{ letterSpacing: ".12em", color: C.accent }}>THIS WEEK</Label>
+              <span style={{ fontFamily: mono, fontSize: 10.5, color: C.faint }}>{brief.generated}</span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {brief.lines.map((ln, i) => (
+                <div key={i} style={{ fontSize: 13.5, color: i === 0 ? C.text2 : C.text3, lineHeight: 1.5 }}>
+                  <Cited text={ln} onOpen={onOpenInvestigation} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {data.chronic_themes && data.chronic_themes.length > 0 && (
+          <div style={{ maxWidth: 980, marginBottom: 20 }}>
+            <Label style={{ marginBottom: 10, color: C.bad }}>⚠ CHRONIC THEMES · UNRESOLVED &gt; 60 DAYS</Label>
+            <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+              {data.chronic_themes.map((t) => (
+                <div key={t.theme} onClick={() => t.cases[0] && onOpenInvestigation(t.cases[0])}
+                  className="el-row"
+                  style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 16px", background: C.card, border: `1px solid ${C.bad}44`, borderRadius: 10, cursor: "pointer" }}>
+                  <span style={{ fontFamily: mono, fontSize: 11, padding: "3px 9px", borderRadius: 20, background: `${C.bad}1f`, color: C.bad }}>{t.age_days}d</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, color: C.text2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.label}</div>
+                    <div style={{ fontFamily: mono, fontSize: 10.5, color: C.faint, marginTop: 2 }}>
+                      {t.theme} · first seen {t.first_seen} · {t.open_cases} open
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", maxWidth: 980 }}>
           {tiles.map((t) => (
             <div key={t.label} style={{ flex: 1, minWidth: 160, padding: "16px 18px", background: C.card, border: `1px solid ${C.border2}`, borderRadius: 11 }}>

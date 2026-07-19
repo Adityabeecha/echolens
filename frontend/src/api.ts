@@ -168,6 +168,7 @@ export interface Finding {
   decision?: Decision;
   severity?: Severity;
   fix?: FixStatus | null;
+  addenda?: { question: string; answer: string; dimension: string }[];
 }
 export interface Recommendation {
   rank: number;
@@ -338,6 +339,41 @@ export interface Overview {
   confirmed_fixes_quarter: number;
   regressions: number;
   mean_days_to_confirmed_fix: number | null;
+  chronic_themes: ThemeLifecycle[];
+}
+
+// v7.0 chat, brief, themes
+export interface ChatCitation {
+  investigation_id: number;
+  finding_id: number;
+  summary: string;
+  affected_pct?: number | null;
+}
+export interface ChatResponse {
+  type: "answer" | "investigation";
+  text: string;
+  citations?: ChatCitation[];
+  investigation_id?: number;
+}
+export interface WeeklyBrief {
+  generated: string;
+  resolution_rate: number;
+  new_problems: { investigation_id: number; summary: string; impact_score: number }[];
+  fixes_verified: { investigation_id: number; metric: string }[];
+  regressions: { slug: string; parent_case_id: number | null }[];
+  chronic_themes: ThemeLifecycle[];
+  fix_next: { investigation_id: number; summary: string; score: number } | null;
+  lines: string[];
+}
+export interface ThemeLifecycle {
+  theme: string;
+  label: string;
+  status: "chronic" | "active" | "resolved";
+  age_days: number;
+  cases: number[];
+  open_cases: number;
+  first_seen: string;
+  last_seen: string;
 }
 
 // ── endpoints ────────────────────────────────────────────────────────
@@ -378,6 +414,11 @@ export const api = {
   calibration: () => get<Calibration>("/calibration"),
   patterns: () => get<{ patterns: Pattern[] }>("/patterns"),
   overview: () => get<Overview>("/overview"),
+  chat: (message: string) => post<ChatResponse>("/chat", { message }),
+  brief: () => get<WeeklyBrief>("/brief"),
+  themes: () => get<{ themes: ThemeLifecycle[] }>("/themes"),
+  findingFollowup: (findingId: number, question: string) =>
+    post<{ question: string; answer: string; investigation_id: number }>(`/findings/${findingId}/followup`, { question }),
   pause: (id: number) => post(`/investigations/${id}/pause`),
   resume: (id: number) => post(`/investigations/${id}/resume`),
   escalate: (id: number) => post(`/investigations/${id}/escalate`),

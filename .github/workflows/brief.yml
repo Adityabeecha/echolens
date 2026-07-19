@@ -1,0 +1,26 @@
+# Weekly brief (v7.0). Sends EchoLens's Monday-morning brief to Slack/email
+# unprompted. Uses the same secrets as the collector workflow.
+name: EchoLens weekly brief
+
+on:
+  schedule:
+    - cron: "0 13 * * 1" # Mondays 13:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  brief:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in and send the weekly brief
+        env:
+          API: ${{ secrets.ECHOLENS_API }}
+          EMAIL: ${{ secrets.ECHOLENS_EMAIL }}
+          PASSWORD: ${{ secrets.ECHOLENS_PASSWORD }}
+        run: |
+          set -e
+          if [ -z "$API" ]; then echo "ECHOLENS_API secret not set"; exit 1; fi
+          TOKEN=$(curl -sf -X POST "$API/auth/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}" | python3 -c "import sys,json;print(json.load(sys.stdin)['token'])")
+          echo "→ brief"; curl -sf -X POST "$API/brief/send" -H "Authorization: Bearer $TOKEN"
+          echo "done"

@@ -16,6 +16,7 @@ import { Onboarding } from "./screens/Onboarding";
 import { Calibration } from "./screens/Calibration";
 import { Overview } from "./screens/Overview";
 import { Patterns } from "./screens/Patterns";
+import { Chat } from "./screens/Chat";
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("feed");
@@ -144,6 +145,7 @@ export default function App() {
           />
         )}
         {screen === "archive" && <Archive onOpenInvestigation={openInvestigation} />}
+        {screen === "chat" && <Chat onOpenInvestigation={openInvestigation} />}
         {screen === "overview" && <Overview onOpenInvestigation={openInvestigation} />}
         {screen === "patterns" && <Patterns />}
         {screen === "calibration" && <Calibration />}

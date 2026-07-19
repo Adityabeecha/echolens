@@ -1016,6 +1016,8 @@ def overview() -> dict:
                 "affected_pct": impact.get("affected_pct", 0.0),
             })
         open_problems.sort(key=lambda p: -p["impact_score"])
+        from echolens.themes import theme_lifecycle
+        chronic = [t for t in theme_lifecycle(session) if t["status"] == "chronic"]
         return {
             "open_problems": open_problems[:10],
             "open_problem_count": len(open_problems),
@@ -1024,12 +1026,106 @@ def overview() -> dict:
             "confirmed_fixes_quarter": len(confirmed_q),
             "regressions": len(regressed),
             "mean_days_to_confirmed_fix": mttr,
+            "chronic_themes": chronic,
         }
 
 
 def _quarter_start(now: datetime) -> datetime:
     q_month = 3 * ((now.month - 1) // 3) + 1
     return now.replace(month=q_month, day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+# ── v7.0: conversational layer, weekly brief, theme lifecycle ────────────
+
+class ChatBody(BaseModel):
+    message: str
+
+
+@app.post("/chat")
+def chat_endpoint(body: ChatBody, user: dict = Depends(current_user)) -> dict:
+    """Ask the verified knowledge anything. Returns a finding-cited answer, or —
+    for an investigate-intent question — launches a case that streams in-thread."""
+    from echolens import chat as chat_mod
+    with session_scope() as session:
+        decision = chat_mod.route(session, body.message)
+        if decision.get("type") != "launch":
+            return decision
+        if user.get("role") not in ("reviewer", "admin"):
+            return {"type": "answer", "citations": [],
+                    "text": "I can look into that, but opening an investigation needs reviewer access."}
+        anomaly = AnomalyEvent(slug=f"chat-{int(time.time())}", type="manual", metric="chat question",
+                               delta=0.0, z=0.0, window="n/a",
+                               description=decision["description"], status="pending")
+        session.add(anomaly)
+        session.flush()
+        inv = Investigation(anomaly_id=anomaly.id, status="running", opened_by="manual",
+                            budget_tier="standard", budget_json={}, data_notes=_data_notes(session))
+        session.add(inv)
+        anomaly.status = "investigating"
+        session.flush()
+        inv_id = inv.id
+    threading.Thread(target=_run_investigation_bg, args=(inv_id, "standard"), daemon=True).start()
+    return {"type": "investigation", "investigation_id": inv_id,
+            "text": f"Opening an investigation into that — case #{inv_id}. It's streaming now."}
+
+
+class FollowupBody(BaseModel):
+    question: str
+
+
+@app.post("/findings/{finding_id}/followup")
+def finding_followup(finding_id: int, body: FollowupBody,
+                     user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Targeted follow-up on a finding (e.g. 'does this affect iOS too?') appended
+    as an addendum — no full re-investigation."""
+    from echolens.chat import followup
+    with session_scope() as session:
+        finding = session.get(Finding, finding_id)
+        if finding is None:
+            raise HTTPException(404, "no such finding")
+        return followup(session, finding, body.question)
+
+
+@app.get("/brief")
+def brief_view() -> dict:
+    """Preview the weekly brief (also what the scheduled send composes)."""
+    from echolens.brief import weekly_brief
+    with session_scope() as session:
+        return weekly_brief(session)
+
+
+@app.post("/brief/send")
+def brief_send(user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Compose and deliver the weekly brief to Slack/email (scheduled, unprompted)."""
+    from echolens.brief import weekly_brief
+    from echolens.notify import _send_email, _send_slack, deep_link
+    with session_scope() as session:
+        b = weekly_brief(session)
+
+    def _linkify(text: str) -> str:
+        import re
+        def repl(m):
+            cid = m.group(1)
+            link = deep_link(int(cid))
+            return f"<{link}|case #{cid}>" if link else f"case #{cid}"
+        return re.sub(r"case #(\d+)", repl, text)
+
+    body_md = "\n".join(_linkify(line) for line in b["lines"])
+    payload = {"blocks": [
+        {"type": "header", "text": {"type": "plain_text", "text": f"EchoLens weekly brief · {b['generated']}"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": body_md}},
+    ]}
+    slack = _send_slack(payload)
+    email = _send_email(f"EchoLens weekly brief · {b['generated']}", "\n".join(b["lines"]))
+    return {"sent": {"slack": slack, "email": email}, "brief": b}
+
+
+@app.get("/themes")
+def themes_view() -> dict:
+    """Theme lifecycle: emergence → peak → resolved / chronic (>60d unresolved)."""
+    from echolens.themes import theme_lifecycle
+    with session_scope() as session:
+        return {"themes": theme_lifecycle(session)}
 
 
 @app.get("/costs")

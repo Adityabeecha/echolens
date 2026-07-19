@@ -11,6 +11,7 @@ interface Props {
 
 const NAV: { key: Screen; icon: string; label: string; iconColor?: string }[] = [
   { key: "feed", icon: "◉", label: "Case Feed", iconColor: C.accent },
+  { key: "chat", icon: "✦", label: "Ask EchoLens", iconColor: C.accent },
   { key: "overview", icon: "◈", label: "Product Health" },
   { key: "archive", icon: "▤", label: "Archive" },
   { key: "patterns", icon: "❖", label: "Patterns" },

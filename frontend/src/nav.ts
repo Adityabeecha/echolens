@@ -8,4 +8,5 @@ export type Screen =
   | "onboarding"
   | "calibration"
   | "overview"
-  | "patterns";
+  | "patterns"
+  | "chat";
