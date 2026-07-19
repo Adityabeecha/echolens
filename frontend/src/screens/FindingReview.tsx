@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { Evidence, Investigation, api, canReview } from "../api";
+import { Decision, Evidence, Impact, Investigation, Severity, api, canReview } from "../api";
 import { useAsync } from "../hooks";
 import { C, mono, statusColor } from "../theme";
 import { Centered, Label } from "../ui";
+
+const SEV_COLOR: Record<string, string> = { high: C.bad, medium: C.accent, low: C.muted };
 
 interface Props {
   investigationId: number;
@@ -128,6 +130,10 @@ export function FindingReview({ investigationId, onBack, onOpenEvidence, onRevie
               <div key={i} style={{ fontSize: 12.5, color: C.text3, lineHeight: 1.55 }}>{n}</div>
             ))}
           </div>
+        )}
+
+        {f.decision && (
+          <DecisionCard decision={f.decision} impact={f.impact} severity={f.severity} findingId={f.id} canCreate={canReview()} />
         )}
 
         <div style={{ padding: "22px 24px", background: C.card, border: `1px solid ${C.border2}`, borderRadius: 12 }}>
@@ -329,6 +335,118 @@ export function FindingReview({ investigationId, onBack, onOpenEvidence, onRevie
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// The decision document: the three questions a PM asks, above the fold, with
+// impact numbers and one-click ticketing. Evidence detail stays below.
+function DecisionCard({
+  decision,
+  impact,
+  severity,
+  findingId,
+  canCreate,
+}: {
+  decision: Decision;
+  impact?: Impact;
+  severity?: Severity;
+  findingId: number;
+  canCreate: boolean;
+}) {
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const sevColor = severity ? SEV_COLOR[severity.band] ?? C.muted : C.muted;
+
+  const copyIssue = async () => {
+    setBusy("copy");
+    setMsg(null);
+    try {
+      const t = await api.findingIssue(findingId);
+      await navigator.clipboard.writeText(`# ${t.title}\n\n${t.body}`);
+      setMsg("Copied ticket markdown to clipboard.");
+    } catch (e) {
+      setMsg(String(e).replace("Error: ", ""));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const createIssue = async () => {
+    setBusy("create");
+    setMsg(null);
+    try {
+      const r = await api.createGithubIssue(findingId);
+      setMsg(`Opened GitHub issue #${r.number} in ${r.repo}.`);
+    } catch (e) {
+      setMsg(String(e).replace("Error: ", ""));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const rows: [string, string][] = [
+    ["What's broken", decision.whats_broken],
+    ["How bad", decision.how_bad],
+    ["What to do", decision.what_to_do],
+  ];
+
+  return (
+    <div style={{ marginBottom: 18, padding: "20px 22px", background: C.card, border: `1px solid ${C.border3}`, borderRadius: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <Label style={{ letterSpacing: ".12em", color: C.accent }}>DECISION</Label>
+        {severity && (
+          <span style={{ fontFamily: mono, fontSize: 10.5, padding: "3px 9px", borderRadius: 4, background: `${sevColor}1f`, border: `1px solid ${sevColor}66`, color: sevColor, textTransform: "uppercase" }}>
+            {severity.band} severity · {severity.score.toFixed(2)}
+          </span>
+        )}
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
+        {rows.map(([q, a]) => (
+          <div key={q} style={{ display: "grid", gridTemplateColumns: "108px 1fr", gap: 14, alignItems: "baseline" }}>
+            <div style={{ fontFamily: mono, fontSize: 11, color: C.faint, textTransform: "uppercase", letterSpacing: ".06em" }}>{q}</div>
+            <div style={{ fontSize: 14, color: C.text2, lineHeight: 1.5 }}>{a || "—"}</div>
+          </div>
+        ))}
+      </div>
+
+      {impact && (impact.affected_volume > 0 || impact.rating_impact > 0) && (
+        <div style={{ display: "flex", gap: 9, flexWrap: "wrap", marginTop: 16 }}>
+          <ImpactStat label="AFFECTED" value={`${impact.affected_pct}%`} sub={`${impact.affected_volume} reviews / 7d`} />
+          <ImpactStat label="RATING IMPACT" value={`${impact.rating_impact.toFixed(2)}★`} sub="est. lost vs baseline" color={impact.rating_impact > 0 ? C.bad : C.muted} />
+          {impact.blast_radius.top_cohort && impact.blast_radius.top_cohort !== "unknown" && (
+            <ImpactStat
+              label="BLAST RADIUS"
+              value={impact.blast_radius.top_cohort}
+              sub={impact.blast_radius.exclusive ? "exclusive to cohort" : impact.blast_radius.ratio ? `${impact.blast_radius.ratio}× next version` : "top cohort"}
+            />
+          )}
+        </div>
+      )}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+        <button onClick={copyIssue} disabled={!!busy} className="el-btn"
+          style={{ background: "transparent", color: C.text2, border: `1px solid ${C.border3}`, borderRadius: 7, padding: "8px 14px", fontSize: 13, cursor: "pointer" }}>
+          {busy === "copy" ? "Copying…" : "Copy as issue"}
+        </button>
+        {canCreate && (
+          <button onClick={createIssue} disabled={!!busy} className="el-btn"
+            style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: 7, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+            {busy === "create" ? "Creating…" : "Create GitHub issue"}
+          </button>
+        )}
+        {msg && <span style={{ fontSize: 12.5, color: C.muted }}>{msg}</span>}
+      </div>
+    </div>
+  );
+}
+
+function ImpactStat({ label, value, sub, color }: { label: string; value: string; sub: string; color?: string }) {
+  return (
+    <div style={{ flex: 1, minWidth: 150, padding: "11px 14px", background: C.card2, border: `1px solid ${C.border2}`, borderRadius: 9 }}>
+      <div style={{ fontFamily: mono, fontSize: 9.5, letterSpacing: ".1em", color: C.faint }}>{label}</div>
+      <div style={{ fontFamily: mono, fontSize: 18, fontWeight: 700, color: color ?? C.text, marginTop: 5 }}>{value}</div>
+      <div style={{ fontSize: 11, color: C.dim, marginTop: 2 }}>{sub}</div>
     </div>
   );
 }

@@ -42,7 +42,10 @@ from echolens.investigator.prompts import (
 )
 from echolens.investigator.state import Budget, InvState
 from echolens.llm.client import LLMClient, LLMFormatError
+from echolens.logging import get_logger
 from echolens.tools.registry import TOOLS, run_tool
+
+log = get_logger("investigator")
 
 
 def _collect_refs(node) -> set[str]:
@@ -628,6 +631,11 @@ class Investigator:
             return self.inv
 
         finding = self._draft_finding(final)
+        try:  # v4.0 impact quantification — deterministic, never fail the run over it
+            from echolens.impact import quantify
+            finding["impact"] = quantify(self.session, self.anomaly, finding)
+        except Exception as err:
+            log.error("impact_quantify_failed", error=str(err))
         final["finding"] = finding
         self.session.add(Finding(
             investigation_id=self.inv.id,

@@ -32,4 +32,5 @@ jobs:
           echo "→ collect"; curl -sf -X POST "$API/collectors/run" -H "$auth" || true
           echo "→ scan";    curl -sf -X POST "$API/anomalies/scan"
           echo "→ triage";  curl -sf -X POST "$API/anomalies/triage" -H "$auth" || true
+          echo "→ digest";  curl -sf -X POST "$API/alerts/digest?hours=24" -H "$auth" || true
           echo "done"

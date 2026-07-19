@@ -113,6 +113,27 @@ export interface Evidence {
   supports: string[];
   contradicts: string[];
 }
+export interface Impact {
+  terms: string[];
+  affected_pct: number;
+  affected_volume: number;
+  recent_negatives: number;
+  rating_now: number | null;
+  rating_baseline: number | null;
+  rating_impact: number;
+  blast_radius: { dimension: string; top_cohort: string | null; ratio: number | null; exclusive: boolean };
+  impact_score: number;
+  as_of: string;
+}
+export interface Decision {
+  whats_broken: string;
+  how_bad: string;
+  what_to_do: string;
+}
+export interface Severity {
+  score: number;
+  band: "high" | "medium" | "low";
+}
 export interface Finding {
   id: number;
   status: string;
@@ -122,6 +143,9 @@ export interface Finding {
   supported_hypothesis: string | null;
   checked: string[];
   what_would_settle_it: string;
+  impact?: Impact;
+  decision?: Decision;
+  severity?: Severity;
 }
 export interface Recommendation {
   rank: number;
@@ -303,6 +327,11 @@ export const api = {
     get<OnboardStatus>(`/onboard/status?product=${encodeURIComponent(product)}`),
   snapshot: (product?: string) =>
     get<Snapshot>(`/snapshot${product ? `?product=${encodeURIComponent(product)}` : ""}`),
+  findingIssue: (findingId: number) =>
+    get<{ title: string; body: string; repo: string | null }>(`/findings/${findingId}/issue`),
+  createGithubIssue: (findingId: number) =>
+    post<{ repo: string; number: number; url: string }>(`/findings/${findingId}/github-issue`),
+  notifyFinding: (findingId: number) => post<{ routed: string; sent?: string[] }>(`/findings/${findingId}/notify`),
   costsSummary: () => get<CostsSummary>("/costs/summary"),
   setLimits: (limits: { daily_investigations?: number; per_case_budget?: number; per_case_wall_min?: number }) =>
     fetch(`${BASE}/settings/limits`, {

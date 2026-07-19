@@ -121,6 +121,28 @@ class Settings(BaseSettings):
     # extra complaint themes to watch, comma-separated (adds to the built-in list)
     detector_extra_terms: str = ""
 
+    # ── v4.0 delivery & actionability ───────────────────────────────────
+    # Public base URL of the frontend, for deep links in alerts/tickets.
+    app_base_url: str = ""
+    alerts_enabled: bool = True
+    # A finding at or above this severity is pinged instantly; below → digest.
+    alert_instant_min_severity: float = 0.5
+    # Slack incoming-webhook URL for finding/anomaly alerts (optional).
+    slack_webhook_url: str = ""
+    # Shared secret guarding the reply-to-act endpoint (Slack → review).
+    slack_action_token: str = ""
+    # On a Slack "approve", also open a GitHub issue automatically.
+    auto_create_issue_on_approve: bool = False
+    # Fallback repo for issue creation when a product has no GitHub source.
+    github_default_repo: str = ""
+    # Email (optional). If smtp_host is unset, email delivery is skipped.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    alert_email_from: str = ""
+    alert_email_to: str = ""
+
     @property
     def extra_theme_terms(self) -> list[str]:
         return [t.strip() for t in self.detector_extra_terms.split(",") if t.strip()]

@@ -150,9 +150,22 @@ def _investigation_dict(session, inv: Investigation) -> dict:
         "evidence": [{"id": e.eid, "source": e.source, "ref": e.ref, "snippet": e.snippet,
                       "retrieved_by": e.retrieved_by, **e.json} for e in evs],
         "finding": None if finding is None else {
-            "id": finding.id, "status": finding.status, **finding.json},
+            "id": finding.id, "status": finding.status, **finding.json,
+            **_finding_extras(finding, recs, inv.status)},
         "recommendations": [{"rank": r.rank, "action": r.action, "impact": r.impact,
                              "effort": r.effort, "rationale": r.rationale} for r in recs],
+    }
+
+
+def _finding_extras(finding, recs, status: str) -> dict:
+    """The decision doc + severity, computed from the finding's impact + actions
+    (v4.0) so the UI answers What's broken / How bad / What to do above the fold."""
+    from echolens.impact import decision_doc, severity
+    fj = finding.json or {}
+    impact = fj.get("impact", {})
+    return {
+        "decision": decision_doc(fj, list(recs), impact, status),
+        "severity": severity(float(fj.get("confidence", 0.0)), impact),
     }
 
 
@@ -162,6 +175,17 @@ def _trace_dict(t: TraceStep) -> dict:
 
 
 # ── background investigation runner ────────────────────────────────────
+
+def _try_notify(session, finding) -> None:
+    """Auto-deliver a concluded finding by severity (v4.0). Never let a delivery
+    failure affect the investigation result."""
+    try:
+        from echolens.notify import notify_finding
+        result = notify_finding(session, finding)
+        log.info("finding_notified", finding_id=finding.id, routed=result.get("routed"))
+    except Exception as err:
+        log.error("notify_failed", finding_id=finding.id, error=str(err))
+
 
 def _run_investigation_bg(investigation_id: int, tier: str) -> None:
     """Run the loop on an investigation row that was already created (so the
@@ -179,6 +203,7 @@ def _run_investigation_bg(investigation_id: int, tier: str) -> None:
             Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
         if finding is not None:
             recommend(session, finding)
+            _try_notify(session, finding)
 
 
 # ── endpoints ──────────────────────────────────────────────────────────
@@ -508,6 +533,7 @@ def _resume_investigation_bg(inv_id: int) -> None:
             Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
         if finding is not None:
             recommend(session, finding)
+            _try_notify(session, finding)
 
 
 @app.post("/investigations/{inv_id}/pause")
@@ -614,6 +640,168 @@ def recommend_finding(finding_id: int) -> dict:
         return {"recommendations": [
             {"rank": r.rank, "action": r.action, "impact": r.impact, "effort": r.effort}
             for r in recs]}
+
+
+# ── v4.0: actionable delivery (tickets, GitHub issues, Slack, alerts) ────
+
+def _github_repo(session) -> str | None:
+    """The repo to file issues into: the single connected GitHub source, else
+    the configured default. (Our beachhead is one product per workspace.)"""
+    from echolens.db.models import CollectorState
+    rows = session.scalars(select(CollectorState).where(
+        CollectorState.source == "github", CollectorState.enabled == True)).all()  # noqa: E712
+    if len(rows) == 1:
+        return rows[0].identifier
+    return settings.github_default_repo or None
+
+
+@app.get("/findings/{finding_id}/issue")
+def finding_issue_markdown(finding_id: int) -> dict:
+    """Copy-to-clipboard, ticket-ready markdown for a finding."""
+    from echolens.exporting import finding_ticket
+    from echolens.notify import deep_link
+    with session_scope() as session:
+        finding = session.get(Finding, finding_id)
+        if finding is None:
+            raise HTTPException(404, "no such finding")
+        repo = _github_repo(session)
+        inv = session.get(Investigation, finding.investigation_id)
+        ticket = finding_ticket(session, finding, repo=repo,
+                                deep_link=deep_link(inv.id) if inv else None)
+        return {**ticket, "repo": repo}
+
+
+@app.post("/findings/{finding_id}/github-issue")
+def finding_github_issue(finding_id: int, user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Open a GitHub issue from a finding, evidence chain included."""
+    from echolens.exporting import finding_ticket
+    from echolens.integrations.github_issue import GitHubIssueError, create_issue
+    from echolens.notify import deep_link
+    with session_scope() as session:
+        finding = session.get(Finding, finding_id)
+        if finding is None:
+            raise HTTPException(404, "no such finding")
+        repo = _github_repo(session)
+        if not repo:
+            raise HTTPException(422, "No GitHub repo connected. Connect a repo on Sources, or set GITHUB_DEFAULT_REPO.")
+        inv = session.get(Investigation, finding.investigation_id)
+        ticket = finding_ticket(session, finding, repo=repo,
+                                deep_link=deep_link(inv.id) if inv else None)
+        try:
+            issue = create_issue(repo, ticket["title"], ticket["body"])
+        except GitHubIssueError as err:
+            raise HTTPException(422, str(err))
+        return {"repo": repo, **issue}
+
+
+@app.post("/findings/{finding_id}/notify")
+def finding_notify(finding_id: int, user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Send a finding's alert now (bypasses the severity gate)."""
+    from echolens.notify import notify_finding
+    with session_scope() as session:
+        finding = session.get(Finding, finding_id)
+        if finding is None:
+            raise HTTPException(404, "no such finding")
+        return notify_finding(session, finding, force=True)
+
+
+@app.post("/integrations/slack/act")
+async def slack_act(request: Request) -> dict:
+    """Reply-to-act from Slack: an approve/challenge button (or a simple JSON
+    body) maps to the review endpoint. No dashboard visit required.
+
+    Accepts either Slack's interactive `payload` form field or a JSON body
+    {token, action, finding_id, note}. Guarded by SLACK_ACTION_TOKEN."""
+    from echolens import review as review_mod
+    from echolens.notify import parse_action_value
+
+    ctype = request.headers.get("content-type", "")
+    action = note = None
+    finding_id = None
+    token = ""
+    if "application/json" in ctype:
+        body = await request.json()
+        token = body.get("token", "")
+        action = body.get("action")
+        finding_id = body.get("finding_id")
+        note = body.get("note", "")
+    else:  # Slack interactivity: form-encoded `payload`
+        form = await request.form()
+        token = form.get("token", "") or request.headers.get("x-echolens-token", "")
+        payload = json.loads(form.get("payload", "{}"))
+        token = token or payload.get("token", "")
+        actions = payload.get("actions", [])
+        if actions:
+            action, finding_id = parse_action_value(actions[0].get("value", ""))
+        note = (payload.get("state", {}).get("values") and "") or ""
+
+    expected = settings.slack_action_token
+    if not expected or token != expected:
+        raise HTTPException(401, "invalid or missing slack action token")
+    if action not in ("approve", "challenge") or finding_id is None:
+        raise HTTPException(422, "provide action (approve|challenge) and finding_id")
+
+    with session_scope() as session:
+        finding = session.get(Finding, int(finding_id))
+        if finding is None:
+            raise HTTPException(404, "no such finding")
+        if action == "approve":
+            review_mod.approve(session, finding, note or "approved from Slack")
+            result = {"status": "approved", "finding_id": finding.id}
+            if settings.auto_create_issue_on_approve:
+                result["issue"] = _auto_issue(session, finding)
+            return result
+        if not (note or "").strip():
+            raise HTTPException(422, "a challenge needs a note")
+        reopened = review_mod.challenge(session, finding, note)
+        return {"status": "challenged", "reopened_investigation_id": reopened.id}
+
+
+def _auto_issue(session, finding) -> dict:
+    from echolens.exporting import finding_ticket
+    from echolens.integrations.github_issue import GitHubIssueError, create_issue
+    from echolens.notify import deep_link
+    repo = _github_repo(session)
+    if not repo:
+        return {"error": "no repo configured"}
+    inv = session.get(Investigation, finding.investigation_id)
+    ticket = finding_ticket(session, finding, repo=repo, deep_link=deep_link(inv.id) if inv else None)
+    try:
+        return create_issue(repo, ticket["title"], ticket["body"])
+    except GitHubIssueError as err:
+        return {"error": str(err)}
+
+
+@app.post("/alerts/digest")
+def alerts_digest(hours: int = 24, user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Daily rollup: post one summary of findings drafted in the last `hours` to
+    Slack. Used by the scheduled GitHub Action so PMs get a quiet digest."""
+    from datetime import timedelta
+    from echolens.impact import severity
+    from echolens.notify import _send_slack, deep_link
+    with session_scope() as session:
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        findings = [f for f in session.scalars(select(Finding).order_by(Finding.id.desc())).all()
+                    if f.created_at and _aware(f.created_at) >= since]
+        if not findings:
+            return {"sent": False, "reason": "no findings in window"}
+        lines = []
+        for f in findings[:20]:
+            fj = f.json or {}
+            sev = severity(float(fj.get("confidence", 0.0)), fj.get("impact", {}))
+            link = deep_link(f.investigation_id)
+            label = fj.get("summary", "finding")
+            lines.append(f"• *{sev['band']}* — {label}" + (f" (<{link}|case #{f.investigation_id}>)" if link else ""))
+        payload = {"blocks": [
+            {"type": "header", "text": {"type": "plain_text", "text": f"EchoLens digest · {len(findings)} findings"}},
+            {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}},
+        ]}
+        ok = _send_slack(payload)
+        return {"sent": ok, "count": len(findings)}
+
+
+def _aware(dt):
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 @app.get("/costs")
