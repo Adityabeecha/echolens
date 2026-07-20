@@ -12,9 +12,12 @@ def search_github_issues(
     query: str,
     state: str | None = None,
     since: str | None = None,
+    product: str | None = None,
     limit: int | None = None,
 ) -> dict:
     stmt = select(Issue)
+    if product:
+        stmt = stmt.where(Issue.product == product)
     if state:
         stmt = stmt.where(Issue.state == state)
     if since:

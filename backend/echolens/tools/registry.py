@@ -6,6 +6,7 @@ deterministically. No LLM inside any tool.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from inspect import signature
 from typing import Callable
 
 from sqlalchemy.orm import Session
@@ -45,7 +46,7 @@ TOOLS: dict[str, ToolSpec] = {
                     "date_from": _DATE, "date_to": _DATE,
                     "rating_max": {"type": "integer"}, "rating_min": {"type": "integer"},
                     "version_prefix": {"type": "string"}, "os_version": {"type": "string"},
-                    "product": {"type": "string"}, "limit": {"type": "integer"},
+                    "limit": {"type": "integer"},
                 },
                 "required": ["query"],
             },
@@ -61,7 +62,6 @@ TOOLS: dict[str, ToolSpec] = {
                     "term": {"type": "string"},
                     "date_from": _DATE, "date_to": _DATE,
                     "version_prefix": {"type": "string"}, "os_version": {"type": "string"},
-                    "product": {"type": "string"},
                 },
                 "required": ["term"],
             },
@@ -160,15 +160,23 @@ TOOLS: dict[str, ToolSpec] = {
 }
 
 
-def run_tool(session: Session, name: str, args: dict) -> dict:
+def run_tool(session: Session, name: str, args: dict, product: str | None = None) -> dict:
     """Execute a registered tool. Raises KeyError/TypeError/ValueError on bad
-    calls — the investigator records those as FAIL trace steps."""
+    calls — the investigator records those as FAIL trace steps.
+
+    `product` scopes the corpus to one tracked product. It is NOT part of any
+    tool's model-facing schema on purpose: which product an investigation may
+    look at is a deterministic property of the case, not something the agent
+    gets to widen. The caller passes it; every tool that can filter, does.
+    """
     spec = TOOLS[name]
     allowed = set(spec.args_schema.get("properties", {}))
     clean = {k: v for k, v in args.items() if k in allowed and v is not None}
     missing = [k for k in spec.args_schema.get("required", []) if k not in clean]
     if missing:
         raise ValueError(f"{name}: missing required args {missing}")
+    if product and "product" in signature(spec.fn).parameters:
+        clean["product"] = product
     return spec.fn(session, **clean)
 
 

@@ -12,8 +12,11 @@ def get_release_notes(
     version: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    product: str | None = None,
 ) -> dict:
     stmt = select(Release).order_by(Release.released_at)
+    if product:
+        stmt = stmt.where(Release.product == product)
     if version:
         stmt = stmt.where(Release.version.like(f"{version}%"))
     if date_from:

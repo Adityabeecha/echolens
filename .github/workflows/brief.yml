@@ -17,10 +17,30 @@ jobs:
           EMAIL: ${{ secrets.ECHOLENS_EMAIL }}
           PASSWORD: ${{ secrets.ECHOLENS_PASSWORD }}
         run: |
-          set -e
-          if [ -z "$API" ]; then echo "ECHOLENS_API secret not set"; exit 1; fi
-          TOKEN=$(curl -sf -X POST "$API/auth/login" \
+          set -euo pipefail
+          missing=""
+          [ -n "$API" ]      || missing="$missing ECHOLENS_API"
+          [ -n "$EMAIL" ]    || missing="$missing ECHOLENS_EMAIL"
+          [ -n "$PASSWORD" ] || missing="$missing ECHOLENS_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repo secret(s):$missing"; exit 1
+          fi
+
+          # Render free instances sleep; wake it before the real call.
+          for i in $(seq 1 12); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$API/health" || echo 000)
+            [ "$code" = "200" ] && break
+            echo "waking: attempt $i → $code"; sleep 10
+          done
+
+          body=$(curl -s --max-time 60 -w '\n%{http_code}' -X POST "$API/auth/login" \
             -H "Content-Type: application/json" \
-            -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}" | python3 -c "import sys,json;print(json.load(sys.stdin)['token'])")
-          echo "→ brief"; curl -sf -X POST "$API/brief/send" -H "Authorization: Bearer $TOKEN"
+            -d "$(python3 -c 'import json,os;print(json.dumps({"email":os.environ["EMAIL"],"password":os.environ["PASSWORD"]}))')")
+          code=$(echo "$body" | tail -n1)
+          if [ "$code" != "200" ]; then
+            echo "::error::login failed (HTTP $code) — check ECHOLENS_EMAIL / ECHOLENS_PASSWORD"; exit 1
+          fi
+          TOKEN=$(echo "$body" | sed '$d' | python3 -c "import sys,json;print(json.load(sys.stdin)['token'])")
+
+          echo "→ brief"; curl -sf --max-time 120 -X POST "$API/brief/send" -H "Authorization: Bearer $TOKEN"
           echo "done"

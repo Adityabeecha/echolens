@@ -116,6 +116,17 @@ def test_products_list_and_activate(client):
     assert tc.post(f"/products/{ids['Beta']}/activate").json()["active_product_id"] == ids["Beta"]
 
 
+def test_activation_survives_a_refresh(client):
+    """The switch must be READ BACK, not just echoed. Asserting only the activate
+    response let a bug through where the write was silently skipped and the next
+    boot snapped back to the first product."""
+    tc, ids, _ = client
+    tc.post(f"/products/{ids['Beta']}/activate")
+    assert tc.get("/products").json()["active_product_id"] == ids["Beta"]
+    tc.post(f"/products/{ids['Alpha']}/activate")
+    assert tc.get("/products").json()["active_product_id"] == ids["Alpha"]
+
+
 def test_delete_product_cascades_and_requires_typed_name(client):
     tc, ids, Session = client
     a = ids["Alpha"]
@@ -155,7 +166,7 @@ def test_scan_plus_triage_three_times_keeps_case_count_stable(client, monkeypatc
         def __init__(self, session, daily_limit=5, product_id=None):
             self.session, self.pid = session, product_id
 
-        def triage(self):
+        def triage(self, persist=True):
             stmt = select(AnomalyEvent).where(AnomalyEvent.status == "pending")
             if self.pid is not None:
                 stmt = stmt.where(AnomalyEvent.product_id == self.pid)
@@ -173,6 +184,45 @@ def test_scan_plus_triage_three_times_keeps_case_count_stable(client, monkeypatc
     assert counts[0] == counts[1] == counts[2], f"triage duplicated cases: {counts}"
 
 
+def test_preview_triage_does_not_consume_the_pending_queue(client, monkeypatch):
+    """run=false is a PREVIEW. It used to persist decisions and flip anomalies to
+    'triaged', so the scheduled job (which never passed run=true) silently ate the
+    queue and opened nothing — anomalies sat triaged forever with no case."""
+    tc, ids, Session = client
+    a = ids["Alpha"]
+    import echolens.orchestrator.triage as triage_mod
+    from echolens.orchestrator.triage import Decision
+
+    class FakeOrch:
+        def __init__(self, session, daily_limit=5, product_id=None):
+            self.session, self.pid = session, product_id
+
+        def triage(self, persist=True):
+            rows = self.session.scalars(select(AnomalyEvent).where(
+                AnomalyEvent.status == "pending",
+                AnomalyEvent.product_id == self.pid)).all()
+            ds = [Decision(anomaly=x, decision="investigate", reason="r", budget_tier="quick")
+                  for x in rows]
+            if persist:
+                for d in ds:
+                    d.anomaly.status = "triaged"
+                self.session.flush()
+            return ds
+
+    monkeypatch.setattr(triage_mod, "Orchestrator", FakeOrch)
+
+    def pending():
+        with Session() as s:
+            return len(s.scalars(select(AnomalyEvent).where(
+                AnomalyEvent.product_id == a, AnomalyEvent.status == "pending")).all())
+
+    before = pending()
+    assert before, "fixture must have a pending anomaly for this to mean anything"
+    body = tc.post(f"/anomalies/triage?product_id={a}").json()   # no run=true
+    assert pending() == before, "a preview must leave the queue untouched"
+    assert "preview" in body["summary"] and "nothing started" in body["summary"]
+
+
 def test_triage_reports_already_triaged(client, monkeypatch):
     tc, ids, _ = client
     a = ids["Alpha"]
@@ -183,7 +233,7 @@ def test_triage_reports_already_triaged(client, monkeypatch):
         def __init__(self, session, daily_limit=5, product_id=None):
             self.session, self.pid = session, product_id
 
-        def triage(self):
+        def triage(self, persist=True):
             x = self.session.scalars(select(AnomalyEvent).where(
                 AnomalyEvent.slug == "alpha-1")).first()
             x.status = "pending"
@@ -193,7 +243,7 @@ def test_triage_reports_already_triaged(client, monkeypatch):
     monkeypatch.setattr(triage_mod, "Orchestrator", FakeOrch)
     r = tc.post(f"/anomalies/triage?run=true&product_id={a}").json()
     assert r["skipped_already_triaged"] == 1  # alpha-1 already has a case
-    assert "already triaged" in r["summary"]
+    assert "already triaged" in r["summary"] and "nothing new" in r["summary"]
 
 
 # ── T4.3: duration formatting + sanity cap ──────────────────────────────

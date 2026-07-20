@@ -329,6 +329,30 @@ def _scope(session, product_id: int | None):
     return session.scalars(select(Product).order_by(Product.id)).first()
 
 
+def _user_row(session, user: dict):
+    """The DB row behind the authenticated principal, for per-user settings.
+
+    With auth on, the JWT carries a real user id. In dev mode `current_user`
+    returns a synthetic admin with id 0 — falsy, and backed by no row — so a
+    naive `if uid:` silently dropped every write and product switching appeared
+    to work while never persisting. Resolve the dev principal by email (creating
+    its row once) so local behaviour matches production instead of diverging.
+    """
+    from echolens.db.models import User
+    uid = user.get("id")
+    if uid:
+        return session.get(User, uid)
+    email = user.get("email")
+    if not email:
+        return None
+    row = session.scalars(select(User).where(User.email == email)).first()
+    if row is None:
+        row = User(email=email, password_hash="!dev-no-login", role=user.get("role", "admin"))
+        session.add(row)
+        session.flush()
+    return row
+
+
 def _product_dict(p) -> dict:
     return {"id": p.id, "name": p.name, "package_name": p.package_name,
             "github_repo": p.github_repo, "is_demo": p.is_demo,
@@ -343,11 +367,9 @@ def list_products(user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
         rows = session.scalars(select(Product).order_by(Product.id)).all()
         active = None
-        uid = user.get("id")
-        if uid:
-            u = session.get(User, uid)
-            if u and u.last_active_product_id:
-                active = u.last_active_product_id
+        u = _user_row(session, user)
+        if u is not None and u.last_active_product_id:
+            active = u.last_active_product_id
         if active not in {p.id for p in rows}:
             active = rows[0].id if rows else None
         return {"products": [_product_dict(p) for p in rows], "active_product_id": active}
@@ -382,11 +404,10 @@ def activate_product(product_id: int, user: dict = Depends(current_user)) -> dic
         p = session.get(Product, product_id)
         if p is None:
             raise HTTPException(404, "no such product")
-        uid = user.get("id")
-        if uid:
-            u = session.get(User, uid)
-            if u is not None:
-                u.last_active_product_id = product_id
+        u = _user_row(session, user)
+        if u is None:  # nothing to remember it on — say so rather than lying
+            raise HTTPException(500, "could not resolve the current user to persist the switch")
+        u.last_active_product_id = product_id
         return {"active_product_id": product_id, "name": p.name}
 
 
@@ -666,6 +687,22 @@ def list_anomalies(product_id: int | None = None) -> dict:
         return {"anomalies": [_anomaly_dict(session, a) for a in rows]}
 
 
+def _triage_summary(considered: int, already: int, started: int, run: bool) -> str:
+    """One line the reviewer can trust. The old wording said '0 new → investigating'
+    on a preview, which claimed work that never happened."""
+    if considered == 0:
+        return "Nothing pending — every anomaly already has a case or was dismissed."
+    n = f"{considered} anomaly" if considered == 1 else f"{considered} anomalies"
+    if not run:
+        return f"{n} reviewed — preview only, nothing started. Press Run triage to open cases."
+    if started == 0:
+        if already:
+            return f"{n}, already triaged — every one has a case; nothing new to open."
+        return f"{n}, none met the bar to investigate."
+    kept = f", {already} already triaged" if already else ""
+    return f"{n}{kept} → investigating {started}."
+
+
 @app.post("/anomalies/triage")
 @limiter.limit("10/minute")
 def anomalies_triage(request: Request, run: bool = False, product_id: int | None = None,
@@ -676,8 +713,10 @@ def anomalies_triage(request: Request, run: bool = False, product_id: int | None
     with session_scope() as session:
         p = _scope(session, product_id)
         pid = p.id if p else None
+        # A preview (run=false) must not consume the pending queue — see
+        # Orchestrator.triage(persist=...).
         decisions = Orchestrator(session, daily_limit=_daily_limit(session, pid),
-                                 product_id=pid).triage()
+                                 product_id=pid).triage(persist=run)
         out = [{"anomaly": d.anomaly.slug, "decision": d.decision, "reason": d.reason,
                 "budget_tier": d.budget_tier,
                 "merge_into": d.merge_into.slug if d.merge_into else None} for d in decisions]
@@ -708,8 +747,7 @@ def anomalies_triage(request: Request, run: bool = False, product_id: int | None
         "decisions": out,
         "started_investigations": [i for i, _ in to_run],
         "skipped_already_triaged": skipped_already_triaged,
-        "summary": (f"{len(out)} anomalies: {skipped_already_triaged} already triaged, "
-                    f"{len(to_run)} new → investigating"),
+        "summary": _triage_summary(len(out), skipped_already_triaged, len(to_run), run),
     }
 
 

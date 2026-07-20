@@ -12,9 +12,12 @@ def search_reddit(
     query: str,
     subreddit: str | None = None,
     since: str | None = None,
+    product: str | None = None,
     limit: int | None = None,
 ) -> dict:
     stmt = select(Post)
+    if product:
+        stmt = stmt.where(Post.product == product)
     if subreddit:
         stmt = stmt.where(Post.subreddit == subreddit)
     if since:

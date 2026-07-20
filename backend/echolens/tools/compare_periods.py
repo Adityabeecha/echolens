@@ -12,13 +12,15 @@ from echolens.tools._util import parse_date, terms_of, match_score
 
 
 def _daily_series(
-    session: Session, metric: str, start: datetime, end: datetime
+    session: Session, metric: str, start: datetime, end: datetime,
+    product: str | None = None,
 ) -> list[float]:
     """metric: 'one_star_volume' | 'avg_rating' | 'term_share:<term>'
     (share of negatives mentioning the term, in %)."""
-    rows = session.scalars(
-        select(Review).where(Review.created_at >= start, Review.created_at <= end)
-    ).all()
+    stmt = select(Review).where(Review.created_at >= start, Review.created_at <= end)
+    if product:
+        stmt = stmt.where(Review.product == product)
+    rows = session.scalars(stmt).all()
     daily = defaultdict(list)
     for r in rows:
         daily[r.created_at.date()].append(r)
@@ -47,11 +49,12 @@ def compare_periods(
     before_to: str,
     after_from: str,
     after_to: str,
+    product: str | None = None,
 ) -> dict:
     """Deterministic before/after stats: means, delta %, z-score of the
     after-mean against the before-period distribution."""
-    before = _daily_series(session, metric, parse_date(before_from), parse_date(before_to))
-    after = _daily_series(session, metric, parse_date(after_from), parse_date(after_to))
+    before = _daily_series(session, metric, parse_date(before_from), parse_date(before_to), product)
+    after = _daily_series(session, metric, parse_date(after_from), parse_date(after_to), product)
     if not before or not after:
         return {"metric": metric, "error": "one of the periods has no data"}
 

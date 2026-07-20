@@ -114,6 +114,21 @@ class Investigator:
             session.add(self.inv)
         session.flush()
 
+        # v8.0 scoping: an investigation may only read ITS product's corpus.
+        # Enforced here (deterministic), not asked of the model — the agent has
+        # no way to widen the blast radius by writing a different product arg.
+        self._product_name = self._resolve_product_name()
+
+    def _resolve_product_name(self) -> str | None:
+        """Display name of this case's product — the value stamped on corpus rows.
+        None on a pre-v8 / unscoped case, which reads the whole corpus as before."""
+        pid = getattr(self.inv, "product_id", None)
+        if pid is None:
+            return None
+        from echolens.db.models import Product
+        product = self.session.get(Product, pid)
+        return product.name if product is not None else None
+
     # ── bookkeeping ────────────────────────────────────────────────────
 
     def _record_llm_call(self, agent: str, model: str, tokens_in: int,
@@ -228,15 +243,17 @@ class Investigator:
         from echolens.tools.search_github_issues import search_github_issues
         from echolens.tools.search_reviews import search_reviews
 
+        scope = self._product_name  # specialists read this case's product only
         if name == "sentiment_analyst":
-            reviews = search_reviews(self.session, query=focus or "issue", rating_max=2, limit=8)
+            reviews = search_reviews(self.session, query=focus or "issue", rating_max=2,
+                                     limit=8, product=scope)
             return ("Negative reviews to analyze:\n" +
                     "\n".join(f"- ({r['rating']}★, {r['version']}) {r['snippet']}"
                               for r in reviews["reviews"]))
         # timeline_reconstructor
-        releases = get_release_notes(self.session)
-        issues = search_github_issues(self.session, query=focus or "bug")
-        stats = review_stats(self.session, term=focus or "issue")
+        releases = get_release_notes(self.session, product=scope)
+        issues = search_github_issues(self.session, query=focus or "bug", product=scope)
+        stats = review_stats(self.session, term=focus or "issue", product=scope)
         events = ["RELEASES:"] + [f"  {r['released_at']}: {r['version']} — {r['notes'][:80]}"
                                   for r in releases["releases"]]
         events += ["ISSUES:"] + [f"  {i['date']}: {i['title']}" for i in issues["issues"][:6]]
@@ -294,7 +311,7 @@ class Investigator:
         self.budget.tool_calls += 1
         start = time.monotonic()
         try:
-            result = run_tool(self.session, name, args)
+            result = run_tool(self.session, name, args, product=self._product_name)
         except Exception as err:  # deterministic failure -> FAIL trace, loop continues
             self._trace("FAIL", {"code": code, "error": str(err),
                                  "text": "Tool failed; the next plan step decides whether this is blocking."})
@@ -548,7 +565,10 @@ class Investigator:
         query = " ".join(terms[:3]) or winner["statement"][:40]
         contradicted = False
         try:
-            res = compare_cohorts(self.session, term=query, dimension="version")
+            # scoped: another product's reviews must never be able to veto this
+            # product's finding by flattening the cohort ratio
+            res = compare_cohorts(self.session, term=query, dimension="version",
+                                  product=self._product_name)
             ratio, exclusive, top = (res.get("highest_vs_next_ratio"),
                                      res.get("only_in_top_cohort"), res.get("highest_cohort"))
             if exclusive:

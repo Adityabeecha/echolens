@@ -68,6 +68,19 @@ class ScenarioResult:
     detail: str = ""
 
 
+def scope_of(session: Session) -> str | None:
+    """The corpus this eval's goldens live in.
+
+    On a single-product DB this is None and every tool call sees everything —
+    the original behaviour. Once the corpus is product-stamped, the goldens must
+    pick their evidence refs from the SAME product the investigator will be
+    restricted to, or the script would cite rows the agent can't legally reach.
+    """
+    from echolens.db.models import Product
+    demo = session.scalars(select(Product).where(Product.is_demo.is_(True))).first()
+    return demo.name if demo is not None else None
+
+
 def _tool_calls(inv: Investigation) -> int:
     raw = inv.budget_json.get("tool_calls", "0/0")
     return int(str(raw).split("/")[0])
@@ -96,9 +109,10 @@ def _grounded(session, inv, finding) -> bool:
 
 def scenario_clear_cause() -> ScenarioResult:
     s = fresh_session()
+    scope = scope_of(s)
     review_args = {"query": "battery drain", "date_from": "2026-07-11", "rating_max": 2}
-    ref_r = search_reviews(s, **review_args)["reviews"][0]["ref"]
-    ref_g = search_github_issues(s, "background sync battery wakelock")["issues"][0]["ref"]
+    ref_r = search_reviews(s, product=scope, **review_args)["reviews"][0]["ref"]
+    ref_g = search_github_issues(s, "background sync battery wakelock", product=scope)["issues"][0]["ref"]
     responses = [
         {"thought": "Spike 3 days after v3.2; consider sync vs the OS update.",
          "action": "revise_hypotheses",
@@ -140,8 +154,10 @@ def scenario_decoy_rejected() -> ScenarioResult:
     GitHub issue (a wakelock in the app's own sync worker) distinguishes it and
     forces H2 to be rejected."""
     s = fresh_session()
-    ref_r = search_reviews(s, query="battery drain", date_from="2026-07-11", rating_max=2)["reviews"][0]["ref"]
-    ref_g = search_github_issues(s, "background sync battery wakelock")["issues"][0]["ref"]
+    scope = scope_of(s)
+    ref_r = search_reviews(s, query="battery drain", date_from="2026-07-11", rating_max=2,
+                           product=scope)["reviews"][0]["ref"]
+    ref_g = search_github_issues(s, "background sync battery wakelock", product=scope)["issues"][0]["ref"]
     responses = [
         {"thought": "OS update looks likely at first glance.", "action": "revise_hypotheses",
          "hypotheses": [
@@ -199,7 +215,8 @@ def scenario_insufficient_evidence() -> ScenarioResult:
 
 def scenario_conflicting_needs_human() -> ScenarioResult:
     s = fresh_session()
-    revs = search_reviews(s, query="battery drain", date_from="2026-07-11", rating_max=2)["reviews"]
+    revs = search_reviews(s, query="battery drain", date_from="2026-07-11", rating_max=2,
+                          product=scope_of(s))["reviews"]
     r1, r2 = revs[0]["ref"], revs[1]["ref"]
     r3, r4 = revs[2]["ref"], revs[3]["ref"]
     responses = [
@@ -261,7 +278,8 @@ def scenario_duplicate_merge() -> ScenarioResult:
 
 def scenario_budget_exhausted() -> ScenarioResult:
     s = fresh_session()
-    revs = search_reviews(s, query="battery", date_from="2026-06-01", rating_max=3)["reviews"]
+    revs = search_reviews(s, query="battery", date_from="2026-06-01", rating_max=3,
+                          product=scope_of(s))["reviews"]
     # a 'quick' tier caps at 5 iterations; the agent keeps probing without ever
     # meeting the two-source bar, so the budget wall must end it honestly.
     responses = [

@@ -24,8 +24,11 @@ def analyze_trend(
     date_from: str | None = None,
     date_to: str | None = None,
     negatives_only: bool = True,
+    product: str | None = None,
 ) -> dict:
     stmt = select(Review)
+    if product:
+        stmt = stmt.where(Review.product == product)
     if date_from:
         stmt = stmt.where(Review.created_at >= parse_date(date_from))
     if date_to:

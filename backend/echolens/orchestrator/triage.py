@@ -127,7 +127,11 @@ class Orchestrator:
             Investigation.created_at >= cutoff)).all()
         return sum(1 for r in rows if r.created_at and r.created_at.date() == as_of.date())
 
-    def triage(self, as_of: datetime = AS_OF) -> list[Decision]:
+    def triage(self, as_of: datetime = AS_OF, persist: bool = True) -> list[Decision]:
+        """`persist=False` makes this a true preview: decisions are returned but
+        no anomaly changes status. Persisting on a preview consumed the pending
+        queue without opening any case, so the anomalies could never be picked up
+        again — they just sat at "triaged" forever."""
         # Only PENDING anomalies for this product that have no linked investigation
         # yet — already-triaged ones are never re-triaged (duplicate-cases bug).
         stmt = select(AnomalyEvent).where(
@@ -183,7 +187,8 @@ class Orchestrator:
             if d.decision == "investigate":
                 d.budget_tier = adaptive_tier(d.anomaly, self.session, d.budget_tier or "standard")
         self._enforce_daily_cap(list(decisions.values()), as_of)
-        self._persist(list(decisions.values()))
+        if persist:
+            self._persist(list(decisions.values()))
         return list(decisions.values())
 
     def _enforce_daily_cap(self, decisions: list[Decision], as_of: datetime) -> None:

@@ -155,7 +155,7 @@ def test_triage_run_does_not_duplicate_cases(client, monkeypatch):
         def __init__(self, session, daily_limit=5, product_id=None):
             self.session = session
 
-        def triage(self):
+        def triage(self, persist=True):
             a = self.session.scalars(select(AnomalyEvent).where(AnomalyEvent.slug == "demo1")).first()
             a.status = "pending"  # pretend it's re-detected each run
             self.session.flush()

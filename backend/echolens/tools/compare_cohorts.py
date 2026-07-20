@@ -24,8 +24,11 @@ def compare_cohorts(
     date_to: str | None = None,
     os_version: str | None = None,     # hold OS fixed while comparing versions
     version_prefix: str | None = None, # hold version fixed while comparing OS
+    product: str | None = None,
 ) -> dict:
     stmt = select(Review)
+    if product:
+        stmt = stmt.where(Review.product == product)
     if date_from:
         stmt = stmt.where(Review.created_at >= parse_date(date_from))
     if date_to:
