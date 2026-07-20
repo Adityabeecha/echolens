@@ -12,7 +12,7 @@ export function Patterns() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <ScreenHeader title="Pattern Library" right={<span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>{data.patterns.length} VERIFIED</span>} />
+      <ScreenHeader title={`Pattern Library${data.product ? ` · ${data.product}` : ""}`} right={<span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>{data.patterns.length} VERIFIED</span>} />
       <div style={{ flex: 1, overflow: "auto", padding: "22px 28px" }}>
         <p style={{ fontSize: 13.5, color: C.muted, maxWidth: 720, lineHeight: 1.6, marginTop: 0 }}>
           Every pattern below is built from a fix that was <span style={{ color: C.good }}>verified to work</span>. The
@@ -22,8 +22,8 @@ export function Patterns() {
 
         {data.patterns.length === 0 ? (
           <div style={{ maxWidth: 720, marginTop: 12, padding: "28px 20px", border: `1px dashed ${C.border4}`, borderRadius: 12, textAlign: "center", color: C.dim, fontSize: 13.5 }}>
-            No verified patterns yet. A pattern is earned when a fix ships and EchoLens confirms the complaint went away
-            — check back after your first confirmed fixes.
+            No verified patterns for {data.product || "this product"} yet. A pattern is earned when a fix ships and
+            EchoLens confirms the complaint went away — check back after your first confirmed fixes.
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 820 }}>

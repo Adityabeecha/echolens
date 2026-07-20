@@ -12,6 +12,22 @@ let _onAuthError: (() => void) | null = null;
 const ROLE_KEY = "echolens_role";
 let _role: string = localStorage.getItem(ROLE_KEY) || "viewer";
 
+// ── active product (v8.0) ───────────────────────────────────────────────
+// The server is the source of truth (users.last_active_product_id); this is just
+// the in-memory value appended to every scoped request.
+let _productId: number | null = null;
+export function setActiveProduct(id: number | null): void {
+  _productId = id;
+}
+export function getActiveProduct(): number | null {
+  return _productId;
+}
+/** Append the active product to a scoped path. */
+function scoped(path: string): string {
+  if (_productId == null) return path;
+  return path + (path.includes("?") ? "&" : "?") + `product_id=${_productId}`;
+}
+
 export function setToken(t: string | null): void {
   _token = t;
   if (t) localStorage.setItem(TOKEN_KEY, t);
@@ -92,6 +108,8 @@ export interface Anomaly {
   window: string;
   description: string;
   status: string;
+  headline?: string;
+  product_id?: number | null;
   triage: Triage | null;
   investigation_id: number | null;
 }
@@ -205,6 +223,7 @@ export interface FeedSummary {
   investigations_today: number;
   daily_limit: number;
   spent_today: number;
+  product?: string | null;
 }
 export interface ArchiveRow {
   id: string;
@@ -224,11 +243,16 @@ export interface SourcesResp {
     status: string;
     stale?: boolean;
     staleSince?: string | null;
+    why?: string | null;
+    lastSuccess?: string | null;
+    source?: string;
+    identifier?: string;
     lastPull: string;
     volume: string;
     error?: string | null;
   }[];
   available: string[];
+  product?: string | null;
 }
 
 // v3.0 onboarding + health snapshot
@@ -281,6 +305,7 @@ export interface CostsSummary {
   };
   month_to_date: number;
   budget: number;
+  product?: string | null;
   limits: {
     daily_investigations: number;
     per_case_budget: number;
@@ -319,6 +344,7 @@ export interface Calibration {
   overconfidence_gap: number | null;
   overconfident: boolean;
   headline: string | null;
+  product?: string | null;
   weak_spots: { total_challenges: number; spots: WeakSpot[] };
 }
 
@@ -339,6 +365,7 @@ export interface Overview {
   confirmed_fixes_quarter: number;
   regressions: number;
   mean_days_to_confirmed_fix: number | null;
+  product?: string | null;
   chronic_themes: ThemeLifecycle[];
 }
 
@@ -376,6 +403,16 @@ export interface ThemeLifecycle {
   last_seen: string;
 }
 
+// v8.0 products
+export interface ProductRow {
+  id: number;
+  name: string;
+  package_name: string | null;
+  github_repo: string | null;
+  is_demo: boolean;
+  created_at: string | null;
+}
+
 // ── endpoints ────────────────────────────────────────────────────────
 
 export interface AuthUser {
@@ -391,11 +428,23 @@ export const api = {
   signup: (email: string, password: string) =>
     post<{ id: number; email: string; role: string; token: string }>("/auth/signup", { email, password }),
   me: () => get<AuthUser>("/auth/me"),
+  products: () => get<{ products: ProductRow[]; active_product_id: number | null }>("/products"),
+  activateProduct: (id: number) =>
+    post<{ active_product_id: number; name: string }>(`/products/${id}/activate`),
+  deleteProduct: (id: number, confirmName: string) =>
+    fetch(`${BASE}/products/${id}?confirm=${encodeURIComponent(confirmName)}`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    }).then(async (r) => {
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.detail || `delete → ${r.status}`);
+      return r.json() as Promise<{ deleted: string }>;
+    }),
   collect: () => post("/collect/run"),
-  scan: () => post<{ detected: string[] }>("/anomalies/scan"),
-  anomalies: () => get<{ anomalies: Anomaly[] }>("/anomalies"),
-  triage: (run = false) => post(`/anomalies/triage?run=${run}`),
-  feedSummary: () => get<FeedSummary>("/feed/summary"),
+  scan: () => post<{ detected: string[] }>(scoped("/anomalies/scan")),
+  anomalies: () => get<{ anomalies: Anomaly[] }>(scoped("/anomalies")),
+  triage: (run = false) =>
+    post<{ summary?: string; skipped_already_triaged?: number }>(scoped(`/anomalies/triage?run=${run}`)),
+  feedSummary: () => get<FeedSummary>(scoped("/feed/summary")),
   investigations: () =>
     get<{ investigations: { id: number; status: string; opened_by: string; anomaly_id: number | null }[] }>(
       "/investigations"
@@ -404,26 +453,29 @@ export const api = {
   trace: (id: number, after = 0) =>
     get<{ status: string; steps: TraceStep[] }>(`/investigations/${id}/trace?after=${after}`),
   startInvestigation: (body: { anomaly_slug?: string; description?: string; tier?: string }) =>
-    post<{ status: string; investigation_id: number; anomaly_id: number }>("/investigations", body),
+    post<{ status: string; investigation_id: number; anomaly_id: number }>("/investigations", {
+      ...body,
+      product_id: getActiveProduct(),
+    }),
   review: (findingId: number, action: "approve" | "challenge", note = "", reason?: string) =>
     post<{ status: string; reopened_investigation_id?: number }>(`/findings/${findingId}/review`, {
       action,
       note,
       reason,
     }),
-  calibration: () => get<Calibration>("/calibration"),
-  patterns: () => get<{ patterns: Pattern[] }>("/patterns"),
-  overview: () => get<Overview>("/overview"),
-  chat: (message: string) => post<ChatResponse>("/chat", { message }),
-  brief: () => get<WeeklyBrief>("/brief"),
-  themes: () => get<{ themes: ThemeLifecycle[] }>("/themes"),
+  calibration: () => get<Calibration>(scoped("/calibration")),
+  patterns: () => get<{ patterns: Pattern[]; product?: string | null }>(scoped("/patterns")),
+  overview: () => get<Overview>(scoped("/overview")),
+  chat: (message: string) => post<ChatResponse>("/chat", { message, product_id: getActiveProduct() }),
+  brief: () => get<WeeklyBrief>(scoped("/brief")),
+  themes: () => get<{ themes: ThemeLifecycle[] }>(scoped("/themes")),
   findingFollowup: (findingId: number, question: string) =>
     post<{ question: string; answer: string; investigation_id: number }>(`/findings/${findingId}/followup`, { question }),
   pause: (id: number) => post(`/investigations/${id}/pause`),
   resume: (id: number) => post(`/investigations/${id}/resume`),
   escalate: (id: number) => post(`/investigations/${id}/escalate`),
-  archive: () => get<{ rows: ArchiveRow[]; count: number; resolved_pct: number }>("/archive"),
-  sources: () => get<SourcesResp>("/sources"),
+  archive: () => get<{ rows: ArchiveRow[]; count: number; resolved_pct: number }>(scoped("/archive")),
+  sources: () => get<SourcesResp>(scoped("/sources")),
   importReviews: (file: File, product?: string, source = "csv") => {
     const fd = new FormData();
     fd.append("file", file);
@@ -444,6 +496,8 @@ export const api = {
       identifier,
       product,
     }),
+  collectorsRetry: (source: string, identifier: string) =>
+    post<{ inserted: number; error: string | null }>("/collectors/retry", { source, identifier }),
   collectorsRun: () => post<{ results: { source: string; identifier: string; fetched: number; inserted: number; error: string | null }[] }>("/collectors/run"),
   embed: () => post<{ embedded: Record<string, number> }>("/search/embed"),
   onboard: (body: { play_store: string; github?: string; product?: string }) =>
@@ -451,13 +505,13 @@ export const api = {
   onboardStatus: (product: string) =>
     get<OnboardStatus>(`/onboard/status?product=${encodeURIComponent(product)}`),
   snapshot: (product?: string) =>
-    get<Snapshot>(`/snapshot${product ? `?product=${encodeURIComponent(product)}` : ""}`),
+    get<Snapshot>(product ? `/snapshot?product=${encodeURIComponent(product)}` : scoped("/snapshot")),
   findingIssue: (findingId: number) =>
     get<{ title: string; body: string; repo: string | null }>(`/findings/${findingId}/issue`),
   createGithubIssue: (findingId: number) =>
     post<{ repo: string; number: number; url: string }>(`/findings/${findingId}/github-issue`),
   notifyFinding: (findingId: number) => post<{ routed: string; sent?: string[] }>(`/findings/${findingId}/notify`),
-  costsSummary: () => get<CostsSummary>("/costs/summary"),
+  costsSummary: () => get<CostsSummary>(scoped("/costs/summary")),
   setLimits: (limits: { daily_investigations?: number; per_case_budget?: number; per_case_wall_min?: number }) =>
     fetch(`${BASE}/settings/limits`, {
       method: "PUT",

@@ -11,7 +11,7 @@ export function Calibration() {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <ScreenHeader
-        title="Calibration"
+        title={`Calibration${data.product ? ` · ${data.product}` : ""}`}
         right={<span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>{data.n_reviewed} REVIEWED FINDINGS</span>}
       />
       <div style={{ flex: 1, overflow: "auto", padding: "22px 28px" }}>
@@ -46,8 +46,8 @@ export function Calibration() {
             <Label style={{ marginBottom: 10 }}>KNOWN WEAK SPOTS</Label>
             {data.weak_spots.spots.length === 0 ? (
               <div style={{ padding: "20px 18px", border: `1px dashed ${C.border4}`, borderRadius: 10, color: C.dim, fontSize: 13 }}>
-                No challenges with a recorded reason yet. When you challenge a finding, pick a reason — those roll up
-                here and steer future investigations.
+                No challenges recorded for {data.product || "this product"} yet. When you challenge a finding, pick a
+                reason — those roll up here and steer future investigations.
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>

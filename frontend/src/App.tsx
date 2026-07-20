@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Evidence, api, getToken, isAdmin, onAuthError, setToken } from "./api";
+import { Evidence, ProductRow, api, getToken, onAuthError, setActiveProduct, setToken } from "./api";
 import { Screen } from "./nav";
 import { C, sans } from "./theme";
 import { Sidebar } from "./components/Sidebar";
@@ -25,32 +25,54 @@ export default function App() {
   const [newCaseOpen, setNewCaseOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [authed, setAuthed] = useState<boolean>(!!getToken());
+  const [products, setProducts] = useState<ProductRow[]>([]);
+  const [activeId, setActiveId] = useState<number | null>(null);
+  const [booted, setBooted] = useState(false);
 
   // A 401 anywhere (expired/absent token) bounces back to the login screen.
   useEffect(() => {
     onAuthError(() => setAuthed(false));
   }, []);
 
-  // First run ONLY: an admin with no real product connected, who hasn't seen
-  // the wizard yet, lands on it once. After they connect a product or dismiss it,
-  // we never auto-open it again (they can reach it via Sources → "Add a product").
+  // v8.0 boot routing — SERVER-DERIVED, no localStorage flags. If any product
+  // exists we land on the last-active product's Case Feed; only a truly empty
+  // workspace (0 products) shows the add-product wizard.
   useEffect(() => {
-    if (!authed || !isAdmin()) return;
-    if (localStorage.getItem("echolens_seen_onboarding")) return;
+    if (!authed) return;
     let alive = true;
     api
-      .sources()
-      .then((s) => {
-        const hasReal = s.connected.some((c) => !c.name.includes("(demo)"));
-        if (alive && !hasReal) setScreen("onboarding");
+      .products()
+      .then((r) => {
+        if (!alive) return;
+        setProducts(r.products);
+        setBooted(true);
+        if (r.products.length === 0) {
+          setActiveProduct(null);
+          setScreen("onboarding");
+          return;
+        }
+        const active = r.active_product_id ?? r.products[0].id;
+        setActiveProduct(active);
+        setActiveId(active);
+        setScreen("feed");
       })
       .catch(() => {
-        /* backend down — stay on feed, it shows its own error state */
+        if (alive) setBooted(true); // backend down — screens show their own error
       });
     return () => {
       alive = false;
     };
   }, [authed]);
+
+  const switchProduct = (id: number) => {
+    setActiveProduct(id);
+    setActiveId(id);
+    setCurrentInv(null);
+    setScreen("feed");
+    api.activateProduct(id).catch(() => {
+      /* best-effort persistence; the in-memory scope already switched */
+    });
+  };
 
   // Deep-link support: #case/123 (used by the challenge-reopen redirect).
   useEffect(() => {
@@ -85,6 +107,17 @@ export default function App() {
     return <Login onAuthed={() => setAuthed(true)} />;
   }
 
+  // Wait for the server to tell us which products exist before choosing a screen —
+  // otherwise the wizard flashes on every refresh.
+  if (!booted) {
+    return (
+      <div style={{ height: "100vh", background: C.bg, color: C.dim, fontFamily: sans,
+                    display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>
+        Loading your workspace…
+      </div>
+    );
+  }
+
   const running =
     currentInv != null
       ? {
@@ -108,9 +141,20 @@ export default function App() {
         overflow: "hidden",
       }}
     >
-      <Sidebar screen={screen} go={go} running={running} onOpenCase={() => setNewCaseOpen(true)} onLogout={logout} />
+      <Sidebar
+        screen={screen}
+        go={go}
+        running={running}
+        onOpenCase={() => setNewCaseOpen(true)}
+        onLogout={logout}
+        products={products}
+        activeId={activeId}
+        onSwitchProduct={switchProduct}
+        onAddProduct={() => setScreen("onboarding")}
+      />
 
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      {/* keyed by product: switching remounts every screen so it re-scopes */}
+      <div key={activeId ?? "none"} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {screen === "feed" && (
           <CaseFeed
             onOpenInvestigation={openInvestigation}
@@ -137,15 +181,20 @@ export default function App() {
         )}
         {screen === "onboarding" && (
           <Onboarding
-            canSkip
-            onCancel={() => {
-              localStorage.setItem("echolens_seen_onboarding", "1");
-              setScreen("feed");
-            }}
+            canSkip={products.length > 0}
+            onCancel={() => setScreen("feed")}
             onDone={() => {
-              localStorage.setItem("echolens_seen_onboarding", "1");
-              setReloadKey((k) => k + 1);
-              setScreen("feed");
+              // re-read products from the server and land on the new one's feed
+              api.products().then((r) => {
+                setProducts(r.products);
+                const newest = r.products[r.products.length - 1];
+                if (newest) {
+                  setActiveProduct(newest.id);
+                  setActiveId(newest.id);
+                }
+                setReloadKey((k) => k + 1);
+                setScreen("feed");
+              });
             }}
             onOpenInvestigation={openInvestigation}
           />

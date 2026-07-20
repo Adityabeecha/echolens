@@ -56,6 +56,7 @@ const SECTIONS: { key: Bucket; label: string; color: string }[] = [
 export function CaseFeed({ onOpenInvestigation, onNewCase, reloadKey, bumpReload }: Props) {
   const anomalies = useAsync(() => api.anomalies(), [reloadKey]);
   const summary = useAsync(() => api.feedSummary(), [reloadKey]);
+  const sources = useAsync(() => api.sources(), [reloadKey]);
   const [busy, setBusy] = useState<string | null>(null);
   const [showDismissed, setShowDismissed] = useState(false);
   const reviewer = canReview();
@@ -88,7 +89,9 @@ export function CaseFeed({ onOpenInvestigation, onNewCase, reloadKey, bumpReload
         }}
       >
         <div>
-          <div style={{ fontSize: 17, fontWeight: 600, letterSpacing: "-0.01em" }}>Case Feed</div>
+          <div style={{ fontSize: 17, fontWeight: 600, letterSpacing: "-0.01em" }}>
+            Case Feed{summary.data?.product ? ` · ${summary.data.product}` : ""}
+          </div>
           <div style={{ fontFamily: mono, fontSize: 10.5, color: C.faint, letterSpacing: ".04em", marginTop: 2 }}>
             SIGNALS WORTH A LOOK · LAST 7 DAYS
           </div>
@@ -127,6 +130,19 @@ export function CaseFeed({ onOpenInvestigation, onNewCase, reloadKey, bumpReload
       </div>
 
       <div style={{ flex: 1, overflow: "auto", padding: "22px 28px" }}>
+        {(() => {
+          const stale = (sources.data?.connected ?? []).filter((s) => s.stale);
+          if (stale.length === 0) return null;
+          return (
+            <div style={{ maxWidth: 880, marginBottom: 18, padding: "11px 15px", borderRadius: 9,
+                          border: `1px solid ${C.accent}55`, background: `${C.accent}12`,
+                          fontSize: 12.5, color: C.text3, lineHeight: 1.5 }}>
+              ⚠ {stale.length} source{stale.length > 1 ? "s are" : " is"} stale
+              {stale[0].staleSince ? ` (since ${stale[0].staleSince})` : ""} — findings below may be based on old data.
+              Fix it on the Sources screen.
+            </div>
+          );
+        })()}
         {anomalies.loading && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 880 }}>
             {[0, 1, 2].map((i) => (
@@ -213,9 +229,8 @@ function AnomalyCard({ a, onOpen }: { a: Anomaly; onOpen: (id: number) => void }
   const chip = chipFor(a);
   const clickable = a.investigation_id != null;
   const isManual = a.type === "manual";
-  // Manual cases carry their real name in `description`; detected anomalies
-  // describe themselves via `metric`.
-  const title = isManual ? a.description : a.metric;
+  // Lead with a problem statement a PM understands; the metric is metadata.
+  const title = a.headline || (isManual ? a.description : a.metric);
   const stripe = isManual ? C.info : sev.color;
   return (
     <div
@@ -244,6 +259,12 @@ function AnomalyCard({ a, onOpen }: { a: Anomaly; onOpen: (id: number) => void }
             <span style={{ fontFamily: mono, fontSize: 10, padding: "2px 7px", border: `1px solid ${C.border3}`, borderRadius: 4, color: C.muted, textTransform: "uppercase" }}>
               {isManual ? "manual case" : a.type.replace(/_/g, " ")}
             </span>
+            {!isManual && a.metric && (
+              <span style={{ fontFamily: mono, fontSize: 10, color: C.faint, overflow: "hidden",
+                             textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 260 }}>
+                {a.metric}
+              </span>
+            )}
             {!isManual && <Spark points={sparkFor(a.z)} color={sev.color} />}
             {a.triage?.reason && <span style={{ fontSize: 12, color: C.dim, fontStyle: "italic" }}>{a.triage.reason}</span>}
           </div>

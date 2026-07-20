@@ -43,7 +43,7 @@ export function Overview({ onOpenInvestigation }: { onOpenInvestigation: (id: nu
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <ScreenHeader title="Product Health" right={<span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>OUTCOMES, NOT ALERTS</span>} />
+      <ScreenHeader title={`Product Health${data.product ? ` · ${data.product}` : ""}`} right={<span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>OUTCOMES, NOT ALERTS</span>} />
       <div style={{ flex: 1, overflow: "auto", padding: "22px 28px" }}>
         {brief && brief.lines.length > 0 && (
           <div style={{ maxWidth: 980, marginBottom: 20, padding: "16px 20px", background: C.card, border: `1px solid ${C.border2}`, borderRadius: 12 }}>
@@ -108,12 +108,20 @@ export function Overview({ onOpenInvestigation }: { onOpenInvestigation: (id: nu
               >
                 <span style={{ fontFamily: mono, fontSize: 11.5, color: C.accent }}>#{p.investigation_id}</span>
                 <span style={{ fontSize: 13.5, color: C.text2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.summary}</span>
-                <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                  <div style={{ flex: 1, height: 5, borderRadius: 3, background: C.track, overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: `${Math.round(p.impact_score * 100)}%`, background: C.accent }} />
+                {/* an impact score of 0 means the inputs aren't in yet — say so
+                    rather than showing a fake 0% bar */}
+                {p.impact_score > 0 ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                    <div style={{ flex: 1, height: 5, borderRadius: 3, background: C.track, overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: `${Math.max(4, Math.round(p.impact_score * 100))}%`, background: C.accent }} />
+                    </div>
                   </div>
-                </div>
-                <span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted, textAlign: "right" }}>{p.affected_pct}%</span>
+                ) : (
+                  <span style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>collecting data</span>
+                )}
+                <span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted, textAlign: "right" }}>
+                  {p.impact_score > 0 ? `${p.affected_pct}%` : "—"}
+                </span>
               </div>
             ))}
           </div>

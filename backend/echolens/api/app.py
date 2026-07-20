@@ -110,6 +110,38 @@ app.add_middleware(
 
 # ── serializers ────────────────────────────────────────────────────────
 
+def _anomaly_headline(session, a: AnomalyEvent) -> str:
+    """A PM-readable problem statement, not a metric name. The metric + z stay as
+    secondary metadata on the card."""
+    metric = (a.metric or "").strip()
+    if a.type == "manual":
+        return (a.description or "Manual case").strip()
+    if a.type == "regression":
+        return f"Regression — “{metric}” came back after being fixed"
+    if a.type == "fix_regression":
+        return f"Fix didn't hold — “{metric}” complaints continue"
+    if a.type == "theme_volume_surge":
+        label = metric.split(" share of")[0].split(" on ")[0].strip() or "complaints"
+        return f"{label[:1].upper()}{label[1:]} rising"
+    if a.type == "issue_velocity_surge":
+        label = metric.split(" per week")[0].strip() or "issue reports"
+        return f"{label[:1].upper()}{label[1:]} piling up on GitHub"
+    if a.type == "rating_drop":
+        return "Average rating falling"
+    if a.type == "negative_review_spike":
+        # name the theme driving it when a matching theme surge was detected
+        stmt = select(AnomalyEvent).where(AnomalyEvent.type == "theme_volume_surge")
+        if a.product_id is not None:
+            stmt = stmt.where(AnomalyEvent.product_id == a.product_id)
+        theme = session.scalars(stmt.order_by(AnomalyEvent.z.desc())).first()
+        if theme is not None:
+            label = (theme.metric or "").split(" share of")[0].strip()
+            if label:
+                return f"1-star reviews spiking — {label} driving it"
+        return "1-star reviews spiking"
+    return metric or "Signal detected"
+
+
 def _anomaly_dict(session, a: AnomalyEvent) -> dict:
     td = session.scalars(
         select(TriageDecision).where(TriageDecision.anomaly_id == a.id)
@@ -122,6 +154,7 @@ def _anomaly_dict(session, a: AnomalyEvent) -> dict:
     return {
         "slug": a.slug, "type": a.type, "metric": a.metric, "delta": a.delta,
         "z": a.z, "window": a.window, "description": a.description, "status": a.status,
+        "headline": _anomaly_headline(session, a), "product_id": a.product_id,
         "triage": None if td is None else {
             "decision": td.decision, "reason": td.reason, "budget_tier": td.budget_tier,
             "merge_into_anomaly_id": td.merge_into_anomaly_id,
@@ -455,6 +488,27 @@ def collectors_run(user: dict = Depends(require_role("reviewer"))) -> dict:
         return {"results": [
             {"source": r.source, "identifier": r.identifier, "fetched": r.fetched,
              "inserted": r.inserted, "error": r.error} for r in results]}
+
+
+class RetryBody(BaseModel):
+    source: str
+    identifier: str
+
+
+@app.post("/collectors/retry")
+def collectors_retry(body: RetryBody, user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Retry ONE source now (the 'Retry now' action on a stale/failed source)."""
+    from echolens.collectors.registry import SourceConfig
+    with session_scope() as session:
+        from echolens.db.models import CollectorState
+        st = session.scalars(select(CollectorState).where(
+            CollectorState.source == body.source,
+            CollectorState.identifier == body.identifier)).first()
+        if st is None:
+            raise HTTPException(404, "no such source")
+        res = SourceConfig(st.source, st.identifier, st.product).build().run(session)
+        return {"source": res.source, "identifier": res.identifier,
+                "inserted": res.inserted, "error": res.error}
 
 
 @app.get("/collectors")
@@ -1571,11 +1625,20 @@ def sources(product_id: int | None = None) -> dict:
             status = {"healthy": "Healthy", "error": "Error", "running": "Syncing…"}.get(st.status, "Idle")
             if stale and st.status != "error":
                 status = "Stale"
+            last_run = aware_utc(st.last_run_at)
+            why = None
+            if st.last_error:
+                when = last_run.strftime("%H:%M") if last_run else "last run"
+                why = f"collector failed at {when}: {st.last_error}"
+            elif stale and h.get("stale_since"):
+                why = f"no successful pull since {h['stale_since']}"
             connected.append({
                 "icon": meta["icon"], "name": meta["label"], "detail": f"{st.identifier} · {st.product}",
+                "source": st.source, "identifier": st.identifier,
                 "status": "Error" if st.status == "error" else status,
-                "stale": stale, "staleSince": h.get("stale_since"),
-                "lastPull": (f"pulled {st.last_run_at.date().isoformat()}" if st.last_run_at else "not yet collected"),
+                "stale": stale, "staleSince": h.get("stale_since"), "why": why,
+                "lastSuccess": (last_run.isoformat() if (last_run and st.status != "error") else None),
+                "lastPull": (f"pulled {last_run.date().isoformat()}" if last_run else "not yet collected"),
                 "volume": f"{vol:,} items", "error": st.last_error,
             })
         # Imported (CSV) reviews aren't a pull collector, so surface them from the
@@ -1600,8 +1663,8 @@ def sources(product_id: int | None = None) -> dict:
                     {"icon": "⌥", "name": "GitHub issues (demo)", "detail": "synthetic Lumo dataset",
                      "status": "Healthy", "lastPull": "seeded", "volume": f"{n_issues + n_releases} items"},
                 ]
-        return {"connected": connected,
-                "available": ["App Store reviews", "Zendesk / CSV import", "Discord community", "In-app feedback"]}
+        return {"connected": connected, "product": prod.name if prod else None,
+                "available": ["Zendesk export", "Discord community", "In-app feedback"]}
 
 
 @app.get("/costs/summary")
@@ -1647,6 +1710,7 @@ def costs_summary(product_id: int | None = None) -> dict:
             },
             "month_to_date": total,
             "budget": 25.0,
+            "product": p.name if p else None,
             "limits": _limits(session, pid),
             "rows": rows,
         }

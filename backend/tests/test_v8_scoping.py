@@ -194,3 +194,33 @@ def test_triage_reports_already_triaged(client, monkeypatch):
     r = tc.post(f"/anomalies/triage?run=true&product_id={a}").json()
     assert r["skipped_already_triaged"] == 1  # alpha-1 already has a case
     assert "already triaged" in r["summary"]
+
+
+# ── T4.3: duration formatting + sanity cap ──────────────────────────────
+
+def test_duration_formatter():
+    from echolens.api.app import _fmt_duration
+    assert _fmt_duration(0) == "0s"
+    assert _fmt_duration(45) == "45s"
+    assert _fmt_duration(60) == "1m"
+    assert _fmt_duration(80) == "1m 20s"
+    assert _fmt_duration(3600) == "1h"
+    assert _fmt_duration(7500) == "2h 5m"
+    assert "m" in _fmt_duration(3291 * 60)  # never a raw "3291m"
+
+
+def test_case_duration_flags_impossible_wall_clock():
+    """A stored wall-clock beyond the tier cap is flagged, not shown as fact."""
+    from datetime import datetime, timedelta, timezone
+    from echolens.api.app import _case_duration
+    from echolens.db.models import Investigation
+    start = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    sane = Investigation(anomaly_id=1, budget_tier="standard", budget_json={},
+                         created_at=start, resolved_at=start + timedelta(minutes=12))
+    txt, flagged = _case_duration(sane)
+    assert txt == "12m" and flagged is False
+    # 3291 minutes on a 45-min tier is impossible → flagged
+    bad = Investigation(anomaly_id=1, budget_tier="standard", budget_json={},
+                        created_at=start, resolved_at=start + timedelta(minutes=3291))
+    txt, flagged = _case_duration(bad)
+    assert flagged is True and txt.startswith(">")

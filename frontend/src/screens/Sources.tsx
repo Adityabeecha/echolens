@@ -22,6 +22,20 @@ export function Sources({ onAddProduct }: { onAddProduct?: () => void }) {
   const [msg, setMsg] = useState<string | null>(null);
   const reviewer = canReview();
 
+  const retry = async (source: string, identifier: string) => {
+    setBusy(`retry-${identifier}`);
+    setMsg(null);
+    try {
+      const r = await api.collectorsRetry(source, identifier);
+      setMsg(r.error ? `Retry failed: ${r.error}` : `Retried ${identifier} — ${r.inserted} new items.`);
+      reload();
+    } catch (e) {
+      setMsg(String(e).replace("Error: ", ""));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const collect = async () => {
     setBusy("collect");
     setMsg(null);
@@ -102,8 +116,24 @@ export function Sources({ onAddProduct }: { onAddProduct?: () => void }) {
                   <div style={{ width: 7, height: 7, borderRadius: "50%", background: col, flex: "none" }} />
                   <span style={{ fontSize: 12, color: col }}>{s.status}</span>
                 </div>
-                <div style={{ fontSize: 12, color: s.error ? C.bad : s.stale ? C.accent : C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {s.error || (s.stale && s.staleSince ? `stale since ${s.staleSince}` : s.lastPull)}
+                <div title={s.why || undefined} style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: s.error ? C.bad : s.stale ? C.accent : C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {s.why || s.lastPull}
+                  </div>
+                  {s.lastSuccess && (
+                    <div style={{ fontFamily: mono, fontSize: 9.5, color: C.faint, marginTop: 2 }}>
+                      last success {new Date(s.lastSuccess).toLocaleString()}
+                    </div>
+                  )}
+                  {(s.stale || s.error) && reviewer && s.source && s.identifier && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); retry(s.source!, s.identifier!); }}
+                      disabled={busy === `retry-${s.identifier}`}
+                      className="el-btn"
+                      style={{ marginTop: 5, background: "transparent", color: C.accent, border: `1px solid ${C.accent}55`, borderRadius: 6, padding: "3px 9px", fontSize: 11, cursor: "pointer" }}>
+                      {busy === `retry-${s.identifier}` ? "Retrying…" : "Retry now"}
+                    </button>
+                  )}
                 </div>
                 <div style={{ fontFamily: mono, fontSize: 11.5, color: C.text3, textAlign: "right" }}>{s.volume}</div>
               </div>

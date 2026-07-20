@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { ProductRow } from "../api";
 import { C, mono } from "../theme";
 import { Screen } from "../nav";
 
@@ -7,6 +9,67 @@ interface Props {
   running: { label: string; detail: string; color: string; dot: string; pulse: boolean } | null;
   onOpenCase: () => void;
   onLogout?: () => void;
+  products?: ProductRow[];
+  activeId?: number | null;
+  onSwitchProduct?: (id: number) => void;
+  onAddProduct?: () => void;
+}
+
+// v8.0: the active product scopes every screen, so it sits above the nav.
+function ProductSwitcher({ products, activeId, onSwitch, onAdd }: {
+  products: ProductRow[]; activeId: number | null;
+  onSwitch: (id: number) => void; onAdd?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const active = products.find((p) => p.id === activeId) ?? products[0];
+  if (!active) return null;
+  return (
+    <div style={{ position: "relative", margin: "0 10px 10px" }}>
+      <div
+        onClick={() => setOpen((o) => !o)}
+        className="el-btn"
+        style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderRadius: 8,
+                 background: C.card, border: `1px solid ${C.border3}`, cursor: "pointer" }}
+      >
+        <div style={{ width: 20, height: 20, borderRadius: 5, background: C.hover, border: `1px solid ${C.border4}`,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontFamily: mono, fontSize: 10, color: C.accent, flex: "none" }}>
+          {active.name.slice(0, 1).toUpperCase()}
+        </div>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 600, color: C.text, overflow: "hidden",
+                        textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{active.name}</div>
+          <div style={{ fontFamily: mono, fontSize: 9, color: C.faint, letterSpacing: ".06em" }}>
+            {active.is_demo ? "DEMO PRODUCT" : "ACTIVE PRODUCT"}
+          </div>
+        </div>
+        <span style={{ color: C.faint, fontSize: 10 }}>{open ? "▲" : "▼"}</span>
+      </div>
+      {open && (
+        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, zIndex: 20,
+                      background: C.card2, border: `1px solid ${C.border3}`, borderRadius: 8,
+                      boxShadow: "0 16px 40px rgba(0,0,0,.5)", overflow: "hidden" }}>
+          {products.map((p) => (
+            <div key={p.id}
+              onClick={() => { setOpen(false); if (p.id !== activeId) onSwitch(p.id); }}
+              className="el-row"
+              style={{ padding: "9px 12px", cursor: "pointer", fontSize: 12.5,
+                       color: p.id === activeId ? C.accent : C.text2,
+                       background: p.id === activeId ? C.hover : "transparent" }}>
+              {p.name}{p.is_demo ? "  ·  demo" : ""}
+            </div>
+          ))}
+          {onAdd && (
+            <div onClick={() => { setOpen(false); onAdd(); }} className="el-row"
+              style={{ padding: "9px 12px", cursor: "pointer", fontSize: 12.5, color: C.muted,
+                       borderTop: `1px solid ${C.border}` }}>
+              + Add a product
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 const NAV: { key: Screen; icon: string; label: string; iconColor?: string }[] = [
@@ -23,7 +86,8 @@ const NAV: { key: Screen; icon: string; label: string; iconColor?: string }[] = 
 // The feed / case / finding screens all keep "Case Feed" highlighted.
 const FEED_GROUP: Screen[] = ["feed", "case", "finding"];
 
-export function Sidebar({ screen, go, running, onOpenCase, onLogout }: Props) {
+export function Sidebar({ screen, go, running, onOpenCase, onLogout,
+                          products = [], activeId = null, onSwitchProduct, onAddProduct }: Props) {
   return (
     <div
       style={{
@@ -62,6 +126,11 @@ export function Sidebar({ screen, go, running, onOpenCase, onLogout }: Props) {
           </div>
         </div>
       </div>
+
+      {products.length > 0 && onSwitchProduct && (
+        <ProductSwitcher products={products} activeId={activeId}
+                         onSwitch={onSwitchProduct} onAdd={onAddProduct} />
+      )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 2, padding: "8px 10px" }}>
         {NAV.map((n) => {
