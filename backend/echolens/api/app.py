@@ -470,7 +470,7 @@ def health() -> dict:
 
 
 @app.post("/collect/run")
-def collect_run() -> dict:
+def collect_run(user: dict = Depends(require_role("admin"))) -> dict:
     """Dev convenience: seed the synthetic corpus if empty (real collectors are M3)."""
     from echolens.db.models import Review
     from echolens.synthetic.generate import generate
@@ -533,7 +533,7 @@ def collectors_retry(body: RetryBody, user: dict = Depends(require_role("reviewe
 
 
 @app.get("/collectors")
-def collectors_health() -> dict:
+def collectors_health(user: dict = Depends(current_user)) -> dict:
     from echolens.db.models import CollectorState
     with session_scope() as session:
         rows = session.scalars(select(CollectorState)).all()
@@ -613,7 +613,7 @@ def onboard(body: OnboardBody, user: dict = Depends(require_role("admin"))) -> d
 
 
 @app.get("/onboard/status")
-def onboard_status(product: str) -> dict:
+def onboard_status(product: str, user: dict = Depends(current_user)) -> dict:
     """Live view for the onboarding wait screen: source health, whether the
     backfill is still running, the health snapshot so far, and any anomalies
     already surfaced."""
@@ -641,7 +641,7 @@ def onboard_status(product: str) -> dict:
 
 
 @app.get("/feed/candidates")
-def feed_candidates(product_id: int | None = None, limit: int = 6) -> dict:
+def feed_candidates(product_id: int | None = None, limit: int = 6, user: dict = Depends(current_user)) -> dict:
     """Themes worth investigating that are NOT yet anomalies.
 
     A freshly-connected product often has no spike to detect — the detector needs
@@ -692,7 +692,7 @@ async def import_reviews(file: UploadFile = File(...), product: str = "", source
 
 
 @app.get("/snapshot")
-def snapshot(product: str | None = None, product_id: int | None = None, days: int = 90) -> dict:
+def snapshot(product: str | None = None, product_id: int | None = None, days: int = 90, user: dict = Depends(current_user)) -> dict:
     """Health snapshot for a product (or the whole corpus) — powers the
     'Investigate now on anything' entry point outside onboarding."""
     from echolens.onboarding.snapshot import health_snapshot
@@ -712,7 +712,8 @@ def search_embed(user: dict = Depends(require_role("admin"))) -> dict:
 
 
 @app.post("/anomalies/scan")
-def anomalies_scan(product_id: int | None = None) -> dict:
+def anomalies_scan(product_id: int | None = None,
+                   user: dict = Depends(require_role("reviewer"))) -> dict:
     from echolens.detector.detect import scan
     with session_scope() as session:
         p = _scope(session, product_id)
@@ -721,7 +722,7 @@ def anomalies_scan(product_id: int | None = None) -> dict:
 
 
 @app.get("/anomalies")
-def list_anomalies(product_id: int | None = None) -> dict:
+def list_anomalies(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
         p = _scope(session, product_id)
         stmt = select(AnomalyEvent).where(AnomalyEvent.merged_into_id.is_(None))
@@ -856,7 +857,7 @@ def start_investigation(request: Request, body: NewCase,
 
 
 @app.get("/investigations")
-def list_investigations(product_id: int | None = None) -> dict:
+def list_investigations(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
         p = _scope(session, product_id)
         stmt = select(Investigation).order_by(Investigation.id.desc())
@@ -869,7 +870,7 @@ def list_investigations(product_id: int | None = None) -> dict:
 
 
 @app.get("/investigations/{inv_id}")
-def get_investigation(inv_id: int) -> dict:
+def get_investigation(inv_id: int, user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
         inv = session.get(Investigation, inv_id)
         if inv is None:
@@ -946,7 +947,7 @@ def escalate_investigation(inv_id: int, user: dict = Depends(require_role("revie
 
 
 @app.get("/investigations/{inv_id}/trace")
-def get_trace(inv_id: int, after: int = 0) -> dict:
+def get_trace(inv_id: int, after: int = 0, user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
         inv = session.get(Investigation, inv_id)
         if inv is None:
@@ -958,7 +959,7 @@ def get_trace(inv_id: int, after: int = 0) -> dict:
 
 
 @app.get("/investigations/{inv_id}/trace/stream")
-def stream_trace(inv_id: int) -> StreamingResponse:
+def stream_trace(inv_id: int, user: dict = Depends(current_user)) -> StreamingResponse:
     """SSE tail of the trace_steps table until the investigation stops running."""
     def gen():
         sent = 0
@@ -1015,7 +1016,7 @@ def review_finding(finding_id: int, body: ReviewBody,
 
 
 @app.get("/calibration")
-def calibration_view(product_id: int | None = None) -> dict:
+def calibration_view(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     """v5.0 trust page: stated-confidence-vs-approval curve + known weak spots."""
     from echolens.calibration import calibration, weak_spots
     with session_scope() as session:
@@ -1026,7 +1027,9 @@ def calibration_view(product_id: int | None = None) -> dict:
 
 
 @app.post("/findings/{finding_id}/recommend")
-def recommend_finding(finding_id: int) -> dict:
+@limiter.limit("10/minute")  # each call hits the LLM — cap runaway spend
+def recommend_finding(request: Request, finding_id: int,
+                      user: dict = Depends(require_role("reviewer"))) -> dict:
     from echolens.recommender.recommend import recommend
     with session_scope() as session:
         finding = session.get(Finding, finding_id)
@@ -1052,7 +1055,7 @@ def _github_repo(session) -> str | None:
 
 
 @app.get("/findings/{finding_id}/issue")
-def finding_issue_markdown(finding_id: int) -> dict:
+def finding_issue_markdown(finding_id: int, user: dict = Depends(current_user)) -> dict:
     """Copy-to-clipboard, ticket-ready markdown for a finding."""
     from echolens.exporting import finding_ticket
     from echolens.notify import deep_link
@@ -1297,7 +1300,7 @@ def fixwatch_evaluate(user: dict = Depends(require_role("reviewer"))) -> dict:
 
 
 @app.get("/fixwatch")
-def fixwatch_list(product_id: int | None = None) -> dict:
+def fixwatch_list(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     from echolens.db.models import FixWatch
     with session_scope() as session:
         p = _scope(session, product_id)
@@ -1314,7 +1317,7 @@ def fixwatch_list(product_id: int | None = None) -> dict:
 
 
 @app.get("/patterns")
-def patterns_view(product_id: int | None = None) -> dict:
+def patterns_view(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     """The validated pattern library — (trigger, cause, fix) proven by confirmed fixes."""
     from echolens.patterns import patterns
     with session_scope() as session:
@@ -1324,7 +1327,7 @@ def patterns_view(product_id: int | None = None) -> dict:
 
 
 @app.get("/overview")
-def overview(product_id: int | None = None) -> dict:
+def overview(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     """Outcome-oriented product-health dashboard (the PM's monthly review)."""
     import statistics as _stats
     from echolens.db.models import FixWatch
@@ -1446,7 +1449,7 @@ def finding_followup(finding_id: int, body: FollowupBody,
 
 
 @app.get("/brief")
-def brief_view(product_id: int | None = None) -> dict:
+def brief_view(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     """Preview the weekly brief (also what the scheduled send composes)."""
     from echolens.brief import weekly_brief
     with session_scope() as session:
@@ -1493,7 +1496,7 @@ def brief_send(user: dict = Depends(require_role("reviewer"))) -> dict:
 # ── v9.0 portfolio: one brain across every product ──────────────────────
 
 @app.get("/portfolio")
-def portfolio_view() -> dict:
+def portfolio_view(user: dict = Depends(current_user)) -> dict:
     """Ranked cross-product attention board. Deliberately NOT product-scoped —
     this is the screen you open before you know which product to open."""
     from echolens.portfolio import portfolio, transfer_stats
@@ -1502,7 +1505,7 @@ def portfolio_view() -> dict:
 
 
 @app.get("/portfolio/brief")
-def portfolio_brief_view() -> dict:
+def portfolio_brief_view(user: dict = Depends(current_user)) -> dict:
     """The weekly brief for everything you own, ranked globally by impact."""
     from echolens.portfolio import portfolio_brief
     with session_scope() as session:
@@ -1510,7 +1513,7 @@ def portfolio_brief_view() -> dict:
 
 
 @app.get("/portfolio/themes")
-def portfolio_themes(days: int = 30, limit: int = 8) -> dict:
+def portfolio_themes(days: int = 30, limit: int = 8, user: dict = Depends(current_user)) -> dict:
     """The same complaint theme measured across every product on one axis.
 
     Rates are shares of each product's own negative reviews, so a big app and a
@@ -1553,7 +1556,7 @@ def portfolio_themes(days: int = 30, limit: int = 8) -> dict:
 
 
 @app.get("/portfolio/transfers")
-def portfolio_transfers() -> dict:
+def portfolio_transfers(user: dict = Depends(current_user)) -> dict:
     """Cases that started from another product's verified fix, and whether the
     shortcut is measurable."""
     from echolens.portfolio import recent_transfers, transfer_stats
@@ -1562,7 +1565,7 @@ def portfolio_transfers() -> dict:
 
 
 @app.get("/themes")
-def themes_view(product_id: int | None = None) -> dict:
+def themes_view(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     """Theme lifecycle: emergence → peak → resolved / chronic (>60d unresolved)."""
     from echolens.themes import theme_lifecycle
     with session_scope() as session:
@@ -1572,7 +1575,7 @@ def themes_view(product_id: int | None = None) -> dict:
 
 
 @app.get("/costs")
-def costs(product_id: int | None = None) -> dict:
+def costs(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
         p = _scope(session, product_id)
         calls = _product_llm_calls(session, p.id if p else None)
@@ -1699,7 +1702,7 @@ def _product_llm_calls(session, product_id: int | None):
 
 
 @app.get("/feed/summary")
-def feed_summary(product_id: int | None = None) -> dict:
+def feed_summary(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
         p = _scope(session, product_id)
         pid = p.id if p else None
@@ -1715,7 +1718,7 @@ def feed_summary(product_id: int | None = None) -> dict:
 
 
 @app.get("/archive")
-def archive(product_id: int | None = None) -> dict:
+def archive(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
         p = _scope(session, product_id)
         pid = p.id if p else None
@@ -1765,7 +1768,7 @@ _SOURCE_META = {
 
 
 @app.get("/sources")
-def sources(product_id: int | None = None) -> dict:
+def sources(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     from echolens.collectors.registry import source_health
     from echolens.db.models import CollectorState
     with session_scope() as session:
@@ -1835,7 +1838,7 @@ def sources(product_id: int | None = None) -> dict:
 
 
 @app.get("/costs/summary")
-def costs_summary(product_id: int | None = None) -> dict:
+def costs_summary(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
         p = _scope(session, product_id)
         pid = p.id if p else None

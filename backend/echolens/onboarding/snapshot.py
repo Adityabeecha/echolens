@@ -45,7 +45,7 @@ def _weekly_series(reviews: list[Review], now, weeks: int) -> list[dict]:
 def health_snapshot(session: Session, product: str | None = None, days: int = 90) -> dict:
     """A read-only portrait of a product's feedback: volume, rating trend, top
     negative themes, and a data-quality verdict."""
-    now = reference_now(session)
+    now = reference_now(session, product)
     start = now - timedelta(days=days)
     q = select(Review).where(Review.created_at >= start)
     if product:

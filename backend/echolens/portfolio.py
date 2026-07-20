@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from echolens.db.models import (
@@ -47,13 +47,20 @@ def _band(score: float) -> tuple[str, str]:
 
 def _negative_rate(session: Session, product: str | None, start, end) -> float:
     """Share of reviews in the window that are negative. A rate, not a count —
-    the only way a 3-review app and a 30,000-review app compare honestly."""
-    rows = [r for r in session.scalars(
-        select(Review).where(Review.product == product)).all()
-        if start <= (aware_utc(r.created_at) or start) < end]
-    if not rows:
-        return 0.0
-    return sum(1 for r in rows if r.rating <= 2) / len(rows)
+    the only way a 3-review app and a 30,000-review app compare honestly.
+
+    Counted in SQL: this used to pull every review the product has ever had into
+    Python just to filter two date windows, twice per product, per page load.
+    """
+    from sqlalchemy import case
+    row = session.execute(
+        select(func.count(Review.id),
+               func.sum(case((Review.rating <= 2, 1), else_=0)))
+        .where(Review.product == product,
+               Review.created_at >= start, Review.created_at < end)
+    ).one()
+    total, negatives = row[0] or 0, row[1] or 0
+    return (negatives / total) if total else 0.0
 
 
 def product_snapshot(session: Session, product: Product, now: datetime) -> dict:

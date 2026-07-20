@@ -53,7 +53,7 @@ def quantify(session: Session, anomaly, finding_json: dict, product: str | None 
     """Estimate affected-user share, rating impact, and blast radius for a
     finding. Safe on any corpus (returns zeros rather than raising)."""
     terms = theme_terms(anomaly, finding_json)
-    now = reference_now(session)
+    now = reference_now(session, product)
     recent_start = now - timedelta(days=RECENT_DAYS)
     base_start = now - timedelta(days=BASELINE_DAYS + RECENT_DAYS)
 

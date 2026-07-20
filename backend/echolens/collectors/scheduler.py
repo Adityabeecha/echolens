@@ -14,10 +14,23 @@ _scheduler = None
 
 
 def _collect_job() -> None:
+    from sqlalchemy import select
+
     from echolens.collectors.registry import run_all
+    from echolens.db.models import Product
+    from echolens.detector.detect import scan
 
     with session_scope() as session:
         results = run_all(session)
+    # Collecting without scanning just piles up rows nobody looks at. Scan EVERY
+    # product: since v8.0 an unscoped scan silently falls back to the first one.
+    with session_scope() as session:
+        for p in session.scalars(select(Product)).all():
+            try:
+                found = scan(session, product=p.name, product_id=p.id)
+                log.info("scheduled_scan", product=p.name, anomalies=len(found))
+            except Exception as err:  # one bad product must not stop the rest
+                log.error("scheduled_scan_failed", product=p.name, error=str(err))
     healthy = sum(1 for r in results if r.ok)
     log.info("scheduled_collect", collectors=len(results), healthy=healthy,
              inserted=sum(r.inserted for r in results))

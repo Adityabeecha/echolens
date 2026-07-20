@@ -138,19 +138,21 @@ def theme_rate(session: Session, theme: dict, product: str | None,
     from datetime import timedelta
 
     from echolens.detector.detect import reference_now
-    now = as_of or reference_now(session)
+    now = as_of or reference_now(session, product)
     start = now - timedelta(days=days)
-    stmt = select(Review).where(Review.rating <= 2)
+    # Date filter in SQL. This used to load a product's ENTIRE negative-review
+    # history on every call, once per theme — O(all reviews x themes).
+    stmt = select(Review.text).where(Review.rating <= 2, Review.created_at >= start,
+                                     Review.created_at <= now)
     if product:
         stmt = stmt.where(Review.product == product)
-    rows = [r for r in session.scalars(stmt).all()
-            if (aware_utc(r.created_at) or now) >= start]
+    texts = session.scalars(stmt).all()
     vocab = {_norm(t) for t in theme.get("terms", [])}
-    if not rows or not vocab:
-        return {"theme_id": theme.get("id"), "product": product, "negatives": len(rows),
+    if not texts or not vocab:
+        return {"theme_id": theme.get("id"), "product": product, "negatives": len(texts),
                 "mentions": 0, "rate_pct": 0.0, "days": days}
-    mentions = sum(1 for r in rows
-                   if vocab & {_norm(t) for t in tokenize(r.text)})
+    mentions = sum(1 for txt in texts if vocab & {_norm(t) for t in tokenize(txt)})
+    rows = texts
     return {
         "theme_id": theme.get("id"), "product": product, "negatives": len(rows),
         "mentions": mentions, "rate_pct": round(100 * mentions / len(rows), 1),

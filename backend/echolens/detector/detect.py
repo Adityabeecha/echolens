@@ -34,11 +34,23 @@ LOW_VOLUME_RECENT_DAYS = 14
 LOW_VOLUME_BASELINE_DAYS = 56
 
 
-def reference_now(session: Session) -> datetime:
-    """The 'now' the detector reasons from: the latest review timestamp in the
-    corpus. Works for both the frozen synthetic set and live real data — never
-    a hardcoded date."""
-    latest = session.scalar(select(Review.created_at).order_by(Review.created_at.desc()).limit(1))
+def reference_now(session: Session, product: str | None = None) -> datetime:
+    """The 'now' we reason from: the latest review timestamp in the corpus. Works
+    for both the frozen synthetic set and live real data — never a hardcoded date.
+
+    Scoped by product. Unscoped, one product's healthy collector supplied the
+    clock for a product whose own collector had stalled, so every window for the
+    stalled product landed after its last review and silently measured zero —
+    a dead source read as "no complaints" instead of "no data".
+    """
+    stmt = select(Review.created_at)
+    if product:
+        stmt = stmt.where(Review.product == product)
+    latest = session.scalar(stmt.order_by(Review.created_at.desc()).limit(1))
+    if latest is None and product:
+        # this product has no corpus at all — fall back to the global clock
+        latest = session.scalar(
+            select(Review.created_at).order_by(Review.created_at.desc()).limit(1))
     if latest is None:
         return AS_OF
     return latest if latest.tzinfo else latest.replace(tzinfo=timezone.utc)
@@ -130,7 +142,7 @@ def _zscore(recent: list[float], baseline: list[float]) -> tuple[float, float]:
 
 def detect_volume_spike(session: Session, as_of: datetime | None = None,
                         win: Windows | None = None, product: str | None = None) -> Candidate | None:
-    as_of = as_of or reference_now(session)
+    as_of = as_of or reference_now(session, product)
     win = win or Windows()
     start = as_of - timedelta(days=win.baseline + win.recent)
     stmt = select(Review).where(Review.rating == 1, Review.created_at >= start)
@@ -179,7 +191,7 @@ def detect_rating_drop(session: Session, as_of: datetime | None = None,
                        win: Windows | None = None, product: str | None = None) -> Candidate | None:
     """Theme-agnostic: a real drop in average star rating. Works for ANY app,
     no keyword list required."""
-    as_of = as_of or reference_now(session)
+    as_of = as_of or reference_now(session, product)
     win = win or Windows()
     start = as_of - timedelta(days=win.baseline + win.recent)
     stmt = select(Review).where(Review.created_at >= start)
@@ -212,7 +224,7 @@ def detect_rating_drop(session: Session, as_of: datetime | None = None,
 
 def detect_theme_surges(session: Session, as_of: datetime | None = None,
                         win: Windows | None = None, product: str | None = None) -> list[Candidate]:
-    as_of = as_of or reference_now(session)
+    as_of = as_of or reference_now(session, product)
     win = win or Windows()
     start = as_of - timedelta(days=win.baseline + win.recent)
     r_stmt = select(Review).where(Review.created_at >= start)
@@ -265,7 +277,7 @@ def detect_theme_surges(session: Session, as_of: datetime | None = None,
 
 def detect_issue_velocity(session: Session, as_of: datetime | None = None,
                           win: Windows | None = None, product: str | None = None) -> list[Candidate]:
-    as_of = as_of or reference_now(session)
+    as_of = as_of or reference_now(session, product)
     win = win or Windows()
     start = as_of - timedelta(days=win.baseline + win.recent)
     stmt = select(Issue).where(Issue.created_at >= start)
@@ -310,7 +322,7 @@ def scan(session: Session, as_of: datetime | None = None, persist: bool = True,
     row — so "Scan now" is safe to press repeatedly. Signals below MIN_CASE_Z are
     dropped here (noise gate), never surfaced as cases."""
     if as_of is None:
-        as_of = reference_now(session)
+        as_of = reference_now(session, product)
     win = choose_windows(session, as_of, product)
     candidates: list[Candidate] = []
     spike = detect_volume_spike(session, as_of, win, product)

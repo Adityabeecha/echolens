@@ -33,9 +33,32 @@ def _terms_for(session: Session, finding: Finding) -> list[str]:
     return theme_terms(anomaly, finding.json or {})
 
 
-def complaint_series(session: Session, terms: list[str], start: datetime, end: datetime) -> list[dict]:
-    """Per-day count of negative reviews (≤2★) matching the theme in [start, end]."""
-    rows = session.scalars(select(Review).where(Review.rating <= 2)).all()
+def product_name_of(session: Session, product_id: int | None) -> str | None:
+    """The corpus label for a product id (rows are stamped with Product.name)."""
+    if product_id is None:
+        return None
+    from echolens.db.models import Product
+    p = session.get(Product, product_id)
+    return p.name if p is not None else None
+
+
+def complaint_series(session: Session, terms: list[str], start: datetime, end: datetime,
+                     product: str | None = None) -> list[dict]:
+    """Per-day count of negative reviews (≤2★) matching the theme in [start, end].
+
+    `product` is not optional in spirit: unscoped, another product's complaints
+    counted toward THIS product's fix, so a fix that genuinely worked failed to
+    confirm and could even be flagged as a regression. Callers pass the watch's
+    own product.
+
+    The date range is filtered in SQL, not Python — this used to load every
+    negative review ever recorded on each call, once per watch.
+    """
+    stmt = select(Review).where(Review.rating <= 2,
+                                Review.created_at >= start, Review.created_at <= end)
+    if product:
+        stmt = stmt.where(Review.product == product)
+    rows = session.scalars(stmt).all()
     daily: dict = defaultdict(int)
     d = start.date()
     while d <= end.date():
@@ -48,9 +71,10 @@ def complaint_series(session: Session, terms: list[str], start: datetime, end: d
     return [{"date": d.isoformat(), "count": daily[d]} for d in sorted(daily)]
 
 
-def _rate(session: Session, terms: list[str], start: datetime, end: datetime) -> float:
-    """Average daily matching-negative-review count over the window."""
-    series = complaint_series(session, terms, start, end)
+def _rate(session: Session, terms: list[str], start: datetime, end: datetime,
+          product: str | None = None) -> float:
+    """Average daily matching-negative-review count over the window, for ONE product."""
+    series = complaint_series(session, terms, start, end, product)
     return round(sum(s["count"] for s in series) / max(1, len(series)), 3)
 
 
@@ -83,10 +107,12 @@ def on_issue_closed(session: Session, repo: str, issue_number: int,
         FixWatch.repo == repo, FixWatch.issue_number == issue_number)).first()
     if watch is None or watch.status not in ("issue_open",):
         return watch
-    fix_date = aware_utc(closed_at) or reference_now(session)
+    product = product_name_of(session, watch.product_id)
+    fix_date = aware_utc(closed_at) or reference_now(session, product)
     watch.fix_date = fix_date
     watch.status = "watching"
-    watch.baseline_rate = _rate(session, watch.terms, fix_date - timedelta(days=watch.window_days), fix_date)
+    watch.baseline_rate = _rate(session, watch.terms,
+                                fix_date - timedelta(days=watch.window_days), fix_date, product)
     session.flush()
     return watch
 
@@ -98,8 +124,9 @@ def before_after(session: Session, watch: FixWatch) -> dict:
         return {}
     fix = aware_utc(watch.fix_date)
     w = timedelta(days=watch.window_days)
-    pre = complaint_series(session, watch.terms, fix - w, fix)
-    post = complaint_series(session, watch.terms, fix, fix + w)
+    product = product_name_of(session, watch.product_id)
+    pre = complaint_series(session, watch.terms, fix - w, fix, product)
+    post = complaint_series(session, watch.terms, fix, fix + w, product)
     return {
         "fix_date": fix.date().isoformat(), "window_days": watch.window_days,
         "before": pre, "after": post,
@@ -111,12 +138,13 @@ def before_after(session: Session, watch: FixWatch) -> dict:
 def evaluate(session: Session, as_of: datetime | None = None) -> list[dict]:
     """Advance every watching fix. Confirms fixes that worked and re-opens the
     ones that didn't — unprompted (this is what the scheduled job calls)."""
-    now = aware_utc(as_of) or reference_now(session)
     out = []
     for watch in session.scalars(select(FixWatch).where(FixWatch.status == "watching")).all():
+        product = product_name_of(session, watch.product_id)
+        now = aware_utc(as_of) or reference_now(session, product)
         fix = aware_utc(watch.fix_date)
         window_end = fix + timedelta(days=watch.window_days)
-        post = _rate(session, watch.terms, fix, min(now, window_end))
+        post = _rate(session, watch.terms, fix, min(now, window_end), product)
         watch.post_rate = post
         base = watch.baseline_rate or 0.0
         window_over = now >= window_end
@@ -135,7 +163,7 @@ def evaluate(session: Session, as_of: datetime | None = None) -> list[dict]:
 
 def _confirm(session: Session, watch: FixWatch) -> str:
     watch.status = "confirmed"
-    watch.confirmed_at = reference_now(session)
+    watch.confirmed_at = reference_now(session, product_name_of(session, watch.product_id))
     watch.chart_json = before_after(session, watch)
     return "confirmed"
 
@@ -157,10 +185,11 @@ def _reopen(session: Session, watch: FixWatch) -> str:
 def check_regressions(session: Session, as_of: datetime | None = None) -> list[dict]:
     """A previously-confirmed theme that re-spikes fires a regression anomaly
     linked to the original case (the investigator will start from prior context)."""
-    now = aware_utc(as_of) or reference_now(session)
     out = []
     for watch in session.scalars(select(FixWatch).where(FixWatch.status == "confirmed")).all():
-        recent = _rate(session, watch.terms, now - timedelta(days=REGRESS_WINDOW), now)
+        product = product_name_of(session, watch.product_id)
+        now = aware_utc(as_of) or reference_now(session, product)
+        recent = _rate(session, watch.terms, now - timedelta(days=REGRESS_WINDOW), now, product)
         base = watch.baseline_rate or 0.0
         if base > 0 and recent >= base * REGRESS_BACK:
             watch.status = "regressed"
