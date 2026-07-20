@@ -19,6 +19,7 @@ from echolens.config import (
     EXTENSION_CONFIDENCE,
     EXTENSION_FACTOR,
     MAX_ACTIVE_HYPOTHESES,
+    SEEDED_PRIOR_CONFIDENCE,
     SUPPORT_CONFIDENCE,
 )
 from echolens.db.models import (
@@ -716,14 +717,45 @@ class Investigator:
             self._trace("THINK", {"text": f"Follow-up on case #{self.anomaly.parent_case_id} "
                                           "— starting from the prior investigation's context rather than scratch."})
         # v6.0: seed with a validated pattern if this anomaly matches one (a proven prior).
+        seeded_hypotheses: list[dict] = []
         if seed_state is None:
             from echolens.patterns import matching_pattern
             pat = matching_pattern(self.session, self.anomaly)
             if pat:
                 trigger["matching_pattern"] = pat
-                self._trace("THINK", {"text": f"This matches a pattern verified {pat['verified_count']}× "
-                                              f"(cause: {pat['cause']} → fix that worked: {pat['fix']}). "
-                                              "Testing that hypothesis first before exploring alternatives."})
+                if pat.get("cross_product"):
+                    # v9.0 portfolio transfer: knowledge earned on one product is a
+                    # place to look first on another — never a conclusion. It still
+                    # has to clear the same two-source bar on THIS product's data.
+                    self._trace("THINK", {
+                        "text": f"This caused “{pat['cause']}” on {pat['from_product']}, where the "
+                                f"fix was verified {pat['verified_count']}× — testing it here first. "
+                                "Borrowed priors carry no evidence weight: it must be proven again "
+                                "on this product's own data.",
+                    })
+                else:
+                    self._trace("THINK", {"text": f"This matches a pattern verified {pat['verified_count']}× "
+                                                  f"(cause: {pat['cause']} → fix that worked: {pat['fix']}). "
+                                                  "Testing that hypothesis first before exploring alternatives."})
+                # The shortcut is STRUCTURAL, not a suggestion in the prompt: the
+                # loop starts with the proven cause already on the board, so it
+                # skips the cold-start hypothesis-generation iteration.
+                seeded_hypotheses = [{
+                    "id": "H1",
+                    "statement": pat["cause"] or f"the {pat['trigger']} pattern recurs here",
+                    "confidence": SEEDED_PRIOR_CONFIDENCE,
+                    "status": "active",
+                    "evidence_for": [], "evidence_against": [],
+                    "next_test": f"look for {', '.join(pat['terms'][:3])} in this product's own data",
+                    "boost_if_rejected": [],
+                }]
+                self._persist_hypotheses(seeded_hypotheses)
+                self.inv.seeded_from_pattern = {
+                    "cause": pat["cause"], "fix": pat["fix"], "terms": pat["terms"],
+                    "verified_count": pat["verified_count"],
+                    "cross_product": bool(pat.get("cross_product")),
+                    "from_product": pat.get("from_product"),
+                }
         # v2.0 cross-investigation memory: seed with related past confirmed causes.
         if seed_state is None:
             from echolens.investigator.memory import digest_text
@@ -733,7 +765,7 @@ class Investigator:
                 self._trace("THINK", {"text": "Recalled related past cases:\n" + prior})
         init: InvState = {
             "trigger": (seed_state or {}).get("trigger") or trigger,
-            "hypotheses": (seed_state or {}).get("hypotheses", []),
+            "hypotheses": (seed_state or {}).get("hypotheses") or seeded_hypotheses,
             "evidence": (seed_state or {}).get("evidence", []),
             "status": "running",
             "status_reason": "", "finding": None, "pending_tool": None,

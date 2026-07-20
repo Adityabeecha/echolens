@@ -53,6 +53,12 @@ MIN_DISTINCT_SOURCES = 2           # ... from >=2 distinct sources
 EXTENSION_CONFIDENCE = 0.65        # best hypothesis must be at least this promising
 EXTENSION_FACTOR = 1.5             # one-time cap multiplier
 
+# v9.0 cross-product transfer: a pattern proven elsewhere seeds the board so the
+# loop skips cold-start hypothesis generation. Deliberately BELOW
+# INSUFFICIENT_CONFIDENCE — a borrowed prior is a place to look, and carries no
+# evidence weight until it clears the two-source rule on this product's own data.
+SEEDED_PRIOR_CONFIDENCE = 0.40
+
 # Tool output discipline (PRD §5.4): truncation lives in the tool layer.
 # Raised so each search surfaces MORE reviews for the agent to reason over —
 # deeper evidence, less "guessing from a handful".

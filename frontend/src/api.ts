@@ -356,6 +356,70 @@ export interface Pattern {
   fix: string;
   verified_count: number;
   cases: number[];
+  cross_product?: boolean;
+  from_product?: string | null;
+}
+
+// ── v9.0 portfolio ──────────────────────────────────────────────────────
+export interface PortfolioReason {
+  kind: string;
+  weight: number;
+  text: string;
+}
+export interface PortfolioProduct {
+  product_id: number;
+  product: string;
+  is_demo: boolean;
+  score: number;
+  band: "on_fire" | "attention" | "watch" | "healthy";
+  band_label: string;
+  reasons: PortfolioReason[];
+  headline: string;
+  top_problem: { investigation_id: number; summary: string; band: string; sev_score: number } | null;
+  open_problems: number;
+  regressions: number;
+  untriaged: number;
+  negative_rate_pct: number;
+  negative_rate_delta_pct: number;
+  confirmed_fixes: number;
+  has_data: boolean;
+}
+export interface TransferStats {
+  seeded_cases: number;
+  cold_cases: number;
+  median_iterations_seeded: number | null;
+  median_iterations_cold: number | null;
+  iterations_saved_pct: number | null;
+  sufficient: boolean;
+}
+export interface Portfolio {
+  generated: string;
+  products: PortfolioProduct[];
+  total_products: number;
+  needs_attention: number;
+  verdict: string;
+  transfer: TransferStats;
+}
+export interface PortfolioBrief {
+  generated: string;
+  verdict: string;
+  lines: string[];
+  problems: { investigation_id: number; summary: string; product: string; impact_score: number }[];
+  transfers: {
+    investigation_id: number;
+    product: string | null;
+    from_product: string | null;
+    cause: string | null;
+    verified_count: number | null;
+    status: string;
+  }[];
+}
+export interface PortfolioTheme {
+  theme_id: string;
+  label: string;
+  is_family: boolean;
+  worst: string | null;
+  products: { product: string | null; rate_pct: number; mentions: number; negatives: number }[];
 }
 export interface Overview {
   open_problems: { investigation_id: number; summary: string; impact_score: number; affected_pct: number }[];
@@ -465,6 +529,15 @@ export const api = {
     }),
   calibration: () => get<Calibration>(scoped("/calibration")),
   patterns: () => get<{ patterns: Pattern[]; product?: string | null }>(scoped("/patterns")),
+  // v9.0 — deliberately NOT scoped: this is the screen you open before you know
+  // which product to open.
+  feedCandidates: () =>
+    get<{ candidates: { label: string; count: number; description: string }[]; product: string | null; negatives?: number }>(
+      scoped("/feed/candidates")),
+  portfolio: () => get<Portfolio>("/portfolio"),
+  portfolioBrief: () => get<PortfolioBrief>("/portfolio/brief"),
+  portfolioThemes: () =>
+    get<{ themes: PortfolioTheme[]; products: string[]; days: number; note: string }>("/portfolio/themes"),
   overview: () => get<Overview>(scoped("/overview")),
   chat: (message: string) => post<ChatResponse>("/chat", { message, product_id: getActiveProduct() }),
   brief: () => get<WeeklyBrief>(scoped("/brief")),
@@ -501,7 +574,8 @@ export const api = {
   collectorsRun: () => post<{ results: { source: string; identifier: string; fetched: number; inserted: number; error: string | null }[] }>("/collectors/run"),
   embed: () => post<{ embedded: Record<string, number> }>("/search/embed"),
   onboard: (body: { play_store: string; github?: string; product?: string }) =>
-    post<{ status: string; product: string; play_store: string; github: string | null }>("/onboard", body),
+    post<{ status: string; product: string; product_id: number; play_store: string; github: string | null }>(
+      "/onboard", body),
   onboardStatus: (product: string) =>
     get<OnboardStatus>(`/onboard/status?product=${encodeURIComponent(product)}`),
   snapshot: (product?: string) =>

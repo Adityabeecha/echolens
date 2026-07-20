@@ -8,11 +8,15 @@ interface Props {
   onOpenInvestigation: (id: number) => void;
   canSkip: boolean; // first run has nothing to skip to; later, "cancel" is allowed
   onCancel: () => void;
+  /** Called the moment the product exists, so it becomes the active scope
+   *  immediately. Without this, anything started from this wizard was filed
+   *  against the PREVIOUS product. */
+  onProductCreated: (id: number, name: string) => void;
 }
 
 // The first-run wizard: two inputs → hands-off backfill → live health snapshot →
 // a populated feed. The wait is never blank: the snapshot fills in as data lands.
-export function Onboarding({ onDone, onOpenInvestigation, canSkip, onCancel }: Props) {
+export function Onboarding({ onDone, onOpenInvestigation, canSkip, onCancel, onProductCreated }: Props) {
   const [phase, setPhase] = useState<"form" | "running">("form");
   const [product, setProduct] = useState("");
 
@@ -36,7 +40,10 @@ export function Onboarding({ onDone, onOpenInvestigation, canSkip, onCancel }: P
 
         {phase === "form" ? (
           <OnboardForm
-            onStarted={(p) => {
+            onStarted={(p, id) => {
+              // Switch scope FIRST: everything started from here belongs to the
+              // product being onboarded, not the one that happened to be active.
+              onProductCreated(id, p);
               setProduct(p);
               setPhase("running");
             }}
@@ -61,7 +68,7 @@ function Logo() {
 
 // ── step 1: the two inputs ──────────────────────────────────────────────
 
-function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: string) => void; canSkip: boolean; onCancel: () => void }) {
+function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: string, productId: number) => void; canSkip: boolean; onCancel: () => void }) {
   const [pkg, setPkg] = useState("");
   const [repo, setRepo] = useState("");
   const [name, setName] = useState("");
@@ -74,7 +81,7 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
     setError(null);
     try {
       const r = await api.onboard({ play_store: pkg.trim(), github: repo.trim() || undefined, product: name.trim() || undefined });
-      onStarted(r.product);
+      onStarted(r.product, r.product_id);
     } catch (e) {
       setError(String(e).replace("Error: ", ""));
     } finally {
@@ -211,28 +218,33 @@ function Backfilling({ product, onDone, onOpenInvestigation }: { product: string
         </div>
       )}
 
-      {/* signals found */}
-      {anomalies.length > 0 && (
-        <div style={{ padding: "16px 18px", border: `1px solid ${C.accent}55`, background: `${C.accent}12`, borderRadius: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-            <Dot color={C.accent} pulse />
-            <span style={{ fontSize: 14, fontWeight: 600, color: C.accentHi }}>
-              {anomalies.length} signal{anomalies.length > 1 ? "s" : ""} already surfaced
-            </span>
-          </div>
-          <div style={{ fontSize: 13, color: C.text3, marginTop: 8, lineHeight: 1.55 }}>
-            {anomalies[0].description}
-          </div>
-        </div>
-      )}
-
-      {/* themes → investigate now */}
-      {ready && snap.top_themes.length > 0 && (
+      {/* What we found — a list you choose from, not a button that fires. */}
+      {ready && (anomalies.length > 0 || snap.top_themes.length > 0) && (
         <div>
-          <Label style={{ marginBottom: 10 }}>TOP NEGATIVE THEMES — INVESTIGATE ANY NOW</Label>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 9 }}>
+          <Label style={{ marginBottom: 4 }}>WHAT WE FOUND — PICK ONE TO INVESTIGATE</Label>
+          <p style={{ fontSize: 12.5, color: C.dim, margin: "0 0 12px", lineHeight: 1.55 }}>
+            Investigating one doesn't lose the others — they all stay in the Case Feed.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {anomalies.map((a) => (
+              <Candidate
+                key={a.slug}
+                kind="signal"
+                title={a.description}
+                meta={`${a.type.replace(/_/g, " ")} · z ${a.z.toFixed(1)}`}
+                slug={a.slug}
+                onOpenInvestigation={onOpenInvestigation}
+              />
+            ))}
             {snap.top_themes.map((t) => (
-              <ThemeChip key={t.label} theme={t.label} count={t.count} onOpenInvestigation={onOpenInvestigation} />
+              <Candidate
+                key={t.label}
+                kind="theme"
+                title={t.label}
+                meta={`${t.count} negative review${t.count === 1 ? "" : "s"} mention this`}
+                description={`Rising negative feedback about "${t.label}" — investigate the cause.`}
+                onOpenInvestigation={onOpenInvestigation}
+              />
             ))}
           </div>
         </div>
@@ -303,48 +315,57 @@ function SnapshotView({ snap }: { snap: Snapshot }) {
   );
 }
 
-function ThemeChip({ theme, count, onOpenInvestigation }: { theme: string; count: number; onOpenInvestigation: (id: number) => void }) {
+// One candidate the PM can choose. Selecting is separate from committing: the
+// row explains itself, and only the explicit button starts a case.
+function Candidate({ kind, title, meta, slug, description, onOpenInvestigation }: {
+  kind: "signal" | "theme";
+  title: string;
+  meta: string;
+  slug?: string;
+  description?: string;
+  onOpenInvestigation: (id: number) => void;
+}) {
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   const reviewer = canReview();
 
   const investigate = async () => {
     if (!reviewer || busy) return;
     setBusy(true);
+    setErr(null);
     try {
-      const r = await api.startInvestigation({
-        description: `Rising negative feedback about "${theme}" — investigate the cause.`,
-        tier: "quick",
-      });
+      const r = await api.startInvestigation(
+        slug ? { anomaly_slug: slug, tier: "quick" } : { description, tier: "quick" });
       onOpenInvestigation(r.investigation_id);
-    } catch {
+    } catch (e) {
+      // never fail silently — say what went wrong and what to do
+      setErr(String(e).replace("Error: ", ""));
       setBusy(false);
     }
   };
 
+  const color = kind === "signal" ? C.accent : C.info;
   return (
-    <button
-      onClick={investigate}
-      disabled={!reviewer || busy}
-      className="el-btn"
-      title={reviewer ? "Investigate this theme now" : "Reviewer access needed to investigate"}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 9,
-        padding: "8px 13px",
-        background: C.card,
-        border: `1px solid ${C.border3}`,
-        borderRadius: 20,
-        color: C.text2,
-        fontSize: 13,
-        fontFamily: sans,
-        cursor: reviewer ? "pointer" : "default",
-      }}
-    >
-      <span>{theme}</span>
-      <span style={{ fontFamily: mono, fontSize: 10.5, color: C.faint }}>{count}</span>
-      {reviewer && <span style={{ fontSize: 11, color: C.accent }}>{busy ? "…" : "Investigate →"}</span>}
-    </button>
+    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 15px",
+                  background: C.card, border: `1px solid ${C.border2}`, borderRadius: 10 }}>
+      <div style={{ width: 3, alignSelf: "stretch", minHeight: 26, borderRadius: 2,
+                    background: color, flex: "none" }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, color: C.text2, lineHeight: 1.4 }}>{title}</div>
+        <div style={{ fontFamily: mono, fontSize: 10.5, color: C.faint, marginTop: 3 }}>
+          {kind === "signal" ? "SIGNAL" : "THEME"} · {meta}
+        </div>
+        {err && <div style={{ fontSize: 12, color: C.bad, marginTop: 6 }}>{err}</div>}
+      </div>
+      <button onClick={investigate} disabled={!reviewer || busy} className="el-btn"
+        title={reviewer ? "Start a case for this" : "You need reviewer access to start an investigation."}
+        style={{ background: "transparent", color: reviewer ? C.accent : C.dim,
+                 border: `1px solid ${reviewer ? "rgba(240,166,60,.4)" : C.border3}`,
+                 borderRadius: 6, padding: "7px 13px", fontSize: 12.5, fontFamily: sans,
+                 cursor: reviewer && !busy ? "pointer" : "not-allowed", flex: "none" }}>
+        {busy ? "Starting…" : "Investigate"}
+      </button>
+    </div>
   );
 }
 

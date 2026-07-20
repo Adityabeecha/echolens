@@ -16,6 +16,7 @@ import { Onboarding } from "./screens/Onboarding";
 import { Calibration } from "./screens/Calibration";
 import { Overview } from "./screens/Overview";
 import { Patterns } from "./screens/Patterns";
+import { Portfolio } from "./screens/Portfolio";
 import { Chat } from "./screens/Chat";
 
 export default function App() {
@@ -182,6 +183,14 @@ export default function App() {
         {screen === "onboarding" && (
           <Onboarding
             canSkip={products.length > 0}
+            onProductCreated={(id) => {
+              // scope everything to the new product straight away — including
+              // anything the wizard itself starts
+              setActiveProduct(id);
+              setActiveId(id);
+              api.products().then((r) => setProducts(r.products)).catch(() => {});
+              api.activateProduct(id).catch(() => {});
+            }}
             onCancel={() => setScreen("feed")}
             onDone={() => {
               // re-read products from the server and land on the new one's feed
@@ -191,12 +200,22 @@ export default function App() {
                 if (newest) {
                   setActiveProduct(newest.id);
                   setActiveId(newest.id);
+                  // persist it, or the next refresh snaps back to the old product
+                  api.activateProduct(newest.id).catch(() => {});
                 }
                 setReloadKey((k) => k + 1);
                 setScreen("feed");
               });
             }}
             onOpenInvestigation={openInvestigation}
+          />
+        )}
+        {screen === "portfolio" && (
+          <Portfolio
+            // picking a product here IS switching to it — take the PM to the thing
+            onOpenProduct={switchProduct}
+            onOpenInvestigation={openInvestigation}
+            onAddProduct={() => setScreen("onboarding")}
           />
         )}
         {screen === "archive" && <Archive onOpenInvestigation={openInvestigation} />}

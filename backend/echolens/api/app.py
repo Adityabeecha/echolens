@@ -618,6 +618,7 @@ def onboard_status(product: str) -> dict:
     backfill is still running, the health snapshot so far, and any anomalies
     already surfaced."""
     from echolens.collectors.registry import source_health
+    from echolens.db.models import Product
     from echolens.onboarding.snapshot import health_snapshot
     with session_scope() as session:
         health = source_health(session, product=product)
@@ -625,10 +626,53 @@ def onboard_status(product: str) -> dict:
         backfilling = any(h["status"] in ("idle", "running") and h["never_collected"]
                           for h in health) or any(h["status"] == "running" for h in health)
         snap = health_snapshot(session, product=product)
-        anomalies = [_anomaly_dict(session, a) for a in session.scalars(
-            select(AnomalyEvent).where(AnomalyEvent.status == "pending").order_by(AnomalyEvent.id)).all()]
-        return {"product": product, "backfilling": backfilling, "sources": health,
+        # Scoped to THIS product. Unscoped, the wizard showed another product's
+        # signals, and clicking through to the new product's feed found none of
+        # them — they were never its anomalies.
+        prod = session.scalars(select(Product).where(Product.name == product)).first()
+        a_stmt = select(AnomalyEvent).where(AnomalyEvent.status == "pending")
+        if prod is not None:
+            a_stmt = a_stmt.where(AnomalyEvent.product_id == prod.id)
+        anomalies = [_anomaly_dict(session, a)
+                     for a in session.scalars(a_stmt.order_by(AnomalyEvent.id)).all()]
+        return {"product": product, "product_id": prod.id if prod else None,
+                "backfilling": backfilling, "sources": health,
                 "snapshot": snap, "anomalies": anomalies}
+
+
+@app.get("/feed/candidates")
+def feed_candidates(product_id: int | None = None, limit: int = 6) -> dict:
+    """Themes worth investigating that are NOT yet anomalies.
+
+    A freshly-connected product often has no spike to detect — the detector needs
+    a baseline, and a mature app may simply be steadily bad rather than newly
+    bad. The onboarding wizard offered these themes; without the same list here,
+    they vanished the moment you left the wizard.
+    """
+    from echolens.onboarding.snapshot import health_snapshot
+    with session_scope() as session:
+        prod = _scope(session, product_id)
+        if prod is None:
+            return {"candidates": [], "product": None}
+        snap = health_snapshot(session, product=prod.name)
+        # anything already covered by an open case isn't a candidate any more
+        taken = set()
+        for inv in session.scalars(select(Investigation).where(
+                Investigation.product_id == prod.id)).all():
+            a = session.get(AnomalyEvent, inv.anomaly_id) if inv.anomaly_id else None
+            if a is not None:
+                taken.update(t.lower() for t in (a.description or "").split())
+        out = []
+        for t in snap.get("top_themes", [])[: limit * 2]:
+            if t["label"].lower() in taken:
+                continue
+            out.append({"label": t["label"], "count": t["count"],
+                        "description": f'Rising negative feedback about "{t["label"]}" '
+                                       "— investigate the cause."})
+            if len(out) >= limit:
+                break
+        return {"candidates": out, "product": prod.name,
+                "negatives": snap.get("negatives", 0)}
 
 
 @app.post("/import/reviews")
@@ -781,6 +825,11 @@ def start_investigation(request: Request, body: NewCase,
             if running is not None:
                 return {"status": "already_running", "investigation_id": running.id,
                         "anomaly_id": anomaly.id}
+            # The anomaly's product wins over whatever the caller claimed. A
+            # mismatch means the client's scope is stale, and filing the case
+            # under the wrong product corrupts every downstream view.
+            if anomaly.product_id is not None:
+                pid = anomaly.product_id
         elif body.description:
             opened_by = "manual"
             anomaly = AnomalyEvent(
@@ -1410,9 +1459,17 @@ def brief_view(product_id: int | None = None) -> dict:
 def brief_send(user: dict = Depends(require_role("reviewer"))) -> dict:
     """Compose and deliver the weekly brief to Slack/email (scheduled, unprompted)."""
     from echolens.brief import weekly_brief
+    from echolens.db.models import Product
     from echolens.notify import _send_email, _send_slack, deep_link
     with session_scope() as session:
-        b = weekly_brief(session)
+        # v9.0: own more than one product and this becomes ONE ranked email
+        # across all of them, not a per-product blast.
+        n_products = len(session.scalars(select(Product)).all())
+        if n_products > 1:
+            from echolens.portfolio import portfolio_brief
+            b = portfolio_brief(session)
+        else:
+            b = weekly_brief(session)
 
     def _linkify(text: str) -> str:
         import re
@@ -1422,14 +1479,86 @@ def brief_send(user: dict = Depends(require_role("reviewer"))) -> dict:
             return f"<{link}|case #{cid}>" if link else f"case #{cid}"
         return re.sub(r"case #(\d+)", repl, text)
 
+    title = ("EchoLens portfolio brief" if n_products > 1 else "EchoLens weekly brief")
     body_md = "\n".join(_linkify(line) for line in b["lines"])
     payload = {"blocks": [
-        {"type": "header", "text": {"type": "plain_text", "text": f"EchoLens weekly brief · {b['generated']}"}},
+        {"type": "header", "text": {"type": "plain_text", "text": f"{title} · {b['generated']}"}},
         {"type": "section", "text": {"type": "mrkdwn", "text": body_md}},
     ]}
     slack = _send_slack(payload)
-    email = _send_email(f"EchoLens weekly brief · {b['generated']}", "\n".join(b["lines"]))
+    email = _send_email(f"{title} · {b['generated']}", "\n".join(b["lines"]))
     return {"sent": {"slack": slack, "email": email}, "brief": b}
+
+
+# ── v9.0 portfolio: one brain across every product ──────────────────────
+
+@app.get("/portfolio")
+def portfolio_view() -> dict:
+    """Ranked cross-product attention board. Deliberately NOT product-scoped —
+    this is the screen you open before you know which product to open."""
+    from echolens.portfolio import portfolio, transfer_stats
+    with session_scope() as session:
+        return {**portfolio(session), "transfer": transfer_stats(session)}
+
+
+@app.get("/portfolio/brief")
+def portfolio_brief_view() -> dict:
+    """The weekly brief for everything you own, ranked globally by impact."""
+    from echolens.portfolio import portfolio_brief
+    with session_scope() as session:
+        return portfolio_brief(session)
+
+
+@app.get("/portfolio/themes")
+def portfolio_themes(days: int = 30, limit: int = 8) -> dict:
+    """The same complaint theme measured across every product on one axis.
+
+    Rates are shares of each product's own negative reviews, so a big app and a
+    small one are genuinely comparable.
+    """
+    from echolens.db.models import Product
+    from echolens.vocab import FAMILIES, canonical_theme, compare_theme
+    with session_scope() as session:
+        products = session.scalars(select(Product).order_by(Product.id)).all()
+        names = [p.name for p in products]
+        if not names:
+            return {"themes": [], "products": [], "days": days}
+
+        # themes actually seen on this portfolio's findings, then the shared
+        # families they map onto — emergent first, vocabulary second
+        seen: dict[str, dict] = {}
+        for f in session.scalars(select(Finding)).all():
+            inv = session.get(Investigation, f.investigation_id)
+            anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv else None
+            if anomaly is None:
+                continue
+            from echolens.vocab import theme_of
+            t = theme_of(anomaly, f.json or {})
+            if t["id"] != "other":
+                seen.setdefault(t["id"], t)
+        for fid in list(FAMILIES)[:6]:      # always show the common families too
+            seen.setdefault(fid, canonical_theme([fid.replace("-", " ")]))
+
+        rows = []
+        for t in list(seen.values())[:limit]:
+            per = compare_theme(session, t, names, days)
+            if not any(r["rate_pct"] > 0 for r in per):
+                continue
+            rows.append({"theme_id": t["id"], "label": t["label"],
+                         "is_family": t["is_family"], "products": per,
+                         "worst": per[0]["product"] if per else None})
+        rows.sort(key=lambda r: -(r["products"][0]["rate_pct"] if r["products"] else 0))
+        return {"themes": rows, "products": names, "days": days,
+                "note": "Rate = share of that product's negative reviews mentioning the theme."}
+
+
+@app.get("/portfolio/transfers")
+def portfolio_transfers() -> dict:
+    """Cases that started from another product's verified fix, and whether the
+    shortcut is measurable."""
+    from echolens.portfolio import recent_transfers, transfer_stats
+    with session_scope() as session:
+        return {"transfers": recent_transfers(session), "stats": transfer_stats(session)}
 
 
 @app.get("/themes")

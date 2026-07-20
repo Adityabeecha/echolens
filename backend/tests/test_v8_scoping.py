@@ -274,3 +274,26 @@ def test_case_duration_flags_impossible_wall_clock():
                         created_at=start, resolved_at=start + timedelta(minutes=3291))
     txt, flagged = _case_duration(bad)
     assert flagged is True and txt.startswith(">")
+
+
+def test_a_case_follows_its_anomalys_product_not_the_clients_claim(client):
+    """Real bug: starting an investigation from the onboarding wizard sent the
+    PREVIOUS product's id, so the case was filed under the wrong product (and
+    'back' then landed on the wrong feed). The anomaly's product must win."""
+    tc, ids, Session = client
+    a, b = ids["Alpha"], ids["Beta"]
+    with Session() as s:
+        s.add(AnomalyEvent(slug="beta-2", type="theme_volume_surge", metric="m",
+                           delta=0.2, z=2.5, window="7d", description="beta signal",
+                           status="pending", product_id=b))
+        s.commit()
+    # client wrongly claims product A while opening B's anomaly
+    r = tc.post("/investigations", json={"anomaly_slug": "beta-2", "tier": "quick",
+                                         "product_id": a})
+    assert r.status_code == 200
+    with Session() as s:
+        inv = s.get(Investigation, r.json()["investigation_id"])
+        assert inv.product_id == b, "the case must belong to the anomaly's product"
+    # and it shows up on B's feed, not A's
+    assert any(x["slug"] == "beta-2" for x in tc.get(f"/anomalies?product_id={b}").json()["anomalies"])
+    assert not any(x["slug"] == "beta-2" for x in tc.get(f"/anomalies?product_id={a}").json()["anomalies"])

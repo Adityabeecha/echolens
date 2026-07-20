@@ -223,6 +223,10 @@ class Investigation(Base):
     # the finding can disclose what was unavailable during the investigation.
     data_notes: Mapped[list | None] = mapped_column(JSON, nullable=True)
     product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    # v9.0 cross-product transfer: the validated pattern this case started from,
+    # if any. Recorded so the shortcut can be MEASURED (seeded vs cold cases)
+    # rather than asserted.
+    seeded_from_pattern: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(nullable=True)
 

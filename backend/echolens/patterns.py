@@ -43,14 +43,9 @@ def patterns(session: Session, product_id: int | None = None) -> list[dict]:
     return sorted(groups.values(), key=lambda p: -p["verified_count"])
 
 
-def matching_pattern(session: Session, anomaly: AnomalyEvent, min_verified: int = 1) -> dict | None:
-    """The best validated pattern whose theme overlaps this anomaly, or None.
-    Only patterns from the SAME product count as a prior."""
-    cand = set(theme_terms(anomaly, {"summary": anomaly.description or "", "prose": ""}))
-    if not cand:
-        return None
+def _best_overlap(pats: list[dict], cand: set[str], min_verified: int) -> dict | None:
     best, best_key = None, (0, 0)
-    for p in patterns(session, getattr(anomaly, "product_id", None)):
+    for p in pats:
         if p["verified_count"] < min_verified:
             continue
         overlap = len(set(p["terms"]) & cand)
@@ -58,4 +53,58 @@ def matching_pattern(session: Session, anomaly: AnomalyEvent, min_verified: int 
             key = (p["verified_count"], overlap)
             if key > best_key:
                 best, best_key = p, key
+    return best
+
+
+def matching_pattern(session: Session, anomaly: AnomalyEvent, min_verified: int = 1) -> dict | None:
+    """The best validated pattern to use as a prior for this anomaly.
+
+    v9.0 — knowledge compounds ACROSS products. Own-product patterns still win
+    outright: a fix proven on this very app is stronger evidence than the same
+    fix proven elsewhere. Only when this product has nothing do we look at the
+    rest of the portfolio, matched on the shared theme vocabulary rather than raw
+    strings (see vocab.canonical_theme). A borrowed pattern is always tagged with
+    where it came from — it is a place to look first, never a conclusion.
+    """
+    cand = set(theme_terms(anomaly, {"summary": anomaly.description or "", "prose": ""}))
+    if not cand:
+        return None
+    pid = getattr(anomaly, "product_id", None)
+
+    own = _best_overlap(patterns(session, pid), cand, min_verified)
+    if own is not None:
+        return {**own, "cross_product": False, "from_product": None}
+
+    return cross_product_pattern(session, anomaly, min_verified)
+
+
+def cross_product_pattern(session: Session, anomaly: AnomalyEvent,
+                          min_verified: int = 1) -> dict | None:
+    """A pattern verified on a DIFFERENT product whose canonical theme matches."""
+    from echolens.db.models import Product
+    from echolens.vocab import canonical_theme
+
+    pid = getattr(anomaly, "product_id", None)
+    theme = canonical_theme(theme_terms(anomaly, {"summary": anomaly.description or "",
+                                                  "prose": ""}))
+    if theme["id"] == "other":
+        return None
+
+    best, best_key = None, (0, 0)
+    for other in session.scalars(select(Product)).all():
+        if pid is not None and other.id == pid:
+            continue
+        for p in patterns(session, other.id):
+            if p["verified_count"] < min_verified:
+                continue
+            # match on the SHARED axis, so "battery drain" and "draining fast"
+            # count as the same complaint across two apps
+            if canonical_theme(p["terms"])["id"] != theme["id"]:
+                continue
+            key = (p["verified_count"], len(set(p["terms"]) & set(theme["terms"])))
+            if key > best_key:
+                best, best_key = {**p, "cross_product": True,
+                                  "from_product": other.name,
+                                  "theme_id": theme["id"],
+                                  "theme_label": theme["label"]}, key
     return best

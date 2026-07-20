@@ -57,6 +57,9 @@ export function CaseFeed({ onOpenInvestigation, onNewCase, reloadKey, bumpReload
   const anomalies = useAsync(() => api.anomalies(), [reloadKey]);
   const summary = useAsync(() => api.feedSummary(), [reloadKey]);
   const sources = useAsync(() => api.sources(), [reloadKey]);
+  // Themes worth investigating that aren't anomalies yet. The onboarding wizard
+  // offers these; without the same list here they'd vanish on the way to the feed.
+  const candidates = useAsync(() => api.feedCandidates(), [reloadKey]);
   const [busy, setBusy] = useState<string | null>(null);
   const [showDismissed, setShowDismissed] = useState(false);
   const reviewer = canReview();
@@ -180,6 +183,25 @@ export function CaseFeed({ onOpenInvestigation, onNewCase, reloadKey, bumpReload
           </div>
         )}
 
+        {candidates.data && candidates.data.candidates.length > 0 && (
+          <div style={{ maxWidth: 880, marginBottom: 26 }}>
+            <Label style={{ marginBottom: 4, color: C.info }}>
+              INVESTIGATE FROM YOUR FEEDBACK · {candidates.data.candidates.length}
+            </Label>
+            <p style={{ fontSize: 12.5, color: C.dim, margin: "0 0 12px", lineHeight: 1.55 }}>
+              What people complain about most, right now. These aren't spikes — no baseline shift is
+              needed to look into them.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {candidates.data.candidates.map((c) => (
+                <CandidateRow key={c.label} label={c.label} count={c.count}
+                              description={c.description} onOpen={onOpenInvestigation}
+                              onStarted={bumpReload} />
+              ))}
+            </div>
+          </div>
+        )}
+
         {anomalies.data && anomalies.data.anomalies.length > 0 && (() => {
           const groups: Record<Bucket, typeof anomalies.data.anomalies> = {
             attention: [], active: [], triage: [], resolved: [], dismissed: [],
@@ -271,6 +293,57 @@ function AnomalyCard({ a, onOpen }: { a: Anomaly; onOpen: (id: number) => void }
         </div>
         <Chip {...chip} />
       </div>
+    </div>
+  );
+}
+
+// A complaint theme you can turn into a case. Selecting is separate from
+// committing: the row explains itself; only the button starts an investigation.
+function CandidateRow({ label, count, description, onOpen, onStarted }: {
+  label: string;
+  count: number;
+  description: string;
+  onOpen: (id: number) => void;
+  onStarted: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const reviewer = canReview();
+
+  const investigate = async () => {
+    if (!reviewer || busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api.startInvestigation({ description, tier: "quick" });
+      onStarted();
+      onOpen(r.investigation_id);
+    } catch (e) {
+      setErr(String(e).replace("Error: ", ""));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 15px",
+                  background: C.card, border: `1px solid ${C.border2}`, borderRadius: 10 }}>
+      <div style={{ width: 3, alignSelf: "stretch", minHeight: 26, borderRadius: 2,
+                    background: C.info, flex: "none" }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, color: C.text2 }}>{label}</div>
+        <div style={{ fontFamily: mono, fontSize: 10.5, color: C.faint, marginTop: 3 }}>
+          {count} negative review{count === 1 ? "" : "s"} mention this
+        </div>
+        {err && <div style={{ fontSize: 12, color: C.bad, marginTop: 6 }}>{err}</div>}
+      </div>
+      <button onClick={investigate} disabled={!reviewer || busy} className="el-btn"
+        title={reviewer ? "Start a case for this theme" : "You need reviewer access to start an investigation."}
+        style={{ background: "transparent", color: reviewer ? C.accent : C.dim,
+                 border: `1px solid ${reviewer ? "rgba(240,166,60,.4)" : C.border3}`,
+                 borderRadius: 6, padding: "7px 13px", fontSize: 12.5, fontFamily: sans,
+                 cursor: reviewer && !busy ? "pointer" : "not-allowed", flex: "none" }}>
+        {busy ? "Starting…" : "Investigate"}
+      </button>
     </div>
   );
 }

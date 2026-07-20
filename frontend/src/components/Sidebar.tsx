@@ -127,6 +127,27 @@ export function Sidebar({ screen, go, running, onOpenCase, onLogout,
         </div>
       </div>
 
+      {/* v9.0: the portfolio spans every product, so it sits ABOVE the switcher —
+          the switcher scopes what's below it, not this. */}
+      {products.length > 1 && (
+        <div
+          onClick={() => go("portfolio")}
+          className="el-btn"
+          style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 10px 8px",
+                   padding: "8px 11px", borderRadius: 8, cursor: "pointer",
+                   background: screen === "portfolio" ? C.active : "transparent",
+                   border: `1px solid ${screen === "portfolio" ? C.border3 : "transparent"}`,
+                   color: screen === "portfolio" ? C.text : C.muted }}
+        >
+          <span style={{ fontFamily: mono, fontSize: 10, width: 16, color: C.accent }}>▦</span>
+          <span style={{ fontSize: 13 }}>Portfolio</span>
+          <span style={{ marginLeft: "auto", fontFamily: mono, fontSize: 9, color: C.faint,
+                         letterSpacing: ".06em" }}>
+            {products.length}
+          </span>
+        </div>
+      )}
+
       {products.length > 0 && onSwitchProduct && (
         <ProductSwitcher products={products} activeId={activeId}
                          onSwitch={onSwitchProduct} onAdd={onAddProduct} />

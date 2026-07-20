@@ -1,4 +1,5 @@
 export type Screen =
+  | "portfolio"
   | "feed"
   | "case"
   | "finding"

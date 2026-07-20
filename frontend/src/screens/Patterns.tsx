@@ -35,6 +35,11 @@ export function Patterns() {
                       {t}
                     </span>
                   ))}
+                  {p.cross_product && p.from_product && (
+                    <span style={{ fontFamily: mono, fontSize: 10.5, padding: "3px 9px", borderRadius: 20, background: `${C.info}1f`, border: `1px solid ${C.info}66`, color: C.info }}>
+                      proven on {p.from_product}
+                    </span>
+                  )}
                   <span style={{ fontFamily: mono, fontSize: 10.5, padding: "3px 9px", borderRadius: 20, background: `${C.good}1f`, border: `1px solid ${C.good}66`, color: C.good, marginLeft: "auto" }}>
                     verified {p.verified_count}×
                   </span>
