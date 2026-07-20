@@ -29,6 +29,16 @@ _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("posts", "embedding", "JSON"),
     ("releases", "product", "VARCHAR"),
     ("anomaly_events", "parent_case_id", "INTEGER"),
+    # v8.0 product scoping
+    ("anomaly_events", "product_id", "INTEGER"),
+    ("anomaly_events", "window_start", "TIMESTAMP"),
+    ("anomaly_events", "window_end", "TIMESTAMP"),
+    ("anomaly_events", "merged_into_id", "INTEGER"),
+    ("investigations", "product_id", "INTEGER"),
+    ("findings", "product_id", "INTEGER"),
+    ("fix_watches", "product_id", "INTEGER"),
+    ("collector_state", "product_id", "INTEGER"),
+    ("users", "last_active_product_id", "INTEGER"),
 ]
 
 
@@ -56,6 +66,14 @@ def init_db(db_url: str | None = None) -> None:
             cols = {c["name"] for c in inspector.get_columns(table)}
             if column not in cols:
                 conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {column} {ddl_type}'))
+    # v8.0: create Products from existing bindings and scope legacy rows (idempotent).
+    try:
+        from echolens.db.migrate import backfill_products
+        with sessionmaker(bind=engine, expire_on_commit=False)() as s:
+            backfill_products(s)
+            s.commit()
+    except Exception:  # never block startup on the backfill
+        pass
 
 
 @contextmanager

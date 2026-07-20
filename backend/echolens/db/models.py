@@ -80,6 +80,21 @@ class Release(Base):
 # ── v1.0 operational tables ─────────────────────────────────────────────
 
 
+class Product(Base):
+    """v8.0: the tenant of everything. Each product owns its own sources, corpus
+    slice, anomalies, cases, patterns and budgets — nothing is global anymore."""
+    __tablename__ = "products"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    package_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    github_repo: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    is_demo: Mapped[bool] = mapped_column(default=False)
+    # per-product budget overrides; falls back to the global defaults
+    limits_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class CollectorState(Base):
     """One row per configured collector — its incremental watermark and health
     (PRD/roadmap v1.0). Lets ingestion be idempotent and observable."""
@@ -95,6 +110,7 @@ class CollectorState(Base):
     last_run_at: Mapped[datetime | None] = mapped_column(nullable=True)
     items_last_run: Mapped[int] = mapped_column(Integer, default=0)
     enabled: Mapped[bool] = mapped_column(default=True)
+    product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
 
 
 class Setting(Base):
@@ -113,6 +129,9 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(256), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(256))
     role: Mapped[str] = mapped_column(String(16), default="viewer")  # admin|reviewer|viewer
+    # v8.0: which product this user was last looking at (server-side, so a refresh
+    # lands them back on it instead of re-showing the wizard)
+    last_active_product_id: Mapped[int | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
@@ -133,6 +152,12 @@ class AnomalyEvent(Base):
     status: Mapped[str] = mapped_column(String(32), default="pending")  # pending|triaged|investigating|closed
     # v6.0: for a regression anomaly, the original resolved case it re-opens.
     parent_case_id: Mapped[int | None] = mapped_column(nullable=True)
+    product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    # v8.0 dedupe key: one anomaly per (product, metric, type, window)
+    window_start: Mapped[datetime | None] = mapped_column(nullable=True)
+    window_end: Mapped[datetime | None] = mapped_column(nullable=True)
+    # when this row was superseded/merged into another anomaly
+    merged_into_id: Mapped[int | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
@@ -159,6 +184,7 @@ class FixWatch(Base):
     post_rate: Mapped[float | None] = mapped_column(Float, nullable=True)      # post-fix complaint rate
     confirmed_at: Mapped[datetime | None] = mapped_column(nullable=True)
     chart_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # before/after series
+    product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
@@ -196,6 +222,7 @@ class Investigation(Base):
     # v3.0: data-availability caveats captured at start (e.g. a stale source), so
     # the finding can disclose what was unavailable during the investigation.
     data_notes: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
@@ -247,6 +274,7 @@ class Finding(Base):
     confidence: Mapped[float] = mapped_column(Float)
     status: Mapped[str] = mapped_column(String(16), default="draft")  # draft|approved|challenged
     json: Mapped[dict] = mapped_column(JSON, default=dict)  # prose, claim->evidence map, what_would_settle_it
+    product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 

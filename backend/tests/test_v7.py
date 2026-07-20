@@ -57,8 +57,19 @@ def test_chat_answer_is_cited_to_a_finding():
     assert r["citations"] and r["citations"][0]["investigation_id"] == inv.id  # clickable to the case
 
 
-def test_chat_unknown_topic_is_honest():
+def test_chat_says_when_product_has_no_investigations():
+    """Empty product → says so explicitly (v8 product scoping)."""
     s = _session()
+    r = route(s, "how is the onboarding funnel doing", product_name="Firefox")
+    assert r["type"] == "answer" and r["citations"] == []
+    assert "no investigations" in r["text"].lower() and "firefox" in r["text"].lower()
+
+
+def test_chat_unknown_topic_is_honest():
+    """With knowledge on record but nothing matching, it still refuses to guess."""
+    s = _session()
+    _resolved(s, "battery drain from background sync")
+    s.commit()
     r = route(s, "how is the onboarding funnel doing")
     assert r["type"] == "answer" and r["citations"] == [] and "haven't investigated" in r["text"].lower()
 

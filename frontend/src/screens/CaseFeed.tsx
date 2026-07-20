@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Anomaly, api, canReview } from "../api";
 import { useAsync } from "../hooks";
-import { C, mono } from "../theme";
+import { C, mono, sans } from "../theme";
 import { Chip, Label, Spark, sparkFor } from "../ui";
 
 interface Props {

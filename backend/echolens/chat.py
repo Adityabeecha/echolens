@@ -27,10 +27,13 @@ RANK_MARKERS = (
 )
 
 
-def _knowledge(session: Session) -> list[tuple[Finding, Investigation]]:
-    """Every finding backed by a real cause (resolved case or approved finding)."""
+def _knowledge(session: Session, product_id: int | None = None) -> list[tuple[Finding, Investigation]]:
+    """Every finding in THIS product backed by a real cause."""
+    stmt = select(Finding)
+    if product_id is not None:
+        stmt = stmt.where(Finding.product_id == product_id)
     out = []
-    for f in session.scalars(select(Finding)).all():
+    for f in session.scalars(stmt).all():
         inv = session.get(Investigation, f.investigation_id)
         if inv is None:
             continue
@@ -39,12 +42,13 @@ def _knowledge(session: Session) -> list[tuple[Finding, Investigation]]:
     return out
 
 
-def retrieve(session: Session, message: str, k: int = 4) -> list[tuple[Finding, Investigation]]:
+def retrieve(session: Session, message: str, k: int = 4,
+             product_id: int | None = None) -> list[tuple[Finding, Investigation]]:
     terms = set(tokenize(message))
     if not terms:
         return []
     scored = []
-    for f, inv in _knowledge(session):
+    for f, inv in _knowledge(session, product_id):
         ftoks = set(tokenize(f.summary + " " + (f.json or {}).get("prose", "")))
         overlap = len(terms & ftoks)
         if overlap:
@@ -53,13 +57,17 @@ def retrieve(session: Session, message: str, k: int = 4) -> list[tuple[Finding, 
     return [(f, inv) for _, f, inv in scored[:k]]
 
 
-def _open_problems(session: Session) -> list[tuple[Finding, Investigation]]:
-    """Resolved cases not yet confirmed-fixed, ranked by impact."""
+def _open_problems(session: Session, product_id: int | None = None) -> list[tuple[Finding, Investigation]]:
+    """Resolved cases not yet confirmed-fixed, ranked by impact (this product)."""
     from echolens.db.models import FixWatch
-    confirmed = {w.investigation_id for w in session.scalars(
-        select(FixWatch).where(FixWatch.status == "confirmed")).all()}
+    fw = select(FixWatch).where(FixWatch.status == "confirmed")
+    inv_stmt = select(Investigation).where(Investigation.status == "resolved")
+    if product_id is not None:
+        fw = fw.where(FixWatch.product_id == product_id)
+        inv_stmt = inv_stmt.where(Investigation.product_id == product_id)
+    confirmed = {w.investigation_id for w in session.scalars(fw).all()}
     rows = []
-    for inv in session.scalars(select(Investigation).where(Investigation.status == "resolved")).all():
+    for inv in session.scalars(inv_stmt).all():
         if inv.id in confirmed:
             continue
         f = session.scalars(select(Finding).where(
@@ -76,21 +84,28 @@ def _cite(f: Finding, inv: Investigation) -> dict:
             "affected_pct": impact.get("affected_pct")}
 
 
-def route(session: Session, message: str) -> dict:
-    """Decide how to answer. Returns one of:
+def route(session: Session, message: str, product_id: int | None = None,
+          product_name: str | None = None) -> dict:
+    """Decide how to answer, using ONLY the active product's cases. Returns:
       {"type": "answer", "text", "citations": [...]}
       {"type": "launch", "description": <what to investigate>}
     The endpoint executes a launch (creates the anomaly + investigation)."""
     msg = (message or "").lower().strip()
+    label = f" for {product_name}" if product_name else ""
     if not msg:
         return {"type": "answer", "text": "Ask me about a complaint, a cause, or what to fix next.", "citations": []}
 
+    # nothing investigated yet in this product — say so explicitly
+    if not _knowledge(session, product_id) and not any(m in msg for m in INVESTIGATE_MARKERS):
+        return {"type": "answer", "citations": [],
+                "text": f"No investigations{label} yet. Ask me to \"investigate …\" and I'll open the first case."}
+
     # 1) ranking / aggregate view → answer from open problems by impact
     if any(m in msg for m in RANK_MARKERS):
-        probs = _open_problems(session)
+        probs = _open_problems(session, product_id)
         if not probs:
             return {"type": "answer",
-                    "text": "No open problems on record — every resolved case is fixed or in verification.",
+                    "text": f"No open problems{label} — every resolved case is fixed or in verification.",
                     "citations": []}
         f, inv = probs[0]
         cites = [_cite(f, inv) for f, inv in probs[:3]]
@@ -106,7 +121,7 @@ def route(session: Session, message: str) -> dict:
         return {"type": "launch", "description": message.strip()}
 
     # 3) topic question → cite matching verified findings
-    hits = retrieve(session, message)
+    hits = retrieve(session, message, product_id=product_id)
     if hits:
         cites = [_cite(f, inv) for f, inv in hits]
         lead = hits[0]

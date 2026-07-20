@@ -43,19 +43,26 @@ def _verdict(session: Session, finding: Finding) -> str | None:
     return fb.action if fb else None
 
 
-def _reviewed(session: Session) -> list[tuple[float, str]]:
-    """(stated_confidence, verdict) for every reviewed finding."""
+def _findings(session: Session, product_id: int | None):
+    stmt = select(Finding)
+    if product_id is not None:
+        stmt = stmt.where(Finding.product_id == product_id)
+    return session.scalars(stmt).all()
+
+
+def _reviewed(session: Session, product_id: int | None = None) -> list[tuple[float, str]]:
+    """(stated_confidence, verdict) for every reviewed finding in this product."""
     out = []
-    for f in session.scalars(select(Finding)).all():
+    for f in _findings(session, product_id):
         v = _verdict(session, f)
         if v in ("approve", "challenge"):
             out.append((float(f.confidence or 0.0), v))
     return out
 
 
-def calibration(session: Session) -> dict:
-    """Stated-confidence vs. actual-approval curve over all reviewed findings."""
-    data = _reviewed(session)
+def calibration(session: Session, product_id: int | None = None) -> dict:
+    """Stated-confidence vs. actual-approval curve over this product's findings."""
+    data = _reviewed(session, product_id)
     n = len(data)
     points = []
     for lo, hi in _BUCKETS:
@@ -94,11 +101,17 @@ def _headline(points: list[dict], overall_rate) -> str | None:
             f"{int(best['approval_rate'] * 100)}% of the time.")
 
 
-def weak_spots(session: Session) -> dict:
-    """Roll up structured challenge reasons into visible failure modes (v5.0)."""
+def weak_spots(session: Session, product_id: int | None = None) -> dict:
+    """Roll up structured challenge reasons into visible failure modes (v5.0),
+    scoped to one product."""
+    scope = None
+    if product_id is not None:
+        scope = {f.id for f in _findings(session, product_id)}
     counts: dict[str, int] = {}
     for fb in session.scalars(
         select(ReviewFeedback).where(ReviewFeedback.action == "challenge")).all():
+        if scope is not None and fb.finding_id not in scope:
+            continue
         if fb.reason:
             counts[fb.reason] = counts.get(fb.reason, 0) + 1
     spots = [{"reason": r, "label": _REASON_LABELS.get(r, r), "count": c,
@@ -107,19 +120,19 @@ def weak_spots(session: Session) -> dict:
     return {"total_challenges": sum(counts.values()), "spots": spots}
 
 
-def guidance_text(session: Session) -> str:
+def guidance_text(session: Session, product_id: int | None = None) -> str:
     """The corrective note injected into the investigator's prompt (empty when
     there's nothing learned yet). This is the visible trust loop: past human
-    verdicts change future behavior."""
+    verdicts change future behavior — learned per product."""
     lines: list[str] = []
-    cal = calibration(session)
+    cal = calibration(session, product_id)
     if cal["overconfident"]:
         lines.append(
             f"CALIBRATION: over the last {cal['n_reviewed']} reviewed findings your stated confidence has "
             f"run ~{int(cal['overconfidence_gap'] * 100)} points above your human-approved accuracy "
             f"({int(cal['mean_stated_confidence'] * 100)}% stated vs {int(cal['overall_approval_rate'] * 100)}% "
             "approved). Be more conservative: demand stronger corroboration before high confidence.")
-    ws = weak_spots(session)
+    ws = weak_spots(session, product_id)
     if ws["spots"]:
         top = ws["spots"][0]
         lines.append(f"KNOWN WEAK SPOT: reviewers most often reject findings for '{top['label']}' "

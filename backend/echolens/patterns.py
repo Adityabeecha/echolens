@@ -14,11 +14,14 @@ from echolens.db.models import AnomalyEvent, Finding, FixWatch, Investigation, R
 from echolens.impact import theme_terms
 
 
-def patterns(session: Session) -> list[dict]:
-    """Every validated pattern, most-verified first. Grouped by theme signature so
-    repeated confirmations of the same problem accumulate a verified count."""
+def patterns(session: Session, product_id: int | None = None) -> list[dict]:
+    """Every validated pattern for this product, most-verified first. Grouped by
+    theme signature so repeated confirmations accumulate a verified count."""
+    stmt = select(FixWatch).where(FixWatch.status == "confirmed")
+    if product_id is not None:
+        stmt = stmt.where(FixWatch.product_id == product_id)
     groups: dict[tuple, dict] = {}
-    for w in session.scalars(select(FixWatch).where(FixWatch.status == "confirmed")).all():
+    for w in session.scalars(stmt).all():
         finding = session.get(Finding, w.finding_id)
         inv = session.get(Investigation, w.investigation_id)
         anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv else None
@@ -42,12 +45,12 @@ def patterns(session: Session) -> list[dict]:
 
 def matching_pattern(session: Session, anomaly: AnomalyEvent, min_verified: int = 1) -> dict | None:
     """The best validated pattern whose theme overlaps this anomaly, or None.
-    Used by the investigator as a proven starting prior."""
+    Only patterns from the SAME product count as a prior."""
     cand = set(theme_terms(anomaly, {"summary": anomaly.description or "", "prose": ""}))
     if not cand:
         return None
     best, best_key = None, (0, 0)
-    for p in patterns(session):
+    for p in patterns(session, getattr(anomaly, "product_id", None)):
         if p["verified_count"] < min_verified:
             continue
         overlap = len(set(p["terms"]) & cand)

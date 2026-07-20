@@ -296,11 +296,19 @@ def detect_issue_velocity(session: Session, as_of: datetime | None = None,
     return out
 
 
+# v8.0 noise gate: a signal below this z never becomes a case at all.
+MIN_CASE_Z = SEV3_Z          # detector-level filter, not a display filter
+MERGE_WINDOW_DAYS = 7        # same metric within N days → same anomaly, not a new one
+
+
 def scan(session: Session, as_of: datetime | None = None, persist: bool = True,
-         product: str | None = None) -> list[AnomalyEvent]:
-    """Run every detector, dedupe by slug, and (optionally) persist as pending
-    anomaly_events. Re-running is idempotent: existing slugs are skipped.
-    `as_of` defaults to the latest data timestamp (not a hardcoded date)."""
+         product: str | None = None, product_id: int | None = None) -> list[AnomalyEvent]:
+    """Run every detector for ONE product and UPSERT the results.
+
+    Dedupe key is (product_id, type, metric, overlapping window): re-running a
+    scan updates the open anomaly for that window instead of inserting a second
+    row — so "Scan now" is safe to press repeatedly. Signals below MIN_CASE_Z are
+    dropped here (noise gate), never surfaced as cases."""
     if as_of is None:
         as_of = reference_now(session)
     win = choose_windows(session, as_of, product)
@@ -313,17 +321,35 @@ def scan(session: Session, as_of: datetime | None = None, persist: bool = True,
         candidates.append(drop)
     candidates += detect_theme_surges(session, as_of, win, product)
     candidates += detect_issue_velocity(session, as_of, win, product)
+    # Noise gate: a weak SEV3 signal (z below threshold) never becomes a case.
+    # Detectors that assert their own significance (SEV1/SEV2 — e.g. issue
+    # velocity, which counts real new issues) are not z-gated.
+    candidates = [c for c in candidates
+                  if c.severity in ("SEV1", "SEV2") or abs(c.z) >= MIN_CASE_Z]
 
-    existing = {e.slug for e in session.scalars(select(AnomalyEvent)).all()}
+    window_start = as_of - timedelta(days=win.recent)
     events: list[AnomalyEvent] = []
     for c in candidates:
-        if c.slug in existing:
-            events.append(session.scalars(
-                select(AnomalyEvent).where(AnomalyEvent.slug == c.slug)).first())
+        slug = f"p{product_id}-{c.slug}" if product_id else c.slug
+        # Dedupe key: the product-scoped slug identifies (product, detector, metric);
+        # re-scanning the same window UPSERTS it instead of inserting a duplicate.
+        prior = session.scalars(select(AnomalyEvent).where(AnomalyEvent.slug == slug)).first()
+        if prior is not None:
+            fresh = prior.window_end is None or (
+                window_start - _aware(prior.window_end)) <= timedelta(days=MERGE_WINDOW_DAYS)
+            prior.z, prior.delta = c.z, c.delta
+            prior.description, prior.window = c.description, c.window
+            if fresh:  # same ongoing window → extend it
+                prior.window_start = prior.window_start or window_start
+            else:      # a new occurrence after a gap → restart the window
+                prior.window_start = window_start
+            prior.window_end = as_of
+            events.append(prior)
             continue
         ev = AnomalyEvent(
-            slug=c.slug, type=c.type, metric=c.metric, delta=c.delta, z=c.z,
+            slug=slug, type=c.type, metric=c.metric, delta=c.delta, z=c.z,
             window=c.window, description=c.description, status="pending",
+            product_id=product_id, window_start=window_start, window_end=as_of,
         )
         if persist:
             session.add(ev)
@@ -331,3 +357,7 @@ def scan(session: Session, as_of: datetime | None = None, persist: bool = True,
     if persist:
         session.flush()
     return events
+
+
+def _aware(dt: datetime) -> datetime:
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)

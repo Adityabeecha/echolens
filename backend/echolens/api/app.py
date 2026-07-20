@@ -278,6 +278,126 @@ def auth_me(user: dict = Depends(current_user)) -> dict:
     return user
 
 
+# ── v8.0: products are the scope of everything ──────────────────────────
+
+def _scope(session, product_id: int | None):
+    """The product this request is scoped to: the explicit id, else the first
+    product. Returns None only when no products exist at all."""
+    from echolens.db.models import Product
+    if product_id is not None:
+        p = session.get(Product, product_id)
+        if p is not None:
+            return p
+    return session.scalars(select(Product).order_by(Product.id)).first()
+
+
+def _product_dict(p) -> dict:
+    return {"id": p.id, "name": p.name, "package_name": p.package_name,
+            "github_repo": p.github_repo, "is_demo": p.is_demo,
+            "created_at": p.created_at.isoformat() if p.created_at else None}
+
+
+@app.get("/products")
+def list_products(user: dict = Depends(current_user)) -> dict:
+    """Every product + the caller's last-active one. The client uses this on boot
+    to decide between the Case Feed and the add-product wizard (server-derived)."""
+    from echolens.db.models import Product, User
+    with session_scope() as session:
+        rows = session.scalars(select(Product).order_by(Product.id)).all()
+        active = None
+        uid = user.get("id")
+        if uid:
+            u = session.get(User, uid)
+            if u and u.last_active_product_id:
+                active = u.last_active_product_id
+        if active not in {p.id for p in rows}:
+            active = rows[0].id if rows else None
+        return {"products": [_product_dict(p) for p in rows], "active_product_id": active}
+
+
+class ProductBody(BaseModel):
+    name: str
+    package_name: str | None = None
+    github_repo: str | None = None
+
+
+@app.post("/products")
+def create_product(body: ProductBody, user: dict = Depends(require_role("admin"))) -> dict:
+    from echolens.db.models import Product
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(422, "a product needs a name")
+    with session_scope() as session:
+        if session.scalars(select(Product).where(Product.name == name)).first():
+            raise HTTPException(409, f"a product named '{name}' already exists")
+        p = Product(name=name, package_name=body.package_name, github_repo=body.github_repo)
+        session.add(p)
+        session.flush()
+        return _product_dict(p)
+
+
+@app.post("/products/{product_id}/activate")
+def activate_product(product_id: int, user: dict = Depends(current_user)) -> dict:
+    """Persist the caller's active product server-side so a refresh returns here."""
+    from echolens.db.models import Product, User
+    with session_scope() as session:
+        p = session.get(Product, product_id)
+        if p is None:
+            raise HTTPException(404, "no such product")
+        uid = user.get("id")
+        if uid:
+            u = session.get(User, uid)
+            if u is not None:
+                u.last_active_product_id = product_id
+        return {"active_product_id": product_id, "name": p.name}
+
+
+@app.delete("/products/{product_id}")
+def delete_product(product_id: int, confirm: str = "",
+                   user: dict = Depends(require_role("admin"))) -> dict:
+    """Delete a product and cascade its data. Requires ?confirm=<exact name>."""
+    from echolens.db.models import (
+        AnomalyEvent, CollectorState, EvidenceRow, Finding, FixWatch, HypothesisRow,
+        Investigation, Issue, LLMCall, Post, Product, Recommendation, Release,
+        Review, ReviewFeedback, TraceStep, TriageDecision, User)
+    with session_scope() as session:
+        p = session.get(Product, product_id)
+        if p is None:
+            raise HTTPException(404, "no such product")
+        if confirm.strip() != p.name:
+            raise HTTPException(422, f"type the product name exactly to confirm deletion ('{p.name}')")
+        name = p.name
+        inv_ids = [i.id for i in session.scalars(select(Investigation).where(
+            Investigation.product_id == product_id)).all()]
+        find_ids = [f.id for f in session.scalars(select(Finding).where(
+            Finding.product_id == product_id)).all()]
+        anom_ids = [a.id for a in session.scalars(select(AnomalyEvent).where(
+            AnomalyEvent.product_id == product_id)).all()]
+
+        def _purge(model, col, ids):
+            if ids:
+                for row in session.scalars(select(model).where(col.in_(ids))).all():
+                    session.delete(row)
+
+        _purge(ReviewFeedback, ReviewFeedback.finding_id, find_ids)
+        _purge(Recommendation, Recommendation.finding_id, find_ids)
+        _purge(TraceStep, TraceStep.investigation_id, inv_ids)
+        _purge(HypothesisRow, HypothesisRow.investigation_id, inv_ids)
+        _purge(EvidenceRow, EvidenceRow.investigation_id, inv_ids)
+        _purge(LLMCall, LLMCall.investigation_id, inv_ids)
+        _purge(TriageDecision, TriageDecision.anomaly_id, anom_ids)
+        for model in (FixWatch, Finding, Investigation, AnomalyEvent, CollectorState):
+            for row in session.scalars(select(model).where(model.product_id == product_id)).all():
+                session.delete(row)
+        for model in (Review, Issue, Post, Release):
+            for row in session.scalars(select(model).where(model.product == name)).all():
+                session.delete(row)
+        for u in session.scalars(select(User).where(User.last_active_product_id == product_id)).all():
+            u.last_active_product_id = None
+        session.delete(p)
+        return {"deleted": name}
+
+
 @app.get("/health")
 def health() -> dict:
     ok = True

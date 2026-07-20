@@ -21,17 +21,31 @@ def _recent(dt, since) -> bool:
     return dt is not None and dt >= since
 
 
-def _resolution_rate(session: Session) -> float:
-    resolved = session.scalars(select(Investigation).where(Investigation.status == "resolved")).all()
-    confirmed = [w for w in session.scalars(select(FixWatch)).all() if w.status == "confirmed"]
+def _resolved_invs(session: Session, product_id: int | None):
+    stmt = select(Investigation).where(Investigation.status == "resolved")
+    if product_id is not None:
+        stmt = stmt.where(Investigation.product_id == product_id)
+    return session.scalars(stmt).all()
+
+
+def _watches(session: Session, product_id: int | None):
+    stmt = select(FixWatch)
+    if product_id is not None:
+        stmt = stmt.where(FixWatch.product_id == product_id)
+    return session.scalars(stmt).all()
+
+
+def _resolution_rate(session: Session, product_id: int | None = None) -> float:
+    resolved = _resolved_invs(session, product_id)
+    confirmed = [w for w in _watches(session, product_id) if w.status == "confirmed"]
     return round(len(confirmed) / len(resolved), 3) if resolved else 0.0
 
 
-def _fix_next(session: Session, resolution_rate: float, now) -> dict | None:
+def _fix_next(session: Session, resolution_rate: float, now, product_id: int | None = None) -> dict | None:
     """Rank open problems by severity × volume × persistence × (1 − resolution)."""
-    confirmed = {w.investigation_id for w in session.scalars(select(FixWatch)).all() if w.status == "confirmed"}
+    confirmed = {w.investigation_id for w in _watches(session, product_id) if w.status == "confirmed"}
     best, best_score = None, -1.0
-    for inv in session.scalars(select(Investigation).where(Investigation.status == "resolved")).all():
+    for inv in _resolved_invs(session, product_id):
         if inv.id in confirmed:
             continue
         f = session.scalars(select(Finding).where(
@@ -51,12 +65,13 @@ def _fix_next(session: Session, resolution_rate: float, now) -> dict | None:
     return {"investigation_id": inv.id, "summary": f.summary, "score": round(best_score, 2)}
 
 
-def weekly_brief(session: Session, as_of: datetime | None = None) -> dict:
+def weekly_brief(session: Session, as_of: datetime | None = None,
+                 product_id: int | None = None) -> dict:
     now = as_of or datetime.now(timezone.utc)
     since = now - timedelta(days=7)
 
     new_problems = []
-    for inv in session.scalars(select(Investigation).where(Investigation.status == "resolved")).all():
+    for inv in _resolved_invs(session, product_id):
         if not _recent(inv.created_at, since):
             continue
         f = session.scalars(select(Finding).where(
@@ -68,18 +83,20 @@ def weekly_brief(session: Session, as_of: datetime | None = None) -> dict:
     new_problems.sort(key=lambda p: -p["impact_score"])
 
     fixes_verified = [{"investigation_id": w.investigation_id, "metric": w.metric}
-                      for w in session.scalars(select(FixWatch)).all()
+                      for w in _watches(session, product_id)
                       if w.status == "confirmed" and _recent(w.confirmed_at, since)]
+    reg_stmt = select(AnomalyEvent).where(AnomalyEvent.type == "regression")
+    if product_id is not None:
+        reg_stmt = reg_stmt.where(AnomalyEvent.product_id == product_id)
     regressions = [{"slug": a.slug, "parent_case_id": a.parent_case_id}
-                   for a in session.scalars(select(AnomalyEvent).where(
-                       AnomalyEvent.type == "regression")).all() if _recent(a.created_at, since)]
+                   for a in session.scalars(reg_stmt).all() if _recent(a.created_at, since)]
 
-    rate = _resolution_rate(session)
-    fix_next = _fix_next(session, rate, now)
+    rate = _resolution_rate(session, product_id)
+    fix_next = _fix_next(session, rate, now, product_id)
 
     # chronic themes (context for the brief)
     from echolens.themes import theme_lifecycle
-    chronic = [t for t in theme_lifecycle(session, now) if t["status"] == "chronic"]
+    chronic = [t for t in theme_lifecycle(session, now, product_id) if t["status"] == "chronic"]
 
     lines = [
         f"This week: {len(new_problems)} new problem(s), {len(fixes_verified)} fix(es) verified, "

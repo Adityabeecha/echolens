@@ -19,13 +19,18 @@ from echolens.timeutil import aware_utc
 CHRONIC_DAYS = 60
 
 
-def theme_lifecycle(session: Session, as_of: datetime | None = None) -> list[dict]:
+def theme_lifecycle(session: Session, as_of: datetime | None = None,
+                    product_id: int | None = None) -> list[dict]:
     now = as_of or datetime.now(timezone.utc)
-    confirmed = {w.investigation_id for w in session.scalars(
-        select(FixWatch).where(FixWatch.status == "confirmed")).all()}
+    fw = select(FixWatch).where(FixWatch.status == "confirmed")
+    fstmt = select(Finding)
+    if product_id is not None:
+        fw = fw.where(FixWatch.product_id == product_id)
+        fstmt = fstmt.where(Finding.product_id == product_id)
+    confirmed = {w.investigation_id for w in session.scalars(fw).all()}
 
     groups: dict[str, dict] = {}
-    for f in session.scalars(select(Finding)).all():
+    for f in session.scalars(fstmt).all():
         inv = session.get(Investigation, f.investigation_id)
         if inv is None or inv.status != "resolved":
             continue
