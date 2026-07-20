@@ -89,7 +89,7 @@ class Investigator:
         # corrective note injected into this investigation's planning prompt.
         try:
             from echolens.calibration import guidance_text
-            self._guidance = guidance_text(session)
+            self._guidance = guidance_text(session, getattr(anomaly, "product_id", None))
         except Exception:
             self._guidance = ""
 
@@ -109,6 +109,7 @@ class Investigator:
                 anomaly_id=anomaly.id, status="running", opened_by=opened_by,
                 budget_tier=tier, budget_json=self.budget.as_dict(),
                 reopens_investigation_id=reopens_investigation_id,
+                product_id=getattr(anomaly, "product_id", None),
             )
             session.add(self.inv)
         session.flush()
@@ -741,6 +742,7 @@ class Investigator:
             confidence=float(finding.get("confidence", 0.0)),
             status="draft",
             json=finding,
+            product_id=self.inv.product_id,
         ))
         self.inv.status = final["status"]
         self.inv.budget_json = self.budget.as_dict()

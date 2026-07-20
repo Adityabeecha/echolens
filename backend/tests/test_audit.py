@@ -152,7 +152,7 @@ def test_triage_run_does_not_duplicate_cases(client, monkeypatch):
     from echolens.orchestrator.triage import Decision
 
     class FakeOrch:
-        def __init__(self, session, daily_limit=5):
+        def __init__(self, session, daily_limit=5, product_id=None):
             self.session = session
 
         def triage(self):

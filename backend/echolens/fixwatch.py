@@ -68,6 +68,7 @@ def link_issue(session: Session, finding: Finding, repo: str, issue_number: int,
         finding_id=finding.id, investigation_id=finding.investigation_id,
         repo=repo, issue_number=issue_number, issue_url=issue_url, status="issue_open",
         terms=_terms_for(session, finding), metric=(anomaly.metric if anomaly else ""),
+        product_id=(inv.product_id if inv else None),
     )
     session.add(watch)
     session.flush()
@@ -184,6 +185,7 @@ def _start_followup(session, orig_inv, note, slug, a_type, metric) -> AnomalyEve
         slug=slug, type=a_type, metric=metric, delta=0.0, z=0.0, window="follow-up",
         description=note, status="pending",
         parent_case_id=orig_inv.id if orig_inv else None,
+        product_id=(orig_inv.product_id if orig_inv else None),
     )
     session.add(ev)
     session.flush()

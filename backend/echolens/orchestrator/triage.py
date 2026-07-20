@@ -102,9 +102,11 @@ def adaptive_tier(anomaly: AnomalyEvent, session: Session, proposed: str = "stan
 
 class Orchestrator:
     def __init__(self, session: Session, llm: LLMClient | None = None,
-                 daily_limit: int = ORCHESTRATOR_DAILY_INVESTIGATIONS):
+                 daily_limit: int = ORCHESTRATOR_DAILY_INVESTIGATIONS,
+                 product_id: int | None = None):
         self.session = session
         self.daily_limit = daily_limit
+        self.product_id = product_id
         if llm is None:
             from echolens.llm.openai_client import OpenAIClient
             llm = OpenAIClient(on_call=self._record_llm_call)
@@ -126,9 +128,14 @@ class Orchestrator:
         return sum(1 for r in rows if r.created_at and r.created_at.date() == as_of.date())
 
     def triage(self, as_of: datetime = AS_OF) -> list[Decision]:
-        pending = self.session.scalars(
-            select(AnomalyEvent).where(AnomalyEvent.status == "pending")
-        ).all()
+        # Only PENDING anomalies for this product that have no linked investigation
+        # yet — already-triaged ones are never re-triaged (duplicate-cases bug).
+        stmt = select(AnomalyEvent).where(
+            AnomalyEvent.status == "pending", AnomalyEvent.merged_into_id.is_(None))
+        if self.product_id is not None:
+            stmt = stmt.where(AnomalyEvent.product_id == self.product_id)
+        linked = {i.anomaly_id for i in self.session.scalars(select(Investigation)).all()}
+        pending = [a for a in self.session.scalars(stmt).all() if a.id not in linked]
         if not pending:
             return []
         open_invs = self.session.scalars(
