@@ -21,6 +21,7 @@ import { Overview } from "./screens/Overview";
 import { Patterns } from "./screens/Patterns";
 import { Portfolio } from "./screens/Portfolio";
 import { Chat } from "./screens/Chat";
+import { Backlog } from "./screens/Backlog";
 
 export default function App() {
   const { route, navigate, back, backTarget } = useRouter({ screen: "feed", productId: null });
@@ -233,6 +234,9 @@ export default function App() {
               onOpenInvestigation={(id) => openInvestigation(id, "resolved")}
               onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
             />
+          )}
+          {screen === "backlog" && (
+            <Backlog key={activeId ?? "none"} onOpenInvestigation={openInvestigation} />
           )}
           {screen === "archive" && <Archive key={activeId ?? "none"} onOpenInvestigation={(id) => openInvestigation(id, "resolved")} />}
           {screen === "chat" && <Chat key={activeId ?? "none"} onOpenInvestigation={(id) => openInvestigation(id, "resolved")} />}

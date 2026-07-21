@@ -14,6 +14,7 @@
 export type Screen =
   | "portfolio"
   | "feed"
+  | "backlog"
   | "case"
   | "finding"
   | "archive"
@@ -30,7 +31,7 @@ export const GLOBAL_SCREENS: Screen[] = ["portfolio", "onboarding"];
 
 /** Screens scoped to one product, reachable from the sidebar. */
 const PRODUCT_SCREENS: Screen[] = [
-  "feed", "archive", "sources", "costs", "calibration", "overview", "patterns", "chat",
+  "feed", "backlog", "archive", "sources", "costs", "calibration", "overview", "patterns", "chat",
 ];
 
 export interface Route {
@@ -44,6 +45,7 @@ export interface Route {
 export const SCREEN_LABEL: Record<Screen, string> = {
   portfolio: "Portfolio",
   feed: "Case Feed",
+  backlog: "Quality Backlog",
   case: "the investigation",
   finding: "the finding",
   archive: "Archive",

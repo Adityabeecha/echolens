@@ -733,6 +733,50 @@ def onboard_status(product: str, user: dict = Depends(current_user)) -> dict:
                 "snapshot": snap, "anomalies": anomalies}
 
 
+# ── v11: the quality backlog ────────────────────────────────────────────
+
+@app.get("/backlog")
+def backlog_view(product_id: int | None = None,
+                 user: dict = Depends(current_user)) -> dict:
+    """Every open problem, ranked by impact-per-effort, each line defended."""
+    from echolens.backlog import backlog
+    with session_scope() as session:
+        p = _scope(session, product_id)
+        return {**backlog(session, p.id if p else None), "product": p.name if p else None}
+
+
+@app.get("/backlog/plan")
+def backlog_plan_view(product_id: int | None = None, capacity_days: float | None = None,
+                      user: dict = Depends(current_user)) -> dict:
+    """The proposed "what to fix next" draft, respecting the PM's own edits."""
+    from echolens.backlog import quarter_plan
+    with session_scope() as session:
+        p = _scope(session, product_id)
+        return {**quarter_plan(session, p.id if p else None, capacity_days),
+                "product": p.name if p else None}
+
+
+class PlanBody(BaseModel):
+    included: list[int] = []
+    excluded: list[int] = []
+    notes: dict[str, str] | None = None
+    capacity_days: float | None = None
+    product_id: int | None = None
+
+
+@app.put("/backlog/plan")
+def backlog_plan_save(body: PlanBody,
+                      user: dict = Depends(require_role("reviewer"))) -> dict:
+    """The PM edits and owns the plan; a later re-rank proposes around it."""
+    from echolens.backlog import quarter_plan, save_plan
+    with session_scope() as session:
+        p = _scope(session, body.product_id)
+        pid = p.id if p else None
+        save_plan(session, pid, included=body.included, excluded=body.excluded,
+                  notes=body.notes, capacity_days=body.capacity_days)
+        return {**quarter_plan(session, pid), "product": p.name if p else None}
+
+
 # ── v10: the unified feedback graph ─────────────────────────────────────
 
 @app.get("/graph")

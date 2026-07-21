@@ -91,6 +91,25 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
   return r.json();
 }
 
+async function put<T>(path: string, body?: unknown): Promise<T> {
+  const r = await fetch(BASE + path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!r.ok) {
+    handle(r.status);
+    let detail = "";
+    try {
+      detail = (await r.json())?.detail ?? "";
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail || `${path} → ${r.status}`);
+  }
+  return r.json();
+}
+
 async function del<T>(path: string): Promise<T> {
   const r = await fetch(BASE + path, { method: "DELETE", headers: authHeaders() });
   if (!r.ok) {
@@ -403,6 +422,41 @@ export interface QueueView {
   remaining_today: number;
 }
 
+// v11: the quality backlog
+export interface BacklogItem {
+  rank: number;
+  investigation_id: number;
+  finding_id: number;
+  summary: string;
+  confidence: number;
+  severity: { score: number; band: "high" | "medium" | "low" };
+  score: number;
+  volume: number;
+  persistence_days: number;
+  effort: { days: number; basis: string; known: boolean };
+  value_per_day: number;
+  projected: { stars: number; basis: string; confident: boolean };
+  evidence_refs: string[];
+  evidence_count: number;
+  theme: string | null;
+  defence: string;
+}
+export interface QuarterPlan {
+  proposed: BacklogItem[];
+  deferred: BacklogItem[];
+  capacity_days: number;
+  committed_days: number;
+  remaining_days: number;
+  projected_stars: number;
+  owned: boolean;
+  notes: Record<string, string>;
+  resolution_rate: number;
+  median_fix_days: number | null;
+  unknown_effort: number;
+  generated: string;
+  product?: string | null;
+}
+
 export interface Pattern {
   terms: string[];
   trigger: string;
@@ -603,6 +657,10 @@ export const api = {
       "/queue/themes", { slugs, statements, tier, product_id: getActiveProduct() }),
   queue: () => get<QueueView>(scoped("/queue")),
   cancelQueued: (queueId: number) => del<{ cancelled: number }>(`/queue/${queueId}`),
+  backlogPlan: (capacityDays?: number) =>
+    get<QuarterPlan>(scoped(`/backlog/plan${capacityDays ? `?capacity_days=${capacityDays}` : ""}`)),
+  saveBacklogPlan: (body: { included: number[]; excluded: number[]; capacity_days?: number }) =>
+    put<QuarterPlan>("/backlog/plan", { ...body, product_id: getActiveProduct() }),
   portfolio: () => get<Portfolio>("/portfolio"),
   portfolioBrief: () => get<PortfolioBrief>("/portfolio/brief"),
   portfolioThemes: () =>

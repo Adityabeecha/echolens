@@ -106,6 +106,7 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
     title: "WHAT NEEDS ME",
     items: [
       { key: "feed", icon: "◉", label: "Cases", iconColor: C.accent },
+      { key: "backlog", icon: "▦", label: "Quality Backlog", iconColor: C.accent },
       { key: "chat", icon: "✦", label: "Ask EchoLens", iconColor: C.accent },
     ],
   },
