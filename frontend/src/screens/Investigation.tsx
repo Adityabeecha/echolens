@@ -7,6 +7,8 @@ import { Bar, Label } from "../ui";
 interface Props {
   investigationId: number;
   onBack: () => void;
+  /** Where Back actually returns to — named, because it isn't always the feed. */
+  backLabel?: string;
   onDraftFinding: () => void;
   onOpenEvidence: (e: Evidence) => void;
 }
@@ -24,7 +26,7 @@ const STATE_LABEL: Record<string, string> = {
   budget_exhausted: "BUDGET EXHAUSTED",
 };
 
-export function Investigation({ investigationId, onBack, onDraftFinding, onOpenEvidence }: Props) {
+export function Investigation({ investigationId, onBack, backLabel = "the Case Feed", onDraftFinding, onOpenEvidence }: Props) {
   const { steps, status: liveStatus } = useTrace(investigationId);
   const [inv, setInv] = useState<Awaited<ReturnType<typeof api.investigation>> | null>(null);
   const [selHyp, setSelHyp] = useState<string | null>(null);
@@ -105,8 +107,10 @@ export function Investigation({ investigationId, onBack, onDraftFinding, onOpenE
           flex: "none",
         }}
       >
-        <span onClick={onBack} style={{ color: C.dim, cursor: "pointer", fontSize: 13 }}>
-          ← Feed
+        <span onClick={onBack} className="el-btn" role="button" tabIndex={0}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onBack(); }}
+          style={{ color: C.dim, cursor: "pointer", fontSize: 13, whiteSpace: "nowrap" }}>
+          ← Back to {backLabel}
         </span>
         <div style={{ width: 1, height: 18, background: C.border2 }} />
         <span style={{ fontFamily: mono, fontSize: 12, color: C.accent }}>CASE #{investigationId}</span>

@@ -511,7 +511,7 @@ export const api = {
   feedSummary: () => get<FeedSummary>(scoped("/feed/summary")),
   investigations: () =>
     get<{ investigations: { id: number; status: string; opened_by: string; anomaly_id: number | null }[] }>(
-      "/investigations"
+      scoped("/investigations")
     ),
   investigation: (id: number) => get<Investigation>(`/investigations/${id}`),
   trace: (id: number, after = 0) =>

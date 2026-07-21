@@ -9,6 +9,7 @@ const SEV_COLOR: Record<string, string> = { high: C.bad, medium: C.accent, low: 
 interface Props {
   investigationId: number;
   onBack: () => void;
+  backLabel?: string;
   onOpenEvidence: (e: Evidence) => void;
   onReviewed: () => void;
 }
@@ -45,7 +46,7 @@ function Prose({ text, evidence, onOpenEvidence }: { text: string; evidence: Evi
   );
 }
 
-export function FindingReview({ investigationId, onBack, onOpenEvidence, onReviewed }: Props) {
+export function FindingReview({ investigationId, onBack, backLabel = "the investigation", onOpenEvidence, onReviewed }: Props) {
   const { data: inv, loading, reload } = useAsync<Investigation>(() => api.investigation(investigationId), [investigationId]);
   const [challengeOpen, setChallengeOpen] = useState(false);
   const [note, setNote] = useState("");
@@ -96,8 +97,10 @@ export function FindingReview({ investigationId, onBack, onOpenEvidence, onRevie
           zIndex: 5,
         }}
       >
-        <span onClick={onBack} style={{ color: C.dim, cursor: "pointer", fontSize: 13 }}>
-          ← Investigation
+        <span onClick={onBack} className="el-btn" role="button" tabIndex={0}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onBack(); }}
+          style={{ color: C.dim, cursor: "pointer", fontSize: 13, whiteSpace: "nowrap" }}>
+          ← Back to {backLabel}
         </span>
         <div style={{ width: 1, height: 18, background: C.border2 }} />
         <span style={{ fontFamily: mono, fontSize: 12, color: C.accent }}>CASE #{investigationId}</span>

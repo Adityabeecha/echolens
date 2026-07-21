@@ -1,12 +1,12 @@
 import { useState } from "react";
-import { ProductRow } from "../api";
+import { ProductRow, api } from "../api";
+import { useAsync } from "../hooks";
 import { C, mono } from "../theme";
 import { Screen } from "../nav";
 
 interface Props {
   screen: Screen;
   go: (s: Screen) => void;
-  running: { label: string; detail: string; color: string; dot: string; pulse: boolean } | null;
   onOpenCase: () => void;
   onLogout?: () => void;
   products?: ProductRow[];
@@ -86,8 +86,12 @@ const NAV: { key: Screen; icon: string; label: string; iconColor?: string }[] = 
 // The feed / case / finding screens all keep "Case Feed" highlighted.
 const FEED_GROUP: Screen[] = ["feed", "case", "finding"];
 
-export function Sidebar({ screen, go, running, onOpenCase, onLogout,
+export function Sidebar({ screen, go, onOpenCase, onLogout,
                           products = [], activeId = null, onSwitchProduct, onAddProduct }: Props) {
+  // What is ACTUALLY running, asked of the server — this used to show whatever
+  // case you last opened, pulsing as "live" long after it had finished.
+  const { data: live } = useAsync(() => api.investigations(), [screen, activeId]);
+  const running = (live?.investigations ?? []).filter((i) => i.status === "running");
   return (
     <div
       style={{
@@ -183,14 +187,17 @@ export function Sidebar({ screen, go, running, onOpenCase, onLogout,
 
       <div style={{ flex: 1 }} />
 
-      {running && (
+      {running.length > 0 && (
         <div
+          onClick={() => go("feed")}
+          className="el-btn"
           style={{
             margin: 10,
             padding: "10px 12px",
             border: `1px solid ${C.border2}`,
             borderRadius: 8,
             background: C.card2,
+            cursor: "pointer",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -199,25 +206,18 @@ export function Sidebar({ screen, go, running, onOpenCase, onLogout,
                 width: 7,
                 height: 7,
                 borderRadius: "50%",
-                background: running.dot,
-                animation: running.pulse ? "elPulse 1.6s infinite" : "none",
+                background: C.accent,
+                animation: "elPulse 1.6s infinite",
                 flex: "none",
               }}
             />
-            <div style={{ fontSize: 12, color: C.text3 }}>{running.label}</div>
+            <div style={{ fontSize: 12, color: C.text3 }}>
+              {running.length === 1 ? "Investigation running" : `${running.length} investigations running`}
+            </div>
           </div>
-          <div
-            onClick={() => go("case")}
-            style={{
-              fontFamily: mono,
-              fontSize: 11,
-              color: running.color,
-              marginTop: 4,
-              marginLeft: 15,
-              cursor: "pointer",
-            }}
-          >
-            {running.detail}
+          <div style={{ fontFamily: mono, fontSize: 11, color: C.accent, marginTop: 4, marginLeft: 15 }}>
+            {running.slice(0, 2).map((i) => `case #${i.id}`).join(", ")}
+            {running.length > 2 ? ` +${running.length - 2}` : ""}
           </div>
         </div>
       )}
