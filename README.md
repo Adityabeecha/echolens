@@ -64,7 +64,7 @@ python -m echolens.cli resume             # recover investigations killed mid-ru
 - **Semantic search** (`echolens/search/`): embeddings backfill the corpus; search tools blend keyword + cosine similarity with a keyword fallback. Zero-dep `hash` backend by default; `sentence-transformers` optional for paraphrase-aware matching.
 - **Auth & RBAC**: JWT (admin/reviewer/viewer), audit log on reviews. Off in `dev`, required in `staging`/`production` (`ECHOLENS_ENV`).
 - **Hardening**: structlog JSON logs with per-investigation correlation IDs, LLM exponential backoff on rate limits, slowapi rate limiting on cost-sensitive endpoints, and crash recovery (investigations checkpoint each iteration and resume on restart).
-- **Deploy**: backend on Fly.io + frontend on Vercel + Supabase DB (see [DEPLOY.md](DEPLOY.md)), or all-in-one `docker compose up` (Postgres, Redis, backend, frontend, Nginx) for a VPS.
+- **Deploy**: backend on Northflank + frontend on Vercel + Supabase DB (see [DEPLOY.md](DEPLOY.md)), or all-in-one `docker compose up` (Postgres, Redis, backend, frontend, Nginx) for a VPS.
 
 ## Status
 

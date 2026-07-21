@@ -1,7 +1,7 @@
 // Typed client for the EchoLens FastAPI backend.
 // Dev: Vite proxies "/api" → http://localhost:8000 (see vite.config.ts).
 // Prod (split origins): set VITE_API_BASE to the backend URL at build time,
-// e.g. VITE_API_BASE=https://echolens-api.fly.dev
+// e.g. VITE_API_BASE=https://echolens-api.code.run
 const BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, "") || "/api";
 
 // ── auth token (persisted) ──────────────────────────────────────────────

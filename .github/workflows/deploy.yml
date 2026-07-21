@@ -1,5 +1,10 @@
-# Deploy the API to Fly.io on every push to main that touches the backend.
-name: deploy-api
+# Verify the deployed API after a backend push.
+#
+# Northflank builds and deploys on its own when the service is linked to this
+# branch, so there is nothing to push from here. What CI is useful for is the
+# part that silently went wrong before: confirming the new build is ACTUALLY
+# serving, rather than assuming the rollout worked.
+name: verify-api
 
 on:
   push:
@@ -10,43 +15,29 @@ on:
   workflow_dispatch: {}
 
 jobs:
-  deploy:
-    name: fly deploy
+  verify:
     runs-on: ubuntu-latest
-    concurrency:
-      group: deploy-api
-      cancel-in-progress: false # never interrupt a half-finished rollout
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Check the deploy token exists
-        run: |
-          if [ -z "${{ secrets.FLY_API_TOKEN }}" ]; then
-            echo "::error::FLY_API_TOKEN is not set. Create it with 'fly tokens create deploy'"
-            echo "::error::then add it under Settings -> Secrets and variables -> Actions."
-            exit 1
-          fi
-
-      - uses: superfly/flyctl-actions/setup-flyctl@master
-
-      - name: Deploy
-        working-directory: backend
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: flyctl deploy --remote-only
-
-      - name: Verify the new build is actually serving
+      - name: Wait for the rollout, then check health
         env:
           API: ${{ vars.ECHOLENS_API }}
         run: |
           if [ -z "$API" ]; then
-            echo "::notice::Set the ECHOLENS_API repo variable to verify deploys automatically."
+            echo "::notice::Set the ECHOLENS_API repo variable (Settings -> Secrets and"
+            echo "::notice::variables -> Actions -> Variables) to verify deploys automatically."
             exit 0
           fi
-          for i in $(seq 1 10); do
-            code=$(curl -s -o /dev/null -w '%{http_code}' "$API/health" || true)
-            [ "$code" = "200" ] && echo "healthy after ${i} attempt(s)" && exit 0
-            sleep 5
+          echo "Waiting for Northflank to build and roll out…"
+          sleep 60
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$API/health" || true)
+            if [ "$code" = "200" ]; then
+              echo "healthy after $((60 + i * 15))s"
+              curl -s "$API/health"
+              exit 0
+            fi
+            echo "  attempt $i: HTTP $code"
+            sleep 15
           done
-          echo "::error::$API/health never returned 200 after the deploy."
+          echo "::error::$API/health never returned 200. Check the build logs in Northflank."
           exit 1
