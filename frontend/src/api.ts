@@ -91,6 +91,21 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
   return r.json();
 }
 
+async function del<T>(path: string): Promise<T> {
+  const r = await fetch(BASE + path, { method: "DELETE", headers: authHeaders() });
+  if (!r.ok) {
+    handle(r.status);
+    let detail = "";
+    try {
+      detail = (await r.json())?.detail ?? "";
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail || `${path} → ${r.status}`);
+  }
+  return r.json();
+}
+
 // ── types ────────────────────────────────────────────────────────────
 
 export interface Triage {
@@ -349,6 +364,45 @@ export interface Calibration {
 }
 
 // v6.0 patterns + product-health overview
+// v10: themes are clustered problem statements, not n-gram counts.
+export interface ThemeCandidate {
+  slug: string;
+  statement: string;
+  count: number;
+  verbatims: string[];
+  trend: "up" | "down" | "flat";
+  label_source: "model" | "verbatim";
+  first_seen?: string | null;
+  /** Set when this theme is already queued or investigated. */
+  existing: { reason: string; queue_id: number | null; investigation_id: number | null } | null;
+}
+export interface CandidatesResp {
+  candidates: ThemeCandidate[];
+  product: string | null;
+  engine?: string;
+  cached?: boolean;
+  reviews_considered?: number;
+  other?: number;
+}
+export interface QueueItem {
+  queue_id: number;
+  position: number;
+  title: string;
+  source: string;
+  budget_tier: string;
+  anomaly_id: number | null;
+  investigation_id: number | null;
+  status: "queued" | "deferred";
+  note: string | null;
+}
+export interface QueueView {
+  running: { queue_id: number; title: string; investigation_id: number | null }[];
+  queued: QueueItem[];
+  used_today: number;
+  daily_limit: number;
+  remaining_today: number;
+}
+
 export interface Pattern {
   terms: string[];
   trigger: string;
@@ -531,9 +585,13 @@ export const api = {
   patterns: () => get<{ patterns: Pattern[]; product?: string | null }>(scoped("/patterns")),
   // v9.0 — deliberately NOT scoped: this is the screen you open before you know
   // which product to open.
-  feedCandidates: () =>
-    get<{ candidates: { label: string; count: number; description: string }[]; product: string | null; negatives?: number }>(
-      scoped("/feed/candidates")),
+  feedCandidates: (refresh = false) =>
+    get<CandidatesResp>(scoped(`/feed/candidates${refresh ? "?refresh=true" : ""}`)),
+  queueThemes: (slugs: string[], statements: Record<string, string>, tier = "quick") =>
+    post<{ queued: unknown[]; already: unknown[]; queue: QueueView; summary: string }>(
+      "/queue/themes", { slugs, statements, tier, product_id: getActiveProduct() }),
+  queue: () => get<QueueView>(scoped("/queue")),
+  cancelQueued: (queueId: number) => del<{ cancelled: number }>(`/queue/${queueId}`),
   portfolio: () => get<Portfolio>("/portfolio"),
   portfolioBrief: () => get<PortfolioBrief>("/portfolio/brief"),
   portfolioThemes: () =>

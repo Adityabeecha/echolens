@@ -237,6 +237,52 @@ def _try_notify(session, finding) -> None:
         log.error("notify_failed", finding_id=finding.id, error=str(err))
 
 
+_queue_worker_active: set[int | None] = set()
+
+
+def _drain_queue_bg(product_id: int | None) -> None:
+    """Run the queue sequentially until it empties or the daily budget is spent.
+
+    One worker per product: a second call while one is draining is a no-op, so
+    pressing the button twice cannot run the same item twice or blow past the
+    cap by racing.
+    """
+    from echolens.orchestrator import queue as q
+
+    if product_id in _queue_worker_active:
+        return
+    _queue_worker_active.add(product_id)
+    try:
+        while True:
+            with session_scope() as session:
+                limit = _daily_limit(session, product_id)
+                row = q.claim_next(session, product_id, limit)
+                if row is None:
+                    return  # queue empty, or today's budget is gone
+                queue_id, anomaly_id, tier = row.id, row.anomaly_id, row.budget_tier
+                anomaly = session.get(AnomalyEvent, anomaly_id)
+                inv = Investigation(anomaly_id=anomaly_id, status="running",
+                                    opened_by="anomaly", budget_tier=tier, budget_json={},
+                                    data_notes=_data_notes(session),
+                                    product_id=(anomaly.product_id if anomaly else product_id))
+                session.add(inv)
+                if anomaly is not None:
+                    anomaly.status = "investigating"
+                session.flush()
+                investigation_id = inv.id
+                row.investigation_id = investigation_id
+            ok = True
+            try:
+                _run_investigation_bg(investigation_id, tier)
+            except Exception as err:  # one bad case must not stall the queue
+                ok = False
+                log.error("queued_investigation_failed", queue_id=queue_id, error=str(err))
+            with session_scope() as session:
+                q.finish(session, queue_id, investigation_id, ok=ok)
+    finally:
+        _queue_worker_active.discard(product_id)
+
+
 def _run_investigation_bg(investigation_id: int, tier: str) -> None:
     """Run the loop on an investigation row that was already created (so the
     POST could return its id immediately for the UI to jump to)."""
@@ -641,38 +687,109 @@ def onboard_status(product: str, user: dict = Depends(current_user)) -> dict:
 
 
 @app.get("/feed/candidates")
-def feed_candidates(product_id: int | None = None, limit: int = 6, user: dict = Depends(current_user)) -> dict:
-    """Themes worth investigating that are NOT yet anomalies.
+def feed_candidates(product_id: int | None = None, limit: int = 6, refresh: bool = False,
+                    user: dict = Depends(current_user)) -> dict:
+    """Themes worth investigating that are not yet anomalies.
 
     A freshly-connected product often has no spike to detect — the detector needs
     a baseline, and a mature app may simply be steadily bad rather than newly
-    bad. The onboarding wizard offered these themes; without the same list here,
-    they vanished the moment you left the wizard.
+    bad. These come from clustering complaints by meaning, not from counting
+    n-grams, which is why they are sentences rather than words.
     """
-    from echolens.onboarding.snapshot import health_snapshot
+    from echolens.orchestrator.queue import find_existing
+    from echolens.themes.discover import cached_themes
+
     with session_scope() as session:
         prod = _scope(session, product_id)
         if prod is None:
-            return {"candidates": [], "product": None}
-        snap = health_snapshot(session, product=prod.name)
-        # anything already covered by an open case isn't a candidate any more
-        taken = set()
-        for inv in session.scalars(select(Investigation).where(
-                Investigation.product_id == prod.id)).all():
-            a = session.get(AnomalyEvent, inv.anomaly_id) if inv.anomaly_id else None
-            if a is not None:
-                taken.update(t.lower() for t in (a.description or "").split())
+            return {"candidates": [], "product": None, "engine": "none"}
+        llm = None
+        if settings.openai_api_key:
+            from echolens.llm.openai_client import OpenAIClient
+            llm = OpenAIClient(on_call=lambda *a: None)
+        result = cached_themes(session, prod.name, llm=llm, limit=limit,
+                               package_name=prod.package_name, force=refresh)
         out = []
-        for t in snap.get("top_themes", [])[: limit * 2]:
-            if t["label"].lower() in taken:
-                continue
-            out.append({"label": t["label"], "count": t["count"],
-                        "description": f'Rising negative feedback about "{t["label"]}" '
-                                       "— investigate the cause."})
-            if len(out) >= limit:
-                break
+        for th in result.get("themes", []):
+            slug = f"theme-p{prod.id}-{th['slug']}"
+            # Already queued or investigated? Say so and link, rather than
+            # offering a button that would quietly create a duplicate.
+            existing = find_existing(session, prod.id, slug)
+            out.append({
+                "slug": slug,
+                "statement": th["statement"],
+                "count": th["count"],
+                "verbatims": th["verbatims"],
+                "trend": th["trend"],
+                "label_source": th["label_source"],
+                "first_seen": th.get("first_seen"),
+                "existing": existing,
+            })
         return {"candidates": out, "product": prod.name,
-                "negatives": snap.get("negatives", 0)}
+                "engine": result.get("engine"), "cached": result.get("cached", False),
+                "reviews_considered": result.get("reviews_considered", 0),
+                "other": result.get("other", 0)}
+
+
+# ── v10: the investigation queue ────────────────────────────────────────
+
+class QueueThemes(BaseModel):
+    slugs: list[str] = []
+    statements: dict[str, str] = {}       # slug -> problem statement
+    tier: str = "quick"
+    product_id: int | None = None
+
+
+@app.post("/queue/themes")
+@limiter.limit("20/minute")
+def queue_themes(request: Request, body: QueueThemes,
+                 user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Queue selected themes. Batch by design: selecting three things should cost
+    one decision, not three clicks that each fight the daily budget."""
+    from echolens.orchestrator.queue import enqueue_theme, queue_view
+
+    with session_scope() as session:
+        prod = _scope(session, body.product_id)
+        pid = prod.id if prod else None
+        queued, already = [], []
+        for i, slug in enumerate(body.slugs):
+            res = enqueue_theme(session, product_id=pid, slug=slug,
+                                statement=body.statements.get(slug, ""),
+                                tier=body.tier, selection_order=i)
+            (already if res["status"] == "already" else queued).append(res)
+        limit = _daily_limit(session, pid)
+        view = queue_view(session, pid, limit)
+
+    if queued:
+        threading.Thread(target=_drain_queue_bg, args=(pid,), daemon=True).start()
+    deferred = len([q for q in view["queued"] if q["status"] == "deferred"])
+    parts = []
+    if queued:
+        parts.append(f"{len(queued)} queued")
+    if deferred:
+        parts.append(f"{deferred} waiting for tomorrow's budget")
+    if already:
+        parts.append(f"{len(already)} already under investigation")
+    return {"queued": queued, "already": already, "queue": view,
+            "summary": " · ".join(parts) or "nothing to queue"}
+
+
+@app.get("/queue")
+def queue_list(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    from echolens.orchestrator.queue import queue_view
+    with session_scope() as session:
+        prod = _scope(session, product_id)
+        pid = prod.id if prod else None
+        return queue_view(session, pid, _daily_limit(session, pid))
+
+
+@app.delete("/queue/{queue_id}")
+def queue_cancel(queue_id: int, user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.orchestrator.queue import cancel
+    with session_scope() as session:
+        if not cancel(session, queue_id):
+            raise HTTPException(409, "that item is already running or finished")
+    return {"cancelled": queue_id}
 
 
 @app.post("/import/reviews")

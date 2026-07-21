@@ -161,6 +161,38 @@ class AnomalyEvent(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class QueuedInvestigation(Base):
+    """v10: one queue for everything waiting to be investigated.
+
+    Per-theme "Investigate" buttons fought the daily budget — each click either
+    started a run or was silently refused, and you had to click one at a time.
+    Selections now become queue rows the orchestrator drains: it merges them with
+    anomaly-driven work, orders by severity then by the order you picked, and
+    stops at the daily cap instead of dropping the remainder on the floor.
+    """
+    __tablename__ = "investigation_queue"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    anomaly_id: Mapped[int | None] = mapped_column(ForeignKey("anomaly_events.id"))
+    # queued|running|done|cancelled|failed
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    # anomaly|manual_theme — manual picks rank below real spikes
+    source: Mapped[str] = mapped_column(String(24), default="anomaly")
+    # severity band first, then the order the user selected them in
+    priority: Mapped[int] = mapped_column(Integer, default=100)
+    selection_order: Mapped[int] = mapped_column(Integer, default=0)
+    budget_tier: Mapped[str] = mapped_column(String(16), default="quick")
+    title: Mapped[str] = mapped_column(Text, default="")
+    # set once the orchestrator starts it, so the feed can link to the live case
+    investigation_id: Mapped[int | None] = mapped_column(nullable=True)
+    # why it is still waiting, e.g. "daily limit reached — runs tomorrow"
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
 class FixWatch(Base):
     """v6.0 closed-loop verification: links a finding's GitHub issue to the metric
     it should fix, then watches whether the fix actually worked.
