@@ -522,6 +522,16 @@ export interface ThemeLifecycle {
 }
 
 // v8.0 products
+export interface DeletionPreview {
+  id: number;
+  name: string;
+  is_demo: boolean;
+  reviews: number;
+  cases: number;
+  findings: number;
+  anomalies: number;
+  sources: number;
+}
 export interface ProductRow {
   id: number;
   name: string;
@@ -549,6 +559,7 @@ export const api = {
   products: () => get<{ products: ProductRow[]; active_product_id: number | null }>("/products"),
   activateProduct: (id: number) =>
     post<{ active_product_id: number; name: string }>(`/products/${id}/activate`),
+  deletionPreview: (id: number) => get<DeletionPreview>(`/products/${id}/deletion-preview`),
   deleteProduct: (id: number, confirmName: string) =>
     fetch(`${BASE}/products/${id}?confirm=${encodeURIComponent(confirmName)}`, {
       method: "DELETE",

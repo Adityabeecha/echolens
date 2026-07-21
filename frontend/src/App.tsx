@@ -7,6 +7,7 @@ import { Sidebar } from "./components/Sidebar";
 import { EvidenceSheet } from "./components/EvidenceSheet";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { NewCaseModal } from "./components/NewCaseModal";
+import { DeleteProductModal } from "./components/DeleteProductModal";
 import { CaseFeed } from "./screens/CaseFeed";
 import { Investigation } from "./screens/Investigation";
 import { FindingReview } from "./screens/FindingReview";
@@ -29,6 +30,7 @@ export default function App() {
   const [authed, setAuthed] = useState<boolean>(!!getToken());
   const [products, setProducts] = useState<ProductRow[]>([]);
   const [booted, setBooted] = useState(false);
+  const [deleting, setDeleting] = useState<ProductRow | null>(null);
 
   // The active product comes from the URL, so a refresh or a shared link lands
   // on the product you were actually looking at.
@@ -161,6 +163,7 @@ export default function App() {
           activeId={activeId}
           onSwitchProduct={switchProduct}
           onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
+          onDeleteProduct={setDeleting}
         />
       )}
 
@@ -242,6 +245,31 @@ export default function App() {
           {screen === "costs" && <Costs key={activeId ?? "none"} />}
         </ErrorBoundary>
       </div>
+
+      {deleting && (
+        <DeleteProductModal
+          product={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={(id) => {
+            setDeleting(null);
+            const left = products.filter((p) => p.id !== id);
+            setProducts(left);
+            if (left.length === 0) {
+              // Nothing left to look at — the wizard is the only sensible screen.
+              setActiveProduct(null);
+              navigate({ screen: "onboarding", productId: null }, { replace: true });
+              return;
+            }
+            // Deleting the product you were viewing must not strand you on a
+            // dead URL, so move to a surviving one and tell the server.
+            if (id === activeId) {
+              switchProduct(left[0].id);
+            } else {
+              setReloadKey((k) => k + 1);
+            }
+          }}
+        />
+      )}
 
       <EvidenceSheet evidence={evidence} onClose={() => setEvidence(null)} />
       {newCaseOpen && (

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ProductRow, api } from "../api";
+import { ProductRow, api, isAdmin } from "../api";
 import { useAsync } from "../hooks";
 import { C, mono } from "../theme";
 import { Screen } from "../nav";
@@ -13,13 +13,16 @@ interface Props {
   activeId?: number | null;
   onSwitchProduct?: (id: number) => void;
   onAddProduct?: () => void;
+  onDeleteProduct?: (p: ProductRow) => void;
 }
 
 // v8.0: the active product scopes every screen, so it sits above the nav.
-function ProductSwitcher({ products, activeId, onSwitch, onAdd }: {
+function ProductSwitcher({ products, activeId, onSwitch, onAdd, onDelete }: {
   products: ProductRow[]; activeId: number | null;
   onSwitch: (id: number) => void; onAdd?: () => void;
+  onDelete?: (p: ProductRow) => void;
 }) {
+  const admin = isAdmin();
   const [open, setOpen] = useState(false);
   const active = products.find((p) => p.id === activeId) ?? products[0];
   if (!active) return null;
@@ -53,10 +56,32 @@ function ProductSwitcher({ products, activeId, onSwitch, onAdd }: {
             <div key={p.id}
               onClick={() => { setOpen(false); if (p.id !== activeId) onSwitch(p.id); }}
               className="el-row"
-              style={{ padding: "9px 12px", cursor: "pointer", fontSize: 12.5,
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px",
+                       cursor: "pointer", fontSize: 12.5,
                        color: p.id === activeId ? C.accent : C.text2,
                        background: p.id === activeId ? C.hover : "transparent" }}>
-              {p.name}{p.is_demo ? "  ·  demo" : ""}
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden",
+                             textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {p.name}{p.is_demo ? "  ·  demo" : ""}
+              </span>
+              {admin && onDelete && (
+                <span
+                  title={`Delete ${p.name}`}
+                  aria-label={`Delete ${p.name}`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => { e.stopPropagation(); setOpen(false); onDelete(p); }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.stopPropagation(); setOpen(false); onDelete(p);
+                    }
+                  }}
+                  className="el-btn"
+                  style={{ fontFamily: mono, fontSize: 12, color: C.faint, cursor: "pointer",
+                           padding: "0 3px", flex: "none" }}>
+                  ×
+                </span>
+              )}
             </div>
           ))}
           {onAdd && (
@@ -105,8 +130,8 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
 // The feed / case / finding screens all keep "Case Feed" highlighted.
 const FEED_GROUP: Screen[] = ["feed", "case", "finding"];
 
-export function Sidebar({ screen, go, onOpenCase, onLogout,
-                          products = [], activeId = null, onSwitchProduct, onAddProduct }: Props) {
+export function Sidebar({ screen, go, onOpenCase, onLogout, products = [], activeId = null,
+                          onSwitchProduct, onAddProduct, onDeleteProduct }: Props) {
   // What is ACTUALLY running, asked of the server — this used to show whatever
   // case you last opened, pulsing as "live" long after it had finished.
   const { data: live } = useAsync(() => api.investigations(), [screen, activeId]);
@@ -173,7 +198,8 @@ export function Sidebar({ screen, go, onOpenCase, onLogout,
 
       {products.length > 0 && onSwitchProduct && (
         <ProductSwitcher products={products} activeId={activeId}
-                         onSwitch={onSwitchProduct} onAdd={onAddProduct} />
+                         onSwitch={onSwitchProduct} onAdd={onAddProduct}
+                         onDelete={onDeleteProduct} />
       )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "8px 10px", overflow: "auto" }}>

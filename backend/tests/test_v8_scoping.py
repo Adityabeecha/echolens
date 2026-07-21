@@ -297,3 +297,24 @@ def test_a_case_follows_its_anomalys_product_not_the_clients_claim(client):
     # and it shows up on B's feed, not A's
     assert any(x["slug"] == "beta-2" for x in tc.get(f"/anomalies?product_id={b}").json()["anomalies"])
     assert not any(x["slug"] == "beta-2" for x in tc.get(f"/anomalies?product_id={a}").json()["anomalies"])
+
+
+def test_deletion_preview_reports_what_would_be_destroyed(client):
+    """A confirmation that says 'cannot be undone' without saying what 'this' is
+    asks the user to trust a number they can't see."""
+    tc, ids, _ = client
+    r = tc.get(f"/products/{ids['Alpha']}/deletion-preview")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["name"] == "Alpha"
+    assert body["reviews"] == 6      # seeded corpus
+    assert body["cases"] == 1 and body["findings"] == 1
+    # and it counts only THIS product's rows
+    beta = tc.get(f"/products/{ids['Beta']}/deletion-preview").json()
+    assert beta["name"] == "Beta" and beta["reviews"] == 6
+
+
+def test_deletion_preview_404s_for_a_product_that_is_gone(client):
+    tc, ids, _ = client
+    tc.delete(f"/products/{ids['Alpha']}?confirm=Alpha")
+    assert tc.get(f"/products/{ids['Alpha']}/deletion-preview").status_code == 404

@@ -457,6 +457,36 @@ def activate_product(product_id: int, user: dict = Depends(current_user)) -> dic
         return {"active_product_id": product_id, "name": p.name}
 
 
+@app.get("/products/{product_id}/deletion-preview")
+def product_deletion_preview(product_id: int, user: dict = Depends(current_user)) -> dict:
+    """What deleting this product would destroy.
+
+    A destructive confirmation that says "this cannot be undone" without saying
+    what "this" is asks the user to trust a number they cannot see. These are the
+    real counts.
+    """
+    from echolens.db.models import (
+        AnomalyEvent, CollectorState, Finding, Investigation, Product, Review)
+    with session_scope() as session:
+        p = session.get(Product, product_id)
+        if p is None:
+            raise HTTPException(404, "no such product")
+
+        def count(model, *where):
+            return len(session.scalars(select(model).where(*where)).all())
+
+        return {
+            "id": p.id,
+            "name": p.name,
+            "is_demo": p.is_demo,
+            "reviews": count(Review, Review.product == p.name),
+            "cases": count(Investigation, Investigation.product_id == p.id),
+            "findings": count(Finding, Finding.product_id == p.id),
+            "anomalies": count(AnomalyEvent, AnomalyEvent.product_id == p.id),
+            "sources": count(CollectorState, CollectorState.product_id == p.id),
+        }
+
+
 @app.delete("/products/{product_id}")
 def delete_product(product_id: int, confirm: str = "",
                    user: dict = Depends(require_role("admin"))) -> dict:
