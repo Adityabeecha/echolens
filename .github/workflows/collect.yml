@@ -1,10 +1,10 @@
 # Free-tier scheduled monitoring for EchoLens.
-# Render's cron is paid; GitHub Actions cron is free. This pings the deployed
+# Fly has no built-in cron; GitHub Actions cron is free. This pings the deployed
 # backend every 6 hours to collect new data, scan for anomalies, and triage —
 # so the "watch feedback → investigate" loop runs without you.
 #
 # Setup: in the repo settings → Secrets and variables → Actions, add:
-#   ECHOLENS_API   = https://your-echolens-api.onrender.com   (no trailing slash)
+#   ECHOLENS_API   = https://echolens-api.fly.dev   (no trailing slash)
 #   ECHOLENS_EMAIL / ECHOLENS_PASSWORD = a reviewer/admin login (for the token)
 name: EchoLens scheduled collect + scan
 
@@ -37,7 +37,7 @@ jobs:
       - name: Wake the service
         env:
           API: ${{ secrets.ECHOLENS_API }}
-        # Render free instances sleep after 15 min idle and take ~30-60s to wake.
+        # Fly keeps a machine running, but a redeploy can still be mid-rollout.
         # Poll /health until it answers so the real calls below don't hit a cold
         # start and time out.
         run: |
@@ -47,7 +47,7 @@ jobs:
             echo "attempt $i: /health → $code, retrying in 10s"
             sleep 10
           done
-          echo "::error::$API/health never returned 200 — is the Render service up?"
+          echo "::error::$API/health never returned 200 — is the Fly machine up? (fly status)"
           exit 1
 
       - name: Log in and run the pipeline for every product

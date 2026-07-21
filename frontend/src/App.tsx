@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Evidence, ProductRow, api, getToken, onAuthError, setActiveProduct, setToken } from "./api";
-import { GLOBAL_SCREENS, Route, Screen } from "./nav";
+import { GLOBAL_SCREENS, Screen, caseScreenFor } from "./nav";
 import { useRouter } from "./router";
 import { C, sans } from "./theme";
 import { Sidebar } from "./components/Sidebar";
@@ -106,8 +106,11 @@ export default function App() {
     [navigate, activeId],
   );
 
+  // Finished cases open their finding (the answer); running ones open the live
+  // trace. Callers that only ever surface resolved work pass "resolved".
   const openInvestigation = useCallback(
-    (id: number) => navigate({ screen: "case", id, productId: activeId }),
+    (id: number, status?: string) =>
+      navigate({ screen: caseScreenFor(status), id, productId: activeId }),
     [navigate, activeId],
   );
 
@@ -190,6 +193,7 @@ export default function App() {
               investigationId={caseId}
               onBack={back}
               backLabel={backTarget?.label ?? "the investigation"}
+              onOpenTrace={() => navigate({ screen: "case", id: caseId, productId: activeId })}
               onOpenEvidence={setEvidence}
               onReviewed={() => setReloadKey((k) => k + 1)}
             />
@@ -217,19 +221,19 @@ export default function App() {
                   }
                 });
               }}
-              onOpenInvestigation={(id) => navigate({ screen: "case", id, productId: activeId })}
+              onOpenInvestigation={openInvestigation}
             />
           )}
           {screen === "portfolio" && (
             <Portfolio
               onOpenProduct={switchProduct}
-              onOpenInvestigation={(id) => navigate({ screen: "case", id, productId: activeId })}
+              onOpenInvestigation={(id) => openInvestigation(id, "resolved")}
               onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
             />
           )}
-          {screen === "archive" && <Archive key={activeId ?? "none"} onOpenInvestigation={openInvestigation} />}
-          {screen === "chat" && <Chat key={activeId ?? "none"} onOpenInvestigation={openInvestigation} />}
-          {screen === "overview" && <Overview key={activeId ?? "none"} onOpenInvestigation={openInvestigation} />}
+          {screen === "archive" && <Archive key={activeId ?? "none"} onOpenInvestigation={(id) => openInvestigation(id, "resolved")} />}
+          {screen === "chat" && <Chat key={activeId ?? "none"} onOpenInvestigation={(id) => openInvestigation(id, "resolved")} />}
+          {screen === "overview" && <Overview key={activeId ?? "none"} onOpenInvestigation={(id) => openInvestigation(id, "resolved")} />}
           {screen === "patterns" && <Patterns key={activeId ?? "none"} />}
           {screen === "calibration" && <Calibration key={activeId ?? "none"} />}
           {screen === "sources" && (

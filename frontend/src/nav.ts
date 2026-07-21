@@ -56,6 +56,21 @@ export const SCREEN_LABEL: Record<Screen, string> = {
   chat: "Ask EchoLens",
 };
 
+/** Case states where the work is over and an answer exists to read. */
+const SETTLED = ["closed", "resolved", "needs_human", "insufficient_evidence", "budget_exhausted"];
+
+/**
+ * Where clicking a case should land you.
+ *
+ * A finished case opens its FINDING — the answer — not the reasoning trace.
+ * The trace is EchoLens's machinery; a PM wants the conclusion, with "how we
+ * got here" one click away. A case still running has no answer yet, so it opens
+ * the live trace, which is genuinely the most useful thing to watch.
+ */
+export function caseScreenFor(status?: string | null): "case" | "finding" {
+  return status && SETTLED.includes(status) ? "finding" : "case";
+}
+
 export function formatRoute(r: Route): string {
   if (GLOBAL_SCREENS.includes(r.screen)) return `#/${r.screen}`;
   const p = r.productId != null ? `/p/${r.productId}` : "";

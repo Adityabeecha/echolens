@@ -72,15 +72,34 @@ function ProductSwitcher({ products, activeId, onSwitch, onAdd }: {
   );
 }
 
-const NAV: { key: Screen; icon: string; label: string; iconColor?: string }[] = [
-  { key: "feed", icon: "◉", label: "Case Feed", iconColor: C.accent },
-  { key: "chat", icon: "✦", label: "Ask EchoLens", iconColor: C.accent },
-  { key: "overview", icon: "◈", label: "Product Health" },
-  { key: "archive", icon: "▤", label: "Archive" },
-  { key: "patterns", icon: "❖", label: "Patterns" },
-  { key: "calibration", icon: "◑", label: "Calibration" },
-  { key: "sources", icon: "⇄", label: "Sources" },
-  { key: "costs", icon: "$", label: "Costs" },
+// Grouped by the PM's job, not by EchoLens's internals. Nine flat items forced
+// you to know which machine stage a screen belonged to; these three questions
+// are the ones people actually arrive with.
+interface NavItem { key: Screen; icon: string; label: string; iconColor?: string }
+const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
+  {
+    title: "WHAT NEEDS ME",
+    items: [
+      { key: "feed", icon: "◉", label: "Cases", iconColor: C.accent },
+      { key: "chat", icon: "✦", label: "Ask EchoLens", iconColor: C.accent },
+    ],
+  },
+  {
+    title: "WHAT WE LEARNED",
+    items: [
+      { key: "overview", icon: "◈", label: "Product Health" },
+      { key: "archive", icon: "▤", label: "Past Cases" },
+      { key: "patterns", icon: "❖", label: "Patterns" },
+    ],
+  },
+  {
+    title: "HOW IT'S RUNNING",
+    items: [
+      { key: "sources", icon: "⇄", label: "Sources" },
+      { key: "costs", icon: "$", label: "Costs" },
+      { key: "calibration", icon: "◑", label: "Accuracy" },
+    ],
+  },
 ];
 
 // The feed / case / finding screens all keep "Case Feed" highlighted.
@@ -157,32 +176,43 @@ export function Sidebar({ screen, go, onOpenCase, onLogout,
                          onSwitch={onSwitchProduct} onAdd={onAddProduct} />
       )}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 2, padding: "8px 10px" }}>
-        {NAV.map((n) => {
-          const active =
-            n.key === "feed" ? FEED_GROUP.includes(screen) : screen === n.key;
-          return (
-            <div
-              key={n.key}
-              onClick={() => go(n.key)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "8px 10px",
-                borderRadius: 6,
-                cursor: "pointer",
-                background: active ? C.active : "transparent",
-                color: active ? C.text : C.muted,
-              }}
-            >
-              <span style={{ fontFamily: mono, fontSize: 10, width: 16, color: n.iconColor ?? C.faint }}>
-                {n.icon}
-              </span>
-              {n.label}
+      <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "8px 10px", overflow: "auto" }}>
+        {NAV_GROUPS.map((group) => (
+          <div key={group.title} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <div style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".11em", color: C.ghost,
+                          padding: "0 10px 5px" }}>
+              {group.title}
             </div>
-          );
-        })}
+            {group.items.map((n) => {
+              const active = n.key === "feed" ? FEED_GROUP.includes(screen) : screen === n.key;
+              return (
+                <div
+                  key={n.key}
+                  onClick={() => go(n.key)}
+                  className="el-btn"
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") go(n.key); }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "7px 10px",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                    background: active ? C.active : "transparent",
+                    color: active ? C.text : C.muted,
+                  }}
+                >
+                  <span style={{ fontFamily: mono, fontSize: 10, width: 16, color: n.iconColor ?? C.faint }}>
+                    {n.icon}
+                  </span>
+                  {n.label}
+                </div>
+              );
+            })}
+          </div>
+        ))}
       </div>
 
       <div style={{ flex: 1 }} />

@@ -1,103 +1,141 @@
-# Deploying EchoLens to production (Render backend + Vercel frontend + Supabase)
+# Deploying EchoLens to production (Fly.io backend + Vercel frontend + Supabase)
 
-The repo is deploy-ready: [render.yaml](render.yaml) defines the backend, [frontend/vercel.json](frontend/vercel.json) configures the frontend, migrations run automatically on boot, and a startup guard refuses to run with an insecure config. **You do the dashboard steps** (they need your accounts); everything else is prepared.
+The repo is deploy-ready: [backend/fly.toml](backend/fly.toml) defines the backend,
+[frontend/vercel.json](frontend/vercel.json) configures the frontend, migrations run
+automatically on boot, and a startup guard refuses to run with an insecure config.
+**You do the account steps**; everything else is prepared.
 
-**Topology:** backend API on **Render**, frontend on **Vercel**, database on **Supabase**. They're separate origins — CORS and a build-time `VITE_API_BASE` (already wired) connect them.
+**Topology:** backend API on **Fly.io**, frontend on **Vercel**, database on **Supabase**.
+They're separate origins — CORS and a build-time `VITE_API_BASE` (already wired) connect them.
+
+### Why Fly and not a serverless host
+
+EchoLens runs investigations in **background threads** and keeps an in-process collector
+scheduler. Serverless platforms (Vercel Functions, Lambda, Cloud Run scaled to zero) freeze
+or kill the container once the HTTP response is sent, which would abandon a running
+investigation mid-loop. Fly runs a real always-on VM, so both survive.
+
+`fly.toml` sets `auto_stop_machines = false` and `min_machines_running = 1` deliberately —
+a stopped machine both kills in-flight work and makes the next request pay a cold start,
+which is indistinguishable from a broken backend.
 
 ---
 
-## What you need before you start
+## What you need
 
-| Item | You have it? | Where to get it |
+| Thing | Done | Where |
 |---|---|---|
-| GitHub repo | ✅ pushed | this repo |
-| Render account | ⬜ | <https://render.com> (free) — sign in with GitHub — hosts the **backend** |
-| Vercel account | ⬜ | <https://vercel.com> (free) — sign in with GitHub — hosts the **frontend** |
-| OpenAI API key | ✅ | your existing key |
-| Supabase DB URL | ✅ | Supabase → Settings → Database → **Transaction pooler** connection string |
-| JWT secret | ⬜ generate | `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
-| GitHub token | optional | only for connecting a real GitHub repo as a source |
+| GitHub repo | ✅ | already pushed |
+| Fly.io account | ⬜ | <https://fly.io> — hosts the **backend** |
+| Vercel account | ⬜ | <https://vercel.com> — hosts the **frontend** |
+| Supabase project | ✅ | your existing database |
+| OpenAI API key | ✅ | in `backend/.env` |
 
-A freshly generated secret you can use now:
-```
-JWT_SECRET = 3TeGcNmu1bS7AQ4KJS08RjMESliRktb1IkCLhPBk1oxumNH2OVLChPwaCAGwNe8V
-```
-(Generate your own if you prefer — anything from the command above works.)
+Install the CLI once: <https://fly.io/docs/flyctl/install/> then `fly auth login`.
 
 ---
 
 ## Steps
 
-### 1. Backend on Render
-1. In Render: **New +** → **Blueprint** → select this GitHub repo. Render reads `render.yaml` and creates **echolens-api** (Docker backend).
-2. Set its secrets (**echolens-api → Environment**):
+### 1. Backend on Fly
 
-| Key | Value |
-|---|---|
-| `ECHOLENS_DB_URL` | your Supabase transaction-pooler URL |
-| `OPENAI_API_KEY` | your OpenAI key |
-| `JWT_SECRET` | the generated secret (or let Render's "Generate" fill it) |
-| `CORS_ORIGINS` | *(fill in step 3, once you have the Vercel URL)* |
-
-`ECHOLENS_ENV=production` and `ECHOLENS_MODEL=gpt-4o-mini` are already set by the blueprint.
-3. Wait for it to go live and **copy the API URL** (e.g. `https://echolens-api.onrender.com`). Check `https://<that>/health`.
-
-### 2. Frontend on Vercel
-1. In Vercel: **Add New… → Project** → import this GitHub repo.
-2. **Root Directory**: set to **`frontend`** (important — the app isn't at the repo root). Vercel auto-detects Vite from `frontend/vercel.json`.
-3. **Environment Variables**: add `VITE_API_BASE` = your Render API URL from step 1 (e.g. `https://echolens-api.onrender.com`). *(Vite inlines env at build time, so this must be set before the build.)*
-4. **Deploy**. Copy the resulting URL (e.g. `https://echolens.vercel.app`).
-
-### 3. Connect them (CORS)
-Back on **echolens-api → Environment**, set `CORS_ORIGINS` = your Vercel URL (e.g. `https://echolens.vercel.app`) and save — Render auto-redeploys. Now the browser is allowed to call the API.
-
-*(If you later add a custom domain on Vercel, add it to `CORS_ORIGINS` too, comma-separated.)*
-
-### 4. Create your admin login (no shell needed — Render's Shell is paid)
-
-Pick **one** of these — all work on the free tier:
-
-**A. Auto-bootstrap from env vars (easiest).** On **echolens-api → Environment** add:
-| Key | Value |
-|---|---|
-| `BOOTSTRAP_ADMIN_EMAIL` | `you@you.com` |
-| `BOOTSTRAP_ADMIN_PASSWORD` | a strong password |
-| `SEED_ON_START` | `true` (optional — loads the synthetic demo data) |
-
-On the next boot the backend creates that admin automatically (only if no users exist yet). Then you can delete these two env vars.
-
-**B. First-signup bootstrap.** The very first `/auth/signup` call becomes the admin (subsequent signups require an admin). One curl:
 ```bash
-curl -X POST https://echolens-api.onrender.com/auth/signup \
-  -H "Content-Type: application/json" \
-  -d '{"email":"you@you.com","password":"a-strong-password"}'
+cd backend
+fly launch --no-deploy --copy-config      # claims the app name from fly.toml
 ```
 
-**C. Run the CLI from your own machine.** Because the DB is Supabase (shared), your local checkout can bootstrap it — your local `.env` already points at Supabase:
+Set the secrets (these never go in the repo):
+
+```bash
+fly secrets set   ECHOLENS_DB_URL="postgresql://...supabase pooler URL..."   OPENAI_API_KEY="sk-..."   JWT_SECRET="$(openssl rand -hex 32)"   CORS_ORIGINS="https://your-app.vercel.app"
+```
+
+Optional: `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET`, `SLACK_WEBHOOK_URL`, `SLACK_ACTION_TOKEN`.
+
+```bash
+fly deploy
+fly status                 # machine should be "started"
+curl https://<app>.fly.dev/health
+```
+
+`/health` returns `{"db": true, ...}` when Supabase is reachable.
+
+> Pick `primary_region` in `fly.toml` near your Supabase region — every query pays that
+> round trip.
+
+### 2. Frontend on Vercel
+1. Import the repo at vercel.com.
+2. **Root Directory** → `frontend`.
+3. **Environment Variables** → `VITE_API_BASE` = `https://<app>.fly.dev`.
+   *(Vite inlines env at build time, so set this before the first build.)*
+
+### 3. Let the browser call the API
+```bash
+cd backend && fly secrets set CORS_ORIGINS="https://your-app.vercel.app"
+```
+Setting a secret triggers a rolling restart. *(Adding a custom domain later? Append it,
+comma-separated.)*
+
+### 3b. Automatic deploys from GitHub
+
+[.github/workflows/deploy.yml](.github/workflows/deploy.yml) deploys on every push to
+`main` that touches `backend/`. It needs one secret:
+
+```bash
+fly tokens create deploy      # copy the output
+```
+Add it as **FLY_API_TOKEN** under *Settings → Secrets and variables → Actions*.
+Optionally add a repo **variable** `ECHOLENS_API` = `https://<app>.fly.dev` and the
+workflow will verify `/health` after each rollout instead of assuming it worked.
+
+### 4. Create your admin login
+
+Pick **one**:
+
+**A. Auto-bootstrap from secrets (easiest).**
+```bash
+fly secrets set BOOTSTRAP_ADMIN_EMAIL="you@you.com" BOOTSTRAP_ADMIN_PASSWORD="a-strong-password"
+```
+On the next boot the backend creates that admin — only if no users exist yet. Remove both
+afterwards with `fly secrets unset BOOTSTRAP_ADMIN_EMAIL BOOTSTRAP_ADMIN_PASSWORD`.
+
+**B. First-signup bootstrap.** The very first `/auth/signup` becomes the admin; later
+signups require one. Note this is **blocked in production** unless no user exists yet.
+```bash
+curl -X POST https://<app>.fly.dev/auth/signup   -H "Content-Type: application/json"   -d '{"email":"you@you.com","password":"a-strong-password"}'
+```
+
+**C. A shell on the machine.**
+```bash
+fly ssh console -C "python -m echolens.cli createuser you@you.com 'a-strong-password' --role admin"
+```
+
+**D. From your own machine.** The DB is shared, so a local checkout can bootstrap it:
 ```bash
 cd backend
 .venv/Scripts/python -m echolens.cli createuser you@you.com 'a-strong-password' --role admin
-.venv/Scripts/python -m echolens.cli seed          # optional demo data
-# connect a real app instead:
 .venv/Scripts/python -m echolens.cli connect play_store com.your.app --product "Your App"
 .venv/Scripts/python -m echolens.cli connect github your-org/your-repo --product "Your App"
 .venv/Scripts/python -m echolens.cli collect
-.venv/Scripts/python -m echolens.cli embed         # turns on semantic search
 .venv/Scripts/python -m echolens.cli scan
 ```
 
 ### 5. Log in
-Open the Vercel URL, log in with the admin you created. Done.
+Open the Vercel URL and sign in. Done.
 
 ---
 
 ## Notes & gotchas
 
-- **Frontend is always fast** on Vercel (static CDN). Only the **Render backend** free tier cold-starts after ~15 min idle (~30s to wake); the first request after idle is slow, then fine. Investigations survive restarts (they checkpoint and resume). For always-on backend, bump echolens-api to a paid instance.
-- **Auto-deploy:** both hosts redeploy on every push to `main` — Render rebuilds the API, Vercel rebuilds the frontend.
-- **Scheduled collection:** Render's cron is paid. On free tier, either click "collect" manually, or add a **GitHub Actions** workflow that hits `POST /collectors/run` on a schedule (free). Ask me and I'll add the workflow.
-- **Secrets never live in git** — `.gitignore` excludes `backend/.env`. Set backend secrets in the Render dashboard, and `VITE_API_BASE` in the Vercel dashboard.
-- **Auth is ON in production** (`ECHOLENS_ENV=production`): every mutating endpoint needs a bearer token; roles are admin > reviewer > viewer. The first account created is the admin; after that only admins can create users.
-- **No Render shell on free tier** — use the env-var bootstrap or first-signup above; you never need a shell.
-- **`preflight`** (`python -m echolens.cli preflight`) is your pre-deploy sanity check — it refuses an insecure JWT secret, missing CORS, or SQLite in prod. The API itself also refuses to boot if misconfigured.
-- **Semantic search** uses in-Python cosine over stored embeddings — no pgvector extension needed. Fine to thousands of rows; revisit for millions.
+- **No cold starts.** The machine stays running, so the first request after an idle period
+  is as fast as any other — this is the main reason to be on Fly rather than a free tier
+  that sleeps.
+- **Auto-deploy:** pushes to `main` deploy the API via GitHub Actions and the frontend via
+  Vercel. Watch a rollout with `fly logs`.
+- **Scheduled work:** Fly has no built-in cron. [collect.yml](.github/workflows/collect.yml)
+  and [brief.yml](.github/workflows/brief.yml) run on GitHub Actions cron (free) and call
+  the deployed API. Set the `ECHOLENS_API`, `ECHOLENS_EMAIL` and `ECHOLENS_PASSWORD` repo
+  secrets or they fail fast and tell you which is missing.
+- **Useful commands:** `fly logs`, `fly status`, `fly ssh console`, `fly secrets list`
+  (names only — values are never shown), `fly deploy --remote-only` (no local Docker needed).
+- **Investigations survive restarts** — they checkpoint each iteration and resume.

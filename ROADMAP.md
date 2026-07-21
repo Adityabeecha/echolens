@@ -30,7 +30,7 @@ The system proves its value on synthetic data — now make it work against the m
 
 ### Deployment
 - **Docker Compose** setup: backend + Postgres + Redis (for scheduler) + Nginx reverse proxy.
-- One-click deploy to Render / Railway / Fly.io with a `render.yaml` or `fly.toml`.
+- One-click deploy to Fly.io with `backend/fly.toml` (shipped).
 - Environment-based config: dev (SQLite, no auth) → staging → production.
 
 ### Hardening

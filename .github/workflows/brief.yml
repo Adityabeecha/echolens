@@ -26,7 +26,7 @@ jobs:
             echo "::error::Missing repo secret(s):$missing"; exit 1
           fi
 
-          # Render free instances sleep; wake it before the real call.
+          # Confirm the API is answering before the real call.
           for i in $(seq 1 12); do
             code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$API/health" || echo 000)
             [ "$code" = "200" ] && break

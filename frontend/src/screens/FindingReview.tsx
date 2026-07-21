@@ -10,6 +10,8 @@ interface Props {
   investigationId: number;
   onBack: () => void;
   backLabel?: string;
+  /** Jump to the reasoning trace for this case. */
+  onOpenTrace?: () => void;
   onOpenEvidence: (e: Evidence) => void;
   onReviewed: () => void;
 }
@@ -46,7 +48,7 @@ function Prose({ text, evidence, onOpenEvidence }: { text: string; evidence: Evi
   );
 }
 
-export function FindingReview({ investigationId, onBack, backLabel = "the investigation", onOpenEvidence, onReviewed }: Props) {
+export function FindingReview({ investigationId, onBack, backLabel = "the investigation", onOpenEvidence, onReviewed, onOpenTrace }: Props) {
   const { data: inv, loading, reload } = useAsync<Investigation>(() => api.investigation(investigationId), [investigationId]);
   const [challengeOpen, setChallengeOpen] = useState(false);
   const [note, setNote] = useState("");
@@ -54,7 +56,35 @@ export function FindingReview({ investigationId, onBack, backLabel = "the invest
   const [busy, setBusy] = useState(false);
 
   if (loading) return <Centered>Loading finding…</Centered>;
-  if (!inv?.finding) return <Centered>No finding drafted yet for case #{investigationId}.</Centered>;
+  if (!inv?.finding)
+    return (
+      <Centered>
+        <div style={{ textAlign: "center", maxWidth: 380 }}>
+          <div style={{ fontSize: 14.5, color: C.text3, marginBottom: 8 }}>
+            No answer yet for case #{investigationId}
+          </div>
+          <div style={{ fontSize: 13, color: C.dim, lineHeight: 1.6, marginBottom: 14 }}>
+            {inv?.status === "running"
+              ? "It's still investigating — the reasoning is streaming live."
+              : "This case ended without a drafted finding. The trace shows what was checked."}
+          </div>
+          <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+            {onOpenTrace && (
+              <button onClick={onOpenTrace} className="el-btn"
+                style={{ background: "transparent", color: C.accent, border: `1px solid rgba(240,166,60,.4)`,
+                         borderRadius: 7, padding: "9px 16px", fontSize: 13, cursor: "pointer" }}>
+                See the investigation
+              </button>
+            )}
+            <button onClick={onBack} className="el-btn"
+              style={{ background: "transparent", color: C.muted, border: `1px solid ${C.border3}`,
+                       borderRadius: 7, padding: "9px 16px", fontSize: 13, cursor: "pointer" }}>
+              Back to {backLabel}
+            </button>
+          </div>
+        </div>
+      </Centered>
+    );
 
   const f = inv.finding;
   const conf = f.confidence ?? 0;
@@ -105,6 +135,13 @@ export function FindingReview({ investigationId, onBack, backLabel = "the invest
         <div style={{ width: 1, height: 18, background: C.border2 }} />
         <span style={{ fontFamily: mono, fontSize: 12, color: C.accent }}>CASE #{investigationId}</span>
         <div style={{ fontSize: 15, fontWeight: 600 }}>Finding Review</div>
+        {onOpenTrace && (
+          <span onClick={onOpenTrace} className="el-btn" role="button" tabIndex={0}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onOpenTrace(); }}
+            style={{ fontSize: 12.5, color: C.dim, cursor: "pointer", whiteSpace: "nowrap" }}>
+            See how we got here →
+          </span>
+        )}
         <div style={{ flex: 1 }} />
         <span style={{ fontFamily: mono, fontSize: 10.5, color: C.ghost }}>{inv.budget?.tier} tier</span>
       </div>

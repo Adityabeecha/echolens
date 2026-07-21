@@ -13,5 +13,6 @@ RUN pip install --no-cache-dir -e .
 ENV ECHOLENS_ENV=production
 EXPOSE 8000
 
-# Migrations run in the app's lifespan (init_db). Bind to Render's $PORT if set.
+# Migrations run in the app's lifespan (init_db). $PORT is set by the platform
+# (Fly sets it from fly.toml); 8000 is the local default.
 CMD ["sh", "-c", "uvicorn echolens.api.app:app --host 0.0.0.0 --port ${PORT:-8000}"]

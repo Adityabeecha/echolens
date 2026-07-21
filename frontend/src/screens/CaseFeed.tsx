@@ -5,7 +5,7 @@ import { C, mono, sans } from "../theme";
 import { Chip, Label, Spark, sparkFor } from "../ui";
 
 interface Props {
-  onOpenInvestigation: (id: number) => void;
+  onOpenInvestigation: (id: number, status?: string) => void;
   onNewCase: () => void;
   reloadKey: number;
   bumpReload: () => void;
@@ -246,7 +246,7 @@ export function CaseFeed({ onOpenInvestigation, onNewCase, reloadKey, bumpReload
   );
 }
 
-function AnomalyCard({ a, onOpen }: { a: Anomaly; onOpen: (id: number) => void }) {
+function AnomalyCard({ a, onOpen }: { a: Anomaly; onOpen: (id: number, status?: string) => void }) {
   const sev = severity(a.z);
   const chip = chipFor(a);
   const clickable = a.investigation_id != null;
@@ -256,7 +256,7 @@ function AnomalyCard({ a, onOpen }: { a: Anomaly; onOpen: (id: number) => void }
   const stripe = isManual ? C.info : sev.color;
   return (
     <div
-      onClick={() => clickable && onOpen(a.investigation_id!)}
+      onClick={() => clickable && onOpen(a.investigation_id!, a.status)}
       className={clickable ? "el-card el-card--click" : "el-card"}
       style={{ display: "flex", alignItems: "stretch", overflow: "hidden", opacity: clickable ? 1 : 0.72 }}
     >
@@ -303,7 +303,7 @@ function CandidateRow({ label, count, description, onOpen, onStarted }: {
   label: string;
   count: number;
   description: string;
-  onOpen: (id: number) => void;
+  onOpen: (id: number, status?: string) => void;
   onStarted: () => void;
 }) {
   const [busy, setBusy] = useState(false);

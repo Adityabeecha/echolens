@@ -1,0 +1,52 @@
+# Deploy the API to Fly.io on every push to main that touches the backend.
+name: deploy-api
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    name: fly deploy
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-api
+      cancel-in-progress: false # never interrupt a half-finished rollout
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the deploy token exists
+        run: |
+          if [ -z "${{ secrets.FLY_API_TOKEN }}" ]; then
+            echo "::error::FLY_API_TOKEN is not set. Create it with 'fly tokens create deploy'"
+            echo "::error::then add it under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy
+        working-directory: backend
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --remote-only
+
+      - name: Verify the new build is actually serving
+        env:
+          API: ${{ vars.ECHOLENS_API }}
+        run: |
+          if [ -z "$API" ]; then
+            echo "::notice::Set the ECHOLENS_API repo variable to verify deploys automatically."
+            exit 0
+          fi
+          for i in $(seq 1 10); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$API/health" || true)
+            [ "$code" = "200" ] && echo "healthy after ${i} attempt(s)" && exit 0
+            sleep 5
+          done
+          echo "::error::$API/health never returned 200 after the deploy."
+          exit 1

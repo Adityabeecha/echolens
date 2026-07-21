@@ -1,0 +1,55 @@
+# Fly.io config for the EchoLens API.
+#
+# Why Fly and not a serverless host: investigations run in background threads
+# (threading.Thread in api/app.py) and the collector scheduler runs in-process.
+# Serverless platforms freeze or kill the container once the HTTP response is
+# sent, which would abandon a running investigation mid-loop. Fly runs a real
+# always-on VM, so both survive.
+#
+# First deploy:
+#   cd backend
+#   fly launch --no-deploy --copy-config     # claims the app name
+#   fly secrets set ECHOLENS_DB_URL="..." OPENAI_API_KEY="..." \
+#                   JWT_SECRET="$(openssl rand -hex 32)" CORS_ORIGINS="https://your-app.vercel.app"
+#   fly deploy
+#
+# Frontend (Vercel) then needs VITE_API_BASE = https://<app>.fly.dev
+
+app = "echolens-api"
+primary_region = "iad"   # move this near your Supabase region to cut query latency
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  ECHOLENS_ENV = "production"
+  ECHOLENS_MODEL = "gpt-4o-mini"
+  ECHOLENS_LOG_JSON = "1"
+  PORT = "8000"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  # Never scale to zero: a stopped machine kills in-flight investigations and
+  # makes the next request pay a cold start that looks like a broken backend.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 40
+    hard_limit = 80
+
+# Fly restarts the machine if this fails, so it must not depend on the LLM or
+# any third-party API — /health only checks that the DB answers.
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "20s"
+  method = "GET"
+  path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"   # 256mb is enough to boot but tight once a case is running
