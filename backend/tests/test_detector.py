@@ -28,7 +28,10 @@ def test_theme_surge_flags_battery(session):
 
 def test_issue_velocity_surge(session):
     cands = detect_issue_velocity(session)
-    assert any(c.slug == "auto-issues-background" for c in cands)
+    # The term is derived from Lumo's OWN issue text, so assert the signal, not
+    # a hardcoded slug — the detector no longer ships anyone else's keywords.
+    assert any(c.type == "issue_velocity_surge" and "battery" in c.metric.lower()
+               for c in cands), [c.slug for c in cands]
 
 
 def test_scan_is_idempotent(session):

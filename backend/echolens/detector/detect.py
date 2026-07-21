@@ -84,13 +84,45 @@ def choose_windows(session: Session, as_of: datetime, product: str | None = None
     return Windows()
 
 # What the detector watches. (term, human label). Kept small and explicit.
-THEME_TERMS = [
-    ("battery drain", "battery complaints"),
-    ("shipping cost", "print-shipping cost complaints"),
-    ("crash", "crash reports"),
-]
+# Themes are DERIVED per product from its own feedback (see _derived_terms).
+# These constants remain only as an explicit operator override via settings.
+# They used to be the defaults, which meant every product on the system was
+# scanned for the synthetic demo's themes — a brand-new product would reliably
+# surface "sync/battery issue reports" it had never had.
 POST_TERMS = [("slow", "'app is slow' mentions")]
-ISSUE_TERMS = [("background sync battery", "sync/battery issue reports")]
+
+
+def _derived_terms(texts: list[str], k: int = 5) -> list[tuple[str, str]]:
+    """The themes THIS product's users actually complain about.
+
+    Emergent, from the corpus in front of us, with no fixed keyword list — the
+    same rule textkit.top_themes already follows. Lumo still finds battery and
+    shipping because its reviews genuinely say so, not because they were baked
+    into the detector.
+    """
+    from echolens.textkit import top_themes, tokenize
+    usable = [t for t in texts if (t or "").strip()]
+    if len(usable) < 5:
+        return []   # too little to characterise; better silent than invented
+
+    # Overlapping n-grams describe ONE problem, not several: "keep reloading",
+    # "reloading switch" and "switch between" all came from the same sentence and
+    # would otherwise open five near-identical cases for a single complaint.
+    # A new term must share no word with one already accepted.
+    out: list[tuple[str, str]] = []
+    claimed: set[str] = set()
+    for th in top_themes(usable, k=k * 3):
+        label = (th.get("label") or "").strip()
+        if not label:
+            continue
+        words = set(tokenize(label))
+        if not words or words & claimed:
+            continue
+        claimed |= words
+        out.append((label, f"'{label}' complaints"))
+        if len(out) >= k:
+            break
+    return out
 
 # Severity thresholds on the z-score.
 SEV1_Z, SEV2_Z, SEV3_Z = 3.0, 2.0, 1.0
@@ -240,7 +272,8 @@ def detect_theme_surges(session: Session, as_of: datetime | None = None,
     # A real product supplies its OWN themes; the built-in Lumo terms are only the
     # demo default and are dropped once a real operator configures their terms.
     extra = settings.extra_theme_terms
-    theme_terms = ([(t, f"'{t}' complaints") for t in extra] if extra else THEME_TERMS)
+    theme_terms = ([(t, f"'{t}' complaints") for t in extra] if extra
+                   else _derived_terms([r.text for r in reviews if (r.rating or 5) <= 2]))
     for term, label in theme_terms:
         terms = terms_of(term)
         series = _share_series(reviews, lambda r: r.text, lambda r: r.created_at.date(),
@@ -288,7 +321,9 @@ def detect_issue_velocity(session: Session, as_of: datetime | None = None,
     from echolens.config import settings
     # ISSUE_TERMS are Lumo-demo specific; a real product uses its own themes.
     issue_terms = ([(t, f"'{t}' issue reports") for t in settings.extra_theme_terms]
-                   if settings.extra_theme_terms else ISSUE_TERMS)
+                   if settings.extra_theme_terms
+                   else [(term, f"'{term}' issue reports") for term, _ in _derived_terms(
+                       [f"{i.title} {i.body_snippet or ''}" for i in issues], k=3)])
     for term, label in issue_terms:
         terms = terms_of(term)
         hits = [i for i in issues if match_score(i.title + " " + i.body_snippet, terms) > 0]

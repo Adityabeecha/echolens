@@ -12,11 +12,14 @@ def _pending(session):
 
 
 def test_triage_applies_and_persists_decisions(session):
-    scan(session)
+    events = scan(session)
+    # Detector terms are derived from the product's own text now, so the GitHub
+    # signal is found by behaviour rather than by a hardcoded slug.
+    issue_slug = next(e.slug for e in events if e.type == "issue_velocity_surge")
     script = {"decisions": [
         {"anomaly": "auto-neg-review-spike", "decision": "investigate",
          "reason": "clear spike", "budget_tier": "standard"},
-        {"anomaly": "auto-issues-background", "decision": "merge",
+        {"anomaly": issue_slug, "decision": "merge",
          "reason": "same signal", "merge_into": "auto-neg-review-spike"},
         {"anomaly": "auto-theme-battery-drain", "decision": "ignore",
          "reason": "duplicate theme"},
@@ -27,14 +30,14 @@ def test_triage_applies_and_persists_decisions(session):
     assert by_slug["auto-neg-review-spike"].decision == "investigate"
     # tier is now set adaptively by complexity (v2.0), not taken from the LLM
     assert by_slug["auto-neg-review-spike"].budget_tier in ("quick", "standard", "deep")
-    merged = by_slug["auto-issues-background"]
+    merged = by_slug[issue_slug]
     assert merged.decision == "merge" and merged.merge_into.slug == "auto-neg-review-spike"
 
     # persisted + anomaly statuses updated
     assert session.query(TriageDecision).count() >= 3
     spike = session.query(AnomalyEvent).filter_by(slug="auto-neg-review-spike").one()
     assert spike.status == "triaged"
-    assert session.query(AnomalyEvent).filter_by(slug="auto-issues-background").one().status == "merged"
+    assert session.query(AnomalyEvent).filter_by(slug=issue_slug).one().status == "merged"
 
 
 def test_daily_cap_is_enforced_in_code(session):

@@ -256,7 +256,12 @@ def scenario_duplicate_merge() -> ScenarioResult:
     slugs = {e.slug for e in events}
     spike = "auto-neg-review-spike"
     theme = "auto-theme-battery-drain"   # same signal, review side
-    issues = "auto-issues-background"     # same signal, GitHub side
+    # The GitHub-side mirror of the same signal. Found by BEHAVIOUR, not by a
+    # fixed slug: detector terms are now derived from each product's own text,
+    # so the slug depends on the corpus rather than on a hardcoded keyword.
+    issues = next((e.slug for e in events
+                   if e.type == "issue_velocity_surge"
+                   and "battery" in (e.metric or "").lower()), "auto-issues-battery")
     decisions_script = {"decisions": [
         {"anomaly": spike, "decision": "investigate", "reason": "clear review spike after v3.2", "budget_tier": "standard"},
         {"anomaly": theme, "decision": "merge", "reason": "same battery theme + window as the review spike", "merge_into": spike},

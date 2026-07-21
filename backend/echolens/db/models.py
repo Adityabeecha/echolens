@@ -67,6 +67,29 @@ class Post(Base):
     product: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
 
 
+class FeedbackEntry(Base):
+    """v10: the channels that aren't stores, trackers or social — support
+    tickets, in-app feedback, community forums.
+
+    Deliberately generic. Every new channel that arrives shaped like "someone
+    said something at a time" lands here instead of earning its own table, and
+    feedback.collect_items normalises it alongside the older three.
+    """
+    __tablename__ = "feedback_entries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    channel: Mapped[str] = mapped_column(String(32), index=True)  # support|in_app|forum
+    ext_id: Mapped[str] = mapped_column(String(96), unique=True)
+    text: Mapped[str] = mapped_column(Text)
+    product: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    author_kind: Mapped[str] = mapped_column(String(16), default="user")
+    priority: Mapped[str | None] = mapped_column(String(16), nullable=True)  # p0..p3
+    status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(index=True)
+    embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    meta_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
 class Release(Base):
     __tablename__ = "releases"
 

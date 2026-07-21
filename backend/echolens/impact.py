@@ -75,11 +75,19 @@ def quantify(session: Session, anomaly, finding_json: dict, product: str | None 
 
     blast = _blast_radius(session, terms, recent_start)
 
+    # v10: the same complaint filed in two places is ONE affected person. Counting
+    # it per channel inflates impact exactly when a problem is being escalated —
+    # the worst moment to overstate. `cross_source` counts distinct witnesses
+    # across every channel; `affected_volume` stays the store-review figure the
+    # rating maths depends on.
+    cross = _cross_source_impact(session, terms, product, recent_start, now)
+
     # a single 0..1 impact score used for severity + alert routing
     impact_score = min(1.0, 0.5 * (affected_pct / 100) + 0.3 * min(1.0, len(matching) / 40)
                        + 0.2 * min(1.0, rating_impact / 0.6))
 
     return {
+        "cross_source": cross,
         "terms": terms,
         "affected_pct": affected_pct,            # % of recent negative reviews on this theme
         "affected_volume": len(matching),         # count of those reviews (last 7d)
@@ -91,6 +99,39 @@ def quantify(session: Session, anomaly, finding_json: dict, product: str | None 
         "impact_score": round(impact_score, 3),
         "as_of": now.date().isoformat(),
     }
+
+
+def _cross_source_impact(session, terms, product, start, end) -> dict:
+    """Distinct people affected across every channel, deduplicated.
+
+    Returns the collapsed count alongside the raw one so the difference is
+    visible rather than silently applied — if 12 mentions become 9 witnesses,
+    the PM should be able to see that three were the same complaint twice.
+    """
+    try:
+        from echolens.feedback import collect_items, dedupe_witnesses
+        items = [i for i in collect_items(session, product, since=start, until=end)
+                 if terms and match_score(i.text, terms) > 0]
+        kept, collapsed = dedupe_witnesses(items)
+        # Channel coverage counts every channel that WITNESSED the problem,
+        # including ones whose report was collapsed as a duplicate person. One
+        # affected user, two channels that saw it — both facts are true.
+        channels = set()
+        for i in kept:
+            channels.add(i.channel)
+            channels.update(i.meta.get("also_seen_in") or [])
+        channels = sorted(channels)
+        return {
+            "witnesses": len(kept),
+            "raw_mentions": len(items),
+            "collapsed_duplicates": collapsed,
+            "channels": channels,
+            "distinct_channels": len(channels),
+        }
+    except Exception:
+        # impact must survive a missing/!empty feedback layer
+        return {"witnesses": 0, "raw_mentions": 0, "collapsed_duplicates": 0,
+                "channels": [], "distinct_channels": 0}
 
 
 def _blast_radius(session, terms, recent_start) -> dict:

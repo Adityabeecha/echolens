@@ -212,10 +212,27 @@ def _finding_extras(session, finding, recs, status: str) -> dict:
         fix = {"status": watch.status, "issue_number": watch.issue_number,
                "issue_url": watch.issue_url, "chart": watch.chart_json,
                "baseline_rate": watch.baseline_rate, "post_rate": watch.post_rate}
+    # v10: how broadly this finding's own cited evidence is corroborated. The
+    # two-source rule proves at least two channels agree; this reports the actual
+    # spread, so "proven across reviews, GitHub and support" is a fact the finding
+    # carries rather than a claim it makes.
+    breadth = None
+    try:
+        from echolens.db.models import Investigation, Product
+        from echolens.feedback_graph import evidence_breadth
+        inv = session.get(Investigation, finding.investigation_id)
+        prod = session.get(Product, inv.product_id) if inv and inv.product_id else None
+        refs = [e.ref for e in session.scalars(select(EvidenceRow).where(
+            EvidenceRow.investigation_id == finding.investigation_id)).all()]
+        breadth = evidence_breadth(session, refs, prod.name if prod else None)
+    except Exception as err:  # never let a presentation extra break the finding
+        log.warning("evidence_breadth_failed", finding_id=finding.id, error=str(err))
+
     return {
         "decision": decision_doc(fj, list(recs), impact, status),
         "severity": severity(float(fj.get("confidence", 0.0)), impact),
         "fix": fix,
+        "breadth": breadth,
     }
 
 
@@ -714,6 +731,69 @@ def onboard_status(product: str, user: dict = Depends(current_user)) -> dict:
         return {"product": product, "product_id": prod.id if prod else None,
                 "backfilling": backfilling, "sources": health,
                 "snapshot": snap, "anomalies": anomalies}
+
+
+# ── v10: the unified feedback graph ─────────────────────────────────────
+
+@app.get("/graph")
+def feedback_graph(product_id: int | None = None, days: int = 90, limit: int = 10,
+                   user: dict = Depends(current_user)) -> dict:
+    """Cross-channel problem nodes: one complaint, every voice.
+
+    Ranked by how INDEPENDENT the witnesses are, not how many there are — a
+    problem four channels agree on outranks a louder one only the store has seen.
+    """
+    from echolens.feedback_graph import build_graph
+    with session_scope() as session:
+        prod = _scope(session, product_id)
+        if prod is None:
+            return {"nodes": [], "product": None, "channels": []}
+        llm = None
+        if settings.openai_api_key:
+            from echolens.llm.openai_client import OpenAIClient
+            llm = OpenAIClient(on_call=lambda *a: None)
+        return build_graph(session, prod.name, llm=llm, days=days, limit=limit)
+
+
+@app.get("/graph/channels")
+def graph_channels(product_id: int | None = None,
+                   user: dict = Depends(current_user)) -> dict:
+    """Which channels this product has, and how much each contributes."""
+    from echolens.feedback import CHANNELS, channel_meta, collect_items, configured_channels
+    with session_scope() as session:
+        prod = _scope(session, product_id)
+        name = prod.name if prod else None
+        items = collect_items(session, name, negatives_only=False)
+        counts: dict[str, int] = {}
+        for i in items:
+            counts[i.channel] = counts.get(i.channel, 0) + 1
+        connected = configured_channels(session, name)
+        return {
+            "product": name,
+            "connected": [{"channel": c, **channel_meta(c), "items": counts.get(c, 0)}
+                          for c in connected],
+            "available": [{"channel": c, **meta} for c, meta in CHANNELS.items()
+                          if c not in connected],
+        }
+
+
+@app.post("/import/feedback")
+async def import_feedback(file: UploadFile = File(...), channel: str = "support",
+                          product: str = "",
+                          user: dict = Depends(require_role("admin"))) -> dict:
+    """Import support tickets / in-app feedback / forum threads from a CSV."""
+    from echolens.importers.feedback_csv import import_feedback_csv
+    raw = await file.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1", errors="replace")
+    try:
+        with session_scope() as session:
+            return import_feedback_csv(session, text, channel=channel,
+                                       product=(product or None))
+    except ValueError as err:
+        raise HTTPException(422, str(err))
 
 
 @app.get("/feed/candidates")
