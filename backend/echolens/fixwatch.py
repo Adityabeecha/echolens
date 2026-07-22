@@ -165,6 +165,15 @@ def _confirm(session: Session, watch: FixWatch) -> str:
     watch.status = "confirmed"
     watch.confirmed_at = reference_now(session, product_name_of(session, watch.product_id))
     watch.chart_json = before_after(session, watch)
+    session.flush()
+    # v12: a confirmed fix is a new data point for the product's knowledge brain.
+    # Re-mine the edges so the learned map stays current without a manual step.
+    try:
+        from echolens.brain import rebuild
+        rebuild(session, watch.product_id)
+    except Exception as err:  # learning must never block a fix confirmation
+        from echolens.logging import get_logger
+        get_logger("fixwatch").warning("brain_rebuild_failed", error=str(err))
     return "confirmed"
 
 

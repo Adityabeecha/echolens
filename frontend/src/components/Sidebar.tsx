@@ -116,6 +116,7 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
       { key: "overview", icon: "◈", label: "Product Health" },
       { key: "archive", icon: "▤", label: "Past Cases" },
       { key: "patterns", icon: "❖", label: "Patterns" },
+      { key: "brain", icon: "◧", label: "Product Memory", iconColor: C.info },
     ],
   },
   {

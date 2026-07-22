@@ -90,6 +90,31 @@ class FeedbackEntry(Base):
     meta_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
+class KnowledgeEdge(Base):
+    """v12: one learned cause->effect belief about how THIS product breaks.
+
+    "Changes to <subsystem> tend to cause <symptom>." Mined from confirmed
+    findings, then self-calibrated: every time a new problem in the subsystem
+    does or does not show the symptom, the edge is reinforced or decayed, so a
+    cause that stops holding retires itself instead of lingering as folklore.
+    """
+    __tablename__ = "knowledge_edges"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    subsystem: Mapped[str] = mapped_column(String(48), index=True)   # sync, onboarding, ...
+    symptom: Mapped[str] = mapped_column(String(48), index=True)     # battery-drain, churn, ...
+    # evidence tallies — the edge's whole justification
+    supports: Mapped[int] = mapped_column(Integer, default=0)   # confirmed times it held
+    refutes: Mapped[int] = mapped_column(Integer, default=0)    # times predicted, didn't hold
+    verified_count: Mapped[int] = mapped_column(Integer, default=0)  # distinct confirmed fixes
+    case_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)   # findings behind it
+    terms: Mapped[list | None] = mapped_column(JSON, nullable=True)      # matching vocabulary
+    last_seen: Mapped[datetime | None] = mapped_column(nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="active")   # active|retired
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class Release(Base):
     __tablename__ = "releases"
 

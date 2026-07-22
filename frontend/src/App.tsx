@@ -22,6 +22,7 @@ import { Patterns } from "./screens/Patterns";
 import { Portfolio } from "./screens/Portfolio";
 import { Chat } from "./screens/Chat";
 import { Backlog } from "./screens/Backlog";
+import { Brain } from "./screens/Brain";
 
 export default function App() {
   const { route, navigate, back, backTarget } = useRouter({ screen: "feed", productId: null });
@@ -242,6 +243,9 @@ export default function App() {
           {screen === "chat" && <Chat key={activeId ?? "none"} onOpenInvestigation={(id) => openInvestigation(id, "resolved")} />}
           {screen === "overview" && <Overview key={activeId ?? "none"} onOpenInvestigation={(id) => openInvestigation(id, "resolved")} />}
           {screen === "patterns" && <Patterns key={activeId ?? "none"} />}
+          {screen === "brain" && (
+            <Brain key={activeId ?? "none"} onOpenInvestigation={openInvestigation} />
+          )}
           {screen === "calibration" && <Calibration key={activeId ?? "none"} />}
           {screen === "sources" && (
             <Sources key={activeId ?? "none"} onAddProduct={() => navigate({ screen: "onboarding", productId: null })} />

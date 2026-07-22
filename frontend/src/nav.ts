@@ -24,6 +24,7 @@ export type Screen =
   | "calibration"
   | "overview"
   | "patterns"
+  | "brain"
   | "chat";
 
 /** Screens that live above a single product and must never carry one. */
@@ -31,7 +32,7 @@ export const GLOBAL_SCREENS: Screen[] = ["portfolio", "onboarding"];
 
 /** Screens scoped to one product, reachable from the sidebar. */
 const PRODUCT_SCREENS: Screen[] = [
-  "feed", "backlog", "archive", "sources", "costs", "calibration", "overview", "patterns", "chat",
+  "feed", "backlog", "archive", "sources", "costs", "calibration", "overview", "patterns", "brain", "chat",
 ];
 
 export interface Route {
@@ -55,6 +56,7 @@ export const SCREEN_LABEL: Record<Screen, string> = {
   calibration: "Calibration",
   overview: "Product Health",
   patterns: "Patterns",
+  brain: "Product Memory",
   chat: "Ask EchoLens",
 };
 

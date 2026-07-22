@@ -733,6 +733,65 @@ def onboard_status(product: str, user: dict = Depends(current_user)) -> dict:
                 "snapshot": snap, "anomalies": anomalies}
 
 
+# ── v12: the product-knowledge brain ────────────────────────────────────
+
+@app.get("/brain")
+def brain_view(product_id: int | None = None, include_retired: bool = False,
+               user: dict = Depends(current_user)) -> dict:
+    """The learned causal map: which subsystems, when changed, cause which
+    symptoms — with the confidence each belief has earned."""
+    from echolens.brain import edges
+    with session_scope() as session:
+        p = _scope(session, product_id)
+        pid = p.id if p else None
+        return {"edges": edges(session, pid, include_retired=include_retired),
+                "retired": edges(session, pid, include_retired=True) if include_retired else None,
+                "product": p.name if p else None}
+
+
+@app.post("/brain/rebuild")
+def brain_rebuild(product_id: int | None = None,
+                  user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Re-mine edges from confirmed fixes and grade them against resolved cases."""
+    from echolens.brain import calibrate_from_history, edges, rebuild
+    with session_scope() as session:
+        p = _scope(session, product_id)
+        pid = p.id if p else None
+        built = rebuild(session, pid)
+        graded = calibrate_from_history(session, pid)
+        return {**built, "calibration": graded, "edges_now": edges(session, pid)}
+
+
+class ReviewDoc(BaseModel):
+    text: str
+    product_id: int | None = None
+
+
+@app.post("/brain/review")
+def brain_review(body: ReviewDoc, user: dict = Depends(current_user)) -> dict:
+    """Design-doc / PR review: flag a proposed change against learned history
+    BEFORE it ships. Prevention, not detection."""
+    from echolens.brain import review_change
+    with session_scope() as session:
+        p = _scope(session, body.product_id)
+        return {**review_change(session, body.text, p.id if p else None),
+                "product": p.name if p else None}
+
+
+class BrainQuestion(BaseModel):
+    question: str
+    product_id: int | None = None
+
+
+@app.post("/brain/ask")
+def brain_ask(body: BrainQuestion, user: dict = Depends(current_user)) -> dict:
+    """The onboarding oracle: 'what usually goes wrong here?', cited to real cases."""
+    from echolens.brain import ask
+    with session_scope() as session:
+        p = _scope(session, body.product_id)
+        return ask(session, body.question, p.id if p else None, p.name if p else None)
+
+
 # ── v11: the quality backlog ────────────────────────────────────────────
 
 @app.get("/backlog")

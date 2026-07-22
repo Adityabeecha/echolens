@@ -422,6 +422,36 @@ export interface QueueView {
   remaining_today: number;
 }
 
+// v12: the product-knowledge brain
+export interface BrainEdge {
+  subsystem: string;
+  symptom: string;
+  statement: string;
+  confidence: number;
+  verified_count: number;
+  supports: number;
+  refutes: number;
+  status: "active" | "retired";
+  case_ids: number[];
+  trend: "holding" | "weakening";
+}
+export interface ReviewFlag {
+  subsystem: string;
+  symptom: string;
+  confidence: number;
+  verified_count: number;
+  case_ids: number[];
+  recommendation: string;
+  why: string;
+}
+export interface ChangeReview {
+  risk: "clear" | "elevated" | "high";
+  subsystems_touched: string[];
+  flags: ReviewFlag[];
+  summary: string;
+  product?: string | null;
+}
+
 // v11: the quality backlog
 export interface BacklogItem {
   rank: number;
@@ -657,6 +687,14 @@ export const api = {
       "/queue/themes", { slugs, statements, tier, product_id: getActiveProduct() }),
   queue: () => get<QueueView>(scoped("/queue")),
   cancelQueued: (queueId: number) => del<{ cancelled: number }>(`/queue/${queueId}`),
+  brain: (includeRetired = false) =>
+    get<{ edges: BrainEdge[]; product: string | null }>(
+      scoped(`/brain${includeRetired ? "?include_retired=true" : ""}`)),
+  brainReview: (text: string) =>
+    post<ChangeReview>("/brain/review", { text, product_id: getActiveProduct() }),
+  brainAsk: (question: string) =>
+    post<{ answer: string; edges: BrainEdge[]; grounded: boolean }>(
+      "/brain/ask", { question, product_id: getActiveProduct() }),
   backlogPlan: (capacityDays?: number) =>
     get<QuarterPlan>(scoped(`/backlog/plan${capacityDays ? `?capacity_days=${capacityDays}` : ""}`)),
   saveBacklogPlan: (body: { included: number[]; excluded: number[]; capacity_days?: number }) =>
