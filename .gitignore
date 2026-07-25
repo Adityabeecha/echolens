@@ -22,3 +22,10 @@ frontend/dist/
 # OS/editor
 .DS_Store
 Thumbs.db
+
+# Local-only: planning docs and design reference, kept on disk but not on GitHub
+ARCHITECTURE.md
+PRD.md
+ROADMAP.md
+echolens-ui-build/
+.claude/
