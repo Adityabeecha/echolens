@@ -135,7 +135,8 @@ def cmd_triage(args) -> int:
             return 0
         console.print("[bold]Orchestrator triage[/]")
         for d in decisions:
-            col = {"investigate": "green3", "merge": "bright_cyan", "ignore": "grey62"}[d.decision]
+            col = {"investigate": "green3", "merge": "bright_cyan", "ignore": "grey62",
+                   "defer": "yellow3"}.get(d.decision, "grey62")
             extra = f" → {d.budget_tier}" if d.budget_tier else ""
             extra += f" (into {d.merge_into.slug})" if d.merge_into else ""
             console.print(f"  [{col}]{d.decision:<11}[/]{extra} [orange1]{d.anomaly.slug}[/] "

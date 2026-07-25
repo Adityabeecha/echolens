@@ -20,7 +20,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -165,7 +165,12 @@ def collect_items(session: Session, product: str | None = None, *,
             weight=_priority_weight(f.priority),
             meta={"priority": f.priority, "status": f.status, **(f.meta_json or {})}))
 
-    items.sort(key=lambda x: (x.created_at or datetime.min.replace(tzinfo=None)), reverse=True)
+    # Sort key must be tz-aware throughout: every created_at above came through
+    # aware_utc(), so a naive fallback for a NULL timestamp made Python compare
+    # offset-naive to offset-aware and raise TypeError — one row with no date
+    # took down the whole feedback graph.
+    items.sort(key=lambda x: (x.created_at or datetime.min.replace(tzinfo=timezone.utc)),
+               reverse=True)
     return items
 
 
@@ -302,12 +307,24 @@ def configured_channels(session: Session, product: str | None = None) -> list[st
     if product:
         stmt = stmt.where(CollectorState.product == product)
     out = {s.source for s in session.scalars(stmt).all() if s.source}
-    # anything that has actually delivered data counts as connected too
-    for item in collect_items(session, product, negatives_only=False):
-        out.add(item.channel)
+    # Anything that has actually delivered data counts as connected too. Asked as
+    # four DISTINCT queries rather than by normalising the entire corpus into
+    # FeedbackItems: this only needs the set of channel NAMES, and the old form
+    # loaded every review, issue, post and ticket into memory to get it.
+    for model, col in ((Review, Review.source), (Post, Post.source),
+                       (FeedbackEntry, FeedbackEntry.channel)):
+        d_stmt = select(col).distinct()
+        if product:
+            d_stmt = d_stmt.where(model.product == product)
+        out.update(c for (c,) in session.execute(d_stmt) if c)
+    g_stmt = select(Issue.id).limit(1)
+    if product:
+        g_stmt = g_stmt.where(Issue.product == product)
+    if session.scalar(g_stmt) is not None:
+        out.add("github")  # issues have no source column; presence is the signal
     return sorted(out)
 
 
 def window(days: int = 90, as_of: datetime | None = None) -> tuple[datetime, datetime]:
-    end = as_of or datetime.now().astimezone()
+    end = as_of or datetime.now(timezone.utc)
     return end - timedelta(days=days), end

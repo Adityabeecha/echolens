@@ -675,14 +675,10 @@ export const api = {
   activateProduct: (id: number) =>
     post<{ active_product_id: number; name: string }>(`/products/${id}/activate`),
   deletionPreview: (id: number) => get<DeletionPreview>(`/products/${id}/deletion-preview`),
+  // Goes through del() like everything else: a raw fetch() skipped handle(),
+  // so a 401 here left you on a dead screen instead of bouncing to login.
   deleteProduct: (id: number, confirmName: string) =>
-    fetch(`${BASE}/products/${id}?confirm=${encodeURIComponent(confirmName)}`, {
-      method: "DELETE",
-      headers: authHeaders(),
-    }).then(async (r) => {
-      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.detail || `delete → ${r.status}`);
-      return r.json() as Promise<{ deleted: string }>;
-    }),
+    del<{ deleted: string }>(`/products/${id}?confirm=${encodeURIComponent(confirmName)}`),
   collect: () => post("/collect/run"),
   scan: () => post<{ detected: string[] }>(scoped("/anomalies/scan")),
   cases: () => get<CaseView>(scoped("/cases")),
@@ -778,12 +774,10 @@ export const api = {
     post<{ repo: string; number: number; url: string }>(`/findings/${findingId}/github-issue`),
   notifyFinding: (findingId: number) => post<{ routed: string; sent?: string[] }>(`/findings/${findingId}/notify`),
   costsSummary: () => get<CostsSummary>(scoped("/costs/summary")),
+  // Goes through put(): the raw fetch() never checked r.ok, so a rejected save
+  // (401, 403, 500) resolved as success and Settings reported "Limit saved."
   setLimits: (limits: { daily_investigations?: number; per_case_budget?: number; per_case_wall_min?: number }) =>
-    fetch(`${BASE}/settings/limits`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
-      body: JSON.stringify(limits),
-    }).then((r) => r.json()),
+    put<Record<string, number>>("/settings/limits", limits),
   // SSE URL for the live trace (EventSource cannot go through fetch)
   traceStreamUrl: (id: number) => `${BASE}/investigations/${id}/trace/stream`,
 };

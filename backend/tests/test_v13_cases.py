@@ -228,3 +228,59 @@ def test_history_links_the_reopened_case(session, product):
 def _row(session, product, inv_id: int) -> dict:
     rows = C.case_rows(session, product.id, NOW)
     return next(r for r in rows if r["id"] == inv_id)
+
+
+# ── regression guards for the audit fixes ───────────────────────────────
+
+def test_feedback_sort_key_is_tz_aware_throughout():
+    """The NULL-timestamp fallback must be tz-AWARE.
+
+    Every real created_at comes through aware_utc(), so a naive fallback made
+    Python compare offset-naive to offset-aware and raise TypeError. No source
+    table currently allows a NULL created_at, so this was latent rather than
+    live — but the sort must not be one migration away from taking down the
+    whole feedback graph.
+    """
+    from echolens.feedback import FeedbackItem
+
+    dated = FeedbackItem(ref="a", channel="play_store", text="battery",
+                         created_at=NOW - timedelta(days=1))
+    undated = FeedbackItem(ref="b", channel="support", text="crash", created_at=None)
+    fallback = datetime.min.replace(tzinfo=timezone.utc)
+    ordered = sorted([dated, undated], key=lambda x: (x.created_at or fallback), reverse=True)
+    assert ordered[0] is dated  # must not raise, and undated sorts last
+
+
+def test_window_is_utc_not_server_local():
+    """Stored datetimes are UTC; using the server's local offset shifted the
+    window edges and mis-bucketed feedback near the boundary."""
+    from echolens.feedback import window
+    start, end = window(days=7)
+    assert end.tzinfo is not None
+    assert end.utcoffset() == timedelta(0), "window must be UTC, not local time"
+
+
+def test_brain_trend_does_not_call_every_refuted_edge_weakening(session, product):
+    """The old test compared confidence against itself-with-one-fewer-refute,
+    which is arithmetically always lower — so any edge refuted even once read
+    as 'weakening', including a 20-support/1-refute edge at 91% confidence."""
+    from echolens.brain import _edge_dict
+    from echolens.db.models import KnowledgeEdge
+
+    strong = KnowledgeEdge(product_id=product.id, subsystem="sync", symptom="battery-drain",
+                           supports=20, refutes=1, verified_count=20, status="active",
+                           case_ids=[1])
+    decaying = KnowledgeEdge(product_id=product.id, subsystem="ui", symptom="crash",
+                             supports=4, refutes=3, verified_count=4, status="active",
+                             case_ids=[2])
+    assert _edge_dict(strong)["trend"] == "holding"
+    assert _edge_dict(decaying)["trend"] == "weakening"
+
+
+def test_triage_as_of_resolves_at_call_time():
+    """The default used to bind the detector's hardcoded AS_OF at import, so the
+    daily cap compared every run against a frozen date and never engaged."""
+    import inspect
+    from echolens.orchestrator.triage import Orchestrator
+    default = inspect.signature(Orchestrator.triage).parameters["as_of"].default
+    assert default is None, "as_of must resolve at call time, not import time"

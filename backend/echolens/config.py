@@ -113,9 +113,13 @@ class Settings(BaseSettings):
     def check_production_ready(self) -> list[str]:
         """Return a list of misconfigurations that must be fixed before prod."""
         problems: list[str] = []
-        if self.echolens_env == "production":
+        # A known signing key is fatal wherever auth is real, not just in
+        # production: staging enforces logins too, so shipping the public default
+        # there means anyone can mint an admin token for it.
+        if self.echolens_env in ("production", "staging"):
             if self.jwt_secret in self._INSECURE_SECRETS:
                 problems.append("JWT_SECRET is unset or the insecure default — set a strong random value")
+        if self.echolens_env == "production":
             if not self.openai_api_key:
                 problems.append("OPENAI_API_KEY is not set")
             if not self.cors_list:

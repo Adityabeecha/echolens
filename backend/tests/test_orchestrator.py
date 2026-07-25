@@ -54,8 +54,14 @@ def test_daily_cap_is_enforced_in_code(session):
     assert len(investigate) == 1
     # the survivor is the highest-|z| anomaly
     assert abs(investigate[0].anomaly.z) == max(abs(a.z) for a in pending.values())
-    deferred = [d for d in decisions if d.decision == "ignore" and "cap" in d.reason]
+    # Capped work is DEFERRED, not ignored. It was judged worth investigating and
+    # only lost on budget, so it must stay pending and come back next cycle —
+    # marking it "ignore" wrote status="ignored" and the queries that look for
+    # pending anomalies never saw it again, silently discarding the work.
+    deferred = [d for d in decisions if d.decision == "defer" and "cap" in d.reason]
     assert deferred
+    assert all(d.anomaly.status == "pending" for d in deferred), \
+        "a deferred anomaly must stay pending so the next run picks it up"
 
 
 def test_unmentioned_anomalies_default_to_ignore(session):

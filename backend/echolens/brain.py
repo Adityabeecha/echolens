@@ -270,8 +270,14 @@ def _edge_dict(edge: KnowledgeEdge) -> dict:
         "refutes": edge.refutes,
         "status": edge.status,
         "case_ids": edge.case_ids or [],
-        "trend": ("weakening" if edge.refutes and _confidence(edge.supports, edge.refutes)
-                  < _confidence(edge.supports, max(0, edge.refutes - 1)) else "holding"),
+        # "Weakening" must mean the belief is actually decaying, not merely that
+        # it has ever been wrong once. The old test compared confidence against
+        # itself-with-one-fewer-refute, which is arithmetically ALWAYS lower — so
+        # a 20-support/1-refute edge at 91% confidence read as "weakening".
+        # A belief is weakening when refutations are a real share of its evidence.
+        "trend": ("weakening"
+                  if edge.refutes >= 2 and edge.refutes >= 0.25 * max(1, edge.supports)
+                  else "holding"),
     }
 
 
@@ -296,7 +302,8 @@ def review_change(session: Session, text: str, product_id: int | None = None) ->
     ships, and each flag is grounded in real past cases rather than a hunch.
     """
     touched = _classify(text, SUBSYSTEMS)
-    active = {e["subsystem"]: e for e in edges(session, product_id)}  # strongest per subsystem
+    # One query, not two: the previous `active` dict issued an identical
+    # edges() call and was then never read.
     all_edges = edges(session, product_id)
 
     flags = []

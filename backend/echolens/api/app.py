@@ -377,7 +377,11 @@ def auth_signup(body: SignupBody, request: Request) -> dict:
 
 
 @app.post("/auth/login")
-def auth_login(body: LoginBody) -> dict:
+@limiter.limit("10/minute")
+def auth_login(body: LoginBody, request: Request) -> dict:
+    """Rate-limited: bcrypt is slow per attempt, which protects the password but
+    makes an unthrottled endpoint a cheap way to burn every worker thread. The
+    cap bounds both credential-stuffing and that DoS."""
     with session_scope() as session:
         user = authenticate(session, body.email, body.password)
         if user is None:

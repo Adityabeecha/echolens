@@ -9,14 +9,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from echolens.config import ORCHESTRATOR_DAILY_INVESTIGATIONS
 from echolens.db.models import AnomalyEvent, Investigation, LLMCall, TriageDecision
-from echolens.detector.detect import AS_OF
 from echolens.llm.client import LLMClient, LLMFormatError
 
 TRIAGE_SYSTEM = """You are the EchoLens orchestrator. Detected anomalies arrive in batches; \
@@ -127,11 +126,17 @@ class Orchestrator:
             Investigation.created_at >= cutoff)).all()
         return sum(1 for r in rows if r.created_at and r.created_at.date() == as_of.date())
 
-    def triage(self, as_of: datetime = AS_OF, persist: bool = True) -> list[Decision]:
+    def triage(self, as_of: datetime | None = None, persist: bool = True) -> list[Decision]:
         """`persist=False` makes this a true preview: decisions are returned but
         no anomaly changes status. Persisting on a preview consumed the pending
         queue without opening any case, so the anomalies could never be picked up
-        again — they just sat at "triaged" forever."""
+        again — they just sat at "triaged" forever.
+
+        `as_of` resolves at CALL time. It used to default to the detector's
+        hardcoded AS_OF fallback, bound at import — so the daily cap compared
+        every run against a frozen date, counted zero investigations "today",
+        and never actually capped anything in production."""
+        as_of = as_of or datetime.now(timezone.utc)
         # Only PENDING anomalies for this product that have no linked investigation
         # yet — already-triaged ones are never re-triaged (duplicate-cases bug).
         stmt = select(AnomalyEvent).where(
@@ -200,7 +205,11 @@ class Orchestrator:
             key=lambda d: -abs(d.anomaly.z),
         )
         for d in investigate[max(remaining, 0):]:
-            d.decision = "ignore"
+            # "defer", not "ignore". These were judged WORTH investigating and only
+            # lost on budget, so they must come back tomorrow. Marking them ignore
+            # wrote status="ignored", and every pending-anomaly query filters that
+            # out — the cap silently threw the work away instead of postponing it.
+            d.decision = "defer"
             d.reason = f"daily investigation cap ({self.daily_limit}) reached — deferred. " + d.reason
             d.budget_tier = None
 
@@ -211,9 +220,13 @@ class Orchestrator:
                 budget_tier=d.budget_tier,
                 merge_into_anomaly_id=d.merge_into.id if d.merge_into else None,
             ))
+            # A deferred anomaly stays pending: that is what makes the next cycle
+            # pick it up. An unknown decision must not silently become "ignored",
+            # so this maps explicitly and leaves anything else pending.
             d.anomaly.status = {
-                "investigate": "triaged", "merge": "merged", "ignore": "ignored",
-            }[d.decision]
+                "investigate": "triaged", "merge": "merged",
+                "ignore": "ignored", "defer": "pending",
+            }.get(d.decision, "pending")
         self.session.flush()
 
 
