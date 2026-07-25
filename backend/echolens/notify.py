@@ -19,8 +19,10 @@ log = get_logger("notify")
 
 
 def deep_link(investigation_id: int) -> str | None:
+    """A link straight to the case. The product isn't in the URL because the
+    notification doesn't know it — the app restores product context on load."""
     base = settings.app_base_url.rstrip("/")
-    return f"{base}/#case/{investigation_id}" if base else None
+    return f"{base}/#/cases/{investigation_id}" if base else None
 
 
 def _finding_context(session: Session, finding: Finding) -> dict:

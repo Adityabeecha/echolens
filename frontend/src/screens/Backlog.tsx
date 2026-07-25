@@ -7,6 +7,8 @@ const BAND: Record<string, string> = { high: C.bad, medium: C.accent, low: C.dim
 
 interface Props {
   onOpenInvestigation: (id: number, status?: string) => void;
+  onBack: () => void;
+  backLabel: string;
 }
 
 /**
@@ -16,7 +18,7 @@ interface Props {
  * problem that costs a day genuinely should beat one that costs three weeks.
  * Every line shows the arithmetic that placed it there.
  */
-export function Backlog({ onOpenInvestigation }: Props) {
+export function Backlog({ onOpenInvestigation, onBack, backLabel }: Props) {
   const [plan, setPlan] = useState<QuarterPlan | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -66,7 +68,10 @@ export function Backlog({ onOpenInvestigation }: Props) {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <ScreenHeader
-        title={`Quality Backlog${plan.product ? ` · ${plan.product}` : ""}`}
+        title="Plan"
+        product={plan.product}
+        subtitle="OPEN PROBLEMS, RANKED BY VALUE PER ENGINEER-DAY"
+        back={{ label: backLabel, onClick: onBack }}
         right={
           <span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>
             {plan.owned ? "YOUR PLAN" : "PROPOSED"} · {plan.generated}
@@ -79,8 +84,8 @@ export function Backlog({ onOpenInvestigation }: Props) {
                         borderRadius: 12, textAlign: "center", color: C.dim, fontSize: 13.5,
                         lineHeight: 1.6 }}>
             Nothing to plan yet — a problem enters the backlog once an investigation resolves
-            with a finding and no verified fix. Investigate something from the Cases screen and
-            it will show up here, ranked.
+            with a finding and no verified fix. Investigate something from Cases and it
+            shows up here, ranked.
           </div>
         ) : (
           <>

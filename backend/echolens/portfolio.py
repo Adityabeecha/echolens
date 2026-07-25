@@ -38,6 +38,11 @@ BANDS = (
 )
 
 
+def _n(count: int, noun: str, plural: str | None = None) -> str:
+    """Plural forms a person would write. "(s)" is a note to self, not copy."""
+    return f"{count} {noun}" if count == 1 else f"{count} {plural or noun + 's'}"
+
+
 def _band(score: float) -> tuple[str, str]:
     for threshold, key, label in BANDS:
         if score >= threshold:
@@ -106,14 +111,14 @@ def product_snapshot(session: Session, product: Product, now: datetime) -> dict:
     if regressed:
         score += W_REGRESSION * len(regressed)
         reasons.append({"kind": "regression", "weight": round(W_REGRESSION * len(regressed), 1),
-                        "text": f"{len(regressed)} fix(es) regressed"})
+                        "text": f"{_n(len(regressed), 'fix', 'fixes')} regressed after shipping"})
 
     # ── chronic themes ─────────────────────────────────────────────────
     chronic = [t for t in theme_lifecycle(session, now, pid) if t["status"] == "chronic"]
     if chronic:
         score += W_CHRONIC * len(chronic)
         reasons.append({"kind": "chronic", "weight": round(W_CHRONIC * len(chronic), 1),
-                        "text": f"{len(chronic)} theme(s) unresolved > {CHRONIC_DAYS}d"})
+                        "text": f"{_n(len(chronic), 'complaint theme')} unresolved for over {CHRONIC_DAYS} days"})
 
     # ── queue depth ────────────────────────────────────────────────────
     untriaged = session.scalars(select(AnomalyEvent).where(
@@ -122,7 +127,7 @@ def product_snapshot(session: Session, product: Product, now: datetime) -> dict:
     if untriaged:
         score += W_UNTRIAGED * len(untriaged)
         reasons.append({"kind": "untriaged", "weight": round(W_UNTRIAGED * len(untriaged), 1),
-                        "text": f"{len(untriaged)} anomal{'ies' if len(untriaged) > 1 else 'y'} awaiting triage"})
+                        "text": f"{_n(len(untriaged), 'signal')} waiting for triage"})
 
     # ── trend: is sentiment getting worse? ─────────────────────────────
     recent = _negative_rate(session, product.name, now - timedelta(days=7), now)
@@ -144,7 +149,7 @@ def product_snapshot(session: Session, product: Product, now: datetime) -> dict:
     if stale:
         score += W_STALE_DATA
         reasons.append({"kind": "stale", "weight": W_STALE_DATA,
-                        "text": f"{len(stale)} source(s) stale — this ranking may be out of date"})
+                        "text": f"{_n(len(stale), 'source')} not reporting — this ranking may be out of date"})
 
     band, band_label = _band(score)
     reasons.sort(key=lambda r: -r["weight"])
@@ -231,8 +236,8 @@ def portfolio_brief(session: Session, as_of: datetime | None = None) -> dict:
 
     lines = [board["verdict"]]
     lines.append(
-        f"Across {board['total_products']} product(s): {len(problems)} new problem(s), "
-        f"{len(fixes)} fix(es) verified, {len(regressions)} regression(s).")
+        f"Across {_n(board['total_products'], 'product')}: {_n(len(problems), 'new problem')}, "
+        f"{_n(len(fixes), 'fix', 'fixes')} verified, {_n(len(regressions), 'regression')}.")
     for p in problems[:3]:
         lines.append(f"• {p['product']}: {p['summary']} (case #{p['investigation_id']}).")
     for t in transfers[:1]:

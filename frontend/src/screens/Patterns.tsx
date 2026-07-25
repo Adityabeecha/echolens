@@ -5,14 +5,25 @@ import { Centered, Label, ScreenHeader } from "../ui";
 
 // The validated pattern library: (trigger → cause → fix) proven by confirmed
 // fixes. Earned, not asserted — each pattern is backed by fixes that worked.
-export function Patterns() {
+export function Patterns({ onGoMemory }: { onGoMemory: () => void }) {
   const { data, loading, error } = useAsync(() => api.patterns(), []);
   if (loading) return <Centered>Loading patterns…</Centered>;
   if (error || !data) return <Centered>Backend unavailable.</Centered>;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <ScreenHeader title={`Pattern Library${data.product ? ` · ${data.product}` : ""}`} right={<span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>{data.patterns.length} VERIFIED</span>} />
+      <ScreenHeader
+        title="Patterns"
+        product={data.product}
+        subtitle="FIXES THAT WERE PROVEN TO WORK"
+        right={
+          <span onClick={onGoMemory} className="el-btn" role="button" tabIndex={0}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onGoMemory(); }}
+            style={{ fontSize: 12.5, color: C.dim, cursor: "pointer" }}>
+            What else this product has taught EchoLens →
+          </span>
+        }
+      />
       <div style={{ flex: 1, overflow: "auto", padding: "22px 28px" }}>
         <p style={{ fontSize: 13.5, color: C.muted, maxWidth: 720, lineHeight: 1.6, marginTop: 0 }}>
           Every pattern below is built from a fix that was <span style={{ color: C.good }}>verified to work</span>. The

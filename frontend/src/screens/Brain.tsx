@@ -12,6 +12,8 @@ const RISK: Record<string, { color: string; label: string }> = {
 
 interface Props {
   onOpenInvestigation: (id: number, status?: string) => void;
+  onBack: () => void;
+  backLabel: string;
 }
 
 /**
@@ -19,7 +21,7 @@ interface Props {
  * the two things that map is FOR: reviewing a proposed change before it ships,
  * and answering a new PM's "what goes wrong here?" from real history.
  */
-export function Brain({ onOpenInvestigation }: Props) {
+export function Brain({ onOpenInvestigation, onBack, backLabel }: Props) {
   const { data, loading, error } = useAsync(() => api.brain(), []);
 
   if (loading) return <Centered>Reading what this product has taught EchoLens…</Centered>;
@@ -29,7 +31,10 @@ export function Brain({ onOpenInvestigation }: Props) {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <ScreenHeader
-        title={`Product Memory${data.product ? ` · ${data.product}` : ""}`}
+        title="Product memory"
+        product={data.product}
+        subtitle="HOW THIS PRODUCT BREAKS, LEARNED FROM CONFIRMED FIXES"
+        back={{ label: backLabel, onClick: onBack }}
         right={<span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>
           {edges.length} LEARNED PATTERN{edges.length === 1 ? "" : "S"}
         </span>}

@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { OnboardStatus, Snapshot, api, canReview } from "../api";
+import { OnboardStatus, Snapshot, api } from "../api";
+import { plural } from "../format";
 import { C, mono, sans } from "../theme";
 import { Dot, Label } from "../ui";
 
 interface Props {
-  onDone: () => void; // go to the populated Case Feed
-  onOpenInvestigation: (id: number) => void;
+  onDone: () => void; // land on Today for the new product
+  /** Hand off to Cases → Signals, where triage actually happens. */
+  onReviewSignals: () => void;
   canSkip: boolean; // first run has nothing to skip to; later, "cancel" is allowed
   onCancel: () => void;
   /** Called the moment the product exists, so it becomes the active scope
@@ -16,7 +18,7 @@ interface Props {
 
 // The first-run wizard: two inputs → hands-off backfill → live health snapshot →
 // a populated feed. The wait is never blank: the snapshot fills in as data lands.
-export function Onboarding({ onDone, onOpenInvestigation, canSkip, onCancel, onProductCreated }: Props) {
+export function Onboarding({ onDone, onReviewSignals, canSkip, onCancel, onProductCreated }: Props) {
   const [phase, setPhase] = useState<"form" | "running">("form");
   const [product, setProduct] = useState("");
 
@@ -51,7 +53,7 @@ export function Onboarding({ onDone, onOpenInvestigation, canSkip, onCancel, onP
             onCancel={onCancel}
           />
         ) : (
-          <Backfilling product={product} onDone={onDone} onOpenInvestigation={onOpenInvestigation} />
+          <Backfilling product={product} onDone={onDone} onReviewSignals={onReviewSignals} />
         )}
       </div>
     </div>
@@ -152,7 +154,9 @@ const inputStyle: React.CSSProperties = {
 
 // ── step 2: live backfill + snapshot ────────────────────────────────────
 
-function Backfilling({ product, onDone, onOpenInvestigation }: { product: string; onDone: () => void; onOpenInvestigation: (id: number) => void }) {
+function Backfilling({ product, onDone, onReviewSignals }: {
+  product: string; onDone: () => void; onReviewSignals: () => void;
+}) {
   const [status, setStatus] = useState<OnboardStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const timer = useRef<number | null>(null);
@@ -187,6 +191,7 @@ function Backfilling({ product, onDone, onOpenInvestigation }: { product: string
   const snap = status.snapshot;
   const anomalies = status.anomalies.filter((a) => a.status === "pending");
   const ready = snap.reviews > 0;
+  const found = anomalies.length + snap.top_themes.length;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
@@ -218,34 +223,23 @@ function Backfilling({ product, onDone, onOpenInvestigation }: { product: string
         </div>
       )}
 
-      {/* What we found — a list you choose from, not a button that fires. */}
-      {ready && (anomalies.length > 0 || snap.top_themes.length > 0) && (
-        <div>
-          <Label style={{ marginBottom: 4 }}>WHAT WE FOUND — PICK ONE TO INVESTIGATE</Label>
-          <p style={{ fontSize: 12.5, color: C.dim, margin: "0 0 12px", lineHeight: 1.55 }}>
-            Investigating one doesn't lose the others — they all stay in the Case Feed.
-          </p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {anomalies.map((a) => (
-              <Candidate
-                key={a.slug}
-                kind="signal"
-                title={a.description}
-                meta={`${a.type.replace(/_/g, " ")} · z ${a.z.toFixed(1)}`}
-                slug={a.slug}
-                onOpenInvestigation={onOpenInvestigation}
-              />
-            ))}
-            {snap.top_themes.map((t) => (
-              <Candidate
-                key={t.label}
-                kind="theme"
-                title={t.label}
-                meta={`${t.count} negative review${t.count === 1 ? "" : "s"} mention this`}
-                description={`Rising negative feedback about "${t.label}" — investigate the cause.`}
-                onOpenInvestigation={onOpenInvestigation}
-              />
-            ))}
+      {/* What we found — a summary and a handoff, not a third place to triage.
+          This list used to be its own format, so the same themes appeared here,
+          on the feed, and nowhere else the same way. Triage happens in one
+          place: Cases → Signals. */}
+      {ready && found > 0 && (
+        <div style={{ padding: "16px 20px", background: C.card, border: `1px solid ${C.border2}`,
+                      borderRadius: 12 }}>
+          <Label style={{ marginBottom: 6, color: C.info }}>WHAT WE FOUND</Label>
+          <div style={{ fontSize: 14, color: C.text2, lineHeight: 1.55 }}>
+            {found} {plural(found, "signal")} worth a look in {product}'s feedback
+            {anomalies.length > 0 && snap.top_themes.length > 0
+              ? ` — ${anomalies.length} detected ${plural(anomalies.length, "spike")} and ${snap.top_themes.length} recurring ${plural(snap.top_themes.length, "complaint")}.`
+              : "."}
+          </div>
+          <div style={{ fontSize: 12.5, color: C.dim, marginTop: 7, lineHeight: 1.55 }}>
+            They're waiting under Signals at the bottom of Cases. Tick the ones worth
+            investigating and they queue together — nothing is lost by not choosing now.
           </div>
         </div>
       )}
@@ -259,12 +253,27 @@ function Backfilling({ product, onDone, onOpenInvestigation }: { product: string
       )}
 
       {/* CTA */}
-      <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 6,
+                    flexWrap: "wrap" }}>
         <button onClick={onDone} disabled={!ready} className="el-btn"
-          style={{ background: ready ? C.accent : C.hover, color: ready ? C.onAccent : C.dim, border: "none", borderRadius: 8, padding: "12px 24px", fontWeight: 600, fontSize: 14, cursor: ready ? "pointer" : "not-allowed" }}>
-          Go to Case Feed
+          style={{ background: ready ? C.accent : C.hover, color: ready ? C.onAccent : C.dim,
+                   border: "none", borderRadius: 8, padding: "12px 24px", fontWeight: 600,
+                   fontSize: 14, cursor: ready ? "pointer" : "not-allowed" }}>
+          Go to Today
         </button>
-        {status.backfilling && <span style={{ fontSize: 12.5, color: C.faint }}>Still backfilling — the feed keeps filling in.</span>}
+        {ready && found > 0 && (
+          <button onClick={onReviewSignals} className="el-btn"
+            style={{ background: "transparent", color: C.accent,
+                     border: `1px solid rgba(240,166,60,.4)`, borderRadius: 8, padding: "12px 20px",
+                     fontWeight: 500, fontSize: 14, cursor: "pointer", fontFamily: sans }}>
+            Review {found} {plural(found, "signal")} in Cases
+          </button>
+        )}
+        {status.backfilling && (
+          <span style={{ fontSize: 12.5, color: C.faint }}>
+            Still backfilling — Today keeps filling in.
+          </span>
+        )}
       </div>
     </div>
   );
@@ -311,60 +320,6 @@ function SnapshotView({ snap }: { snap: Snapshot }) {
           ))}
         </div>
       </div>
-    </div>
-  );
-}
-
-// One candidate the PM can choose. Selecting is separate from committing: the
-// row explains itself, and only the explicit button starts a case.
-function Candidate({ kind, title, meta, slug, description, onOpenInvestigation }: {
-  kind: "signal" | "theme";
-  title: string;
-  meta: string;
-  slug?: string;
-  description?: string;
-  onOpenInvestigation: (id: number) => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const reviewer = canReview();
-
-  const investigate = async () => {
-    if (!reviewer || busy) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      const r = await api.startInvestigation(
-        slug ? { anomaly_slug: slug, tier: "quick" } : { description, tier: "quick" });
-      onOpenInvestigation(r.investigation_id);
-    } catch (e) {
-      // never fail silently — say what went wrong and what to do
-      setErr(String(e).replace("Error: ", ""));
-      setBusy(false);
-    }
-  };
-
-  const color = kind === "signal" ? C.accent : C.info;
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 15px",
-                  background: C.card, border: `1px solid ${C.border2}`, borderRadius: 10 }}>
-      <div style={{ width: 3, alignSelf: "stretch", minHeight: 26, borderRadius: 2,
-                    background: color, flex: "none" }} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13.5, color: C.text2, lineHeight: 1.4 }}>{title}</div>
-        <div style={{ fontFamily: mono, fontSize: 10.5, color: C.faint, marginTop: 3 }}>
-          {kind === "signal" ? "SIGNAL" : "THEME"} · {meta}
-        </div>
-        {err && <div style={{ fontSize: 12, color: C.bad, marginTop: 6 }}>{err}</div>}
-      </div>
-      <button onClick={investigate} disabled={!reviewer || busy} className="el-btn"
-        title={reviewer ? "Start a case for this" : "You need reviewer access to start an investigation."}
-        style={{ background: "transparent", color: reviewer ? C.accent : C.dim,
-                 border: `1px solid ${reviewer ? "rgba(240,166,60,.4)" : C.border3}`,
-                 borderRadius: 6, padding: "7px 13px", fontSize: 12.5, fontFamily: sans,
-                 cursor: reviewer && !busy ? "pointer" : "not-allowed", flex: "none" }}>
-        {busy ? "Starting…" : "Investigate"}
-      </button>
     </div>
   );
 }

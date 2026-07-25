@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api";
+import { toast } from "./Toast";
 import { C, mono } from "../theme";
 
 const TIERS: { key: string; name: string; detail: string }[] = [
@@ -20,6 +21,7 @@ export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onSt
     setError(null);
     try {
       const r = await api.startInvestigation({ description: desc, tier });
+      toast.ok(`Case #${r.investigation_id} opened — it’s streaming now.`);
       onStarted(r.investigation_id);
     } catch (e) {
       // surface the reason instead of silently doing nothing

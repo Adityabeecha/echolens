@@ -154,7 +154,7 @@ def pending(session: Session, product_id: int | None = None) -> list[QueuedInves
 
 def queue_view(session: Session, product_id: int | None, daily_limit: int,
                as_of: datetime | None = None) -> dict:
-    """The queue as the Case Feed shows it: position, what is running, and which
+    """The queue as Today and Cases show it: position, what is running, and which
     items are past today's budget (with the reason, not silence)."""
     now = as_of or datetime.now(timezone.utc)
     used = investigations_today(session, product_id, now)

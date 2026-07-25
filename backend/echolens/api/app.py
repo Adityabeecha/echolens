@@ -24,6 +24,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from sqlalchemy import func, select
 
+from echolens.cases import case_history, case_title, case_view, derive_status
 from echolens.config import (
     BUDGET_TIERS,
     EXTENSION_FACTOR,
@@ -34,6 +35,7 @@ from echolens.db.models import (
     AnomalyEvent,
     EvidenceRow,
     Finding,
+    FixWatch,
     HypothesisRow,
     Investigation,
     Issue,
@@ -175,16 +177,25 @@ def _investigation_dict(session, inv: Investigation) -> dict:
         recs = session.scalars(select(Recommendation).where(
             Recommendation.finding_id == finding.id).order_by(Recommendation.rank)).all()
     anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv.anomaly_id else None
-    title = "Investigation"
-    if anomaly is not None:
-        title = anomaly.description if anomaly.type == "manual" else anomaly.metric
+    # The title is a problem statement, never a metric name — the case detail and
+    # the case list must not disagree about what this case is called.
+    title = case_title(finding, anomaly)
+    # ...and they must not disagree about its state either, so the derivation
+    # lives once, in echolens.cases, and both read it.
+    watch = session.scalars(select(FixWatch).where(
+        FixWatch.investigation_id == inv.id).order_by(FixWatch.id.desc())).first()
+    case_status, case_why = derive_status(inv, finding, watch)
     return {
         "id": inv.id, "anomaly_id": inv.anomaly_id, "status": inv.status,
+        "case_status": case_status, "case_why": case_why,
         "title": title,
         "opened_by": inv.opened_by, "budget_tier": inv.budget_tier,
         "budget": inv.budget_json, "paused": inv.paused, "escalated": inv.escalated,
         "reopens_investigation_id": inv.reopens_investigation_id,
         "data_notes": inv.data_notes or [],
+        # v13: the case's own audit trail, so History is a tab rather than a
+        # thing that happened somewhere you can no longer see.
+        "history": case_history(session, inv),
         "hypotheses": [{"id": h.hid, "statement": h.statement, "confidence": h.confidence,
                         "status": h.status, **h.json} for h in hyps],
         "evidence": [{"id": e.eid, "source": e.source, "ref": e.ref, "snippet": e.snippet,
@@ -425,7 +436,7 @@ def _product_dict(p) -> dict:
 @app.get("/products")
 def list_products(user: dict = Depends(current_user)) -> dict:
     """Every product + the caller's last-active one. The client uses this on boot
-    to decide between the Case Feed and the add-product wizard (server-derived)."""
+    to decide between Today and the add-product wizard (server-derived)."""
     from echolens.db.models import Product, User
     with session_scope() as session:
         rows = session.scalars(select(Product).order_by(Product.id)).all()
@@ -1060,6 +1071,19 @@ def list_anomalies(product_id: int | None = None, user: dict = Depends(current_u
             stmt = stmt.where(AnomalyEvent.product_id == p.id)
         rows = session.scalars(stmt.order_by(AnomalyEvent.id)).all()
         return {"anomalies": [_anomaly_dict(session, a) for a in rows]}
+
+
+@app.get("/cases")
+def list_cases(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    """The unified case list — one lifecycle, one status vocabulary.
+
+    Replaces the three overlapping surfaces (feed / health / archive) that each
+    described the same case differently. Everything a card renders is decided
+    here so the same case cannot look like two different things on two screens.
+    """
+    with session_scope() as session:
+        p = _scope(session, product_id)
+        return case_view(session, p.id if p else None)
 
 
 def _triage_summary(considered: int, already: int, started: int, run: bool) -> str:

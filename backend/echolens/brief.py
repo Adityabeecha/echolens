@@ -16,6 +16,11 @@ from echolens.impact import severity
 from echolens.timeutil import aware_utc
 
 
+def _n(count: int, noun: str, plural: str | None = None) -> str:
+    """"1 fix" / "3 fixes" — never "3 fix(es)". The brief is read by people."""
+    return f"{count} {noun}" if count == 1 else f"{count} {plural or noun + 's'}"
+
+
 def _recent(dt, since) -> bool:
     dt = aware_utc(dt)
     return dt is not None and dt >= since
@@ -98,10 +103,15 @@ def weekly_brief(session: Session, as_of: datetime | None = None,
     from echolens.themes import theme_lifecycle
     chronic = [t for t in theme_lifecycle(session, now, product_id) if t["status"] == "chronic"]
 
-    lines = [
-        f"This week: {len(new_problems)} new problem(s), {len(fixes_verified)} fix(es) verified, "
-        f"{len(regressions)} regression(s). Resolution rate {int(rate*100)}%.",
-    ]
+    # A "0% resolution rate" computed from zero cases is not a measurement; it
+    # reads as a failing grade the data cannot support. Say so instead.
+    resolved_total = len(_resolved_invs(session, product_id))
+    headline = (f"This week: {_n(len(new_problems), 'new problem')}, "
+                f"{_n(len(fixes_verified), 'fix')} verified, "
+                f"{_n(len(regressions), 'regression')}.")
+    if resolved_total:
+        headline += f" {int(rate * 100)}% of resolved cases have a verified fix."
+    lines = [headline]
     for p in new_problems[:2]:
         lines.append(f"• New: {p['summary']} (case #{p['investigation_id']}).")
     if chronic:

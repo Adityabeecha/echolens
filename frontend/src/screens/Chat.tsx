@@ -18,7 +18,9 @@ const SUGGESTIONS = [
 
 // Ask the verified knowledge anything. Answers cite the case they came from;
 // an investigate-intent question launches a case that streams in the same thread.
-export function Chat({ onOpenInvestigation }: { onOpenInvestigation: (id: number) => void }) {
+export function Chat({ onOpenInvestigation, productName }: {
+  onOpenInvestigation: (id: number) => void; productName: string | null;
+}) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -52,7 +54,7 @@ export function Chat({ onOpenInvestigation }: { onOpenInvestigation: (id: number
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <ScreenHeader title="Ask EchoLens" right={<span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>GROUNDED IN YOUR CASES</span>} />
+      <ScreenHeader title="Ask" product={productName} subtitle="ANSWERS GROUNDED IN YOUR OWN CASES" />
 
       <div ref={scrollRef} style={{ flex: 1, overflow: "auto", padding: "22px 28px" }}>
         {turns.length === 0 && (

@@ -32,7 +32,7 @@ export function Portfolio({ onOpenProduct, onOpenInvestigation, onAddProduct }: 
   if (data.products.length === 0) {
     return (
       <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-        <ScreenHeader title="Portfolio" />
+        <ScreenHeader title="All products" />
         <Centered>
           <div style={{ textAlign: "center", maxWidth: 420 }}>
             <div style={{ fontSize: 15, color: C.text3, marginBottom: 8 }}>No products connected yet.</div>
@@ -57,7 +57,8 @@ export function Portfolio({ onOpenProduct, onOpenInvestigation, onAddProduct }: 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <ScreenHeader
-        title="Portfolio"
+        title="All products"
+        subtitle="RANKED BY WHAT NEEDS YOU"
         right={
           <span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>
             {data.total_products} PRODUCT{data.total_products === 1 ? "" : "S"} ·{" "}

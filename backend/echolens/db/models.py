@@ -270,7 +270,7 @@ class FixWatch(Base):
 
 class TriageDecision(Base):
     """One orchestrator ruling on one anomaly (PRD §4.1): investigate / ignore /
-    merge. First-class so the Case Feed can show *why* something was not pursued."""
+    merge. First-class so Cases can show *why* something was not pursued."""
     __tablename__ = "triage_decisions"
 
     id: Mapped[int] = mapped_column(primary_key=True)

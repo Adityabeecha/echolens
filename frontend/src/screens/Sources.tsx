@@ -14,7 +14,9 @@ const STATUS_COLOR: Record<string, string> = {
   Idle: C.muted,
 };
 
-export function Sources({ onAddProduct }: { onAddProduct?: () => void }) {
+export function Sources({ onAddProduct, productName }: {
+  onAddProduct?: () => void; productName: string | null;
+}) {
   const { data, loading, error, reload } = useAsync(() => api.sources(), []);
   const [showConnect, setShowConnect] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -58,6 +60,8 @@ export function Sources({ onAddProduct }: { onAddProduct?: () => void }) {
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <ScreenHeader
         title="Sources"
+        product={productName ?? data?.product}
+        subtitle="WHERE THIS PRODUCT'S FEEDBACK COMES FROM"
         right={
           reviewer ? (
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
@@ -200,7 +204,7 @@ function ConnectForm({ onDone }: { onDone: () => void }) {
       </div>
       {error && <div style={{ color: C.bad, fontSize: 12.5, marginTop: 10 }}>{error}</div>}
       <div style={{ fontSize: 11.5, color: C.faint, marginTop: 10 }}>
-        After connecting, click <span style={{ color: C.text3 }}>Collect now</span> to pull data, then <span style={{ color: C.text3 }}>Scan now</span> on the Case Feed.
+        After connecting, click <span style={{ color: C.text3 }}>Collect now</span> to pull data, then <span style={{ color: C.text3 }}>Scan now</span> under Signals at the bottom of Cases.
       </div>
     </div>
   );
@@ -219,7 +223,7 @@ function ImportForm({ onDone }: { onDone: (msg: string) => void }) {
     setError(null);
     try {
       const r = await api.importReviews(file, product.trim() || undefined, sourceLabel);
-      onDone(`Imported ${r.imported} reviews (${r.skipped} skipped) from ${file.name}. Run a scan on the Case Feed.`);
+      onDone(`Imported ${r.imported} reviews (${r.skipped} skipped) from ${file.name}. Run a scan under Signals in Cases to look for new problems.`);
     } catch (e) {
       setError(String(e).replace("Error: ", ""));
     } finally {

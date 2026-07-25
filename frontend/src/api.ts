@@ -229,10 +229,21 @@ export interface Recommendation {
   effort: string;
   rationale: string;
 }
+export interface HistoryEvent {
+  at: string | null;
+  kind: string;
+  text: string;
+  case_id: number | null;
+  note: string;
+}
 export interface Investigation {
   id: number;
   anomaly_id: number | null;
+  /** The raw engine state. Prefer case_status for anything user-facing. */
   status: string;
+  /** The canonical status, derived server-side so lists and detail agree. */
+  case_status: string;
+  case_why: string;
   title: string;
   opened_by: string;
   budget_tier: string;
@@ -241,10 +252,57 @@ export interface Investigation {
   escalated: boolean;
   reopens_investigation_id: number | null;
   data_notes: string[];
+  history: HistoryEvent[];
   hypotheses: Hypothesis[];
   evidence: Evidence[];
   finding: Finding | null;
   recommendations: Recommendation[];
+}
+
+// v13: the unified case list. One lifecycle, one status vocabulary, one card —
+// this is what Today, Cases and every "open problems" list read from.
+export interface CaseRow {
+  /** Null for queued work: it has no investigation yet. */
+  id: number | null;
+  queue_id: number | null;
+  title: string;
+  status: string;
+  why: string;
+  severity: "high" | "medium" | "low" | null;
+  severity_score: number | null;
+  confidence: number | null;
+  impact: { affected_pct: number; affected_volume: number } | null;
+  opened_at: string | null;
+  age_days: number | null;
+  source: string;
+  opened_by: string;
+  iterations: { done: number; max: number } | null;
+  paused: boolean;
+  finding_id: number | null;
+  issue_url: string | null;
+  issue_number: number | null;
+  reopens_investigation_id: number | null;
+  position?: number;
+  /** Weekly complaint volume, or null when there is nothing real to draw. */
+  spark: number[] | null;
+}
+export interface SignalRow {
+  slug: string;
+  title: string;
+  type: string;
+  metric: string;
+  z: number;
+  window: string;
+  age_days: number | null;
+  dismissed: boolean;
+  dismissed_reason: string | null;
+}
+export interface CaseView {
+  product: string | null;
+  product_id: number | null;
+  cases: CaseRow[];
+  signals: SignalRow[];
+  counts: Record<string, number>;
 }
 export interface TraceStep {
   seq: number;
@@ -655,6 +713,7 @@ export const api = {
   collect: () => post("/collect/run"),
   scan: () => post<{ detected: string[] }>(scoped("/anomalies/scan")),
   anomalies: () => get<{ anomalies: Anomaly[] }>(scoped("/anomalies")),
+  cases: () => get<CaseView>(scoped("/cases")),
   triage: (run = false) =>
     post<{ summary?: string; skipped_already_triaged?: number }>(scoped(`/anomalies/triage?run=${run}`)),
   feedSummary: () => get<FeedSummary>(scoped("/feed/summary")),

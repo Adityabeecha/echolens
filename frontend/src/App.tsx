@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Evidence, ProductRow, api, getToken, onAuthError, setActiveProduct, setToken } from "./api";
-import { GLOBAL_SCREENS, Screen, caseScreenFor } from "./nav";
+import { CaseTab, GLOBAL_SCREENS, Screen, caseTabFor } from "./nav";
 import { useRouter } from "./router";
 import { C, sans } from "./theme";
 import { Sidebar } from "./components/Sidebar";
@@ -8,16 +8,16 @@ import { EvidenceSheet } from "./components/EvidenceSheet";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { NewCaseModal } from "./components/NewCaseModal";
 import { DeleteProductModal } from "./components/DeleteProductModal";
-import { CaseFeed } from "./screens/CaseFeed";
-import { Investigation } from "./screens/Investigation";
-import { FindingReview } from "./screens/FindingReview";
-import { Archive } from "./screens/Archive";
+import { Toasts } from "./components/Toast";
+import { Today } from "./screens/Today";
+import { Cases } from "./screens/Cases";
+import { CaseDetail } from "./screens/CaseDetail";
 import { Sources } from "./screens/Sources";
 import { Costs } from "./screens/Costs";
+import { Settings } from "./screens/Settings";
 import { Login } from "./screens/Login";
 import { Onboarding } from "./screens/Onboarding";
 import { Calibration } from "./screens/Calibration";
-import { Overview } from "./screens/Overview";
 import { Patterns } from "./screens/Patterns";
 import { Portfolio } from "./screens/Portfolio";
 import { Chat } from "./screens/Chat";
@@ -25,7 +25,10 @@ import { Backlog } from "./screens/Backlog";
 import { Brain } from "./screens/Brain";
 
 export default function App() {
-  const { route, navigate, back, backTarget } = useRouter({ screen: "feed", productId: null });
+  // Today is home: the first thing you see is what needs you, not a list of
+  // everything the detector has ever noticed.
+  const { route, navigate, back, backTarget, setParams } =
+    useRouter({ screen: "today", productId: null });
   const [evidence, setEvidence] = useState<Evidence | null>(null);
   const [newCaseOpen, setNewCaseOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
@@ -37,6 +40,8 @@ export default function App() {
   // The active product comes from the URL, so a refresh or a shared link lands
   // on the product you were actually looking at.
   const activeId = route.productId ?? null;
+  const activeProduct = products.find((p) => p.id === activeId) ?? null;
+  const productName = activeProduct?.name ?? null;
 
   // A 401 anywhere (expired/absent token) bounces back to the login screen.
   useEffect(() => {
@@ -71,10 +76,11 @@ export default function App() {
         const active = fromUrl ?? r.active_product_id ?? r.products[0].id;
         setActiveProduct(active);
 
-        if (GLOBAL_SCREENS.includes(route.screen)) return; // portfolio/onboarding carry no product
+        if (GLOBAL_SCREENS.includes(route.screen)) return; // carry no product
         if (fromUrl == null) {
-          // No usable product in the URL (fresh load, or it named a deleted one)
-          // — put the real one there rather than leaving the address bar lying.
+          // No usable product in the URL (fresh load, or a deep link like
+          // /cases/34 that names a case but not its product) — restore the
+          // product context rather than leaving the address bar lying.
           navigate({ ...route, productId: active }, { replace: true });
         }
         if (fromUrl != null && fromUrl !== r.active_product_id) {
@@ -92,10 +98,12 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authed]);
 
+  // Switching product re-scopes everything and lands on Today, because the
+  // answer to "how is this one doing" is never the screen you happened to be on.
   const switchProduct = useCallback(
     (id: number) => {
       setActiveProduct(id);
-      navigate({ screen: "feed", productId: id });
+      navigate({ screen: "today", productId: id });
       api.activateProduct(id).catch(() => {
         /* best-effort persistence; the in-memory scope already switched */
       });
@@ -104,19 +112,26 @@ export default function App() {
   );
 
   const go = useCallback(
-    (s: Screen) => {
-      navigate(GLOBAL_SCREENS.includes(s) ? { screen: s, productId: null } : { screen: s, productId: activeId });
+    (s: Screen, params?: Record<string, string>) => {
+      navigate(GLOBAL_SCREENS.includes(s)
+        ? { screen: s, productId: null }
+        : { screen: s, productId: activeId, params });
     },
     [navigate, activeId],
   );
 
-  // Finished cases open their finding (the answer); running ones open the live
-  // trace. Callers that only ever surface resolved work pass "resolved".
-  const openInvestigation = useCallback(
+  const openCase = useCallback(
     (id: number, status?: string) =>
-      navigate({ screen: caseScreenFor(status), id, productId: activeId }),
+      navigate({ screen: "case", id, tab: caseTabFor(status), productId: activeId }),
     [navigate, activeId],
   );
+
+  const setCaseTab = useCallback(
+    (tab: CaseTab) => navigate({ ...route, tab }, { replace: true }),
+    [navigate, route],
+  );
+
+  const bumpReload = useCallback(() => setReloadKey((k) => k + 1), []);
 
   const logout = () => {
     setToken(null);
@@ -138,10 +153,12 @@ export default function App() {
 
   const { screen } = route;
   const caseId = route.id ?? null;
+  const params = route.params ?? {};
   // Onboarding owns the whole window: a half-connected product has nothing to
   // navigate to, and leaving the nav live invited exactly the mis-scoped cases
   // that filed work under the previous product.
   const fullscreen = screen === "onboarding";
+  const key = activeId ?? "none";
 
   return (
     <div
@@ -159,7 +176,6 @@ export default function App() {
         <Sidebar
           screen={screen}
           go={go}
-          onOpenCase={() => setNewCaseOpen(true)}
           onLogout={logout}
           products={products}
           activeId={activeId}
@@ -169,88 +185,116 @@ export default function App() {
         />
       )}
 
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <ErrorBoundary resetKey={`${screen}:${caseId}:${activeId}`} onGoHome={() => go("feed")}>
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column",
+                    overflow: "hidden" }}>
+        <ErrorBoundary resetKey={`${screen}:${caseId}:${activeId}`} onGoHome={() => go("today")}>
           {/* Product-scoped screens remount per product so they re-fetch; the
-              case/finding pair is keyed by case id for the same reason. */}
-          {screen === "feed" && (
-            <CaseFeed
-              key={activeId ?? "none"}
-              onOpenInvestigation={openInvestigation}
+              case detail is keyed by case id for the same reason. */}
+          {screen === "today" && (
+            <Today
+              key={key}
+              productName={productName}
+              onOpenCase={openCase}
+              onGoCases={(tab) => go("cases", tab && tab !== "all" ? { tab } : undefined)}
+              onGoSources={() => go("sources")}
+              onGoPlan={() => go("plan")}
+              reloadKey={reloadKey}
+              bumpReload={bumpReload}
+            />
+          )}
+
+          {screen === "cases" && (
+            <Cases
+              key={key}
+              productName={productName}
+              params={params}
+              setParams={setParams}
+              onOpenCase={openCase}
               onNewCase={() => setNewCaseOpen(true)}
               reloadKey={reloadKey}
-              bumpReload={() => setReloadKey((k) => k + 1)}
+              bumpReload={bumpReload}
             />
           )}
+
           {screen === "case" && caseId != null && (
-            <Investigation
+            <CaseDetail
               key={caseId}
-              investigationId={caseId}
+              caseId={caseId}
+              tab={route.tab ?? "finding"}
+              productName={productName}
+              onTab={setCaseTab}
               onBack={back}
-              backLabel={backTarget?.label ?? "the Case Feed"}
-              onDraftFinding={() => navigate({ screen: "finding", id: caseId, productId: activeId })}
+              backLabel={backTarget?.label ?? "Cases"}
               onOpenEvidence={setEvidence}
+              onOpenCase={openCase}
+              onReviewed={bumpReload}
+              onGoCalibration={() => go("calibration")}
+              onGoPatterns={() => go("patterns")}
             />
           )}
-          {screen === "finding" && caseId != null && (
-            <FindingReview
-              key={caseId}
-              investigationId={caseId}
-              onBack={back}
-              backLabel={backTarget?.label ?? "the investigation"}
-              onOpenTrace={() => navigate({ screen: "case", id: caseId, productId: activeId })}
-              onOpenEvidence={setEvidence}
-              onReviewed={() => setReloadKey((k) => k + 1)}
+
+          {screen === "ask" && (
+            <Chat key={key} productName={productName}
+                  onOpenInvestigation={(id) => openCase(id, "resolved")} />
+          )}
+
+          {screen === "sources" && (
+            <Sources key={key} productName={productName}
+                     onAddProduct={() => navigate({ screen: "onboarding", productId: null })} />
+          )}
+
+          {screen === "patterns" && (
+            <Patterns key={key} onGoMemory={() => go("memory")} />
+          )}
+
+          {screen === "calibration" && <Calibration key={key} />}
+
+          {screen === "costs" && <Costs key={key} onGoSettings={() => go("settings")} />}
+
+          {screen === "settings" && (
+            <Settings
+              key={key}
+              product={activeProduct}
+              onGoCosts={() => go("costs")}
+              onGoSources={() => go("sources")}
+              onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
+              onDeleteProduct={setDeleting}
             />
           )}
+
+          {/* Reached from within another screen rather than from the nav, so
+              they carry a named Back instead of a nav highlight. */}
+          {screen === "plan" && (
+            <Backlog key={key} onOpenInvestigation={openCase} onBack={back}
+                     backLabel={backTarget?.label ?? "Today"} />
+          )}
+          {screen === "memory" && (
+            <Brain key={key} onOpenInvestigation={openCase} onBack={back}
+                   backLabel={backTarget?.label ?? "Patterns"} />
+          )}
+
+          {screen === "portfolio" && (
+            <Portfolio
+              onOpenProduct={switchProduct}
+              onOpenInvestigation={(id) => openCase(id, "resolved")}
+              onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
+            />
+          )}
+
           {screen === "onboarding" && (
             <Onboarding
               canSkip={products.length > 0}
               onProductCreated={(id) => {
-                // Scope everything to the new product straight away — including
-                // anything the wizard itself starts.
+                // Scope everything to the new product straight away.
                 setActiveProduct(id);
                 api.products().then((r) => setProducts(r.products)).catch(() => {});
                 api.activateProduct(id).catch(() => {});
               }}
-              onCancel={() => navigate({ screen: "feed", productId: activeId }, { replace: true })}
-              onDone={() => {
-                api.products().then((r) => {
-                  setProducts(r.products);
-                  const newest = r.products[r.products.length - 1];
-                  if (newest) {
-                    setActiveProduct(newest.id);
-                    api.activateProduct(newest.id).catch(() => {});
-                    setReloadKey((k) => k + 1);
-                    navigate({ screen: "feed", productId: newest.id }, { replace: true });
-                  }
-                });
-              }}
-              onOpenInvestigation={openInvestigation}
+              onCancel={() => navigate({ screen: "today", productId: activeId }, { replace: true })}
+              onDone={() => finishOnboarding("today")}
+              onReviewSignals={() => finishOnboarding("cases", { signals: "1" })}
             />
           )}
-          {screen === "portfolio" && (
-            <Portfolio
-              onOpenProduct={switchProduct}
-              onOpenInvestigation={(id) => openInvestigation(id, "resolved")}
-              onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
-            />
-          )}
-          {screen === "backlog" && (
-            <Backlog key={activeId ?? "none"} onOpenInvestigation={openInvestigation} />
-          )}
-          {screen === "archive" && <Archive key={activeId ?? "none"} onOpenInvestigation={(id) => openInvestigation(id, "resolved")} />}
-          {screen === "chat" && <Chat key={activeId ?? "none"} onOpenInvestigation={(id) => openInvestigation(id, "resolved")} />}
-          {screen === "overview" && <Overview key={activeId ?? "none"} onOpenInvestigation={(id) => openInvestigation(id, "resolved")} />}
-          {screen === "patterns" && <Patterns key={activeId ?? "none"} />}
-          {screen === "brain" && (
-            <Brain key={activeId ?? "none"} onOpenInvestigation={openInvestigation} />
-          )}
-          {screen === "calibration" && <Calibration key={activeId ?? "none"} />}
-          {screen === "sources" && (
-            <Sources key={activeId ?? "none"} onAddProduct={() => navigate({ screen: "onboarding", productId: null })} />
-          )}
-          {screen === "costs" && <Costs key={activeId ?? "none"} />}
         </ErrorBoundary>
       </div>
 
@@ -270,11 +314,8 @@ export default function App() {
             }
             // Deleting the product you were viewing must not strand you on a
             // dead URL, so move to a surviving one and tell the server.
-            if (id === activeId) {
-              switchProduct(left[0].id);
-            } else {
-              setReloadKey((k) => k + 1);
-            }
+            if (id === activeId) switchProduct(left[0].id);
+            else bumpReload();
           }}
         />
       )}
@@ -285,11 +326,25 @@ export default function App() {
           onClose={() => setNewCaseOpen(false)}
           onStarted={(investigationId) => {
             setNewCaseOpen(false);
-            setReloadKey((k) => k + 1);
-            openInvestigation(investigationId); // jump straight to the live trace
+            bumpReload();
+            openCase(investigationId, "running"); // jump straight to the live trace
           }}
         />
       )}
+      <Toasts />
     </div>
   );
+
+  /** Leaving the wizard: adopt the new product, then land where asked. */
+  function finishOnboarding(target: Screen, extra?: Record<string, string>) {
+    api.products().then((r) => {
+      setProducts(r.products);
+      const newest = r.products[r.products.length - 1];
+      if (!newest) return;
+      setActiveProduct(newest.id);
+      api.activateProduct(newest.id).catch(() => {});
+      bumpReload();
+      navigate({ screen: target, productId: newest.id, params: extra }, { replace: true });
+    });
+  }
 }

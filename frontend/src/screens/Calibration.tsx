@@ -11,7 +11,9 @@ export function Calibration() {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <ScreenHeader
-        title={`Calibration${data.product ? ` · ${data.product}` : ""}`}
+        title="Calibration"
+        product={data.product}
+        subtitle="STATED CONFIDENCE VS YOUR VERDICTS"
         right={<span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>{data.n_reviewed} REVIEWED FINDINGS</span>}
       />
       <div style={{ flex: 1, overflow: "auto", padding: "22px 28px" }}>

@@ -42,8 +42,15 @@ export function useRouter(initial: Route) {
 
   const navigate = useCallback((next: Route, opts?: { replace?: boolean }) => {
     setRoute((prev) => {
+      // Tab and filter state are part of the entry: changing a filter must
+      // change the URL (that is the point of putting it there), but it should
+      // not push a history entry you have to press Back through five times.
       const sameEntry =
-        prev.screen === next.screen && prev.id === next.id && prev.productId === next.productId;
+        prev.screen === next.screen &&
+        prev.id === next.id &&
+        prev.tab === next.tab &&
+        prev.productId === next.productId &&
+        formatRoute(prev) === formatRoute(next);
       if (sameEntry) return prev;
       if (opts?.replace) {
         stack.current[Math.max(0, stack.current.length - 1)] = prev;
@@ -72,6 +79,31 @@ export function useRouter(initial: Route) {
     setRoute(prev);
   }, []);
 
+  /**
+   * Change list state (filter tab, search, severity…) without stacking history.
+   *
+   * Filters live in the URL so a view can be shared, but tapping through six
+   * filters should not bury the screen you arrived from six presses deep.
+   */
+  const setParams = useCallback(
+    (next: Record<string, string | null>) => {
+      setRoute((prev) => {
+        const params = { ...(prev.params ?? {}) };
+        for (const [k, v] of Object.entries(next)) {
+          if (v == null || v === "") delete params[k];
+          else params[k] = v;
+        }
+        const updated: Route = { ...prev, params: Object.keys(params).length ? params : undefined };
+        if (formatRoute(prev) === formatRoute(updated)) return prev;
+        selfNav.current = true;
+        window.history.replaceState(null, "", formatRoute(updated));
+        selfNav.current = false;
+        return updated;
+      });
+    },
+    [],
+  );
+
   const previous = stack.current[stack.current.length - 1];
   const backTarget: BackTarget | null = previous
     ? { label: SCREEN_LABEL[previous.screen], route: previous }
@@ -85,5 +117,5 @@ export function useRouter(initial: Route) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { route, navigate, back, backTarget };
+  return { route, navigate, back, backTarget, setParams };
 }

@@ -35,12 +35,35 @@ export function Bar({ pct, color, height = 5 }: { pct: number; color: string; he
   );
 }
 
-// Sparkline from a small numeric series (0..~16 range like the mock).
-export function Spark({ points, color }: { points: number[]; color: string }) {
-  const pts = points.map((v, i) => `${4 + i * 11},${20 - v}`).join(" ");
+// Sparkline from a real measured series. Self-scaling, because the series now
+// comes from the corpus (weekly complaint counts) rather than from a lookup
+// table keyed on a z-score — a shape that was decorative, not measured.
+export function Spark({
+  points,
+  color,
+  width = 84,
+  height = 22,
+  title,
+}: {
+  points: number[];
+  color: string;
+  width?: number;
+  height?: number;
+  title?: string;
+}) {
+  if (!points || points.length < 2) return null;
+  const max = Math.max(...points);
+  const min = Math.min(...points);
+  const span = max - min || 1;
+  const stepX = (width - 6) / (points.length - 1);
+  const pts = points
+    .map((v, i) => `${3 + i * stepX},${height - 3 - ((v - min) / span) * (height - 6)}`)
+    .join(" ");
   return (
-    <svg width={84} height={22} viewBox="0 0 84 22" style={{ flex: "none" }}>
-      <polyline points={pts} fill="none" stroke={color} strokeWidth={1.5} />
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ flex: "none" }}>
+      {title && <title>{title}</title>}
+      <polyline points={pts} fill="none" stroke={color} strokeWidth={1.5}
+                strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   );
 }
@@ -171,7 +194,28 @@ export function Centered({ children }: { children: ReactNode }) {
   );
 }
 
-export function ScreenHeader({ title, right }: { title: string; right?: ReactNode }) {
+/**
+ * Every screen header reads "Screen · Product".
+ *
+ * Without the product you cannot tell, from the screen alone, which app you are
+ * looking at — and switching products changed the data underneath an unchanged
+ * heading. The product is not decoration here; it is the scope of everything
+ * below it.
+ */
+export function ScreenHeader({
+  title,
+  product,
+  subtitle,
+  right,
+  back,
+}: {
+  title: string;
+  product?: string | null;
+  subtitle?: ReactNode;
+  right?: ReactNode;
+  /** For screens reached from inside another screen rather than from the nav. */
+  back?: { label: string; onClick: () => void };
+}) {
   return (
     <div
       style={{
@@ -183,16 +227,114 @@ export function ScreenHeader({ title, right }: { title: string; right?: ReactNod
         flex: "none",
       }}
     >
-      <div style={{ fontSize: 17, fontWeight: 600 }}>{title}</div>
+      {back && (
+        <span onClick={back.onClick} className="el-btn" role="button" tabIndex={0}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") back.onClick(); }}
+          style={{ color: C.dim, cursor: "pointer", fontSize: 13, whiteSpace: "nowrap" }}>
+          ← Back to {back.label}
+        </span>
+      )}
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 17, fontWeight: 600, letterSpacing: "-0.01em" }}>
+          {title}
+          {product ? (
+            <span style={{ color: C.dim, fontWeight: 500 }}> · {product}</span>
+          ) : null}
+        </div>
+        {subtitle && (
+          <div style={{ fontFamily: mono, fontSize: 10.5, color: C.faint,
+                        letterSpacing: ".04em", marginTop: 3 }}>
+            {subtitle}
+          </div>
+        )}
+      </div>
       <div style={{ flex: 1 }} />
       {right}
     </div>
   );
 }
 
-// Deterministic sparkline seed from a slug so cards look stable.
-export function sparkFor(z: number): number[] {
-  if (z >= 3) return [4, 5, 4, 6, 7, 9, 12, 16];
-  if (z >= 2) return [8, 7, 9, 8, 10, 9, 13, 14];
-  return [9, 11, 8, 10, 9, 11, 10, 9];
+/**
+ * An empty state that names the product and the next action.
+ *
+ * "No data" tells you nothing you did not already know. Every list here says
+ * which product is empty and what to press.
+ */
+export function EmptyState({
+  title,
+  body,
+  action,
+  onAction,
+}: {
+  title: string;
+  body: ReactNode;
+  action?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <div
+      style={{
+        maxWidth: 720, padding: "34px 26px", border: `1px dashed ${C.border4}`,
+        borderRadius: 12, textAlign: "center",
+      }}
+    >
+      <div style={{ fontSize: 15, fontWeight: 600, color: C.text3 }}>{title}</div>
+      <div style={{ fontSize: 13, color: C.dim, marginTop: 7, lineHeight: 1.6,
+                    maxWidth: 480, margin: "7px auto 0" }}>
+        {body}
+      </div>
+      {action && onAction && (
+        <button onClick={onAction} className="el-btn"
+          style={{ marginTop: 16, background: "transparent", color: C.accent,
+                   border: `1px solid rgba(240,166,60,.4)`, borderRadius: 7,
+                   padding: "9px 18px", fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
+          {action}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** A failure the reader can act on, rather than a dead end. */
+export function ErrorState({
+  title = "Can't reach EchoLens",
+  detail,
+  onRetry,
+}: {
+  title?: string;
+  detail?: string;
+  onRetry?: () => void;
+}) {
+  return (
+    <div style={{ maxWidth: 720, padding: "26px 22px", border: `1px solid ${C.border3}`,
+                  borderRadius: 12, background: C.card }}>
+      <div style={{ fontSize: 14.5, fontWeight: 600, color: C.text3 }}>{title}</div>
+      <div style={{ fontSize: 13, color: C.dim, marginTop: 6, lineHeight: 1.55 }}>
+        {detail ||
+          "The backend may be waking up (the free tier sleeps after a while). Give it ~30 seconds, then retry."}
+      </div>
+      {onRetry && (
+        <button onClick={onRetry} className="el-btn"
+          style={{ marginTop: 14, background: "transparent", color: C.accent,
+                   border: `1px solid rgba(240,166,60,.4)`, borderRadius: 7,
+                   padding: "8px 16px", fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
+          Retry
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Placeholder rows while a list loads, sized like the rows they become. */
+export function Skeleton({ rows = 3, height = 74 }: { rows?: number; height?: number }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 940 }}>
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} style={{ height, borderRadius: 10, background: C.card,
+                              border: `1px solid ${C.border2}`,
+                              animation: "elSkeleton 1.4s infinite",
+                              animationDelay: `${i * 0.15}s` }} />
+      ))}
+    </div>
+  );
 }
