@@ -244,10 +244,13 @@ export default function App() {
           )}
 
           {screen === "patterns" && (
-            <Patterns key={key} onGoMemory={() => go("memory")} />
+            <Patterns key={key} onGoMemory={() => go("memory")}
+                      onGoCases={() => go("cases")} />
           )}
 
-          {screen === "calibration" && <Calibration key={key} />}
+          {screen === "calibration" && (
+            <Calibration key={key} onGoCases={() => go("cases", { tab: "needs-review" })} />
+          )}
 
           {screen === "costs" && <Costs key={key} onGoSettings={() => go("settings")} />}
 
@@ -266,10 +269,12 @@ export default function App() {
               they carry a named Back instead of a nav highlight. */}
           {screen === "plan" && (
             <Backlog key={key} onOpenInvestigation={openCase} onBack={back}
+                     onGoCases={() => go("cases")}
                      backLabel={backTarget?.label ?? "Today"} />
           )}
           {screen === "memory" && (
             <Brain key={key} onOpenInvestigation={openCase} onBack={back}
+                   onGoCases={() => go("cases")}
                    backLabel={backTarget?.label ?? "Patterns"} />
           )}
 

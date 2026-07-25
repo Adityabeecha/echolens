@@ -1,12 +1,37 @@
 import { Calibration as Cal, api } from "../api";
 import { useAsync } from "../hooks";
 import { C, mono } from "../theme";
-import { Centered, Label, ScreenHeader } from "../ui";
+import { Centered, EmptyState, ErrorState, Label, ScreenHeader } from "../ui";
 
-export function Calibration() {
-  const { data, loading, error } = useAsync(() => api.calibration(), []);
-  if (loading) return <Centered>Loading calibration…</Centered>;
-  if (error || !data) return <Centered>Backend unavailable.</Centered>;
+export function Calibration({ onGoCases }: { onGoCases: () => void }) {
+  const { data, loading, error, reload } = useAsync(() => api.calibration(), []);
+  if (loading && !data) return <Centered>Loading calibration…</Centered>;
+  if (error || !data) {
+    return (
+      <div style={{ padding: 28 }}>
+        <ErrorState title="Couldn't load calibration" onRetry={reload} />
+      </div>
+    );
+  }
+
+  // Nothing to plot until findings have been reviewed. Showing an empty chart
+  // with axes reads as "we measured, and it's zero" — which is a lie.
+  if (data.n_reviewed === 0) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+        <ScreenHeader title="Calibration" product={data.product}
+                      subtitle="STATED CONFIDENCE VS YOUR VERDICTS" />
+        <div style={{ flex: 1, overflow: "auto", padding: "22px 28px" }}>
+          <EmptyState
+            title={`No reviewed findings for ${data.product || "this product"} yet`}
+            body="This screen checks EchoLens against itself: when it says it is 80% sure, is it right 80% of the time? It needs your verdicts to do that. Approve or challenge a few findings and the curve starts here."
+            action="Review findings in Cases"
+            onAction={onGoCases}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>

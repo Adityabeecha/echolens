@@ -1,14 +1,25 @@
 import { api } from "../api";
 import { useAsync } from "../hooks";
 import { C, mono } from "../theme";
-import { Centered, Label, ScreenHeader } from "../ui";
+import { Centered, EmptyState, ErrorState, Label, ScreenHeader } from "../ui";
+
+interface Props {
+  onGoMemory: () => void;
+  onGoCases: () => void;
+}
 
 // The validated pattern library: (trigger → cause → fix) proven by confirmed
 // fixes. Earned, not asserted — each pattern is backed by fixes that worked.
-export function Patterns({ onGoMemory }: { onGoMemory: () => void }) {
-  const { data, loading, error } = useAsync(() => api.patterns(), []);
-  if (loading) return <Centered>Loading patterns…</Centered>;
-  if (error || !data) return <Centered>Backend unavailable.</Centered>;
+export function Patterns({ onGoMemory, onGoCases }: Props) {
+  const { data, loading, error, reload } = useAsync(() => api.patterns(), []);
+  if (loading && !data) return <Centered>Loading patterns…</Centered>;
+  if (error || !data) {
+    return (
+      <div style={{ padding: 28 }}>
+        <ErrorState title="Couldn't load the pattern library" onRetry={reload} />
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -32,10 +43,12 @@ export function Patterns({ onGoMemory }: { onGoMemory: () => void }) {
         </p>
 
         {data.patterns.length === 0 ? (
-          <div style={{ maxWidth: 720, marginTop: 12, padding: "28px 20px", border: `1px dashed ${C.border4}`, borderRadius: 12, textAlign: "center", color: C.dim, fontSize: 13.5 }}>
-            No verified patterns for {data.product || "this product"} yet. A pattern is earned when a fix ships and
-            EchoLens confirms the complaint went away — check back after your first confirmed fixes.
-          </div>
+          <EmptyState
+            title={`No proven patterns for ${data.product || "this product"} yet`}
+            body="A pattern is earned, not assumed: it appears once a fix ships and EchoLens confirms the complaints actually stopped. Resolve a case and file the fix, and the first one lands here."
+            action="Go to Cases"
+            onAction={onGoCases}
+          />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 820 }}>
             {data.patterns.map((p, i) => (

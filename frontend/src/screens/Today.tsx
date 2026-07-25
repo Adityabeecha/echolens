@@ -344,7 +344,7 @@ function sentence(me: PortfolioProduct): string {
     return `No feedback has been collected for ${me.product} yet — connect a source and the score starts moving.`;
   }
   if (me.score === 0) {
-    return `Nothing is demanding attention on ${me.product}: no unfixed problems, no regressions, nothing awaiting triage.`;
+    return `Nothing is demanding attention on ${me.product}: no unfixed problems, no regressions, no signals waiting on a decision.`;
   }
   const drivers = me.reasons.slice(0, 2).map((r) => r.text);
   const tail = drivers.length > 1 ? `${drivers[0]}, and ${drivers[1]}` : drivers[0];

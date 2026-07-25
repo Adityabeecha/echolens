@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api, canReview } from "../api";
 import { useAsync } from "../hooks";
 import { C, mono } from "../theme";
-import { Centered, GhostButton, Label, ScreenHeader } from "../ui";
+import { Centered, EmptyState, ErrorState, GhostButton, Label, ScreenHeader } from "../ui";
 
 const STATUS_COLOR: Record<string, string> = {
   Healthy: C.good,
@@ -53,8 +53,14 @@ export function Sources({ onAddProduct, productName }: {
     }
   };
 
-  if (loading) return <Centered>Loading sources…</Centered>;
-  if (error) return <Centered>Backend unavailable.</Centered>;
+  if (loading && !data) return <Centered>Loading sources…</Centered>;
+  if (error) {
+    return (
+      <div style={{ padding: 28 }}>
+        <ErrorState title="Couldn't load your sources" onRetry={reload} />
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -96,9 +102,12 @@ export function Sources({ onAddProduct, productName }: {
         <Label style={{ marginBottom: 12 }}>CONNECTED</Label>
         {data && data.connected.length === 0 && (
           <div style={{ maxWidth: 880, padding: "40px 24px", border: `1px dashed ${C.border4}`, borderRadius: 12, textAlign: "center" }}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: C.text3 }}>No sources connected</div>
-            <div style={{ fontSize: 13, color: C.dim, marginTop: 6 }}>
-              Connect a Play Store app or a GitHub repo to start monitoring real feedback.
+            <div style={{ fontSize: 15, fontWeight: 600, color: C.text3 }}>
+              No sources connected for {data?.product || "this product"}
+            </div>
+            <div style={{ fontSize: 13, color: C.dim, marginTop: 6, lineHeight: 1.6 }}>
+              EchoLens has nothing to read yet. Connect a Play Store app or a GitHub repo — or
+              import a CSV of reviews you already have — and collection starts immediately.
             </div>
           </div>
         )}

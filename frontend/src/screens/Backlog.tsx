@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { BacklogItem, QuarterPlan, api, canReview } from "../api";
 import { C, mono, sans } from "../theme";
-import { Bar, Centered, Label, ScreenHeader } from "../ui";
+import { Bar, Centered, EmptyState, ErrorState, Label, ScreenHeader } from "../ui";
 
 const BAND: Record<string, string> = { high: C.bad, medium: C.accent, low: C.dim };
 
 interface Props {
   onOpenInvestigation: (id: number, status?: string) => void;
+  onGoCases: () => void;
   onBack: () => void;
   backLabel: string;
 }
@@ -18,7 +19,7 @@ interface Props {
  * problem that costs a day genuinely should beat one that costs three weeks.
  * Every line shows the arithmetic that placed it there.
  */
-export function Backlog({ onOpenInvestigation, onBack, backLabel }: Props) {
+export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: Props) {
   const [plan, setPlan] = useState<QuarterPlan | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -55,8 +56,14 @@ export function Backlog({ onOpenInvestigation, onBack, backLabel }: Props) {
   };
 
   if (loading && !plan) return <Centered>Ranking your open problems…</Centered>;
-  if (error && !plan) return <Centered>{error}</Centered>;
-  if (!plan) return <Centered>Backend unavailable.</Centered>;
+  if (!plan) {
+    return (
+      <div style={{ padding: 28 }}>
+        <ErrorState title="Couldn't build a plan" detail={error ?? undefined}
+                    onRetry={() => load()} />
+      </div>
+    );
+  }
 
   const inIds = plan.proposed.map((i) => i.investigation_id);
   const outIds = plan.deferred.map((i) => i.investigation_id);
@@ -80,13 +87,12 @@ export function Backlog({ onOpenInvestigation, onBack, backLabel }: Props) {
       />
       <div style={{ flex: 1, overflow: "auto", padding: "22px 28px" }}>
         {empty ? (
-          <div style={{ maxWidth: 720, padding: "30px 22px", border: `1px dashed ${C.border4}`,
-                        borderRadius: 12, textAlign: "center", color: C.dim, fontSize: 13.5,
-                        lineHeight: 1.6 }}>
-            Nothing to plan yet — a problem enters the backlog once an investigation resolves
-            with a finding and no verified fix. Investigate something from Cases and it
-            shows up here, ranked.
-          </div>
+          <EmptyState
+            title={`Nothing to plan yet for ${plan.product || "this product"}`}
+            body="A problem enters the plan once a case resolves with a finding and no verified fix. Investigate something and it shows up here, ranked by what each engineer-day buys you."
+            action="Go to Cases"
+            onAction={onGoCases}
+          />
         ) : (
           <>
             {/* capacity + the outcome the plan projects */}

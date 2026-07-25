@@ -1,7 +1,7 @@
 import { PortfolioProduct, PortfolioTheme, TransferStats, api } from "../api";
 import { useAsync } from "../hooks";
 import { C, mono } from "../theme";
-import { Bar, Centered, Label, ScreenHeader } from "../ui";
+import { Bar, Centered, ErrorState, Label, ScreenHeader } from "../ui";
 
 // Band → the colour that carries "how much does this need me". Semantic, kept
 // separate from the amber accent so a burning product can't be confused with a
@@ -22,12 +22,18 @@ interface Props {
 // v9.0 — the one screen a PM opens before they know which product to open.
 // Attention is the scarce resource; this allocates it.
 export function Portfolio({ onOpenProduct, onOpenInvestigation, onAddProduct }: Props) {
-  const { data, loading, error } = useAsync(() => api.portfolio(), []);
+  const { data, loading, error, reload } = useAsync(() => api.portfolio(), []);
   const { data: themes } = useAsync(() => api.portfolioThemes(), []);
   const { data: brief } = useAsync(() => api.portfolioBrief(), []);
 
-  if (loading) return <Centered>Reading every product…</Centered>;
-  if (error || !data) return <Centered>Backend unavailable — the portfolio couldn't be loaded.</Centered>;
+  if (loading && !data) return <Centered>Reading every product…</Centered>;
+  if (error || !data) {
+    return (
+      <div style={{ padding: 28 }}>
+        <ErrorState title="Couldn't load your portfolio" onRetry={reload} />
+      </div>
+    );
+  }
 
   if (data.products.length === 0) {
     return (

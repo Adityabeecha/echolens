@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { BrainEdge, ChangeReview, api } from "../api";
 import { useAsync } from "../hooks";
 import { C, mono, sans } from "../theme";
-import { Bar, Centered, Label, ScreenHeader } from "../ui";
+import { Bar, Centered, EmptyState, ErrorState, Label, ScreenHeader } from "../ui";
 
 const RISK: Record<string, { color: string; label: string }> = {
   high: { color: C.bad, label: "HIGH RISK" },
@@ -14,6 +14,7 @@ interface Props {
   onOpenInvestigation: (id: number, status?: string) => void;
   onBack: () => void;
   backLabel: string;
+  onGoCases: () => void;
 }
 
 /**
@@ -21,11 +22,17 @@ interface Props {
  * the two things that map is FOR: reviewing a proposed change before it ships,
  * and answering a new PM's "what goes wrong here?" from real history.
  */
-export function Brain({ onOpenInvestigation, onBack, backLabel }: Props) {
-  const { data, loading, error } = useAsync(() => api.brain(), []);
+export function Brain({ onOpenInvestigation, onBack, backLabel, onGoCases }: Props) {
+  const { data, loading, error, reload } = useAsync(() => api.brain(), []);
 
-  if (loading) return <Centered>Reading what this product has taught EchoLens…</Centered>;
-  if (error || !data) return <Centered>Backend unavailable.</Centered>;
+  if (loading && !data) return <Centered>Reading what this product has taught EchoLens…</Centered>;
+  if (error || !data) {
+    return (
+      <div style={{ padding: 28 }}>
+        <ErrorState title="Couldn't load this product's memory" onRetry={reload} />
+      </div>
+    );
+  }
 
   const edges = data.edges;
   return (
@@ -41,13 +48,12 @@ export function Brain({ onOpenInvestigation, onBack, backLabel }: Props) {
       />
       <div style={{ flex: 1, overflow: "auto", padding: "22px 28px" }}>
         {edges.length === 0 ? (
-          <div style={{ maxWidth: 720, padding: "30px 22px", border: `1px dashed ${C.border4}`,
-                        borderRadius: 12, textAlign: "center", color: C.dim, fontSize: 13.5,
-                        lineHeight: 1.6 }}>
-            EchoLens hasn't learned this product's failure patterns yet. Each confirmed fix teaches
-            it one — "changes to X tend to cause Y". Come back after a few fixes land and this becomes
-            a map you can check proposed changes against.
-          </div>
+          <EmptyState
+            title={`EchoLens hasn't learned how ${data.product || "this product"} breaks yet`}
+            body={'Each confirmed fix teaches it one rule — "changes to X tend to cause Y". Once a few fixes land, this becomes a map you can check a proposed change against before it ships.'}
+            action="Go to Cases"
+            onAction={onGoCases}
+          />
         ) : (
           <>
             <ReviewBox />

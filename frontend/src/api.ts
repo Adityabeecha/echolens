@@ -311,22 +311,6 @@ export interface TraceStep {
   tokens: number;
   ms: number;
 }
-export interface FeedSummary {
-  investigations_today: number;
-  daily_limit: number;
-  spent_today: number;
-  product?: string | null;
-}
-export interface ArchiveRow {
-  id: string;
-  cause: string;
-  status: string;
-  conf: number;
-  human: string;
-  cost: string;
-  time: string;
-  summary: string;
-}
 export interface SourcesResp {
   connected: {
     icon: string;
@@ -617,17 +601,6 @@ export interface PortfolioTheme {
   worst: string | null;
   products: { product: string | null; rate_pct: number; mentions: number; negatives: number }[];
 }
-export interface Overview {
-  open_problems: { investigation_id: number; summary: string; impact_score: number; affected_pct: number }[];
-  open_problem_count: number;
-  in_verification: number;
-  confirmed_fixes_total: number;
-  confirmed_fixes_quarter: number;
-  regressions: number;
-  mean_days_to_confirmed_fix: number | null;
-  product?: string | null;
-  chronic_themes: ThemeLifecycle[];
-}
 
 // v7.0 chat, brief, themes
 export interface ChatCitation {
@@ -712,11 +685,9 @@ export const api = {
     }),
   collect: () => post("/collect/run"),
   scan: () => post<{ detected: string[] }>(scoped("/anomalies/scan")),
-  anomalies: () => get<{ anomalies: Anomaly[] }>(scoped("/anomalies")),
   cases: () => get<CaseView>(scoped("/cases")),
   triage: (run = false) =>
     post<{ summary?: string; skipped_already_triaged?: number }>(scoped(`/anomalies/triage?run=${run}`)),
-  feedSummary: () => get<FeedSummary>(scoped("/feed/summary")),
   investigations: () =>
     get<{ investigations: { id: number; status: string; opened_by: string; anomaly_id: number | null }[] }>(
       scoped("/investigations")
@@ -762,16 +733,13 @@ export const api = {
   portfolioBrief: () => get<PortfolioBrief>("/portfolio/brief"),
   portfolioThemes: () =>
     get<{ themes: PortfolioTheme[]; products: string[]; days: number; note: string }>("/portfolio/themes"),
-  overview: () => get<Overview>(scoped("/overview")),
   chat: (message: string) => post<ChatResponse>("/chat", { message, product_id: getActiveProduct() }),
   brief: () => get<WeeklyBrief>(scoped("/brief")),
-  themes: () => get<{ themes: ThemeLifecycle[] }>(scoped("/themes")),
   findingFollowup: (findingId: number, question: string) =>
     post<{ question: string; answer: string; investigation_id: number }>(`/findings/${findingId}/followup`, { question }),
   pause: (id: number) => post(`/investigations/${id}/pause`),
   resume: (id: number) => post(`/investigations/${id}/resume`),
   escalate: (id: number) => post(`/investigations/${id}/escalate`),
-  archive: () => get<{ rows: ArchiveRow[]; count: number; resolved_pct: number }>(scoped("/archive")),
   sources: () => get<SourcesResp>(scoped("/sources")),
   importReviews: (file: File, product?: string, source = "csv") => {
     const fd = new FormData();
