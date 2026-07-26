@@ -8,6 +8,8 @@ Identifier = the numeric App Store app id (the digits in the store URL, id######
 """
 from __future__ import annotations
 
+import hashlib
+
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -27,7 +29,14 @@ def _default_fetch(app_id: str, country: str = "us", pages: int = 4) -> list[dic
         for page in range(1, pages + 1):
             resp = c.get(RSS.format(country=country, page=page, app_id=app_id))
             if resp.status_code >= 300:
-                break
+                # A rate-limit or 5xx is NOT end-of-pages. Treating it as one
+                # made run() record a HEALTHY run and advance the watermark past
+                # reviews that were never fetched — silently skipping them for
+                # good. Raise so run() records the error and leaves the
+                # watermark where it is, and the next run retries this window.
+                raise RuntimeError(
+                    f"App Store HTTP {resp.status_code} while paging; "
+                    "stopping without advancing the watermark")
             feed = (resp.json() or {}).get("feed", {})
             page_entries = feed.get("entry", []) or []
             # the first entry on page 1 is app metadata (no im:rating) — skip those
@@ -68,7 +77,14 @@ class AppStoreCollector(Collector):
 
     def ingest_item(self, session: Session, item: dict) -> tuple[bool, str | None]:
         review_id = _label(item, "id") or ""
-        ext_id = f"as_{review_id}" if review_id else f"as_{hash(item.get('content', {}).get('label', ''))}"
+        # sha1, not builtin hash(): Python salts string hashing per PROCESS
+        # (PYTHONHASHSEED), so an id-less review got a different ext_id on every
+        # restart — dedupe never matched and the same review was re-inserted on
+        # each run, inflating the corpus the detector reasons over.
+        ext_id = (f"as_{review_id}" if review_id else
+                  "as_" + hashlib.sha1(
+                      str(item.get("content", {}).get("label", "")).encode("utf-8")
+                  ).hexdigest()[:20])
         at = _at(item)
         wm = iso(at) if at else None
         if session.scalars(select(Review).where(Review.ext_id == ext_id)).first():

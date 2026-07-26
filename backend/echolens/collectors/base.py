@@ -28,6 +28,9 @@ class CollectResult:
     fetched: int = 0
     inserted: int = 0
     skipped_duplicate: int = 0
+    # Items that raised during ingest. Reported rather than silently dropped —
+    # a run that skipped rows is not the same as one that had nothing to add.
+    failed_items: int = 0
     watermark: str | None = None
     error: str | None = None
     warnings: list[str] = field(default_factory=list)
@@ -77,7 +80,19 @@ class Collector(ABC):
             result.fetched = len(raw)
             newest = st.watermark
             for item in raw:
-                inserted, wm = self.ingest_item(session, item)
+                # One malformed item must not discard the whole page. The loop
+                # was unguarded and the watermark assignment sat AFTER it, so an
+                # exception on item 150 of 200 kept the 149 rows already added
+                # while leaving the watermark unadvanced — and if the poison item
+                # was deterministic (a malformed timestamp, say) every later run
+                # re-fetched the same window forever and never got past it.
+                try:
+                    inserted, wm = self.ingest_item(session, item)
+                except Exception as err:
+                    result.failed_items += 1
+                    log.warning("collector_item_failed", source=self.source,
+                                id=self.identifier, error=f"{type(err).__name__}: {err}")
+                    continue
                 if inserted:
                     result.inserted += 1
                 else:
@@ -88,7 +103,8 @@ class Collector(ABC):
             st.watermark = newest
             st.items_last_run = result.inserted
             st.status = "healthy"
-            st.last_error = None
+            st.last_error = (None if not result.failed_items else
+                             f"{result.failed_items} item(s) could not be ingested")
             log.info("collector_run", source=self.source, id=self.identifier,
                      fetched=result.fetched, inserted=result.inserted)
         except Exception as err:  # a broken source must not crash the app

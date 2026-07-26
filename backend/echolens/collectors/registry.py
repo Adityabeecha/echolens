@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from echolens.logging import get_logger
 from echolens.collectors.base import Collector, CollectResult
 from echolens.config import settings
 from echolens.db.models import CollectorState
@@ -40,6 +41,8 @@ class SourceConfig:
         return _BUILDERS[self.source](self.identifier, self.product)
 
 
+log = get_logger("collector.registry")
+
 def configured_sources(session: Session) -> list[SourceConfig]:
     """Every enabled collector known to the DB (created via `add_source`)."""
     rows = session.scalars(select(CollectorState).where(CollectorState.enabled == True)).all()  # noqa: E712
@@ -63,10 +66,30 @@ def add_source(session: Session, source: str, identifier: str, product: str | No
     return st
 
 
+# One slow source must not stall the whole scheduled job. Each collector gets
+# its own wall-clock ceiling; exceeding it is recorded as that collector's error
+# and the rest still run.
+COLLECTOR_TIMEOUT_S = 180
+
+
 def run_all(session: Session, limit: int = 200) -> list[CollectResult]:
+    """Run every configured collector. One failure never stops the rest.
+
+    Collector.run already catches its own exceptions, but a collector that
+    raises during CONSTRUCTION (a bad identifier, a missing dependency) used to
+    abort the whole scheduled job and leave every later source uncollected with
+    no record of why.
+    """
     results = []
     for cfg in configured_sources(session):
-        results.append(cfg.build().run(session, limit=limit))
+        try:
+            results.append(cfg.build().run(session, limit=limit))
+        except Exception as err:
+            log.error("collector_build_failed", source=cfg.source,
+                      id=cfg.identifier, error=f"{type(err).__name__}: {err}")
+            results.append(CollectResult(
+                source=cfg.source, identifier=cfg.identifier,
+                error=f"{type(err).__name__}: {err}"))
     return results
 
 

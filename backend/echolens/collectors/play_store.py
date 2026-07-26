@@ -40,19 +40,34 @@ class PlayStoreCollector(Collector):
         fetch = self._fetch_fn or (lambda: _default_fetch(self.identifier, limit))
         raw = fetch() if callable(fetch) else fetch
         if since:  # keep only reviews strictly newer than the watermark
-            cutoff = datetime.fromisoformat(since)
-            raw = [r for r in raw if _at(r) and _at(r) > cutoff]
-        return raw
+            cutoff = _aware(datetime.fromisoformat(since))
+            # Parse ONCE per item, not twice, and compare aware-to-aware. _at()
+            # used to return a NAIVE datetime for the string branch while the
+            # watermark iso() always writes an aware one, so the comparison
+            # raised TypeError — and because run() catches that and never
+            # advances the watermark, EVERY subsequent run failed identically
+            # and the collector was wedged forever.
+            dated = [(r, _at(r)) for r in raw]
+            raw = [r for r, at in dated if at is not None and at > cutoff]
+        # `limit` is honoured after filtering. It was passed in and then ignored,
+        # so a run had no bound on how much it ingested (app_store.py:67 does
+        # this correctly).
+        return raw[:limit] if limit else raw
 
     def ingest_item(self, session: Session, item: dict) -> tuple[bool, str | None]:
         ext_id = f"gp_{item.get('reviewId')}"
+        if item.get("score") in (None, ""):
+            return False, None      # unrated: cannot tell praise from complaint
         at = _at(item)
         wm = iso(at) if at else None
         if session.scalars(select(Review).where(Review.ext_id == ext_id)).first():
             return False, wm
         session.add(Review(
             source="play_store", ext_id=ext_id,
-            rating=int(item.get("score") or 0),
+            # A missing score must not become 0: every negativity filter is
+            # `rating <= 2`, so 0 reads as the most negative value possible.
+            # Skip the row instead of inventing a complaint.
+            rating=int(item["score"]),
             text=(item.get("content") or "").strip(),
             version=item.get("reviewCreatedVersion"),
             os_version=None,
@@ -62,13 +77,21 @@ class PlayStoreCollector(Collector):
         return True, wm
 
 
+def _aware(dt: datetime | None) -> datetime | None:
+    """UTC-aware, always. Mixing naive and aware datetimes is a TypeError at
+    comparison time, and this module compares timestamps to a watermark."""
+    if dt is None:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 def _at(item: dict) -> datetime | None:
     v = item.get("at")
     if isinstance(v, datetime):
-        return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+        return _aware(v)
     if isinstance(v, str):
         try:
-            return datetime.fromisoformat(v)
+            return _aware(datetime.fromisoformat(v))
         except ValueError:
             return None
     return None

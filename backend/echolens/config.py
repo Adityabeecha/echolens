@@ -47,6 +47,13 @@ SUPPORT_CONFIDENCE = 0.80          # resolved requires >= this AND two-source ru
 INSUFFICIENT_CONFIDENCE = 0.50     # below this at budget end -> insufficient_evidence
 MIN_INDEPENDENT_EVIDENCE = 2       # two-source rule: >=2 items ...
 MIN_DISTINCT_SOURCES = 2           # ... from >=2 distinct sources
+# Word-set overlap above which two evidence snippets are treated as the SAME
+# report cross-posted, not two independent witnesses. Deliberately high: only
+# near-identical text should collapse.
+CROSS_POST_SIMILARITY = 0.85
+# ...and only for snippets long enough for that overlap to mean something. Two
+# very short quotes sharing their few words are not one person posting twice.
+MIN_CROSS_POST_WORDS = 5
 
 # v2.0 budget extension: if the agent is THIS close at budget end, grant one
 # extra allowance rather than giving up (capped, logged, once).

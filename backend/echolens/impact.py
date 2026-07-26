@@ -141,10 +141,15 @@ def _cross_source_impact(session, terms, product, start, end) -> dict:
             "channels": channels,
             "distinct_channels": len(channels),
         }
-    except Exception:
-        # impact must survive a missing/!empty feedback layer
+    except Exception as err:
+        # Impact must survive a missing feedback layer — but a hard zero is
+        # indistinguishable from "genuinely nobody else reported this", and it
+        # is rendered as fact. Say it is unknown, and LOG it: this silently
+        # swallowed real query and normalisation failures.
+        from echolens.logging import get_logger
+        get_logger("impact").warning("cross_source_failed", error=str(err))
         return {"witnesses": 0, "raw_mentions": 0, "collapsed_duplicates": 0,
-                "channels": [], "distinct_channels": 0}
+                "channels": [], "distinct_channels": 0, "measured": False}
 
 
 def _blast_radius(session, terms, recent_start, product: str | None = None) -> dict:

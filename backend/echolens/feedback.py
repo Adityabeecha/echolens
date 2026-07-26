@@ -243,6 +243,15 @@ def corroboration(items: list[FeedbackItem]) -> dict:
     by_channel: dict[str, list[FeedbackItem]] = {}
     for it in kept:
         by_channel.setdefault(it.channel, []).append(it)
+        # Credit the channels a COLLAPSED duplicate came from as well.
+        # dedupe_witnesses records them in also_seen_in and this never read it,
+        # so one person reporting the same thing on GitHub and in support scored
+        # distinct_channels = 1 and was labelled "single-source" — while
+        # impact._cross_source_impact, reading the same data, correctly unioned
+        # also_seen_in and reported 2. Two modules, one dataset, two answers.
+        for extra in (it.meta.get("also_seen_in") or []):
+            if extra != it.channel:
+                by_channel.setdefault(extra, []).append(it)
 
     per_channel = {}
     miss = 1.0

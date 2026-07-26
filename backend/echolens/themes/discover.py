@@ -563,8 +563,16 @@ def _fingerprint(session: Session, product: str | None, days: int, as_of: dateti
     """Cheap corpus signature: re-running discovery is expensive (embeddings + an
     LLM call), so it must happen on NEW DATA, not on every page load."""
     rows = _candidates(session, product, days, as_of)
-    newest = max((aware_utc(r.created_at) for r in rows if r.created_at), default=None)
-    return f"{len(rows)}:{newest.isoformat() if newest else 'none'}"
+    stamps = [aware_utc(r.created_at) for r in rows if r.created_at]
+    newest = max(stamps, default=None)
+    # Include the OLDEST timestamp and the id range as well as the count and the
+    # newest. This was just f"{len(rows)}:{newest}", and the window ROLLS — one
+    # old row ageing out as one backfilled row arrives leaves both the count and
+    # the newest timestamp identical, so genuinely changed data served stale
+    # themes from cache.
+    oldest = min(stamps, default=None)
+    ids = [r.id for r in rows]
+    return f"{len(rows)}:{newest}:{oldest}:{min(ids, default=0)}:{max(ids, default=0)}"
 
 
 def cached_themes(session: Session, product: str | None, *, llm=None, days: int = WINDOW_DAYS,
@@ -574,7 +582,7 @@ def cached_themes(session: Session, product: str | None, *, llm=None, days: int 
     from echolens.detector.detect import reference_now
 
     now = as_of or reference_now(session, product)
-    key = f"themes:{product or '_'}:{days}"
+    key = f"themes:{product or '_'}:{days}:{limit}:{package_name or '_'}"
     fp = _fingerprint(session, product, days, now)
 
     if not force:

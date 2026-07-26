@@ -2222,15 +2222,33 @@ def _money(x: float) -> str:
     return f"${x:.4f}" if 0 < x < 1 else f"${x:.2f}"
 
 
-def _cost_by_investigation(session) -> dict[int, dict]:
+def _cost_by_investigation(session, product_id: int | None = None) -> dict[int, dict]:
+    """Per-case cost, aggregated in SQL and scoped to one product.
+
+    This pulled EVERY row of llm_calls and EVERY investigation into Python on
+    each call — unbounded, unscoped, and /costs/summary invoked it alongside
+    _product_llm_calls so the full history was loaded twice per request.
+    """
+    from sqlalchemy import func as _func
+
+    inv_stmt = select(Investigation)
+    if product_id is not None:
+        inv_stmt = inv_stmt.where(Investigation.product_id == product_id)
+    investigations = list(session.scalars(inv_stmt).all())
+    inv_ids = [i.id for i in investigations]
+
     agg: dict[int, dict] = {}
-    for c in session.scalars(select(LLMCall)).all():
-        if c.investigation_id is None:
-            continue
-        a = agg.setdefault(c.investigation_id, {"cost": 0.0, "tokens": 0, "queries": 0})
-        a["cost"] += c.cost
-        a["tokens"] += c.tokens_in + c.tokens_out
-    for inv in session.scalars(select(Investigation)).all():
+    if inv_ids:
+        totals = session.execute(
+            select(LLMCall.investigation_id,
+                   _func.sum(LLMCall.cost),
+                   _func.sum(LLMCall.tokens_in + LLMCall.tokens_out))
+            .where(LLMCall.investigation_id.in_(inv_ids))
+            .group_by(LLMCall.investigation_id)
+        ).all()
+        for inv_id, cost, tokens in totals:
+            agg[inv_id] = {"cost": float(cost or 0.0), "tokens": int(tokens or 0), "queries": 0}
+    for inv in investigations:
         a = agg.setdefault(inv.id, {"cost": 0.0, "tokens": 0, "queries": 0})
         a["queries"] = int(str(inv.budget_json.get("tool_calls", "0/0")).split("/")[0])
         a["duration"], a["duration_flagged"] = _case_duration(inv)
@@ -2308,7 +2326,7 @@ def archive(product_id: int | None = None, user: dict = Depends(current_user)) -
     with session_scope() as session:
         p = _scope(session, product_id)
         pid = p.id if p else None
-        costs = _cost_by_investigation(session)
+        costs = _cost_by_investigation(session, pid)
         rows = []
         resolved_approved = 0
         stmt = select(Investigation).order_by(Investigation.id.desc())
@@ -2430,7 +2448,7 @@ def costs_summary(product_id: int | None = None, user: dict = Depends(current_us
         pid = p.id if p else None
         calls = _product_llm_calls(session, pid)
         invs = _product_investigations(session, pid)
-        costs = _cost_by_investigation(session)
+        costs = _cost_by_investigation(session, pid)
         resolved = [i for i in invs if i.status == "resolved"]
         dead = [i for i in invs if i.status in ("insufficient_evidence", "budget_exhausted")]
         spent_today = sum(c.cost for c in calls if c.created_at and c.created_at.date() == _today())

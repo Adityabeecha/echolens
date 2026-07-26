@@ -283,16 +283,32 @@ class Investigator:
         existing = {h["id"]: h for h in state["hypotheses"]}
         merged: list[dict] = []
         active = 0
+        # Fall back to matching on the STATEMENT when an id is new. The prompt
+        # asks for "the FULL revised list", so a model renumbering H2 -> H3 is
+        # realistic — and `existing.get(hid, {})` then returned {} and silently
+        # dropped every accumulated evidence link. The evidence rows survived in
+        # state and in the DB, but the hypothesis no longer cited them, so
+        # two_source_rule saw zero items and it could never resolve.
+        by_statement = {
+            (h.get("statement") or "").strip().lower(): h
+            for h in state["hypotheses"] if (h.get("statement") or "").strip()
+        }
         for p in proposed:
             hid = p.get("id") or f"H{len(merged) + 1}"
-            old = existing.get(hid, {})
+            statement = p.get("statement", "")
+            old = existing.get(hid) or by_statement.get(statement.strip().lower(), {})
             status = p.get("status", "active")
             if status == "supported":  # only the check guard can grant this
                 status = "active"
             if status == "active":
                 active += 1
                 if active > MAX_ACTIVE_HYPOTHESES:
-                    continue
+                    # Park it, do not DELETE it. `continue` skipped the append
+                    # entirely, so a 5th active hypothesis that had already
+                    # accumulated evidence vanished from loop state — while
+                    # _persist_hypotheses only ever updates or inserts, leaving
+                    # a stale DB row that then diverged permanently.
+                    status = "parked"
             merged.append({
                 "id": hid,
                 "statement": p.get("statement", old.get("statement", "")),
@@ -452,6 +468,12 @@ class Investigator:
         if len(a) < 3:
             return None
         for e in evidence:
+            # Same-source only, deliberately. MERGING across sources would be
+            # worse than the bug: it discards the second channel entirely and
+            # destroys the corroboration signal the two-source rule depends on.
+            # The real risk — one person cross-posting the same text — is
+            # handled in two_source_rule, which now requires the copies to be
+            # textually distinct as well as differently-sourced.
             if e["source"] != source:
                 continue
             b = set(tokenize(e["snippet"]))

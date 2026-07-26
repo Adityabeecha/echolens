@@ -114,17 +114,27 @@ class _SparkIndex:
             self.rows = []
             return
         stmt = stmt.where(Review.product == product)
-        self.rows = [(text.lower(), created) for text, created in session.execute(stmt)
-                     if text and created]
+        rows = list(session.execute(stmt))
+        # ORDER BY created_at DESC + LIMIT keeps the NEWEST rows, so on a busy
+        # product the oldest weeks were cut entirely and their buckets read 0 —
+        # drawing a dramatic rise from nothing that was purely an artifact of
+        # the cap. If we hit the cap we cannot see the whole window, so we
+        # refuse to draw rather than draw something false.
+        self.truncated = len(rows) >= SPARK_REVIEW_CAP
+        self.rows = [] if self.truncated else [
+            (text.lower(), created) for text, created in rows if text and created]
 
     def series(self, terms: list[str]) -> list[int] | None:
         if not terms or not self.rows:
             return None
-        needles = [t.lower() for t in terms]
+        # Word-boundary matching. Plain `n in text` meant "app" matched "happy"
+        # and "apply", so a sparkline could be drawn almost entirely from
+        # coincidental substrings.
+        needles = [re.compile(r"\b" + re.escape(t.lower())) for t in terms if t]
         buckets = [0] * SPARK_WEEKS
         hit = False
         for text, created in self.rows:
-            if not any(n in text for n in needles):
+            if not any(n.search(text) for n in needles):
                 continue
             weeks_ago = int((self.now - aware_utc(created)).days // 7)
             if 0 <= weeks_ago < SPARK_WEEKS:
@@ -225,13 +235,33 @@ def case_rows(session: Session, product_id: int | None,
     stmt = select(Investigation).order_by(Investigation.id.desc())
     if product_id is not None:
         stmt = stmt.where(Investigation.product_id == product_id)
+    investigations = list(session.scalars(stmt).all())
+
+    # Three bulk queries instead of three PER CASE. This was 4 SQL round trips
+    # per case — 243 queries for 60 cases, on the two most-loaded screens in the
+    # app (Today and Cases both call it).
+    inv_ids = [i.id for i in investigations]
+    latest_finding: dict[int, Finding] = {}
+    latest_watch: dict[int, FixWatch] = {}
+    anomalies: dict[int, AnomalyEvent] = {}
+    if inv_ids:
+        for f in session.scalars(select(Finding).where(
+                Finding.investigation_id.in_(inv_ids)).order_by(Finding.id)).all():
+            latest_finding[f.investigation_id] = f     # ascending: last wins
+        for w in session.scalars(select(FixWatch).where(
+                FixWatch.investigation_id.in_(inv_ids)).order_by(FixWatch.id)).all():
+            latest_watch[w.investigation_id] = w
+        a_ids = [i.anomaly_id for i in investigations if i.anomaly_id]
+        if a_ids:
+            for a in session.scalars(select(AnomalyEvent).where(
+                    AnomalyEvent.id.in_(a_ids))).all():
+                anomalies[a.id] = a
+
     rows: list[dict] = []
-    for inv in session.scalars(stmt).all():
-        finding = session.scalars(select(Finding).where(
-            Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
-        watch = session.scalars(select(FixWatch).where(
-            FixWatch.investigation_id == inv.id).order_by(FixWatch.id.desc())).first()
-        anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv.anomaly_id else None
+    for inv in investigations:
+        finding = latest_finding.get(inv.id)
+        watch = latest_watch.get(inv.id)
+        anomaly = anomalies.get(inv.anomaly_id) if inv.anomaly_id else None
         status, why = derive_status(inv, finding, watch)
 
         fj = (finding.json or {}) if finding is not None else {}
@@ -312,19 +342,35 @@ def signal_rows(session: Session, product_id: int | None,
     stmt = select(AnomalyEvent).where(AnomalyEvent.merged_into_id.is_(None))
     if product_id is not None:
         stmt = stmt.where(AnomalyEvent.product_id == product_id)
+    anomalies = list(session.scalars(stmt.order_by(AnomalyEvent.id.desc())).all())
+    if not anomalies:
+        return []
+
+    # Three bulk lookups instead of three PER ANOMALY. On a product with a long
+    # detection history this was the other half of the /cases N+1.
+    a_ids = [a.id for a in anomalies]
+    has_case = {
+        i.anomaly_id for i in session.scalars(
+            select(Investigation).where(Investigation.anomaly_id.in_(a_ids))).all()
+    }
+    committed = {
+        q.anomaly_id for q in session.scalars(
+            select(QueuedInvestigation).where(
+                QueuedInvestigation.anomaly_id.in_(a_ids),
+                QueuedInvestigation.status.in_(("queued", "running")))).all()
+    }
+    decisions: dict[int, TriageDecision] = {}
+    for td_row in session.scalars(select(TriageDecision).where(
+            TriageDecision.anomaly_id.in_(a_ids)).order_by(TriageDecision.id)).all():
+        decisions[td_row.anomaly_id] = td_row      # ascending: last wins
+
     out = []
-    for a in session.scalars(stmt.order_by(AnomalyEvent.id.desc())).all():
-        inv = session.scalars(select(Investigation).where(
-            Investigation.anomaly_id == a.id).order_by(Investigation.id.desc())).first()
-        if inv is not None:
+    for a in anomalies:
+        if a.id in has_case:
             continue  # it grew into a case; it belongs in the case list
-        queued = session.scalars(select(QueuedInvestigation).where(
-            QueuedInvestigation.anomaly_id == a.id,
-            QueuedInvestigation.status.in_(("queued", "running")))).first()
-        if queued is not None:
+        if a.id in committed:
             continue  # already committed to
-        td = session.scalars(select(TriageDecision).where(
-            TriageDecision.anomaly_id == a.id).order_by(TriageDecision.id.desc())).first()
+        td = decisions.get(a.id)
         dismissed = td is not None and td.decision in ("ignore", "merge")
         out.append({
             "slug": a.slug,

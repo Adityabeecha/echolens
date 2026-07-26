@@ -8,6 +8,8 @@ import re
 
 from echolens.config import (
     INSUFFICIENT_CONFIDENCE,
+    CROSS_POST_SIMILARITY,
+    MIN_CROSS_POST_WORDS,
     MIN_DISTINCT_SOURCES,
     MIN_INDEPENDENT_EVIDENCE,
     SUPPORT_CONFIDENCE,
@@ -20,6 +22,12 @@ CAUSAL_MARKERS = re.compile(
     re.IGNORECASE,
 )
 EVIDENCE_REF = re.compile(r"\bev_\d+\b")
+
+# Sentence boundary for the claim-grounding scan: terminal punctuation OR a line
+# break. Punctuation alone treated a block of newline-separated prose as ONE
+# sentence, so a single inline citation anywhere in it grounded every causal
+# claim in the block.
+SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
 
 
 def budget_exceeded(budget: Budget) -> list[str]:
@@ -62,14 +70,52 @@ def bayesian_update(prior: float, likelihood_label: str) -> float:
     return round(min(max(posterior, 0.01), 0.99), 3)
 
 
+def _fingerprint(text: str) -> str:
+    """Normalised word set, for spotting the same complaint posted twice."""
+    words = sorted(set(re.sub(r"[^a-z0-9 ]+", " ", (text or "").lower()).split()))
+    return " ".join(words)
+
+
 def two_source_rule(hypothesis: dict, evidence: list[dict]) -> bool:
     """`supported` requires >=2 independent evidence items from >=2 distinct
-    sources (PRD §5.2). Anything less stays `active` at best."""
+    sources (PRD §5.2). Anything less stays `active` at best.
+
+    "Independent" now means textually distinct as well as differently-sourced.
+    A vocal user who files a GitHub issue AND posts the same words as a review
+    produced two items from two sources, which satisfied both halves of this
+    rule — unlocking `resolved` at >=0.80 confidence on one person saying one
+    thing twice. Near-identical text is collapsed here rather than at evidence
+    intake, because merging it there would DISCARD the second channel and
+    destroy the corroboration signal this rule exists to measure.
+    """
     by_id = {e["id"]: e for e in evidence}
     items = [by_id[eid] for eid in hypothesis.get("evidence_for", []) if eid in by_id]
     if len(items) < MIN_INDEPENDENT_EVIDENCE:
         return False
-    return len({e["source"] for e in items}) >= MIN_DISTINCT_SOURCES
+
+    distinct: list[dict] = []
+    seen: list[set[str]] = []
+    for e in items:
+        words = set(_fingerprint(e.get("snippet", "")).split())
+        # Too short to judge. Cross-post detection needs enough words to be a
+        # real signal — two brief snippets that happen to share their few words
+        # are not evidence of the same person posting twice, and treating them
+        # as such would silently weaken the two-source rule rather than sharpen it.
+        if len(words) < MIN_CROSS_POST_WORDS:
+            distinct.append(e)
+            continue
+        # Jaccard over word sets: the same sentence re-posted scores ~1.0.
+        dup = any(
+            len(words & prior) / max(1, len(words | prior)) >= CROSS_POST_SIMILARITY
+            for prior in seen
+        )
+        if not dup:
+            distinct.append(e)
+            seen.append(words)
+
+    if len(distinct) < MIN_INDEPENDENT_EVIDENCE:
+        return False
+    return len({e["source"] for e in distinct}) >= MIN_DISTINCT_SOURCES
 
 
 def resolvable_hypothesis(hypotheses: list[dict], evidence: list[dict]) -> dict | None:
@@ -109,8 +155,12 @@ def classify_end_state(hypotheses: list[dict]) -> tuple[str, str]:
 def unsupported_claims(prose: str, evidence_ids: set[str]) -> list[str]:
     """Claim-grounding scan (Closebrief-guard analog): every causal sentence
     must reference at least one evidence id that actually exists."""
+    # Split on newlines as well as sentence punctuation. Prose that uses line
+    # breaks without terminal punctuation was treated as ONE sentence, so a
+    # single inline citation anywhere in the block grounded every causal claim
+    # in it.
     violations = []
-    for sentence in re.split(r"(?<=[.!?])\s+", prose):
+    for sentence in re.split(SENTENCE_SPLIT, prose):
         if not sentence.strip() or not CAUSAL_MARKERS.search(sentence):
             continue
         refs = set(EVIDENCE_REF.findall(sentence))
