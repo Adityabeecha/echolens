@@ -631,6 +631,15 @@ class ProductBody(BaseModel):
 
 @app.post("/products")
 def create_product(body: ProductBody, user: dict = Depends(require_role("admin"))) -> dict:
+    """Admin-only, deliberately.
+
+    A product is a billing and scope boundary, not a document. Creating one
+    attaches collectors that keep pulling every few hours and opens a new
+    corpus that investigations run against — an ongoing commitment on the
+    workspace owner's API key, not a single action. `reviewer` is "can act on
+    the work" (investigate, approve, challenge); `admin` is "can change what
+    the system watches and what it costs".
+    """
     from echolens.db.models import Product
     name = body.name.strip()
     if not name:
@@ -861,7 +870,11 @@ class OnboardBody(BaseModel):
 @app.post("/onboard")
 def onboard(body: OnboardBody, user: dict = Depends(require_role("admin"))) -> dict:
     """Add a real product in one shot: validate the inputs, register the sources,
-    and kick off a hands-off backfill. The wizard then polls /onboard/status."""
+    and kick off a hands-off backfill. The wizard then polls /onboard/status.
+
+    Admin for the same reason as POST /products, which this is a superset of:
+    it also registers recurring collectors and starts a 90-day backfill.
+    """
     from echolens.collectors.registry import add_source
     from echolens.onboarding.validate import normalize_github_repo, validate_play_store_package
 

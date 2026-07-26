@@ -116,21 +116,7 @@ export function Today({
       />
 
       <ScreenBody>
-        {isGuest() && (
-          <div style={{ display: "flex", alignItems: "center", gap: S[3], flexWrap: "wrap",
-                        maxWidth: MEASURE, marginBottom: S[5], padding: `${S[3]} ${S[4]}`,
-                        background: C.bgRaised, border: `1px solid ${C.border2}`,
-                        borderRadius: R.card, fontSize: T.sm, color: C.muted }}>
-            <Icon name="info" size={14} style={{ color: C.info, flex: "none" }} />
-            <span style={{ flex: 1, minWidth: 220 }}>
-              You're exploring a demo product. Sign in to connect your own app and
-              run investigations on it.
-            </span>
-            {onSignIn && (
-              <Button variant="ghost" size="sm" onClick={onSignIn}>Sign in</Button>
-            )}
-          </div>
-        )}
+        <AccessNote onSignIn={onSignIn} />
         {cases.error ? (
           <ErrorState onRetry={cases.reload} />
         ) : (
@@ -283,6 +269,37 @@ export function Today({
           </>
         )}
       </ScreenBody>
+    </div>
+  );
+}
+
+/**
+ * One line explaining why "Add a product" is not on this screen.
+ *
+ * A control that is simply absent reads as a missing feature. A guest needs to
+ * know an account unlocks it; a reviewer needs to know it is admin-only, which
+ * is otherwise invisible — the button vanishes with no explanation, and the
+ * only way to find out is to ask.
+ */
+function AccessNote({ onSignIn }: { onSignIn?: () => void }) {
+  const guest = isGuest();
+  // Admins have the button, so they need no explanation.
+  if (isAdmin()) return null;
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: S[3], flexWrap: "wrap",
+                  maxWidth: MEASURE, marginBottom: S[5], padding: `${S[3]} ${S[4]}`,
+                  background: C.bgRaised, border: `1px solid ${C.border2}`,
+                  borderRadius: R.card, fontSize: T.sm, color: C.muted }}>
+      <Icon name="info" size={14} style={{ color: C.info, flex: "none" }} />
+      <span style={{ flex: 1, minWidth: 220 }}>
+        {guest
+          ? "You're exploring a demo product. Sign in to connect your own app and run investigations on it."
+          : "Connecting a new product is admin-only — it attaches collectors that keep pulling, so it stays with the workspace owner. You can investigate and review everything here."}
+      </span>
+      {guest && onSignIn && (
+        <Button variant="ghost" size="sm" onClick={onSignIn}>Sign in</Button>
+      )}
     </div>
   );
 }
