@@ -141,6 +141,7 @@ export function Sidebar({
   screen, go, onLogout, products = [], activeId = null,
   onSwitchProduct, onAddProduct, onDeleteProduct
 }: Props) {
+  const admin = isAdmin();
   // The System group opens itself when you are inside it, so you are never on a
   // screen the nav claims you are not on.
   const [systemOpen, setSystemOpen] = useState(false);
@@ -207,10 +208,25 @@ export function Sidebar({
         </button>
       )}
 
-      {products.length > 0 && onSwitchProduct && (
+      {products.length > 0 && onSwitchProduct ? (
         <ProductSwitcher products={products} activeId={activeId}
                          onSwitch={onSwitchProduct} onAdd={onAddProduct}
                          onDelete={onDeleteProduct} />
+      ) : (
+        /* With no products the switcher has nothing to switch between, so it
+           used to render nothing at all — taking the only "Add a product"
+           button in the app with it. An admin who dismissed onboarding was
+           then left with an empty app and no way back into it. */
+        onAddProduct && admin ? (
+          <button
+            onClick={onAddProduct}
+            className="el-btn el-btn--ghost el-nav-wide"
+            style={{ margin: `0 ${S[3]} ${S[3]}`, width: `calc(100% - 2 * ${S[3]})` }}
+          >
+            <Icon name="plus" size={14} />
+            Add a product
+          </button>
+        ) : null
       )}
 
       <div className="el-nav-primary"
