@@ -256,6 +256,10 @@ export default function App() {
               onGoCases={(tab) => go("cases", tab && tab !== "all" ? { tab } : undefined)}
               onGoSources={() => go("sources")}
               onGoPlan={() => go("plan")}
+              onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
+              // A guest signing in is a sign-OUT of the guest visit: it clears
+              // the guest flag and returns to the door.
+              onSignIn={logout}
               reloadKey={reloadKey}
               bumpReload={bumpReload}
             />

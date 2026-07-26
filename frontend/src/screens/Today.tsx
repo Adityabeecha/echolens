@@ -1,5 +1,5 @@
 import { ReactNode, useState } from "react";
-import { CaseRow, PortfolioProduct, api } from "../api";
+import { CaseRow, PortfolioProduct, api, isAdmin, isGuest } from "../api";
 import { CaseCard } from "../components/CaseCard";
 import { withToast } from "../components/Toast";
 import { plural } from "../format";
@@ -17,6 +17,10 @@ interface Props {
   onGoCases: (tab?: string) => void;
   onGoSources: () => void;
   onGoPlan: () => void;
+  /** Opens the add-product overlay. Admin-only; absent for everyone else. */
+  onAddProduct?: () => void;
+  /** Returns a guest to the sign-in screen. */
+  onSignIn?: () => void;
   reloadKey: number;
   bumpReload: () => void;
 }
@@ -34,7 +38,8 @@ interface Props {
  * the bottom of Cases where they can be triaged in a batch.
  */
 export function Today({
-  productName, onOpenCase, onGoCases, onGoSources, onGoPlan, reloadKey, bumpReload
+  productName, onOpenCase, onGoCases, onGoSources, onGoPlan, onAddProduct, onSignIn,
+  reloadKey, bumpReload
 }: Props) {
   const cases = useAsync(() => api.cases(), [reloadKey]);
   const portfolio = useAsync(() => api.portfolio(), [reloadKey]);
@@ -87,20 +92,45 @@ export function Today({
         product={product}
         subtitle="What needs you right now"
         right={
-          <span style={{ display: "inline-flex", alignItems: "center", gap: S[2],
-                         fontFamily: mono, fontSize: T.xs, color: C.muted }}>
-            {running.length > 0 && (
-              <span aria-hidden style={{ width: 6, height: 6, borderRadius: "50%",
-                            background: C.accent, animation: "elPulse 1.6s infinite" }} />
+          <span style={{ display: "inline-flex", alignItems: "center", gap: S[4] }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: S[2],
+                           fontFamily: mono, fontSize: T.xs, color: C.muted }}>
+              {running.length > 0 && (
+                <span aria-hidden style={{ width: 6, height: 6, borderRadius: "50%",
+                              background: C.accent, animation: "elPulse 1.6s infinite" }} />
+              )}
+              {running.length > 0
+                ? `${running.length} ${plural(running.length, "investigation")} running`
+                : "nothing running"}
+            </span>
+            {/* Out in the open, not buried in the product switcher's dropdown:
+                adding a product is the main thing an owner comes here to do
+                when the workspace is thin. */}
+            {onAddProduct && isAdmin() && (
+              <Button variant="ghost" size="sm" icon="plus" onClick={onAddProduct}>
+                Add a product
+              </Button>
             )}
-            {running.length > 0
-              ? `${running.length} ${plural(running.length, "investigation")} running`
-              : "nothing running"}
           </span>
         }
       />
 
       <ScreenBody>
+        {isGuest() && (
+          <div style={{ display: "flex", alignItems: "center", gap: S[3], flexWrap: "wrap",
+                        maxWidth: MEASURE, marginBottom: S[5], padding: `${S[3]} ${S[4]}`,
+                        background: C.bgRaised, border: `1px solid ${C.border2}`,
+                        borderRadius: R.card, fontSize: T.sm, color: C.muted }}>
+            <Icon name="info" size={14} style={{ color: C.info, flex: "none" }} />
+            <span style={{ flex: 1, minWidth: 220 }}>
+              You're exploring a demo product. Sign in to connect your own app and
+              run investigations on it.
+            </span>
+            {onSignIn && (
+              <Button variant="ghost" size="sm" onClick={onSignIn}>Sign in</Button>
+            )}
+          </div>
+        )}
         {cases.error ? (
           <ErrorState onRetry={cases.reload} />
         ) : (

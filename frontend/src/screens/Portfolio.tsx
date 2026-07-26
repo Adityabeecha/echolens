@@ -1,4 +1,4 @@
-import { PortfolioProduct, PortfolioTheme, TransferStats, api } from "../api";
+import { PortfolioProduct, PortfolioTheme, TransferStats, api, isAdmin } from "../api";
 import { useAsync } from "../hooks";
 import { C, MEASURE, R, S, T, mono } from "../theme";
 import { Bar, Centered, ErrorState, Label, ScreenHeader } from "../ui";
@@ -47,7 +47,7 @@ export function Portfolio({ onOpenProduct, onOpenInvestigation, onAddProduct }: 
               Connect an app and EchoLens starts watching its feedback. Add a second one and this screen
               starts ranking them for you.
             </div>
-            {onAddProduct && (
+            {onAddProduct && isAdmin() && (
               <button onClick={onAddProduct} className="el-btn el-btn--primary"
                 style={{ borderRadius: R.control,
                          padding: `${S[2]} ${S[4]}`, fontWeight: 600, fontSize: T.base }}>

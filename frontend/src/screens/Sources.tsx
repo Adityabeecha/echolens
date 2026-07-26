@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, canReview } from "../api";
+import { api, canReview, isAdmin } from "../api";
 import { useAsync } from "../hooks";
 import { C, MEASURE, R, S, T, mono } from "../theme";
 import { Centered, EmptyState, ErrorState, GhostButton, Label, ScreenHeader } from "../ui";
@@ -80,7 +80,7 @@ export function Sources({ onAddProduct, productName }: {
                 style={{ background: "transparent", color: C.muted, border: `1px solid ${C.border3}`, borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base }}>
                 Import CSV
               </button>
-              {onAddProduct && (
+              {onAddProduct && isAdmin() && (
                 <button onClick={onAddProduct} className="el-btn el-btn--primary"
                   style={{ borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base, fontWeight: 600 }}>
                   Add a product

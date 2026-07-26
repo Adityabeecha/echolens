@@ -90,7 +90,9 @@ function ProductSwitcher({ products, activeId, onSwitch, onAdd, onDelete }: {
               )}
             </div>
           ))}
-          {onAdd && (
+          {/* Admin-only: creating a product is an admin route, so offering it
+              to a guest or viewer is offering a button the server refuses. */}
+          {onAdd && admin && (
             <button onClick={() => { setOpen(false); onAdd(); }}
               className="el-btn"
               style={{ padding: `${S[2]} ${S[3]}`, fontSize: T.sm, color: C.muted,
