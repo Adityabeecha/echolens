@@ -442,6 +442,50 @@ def auth_login(body: LoginBody, request: Request) -> dict:
         return {"token": create_token(user), "role": user.role}
 
 
+class GoogleBody(BaseModel):
+    credential: str
+
+
+@app.post("/auth/google")
+@limiter.limit("20/minute")
+def auth_google(body: GoogleBody, request: Request) -> dict:
+    """Exchange a Google ID token for an EchoLens token.
+
+    The ID token is verified against Google's published keys (signature,
+    issuer, audience, expiry) before anything is trusted — see
+    echolens.google_auth. Rate-limited because verification can trigger an
+    outbound JWKS fetch.
+    """
+    from echolens.google_auth import GoogleAuthError, role_for, verify_id_token
+    from echolens.auth import upsert_google_user
+
+    try:
+        claims = verify_id_token(body.credential)
+    except GoogleAuthError as err:
+        # The detail is safe to show: it describes the caller's own token, and
+        # the specific reason ("not configured", "email not verified") is the
+        # difference between a user retrying usefully and giving up.
+        raise HTTPException(401, str(err))
+
+    with session_scope() as session:
+        user = upsert_google_user(session, claims["email"], role_for(claims["email"]))
+        return {"token": create_token(user), "role": user.role, "email": user.email}
+
+
+@app.get("/auth/config")
+def auth_config() -> dict:
+    """What sign-in options this deployment offers, and whether guests are let
+    in. Unauthenticated on purpose: the login screen has to read it before a
+    token exists. It exposes only the public OAuth client id, which is designed
+    to be embedded in a web page."""
+    return {
+        "google_client_id": settings.google_client_id,
+        "google_enabled": bool(settings.google_client_id),
+        "allow_guest": settings.allow_guest,
+        "auth_required": settings.auth_required,
+    }
+
+
 @app.get("/auth/me")
 def auth_me(user: dict = Depends(current_user)) -> dict:
     return user

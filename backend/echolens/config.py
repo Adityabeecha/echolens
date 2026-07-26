@@ -111,6 +111,28 @@ class Settings(BaseSettings):
     bootstrap_admin_password: str = ""
     seed_on_start: bool = False
 
+    # ── public demo mode ────────────────────────────────────────────────
+    # When true, a request with NO token is admitted as a `viewer` instead of
+    # being rejected with a 401. Viewers can read every screen; they cannot
+    # start investigations, connect sources, or delete anything, because those
+    # endpoints all require `reviewer` or `admin`.
+    #
+    # This is deliberately NOT the same as `echolens_env=dev`, which admits an
+    # anonymous caller as a full ADMIN. Doing that on a public URL would let
+    # any visitor spend the deployment's OpenAI credits and delete its data.
+    allow_guest: bool = False
+
+    # ── Google sign-in ──────────────────────────────────────────────────
+    # The OAuth client id from the Google Cloud console. Sign-in is offered by
+    # the frontend only when this is set, so an unconfigured deployment simply
+    # does not show the button rather than showing one that fails.
+    google_client_id: str = ""
+    # Role granted to a verified Google account that is not on the admin list.
+    google_default_role: str = "reviewer"
+    # Comma-separated emails that get `admin` on Google sign-in. Everyone else
+    # gets `google_default_role`, so destructive actions stay with the owner.
+    google_admin_emails: str = ""
+
     @property
     def cors_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
@@ -173,6 +195,10 @@ class Settings(BaseSettings):
     @property
     def auth_required(self) -> bool:
         return self.echolens_env != "dev"
+
+    @property
+    def google_admin_list(self) -> list[str]:
+        return [e.strip().lower() for e in self.google_admin_emails.split(",") if e.strip()]
 
 
 settings = Settings()

@@ -30,3 +30,6 @@ ROADMAP.md
 echolens-ui-build/
 .claude/
 AUDIT.md
+
+# Skill installer lockfile (local dev tooling, not app code)
+skills-lock.json

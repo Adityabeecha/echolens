@@ -1,17 +1,30 @@
 import { useEffect, useState } from "react";
-import { api, setRole, setToken } from "../api";
+import { api, setGuest, setRole, setToken } from "../api";
+import { useAsync } from "../hooks";
 import { C, R, S, T, mono, sans } from "../theme";
+import { GoogleButton } from "../components/GoogleButton";
 
 // A branded split sign-in: the left panel is a taste of the product (the lens
 // mark + a miniature reasoning trace), the right panel is the form. Collapses
 // to a single column on narrow screens.
+//
+// Signing in is optional when the deployment allows guests: the primary action
+// is then "Explore the demo", and an account is what unlocks the controls that
+// spend money or change data.
 export function Login({ onAuthed }: { onAuthed: () => void }) {
   const [mode, setMode] = useState<"login" | "signup">("login");
+  const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [narrow, setNarrow] = useState(typeof window !== "undefined" && window.innerWidth < 900);
+
+  // What this deployment offers. If the call fails (backend asleep on a free
+  // tier), fall back to showing the password form rather than a blank screen.
+  const cfg = useAsync(() => api.authConfig(), []);
+  const googleId = cfg.data?.google_enabled ? cfg.data.google_client_id : "";
+  const guestAllowed = !!cfg.data?.allow_guest;
 
   useEffect(() => {
     const onResize = () => setNarrow(window.innerWidth < 900);
@@ -27,6 +40,7 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
       const r = mode === "login"
         ? await api.login(email.trim(), password)
         : await api.signup(email.trim(), password);
+      setGuest(false);
       setToken(r.token);
       setRole(r.role);
       onAuthed();
@@ -41,8 +55,31 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
     }
   };
 
+  const signInWithGoogle = async (credential: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.google(credential);
+      setGuest(false);
+      setToken(r.token);
+      setRole(r.role);
+      onAuthed();
+    } catch (e) {
+      setError(String(e).replace("Error: ", "") || "Google sign-in didn't work.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const browseAsGuest = () => {
+    setGuest(true);
+    setToken(null);
+    setRole("viewer");
+    onAuthed();
+  };
+
   return (
-    <div style={{ display: "flex", height: "100vh", background: C.bg, color: C.text, fontFamily: sans, overflow: "hidden" }}>
+    <div style={{ display: "flex", height: "100dvh", background: C.bg, color: C.text, fontFamily: sans, overflow: "hidden" }}>
       {!narrow && <BrandPanel />}
 
       {/* form side */}
@@ -58,16 +95,74 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
       >
         {narrow && <Wordmark />}
 
-        <div style={{ fontSize: T.xl, fontWeight: 700, letterSpacing: "-0.01em", marginTop: narrow ? 28 : 0 }}>
-          {mode === "login" ? "Sign in" : "Create your admin account"}
-        </div>
-        <div style={{ fontSize: T.base, color: C.muted, marginTop: S[2], lineHeight: "var(--el-lh-normal)", maxWidth: 360 }}>
-          {mode === "login"
-            ? "Pick up where the investigations left off."
-            : "The first account becomes the workspace admin. You can add reviewers later."}
-        </div>
+        <h1 style={{ margin: 0, fontSize: T.xl, fontWeight: 700, letterSpacing: "-0.01em",
+                     marginTop: narrow ? 28 : 0 }}>
+          {mode === "signup"
+            ? "Create your admin account"
+            : guestAllowed ? "Take a look around" : "Sign in"}
+        </h1>
+        <p style={{ fontSize: T.base, color: C.muted, marginTop: S[2],
+                    lineHeight: "var(--el-lh-normal)", maxWidth: 360 }}>
+          {mode === "signup"
+            ? "The first account becomes the workspace admin. You can add reviewers later."
+            : guestAllowed
+              ? "Explore every screen with real data, no account needed. Sign in when you want to run an investigation or change something."
+              : "Pick up where the investigations left off."}
+        </p>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: S[3], marginTop: S[6], maxWidth: 360 }}>
+        {/* Guest first: on a public demo it is the thing most visitors want,
+            and burying it under a password form they cannot fill is hostile. */}
+        {guestAllowed && mode === "login" && (
+          <div style={{ maxWidth: 360, marginTop: S[5] }}>
+            <button
+              onClick={browseAsGuest}
+              disabled={busy}
+              className="el-btn el-btn--primary"
+              style={{ width: "100%", padding: `${S[3]} 0`, fontSize: T.md }}
+            >
+              Explore the demo
+            </button>
+            <div style={{ fontSize: T.xs, color: C.dim, marginTop: S[2],
+                          lineHeight: "var(--el-lh-snug)" }}>
+              Read-only. Investigations, sources and deletions need an account.
+            </div>
+          </div>
+        )}
+
+        {(googleId || guestAllowed) && mode === "login" && (
+          <div style={{ display: "flex", alignItems: "center", gap: S[3], maxWidth: 360,
+                        marginTop: S[5] }}>
+            <span style={{ flex: 1, height: 1, background: C.border2 }} />
+            <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint,
+                           letterSpacing: "var(--el-ls-wide)" }}>
+              {guestAllowed ? "OR SIGN IN" : "SIGN IN"}
+            </span>
+            <span style={{ flex: 1, height: 1, background: C.border2 }} />
+          </div>
+        )}
+
+        {googleId && (
+          <div style={{ maxWidth: 360, marginTop: S[4] }}>
+            <GoogleButton clientId={googleId} onCredential={signInWithGoogle} disabled={busy} />
+          </div>
+        )}
+
+        {/* The password form is secondary once there are better options, so it
+            folds away behind a link rather than dominating the screen. */}
+        {googleId && mode === "login" && !showPassword && (
+          <button
+            onClick={() => setShowPassword(true)}
+            className="el-btn el-btn--sm"
+            style={{ marginTop: S[3], color: C.dim, alignSelf: "flex-start",
+                     paddingLeft: 0, maxWidth: 360 }}
+          >
+            Use email and password instead
+          </button>
+        )}
+
+        <div hidden={!!googleId && mode === "login" && !showPassword}
+             style={{ display: "flex", flexDirection: "column", gap: S[3],
+                      marginTop: S[5], maxWidth: 360 }}>
           <Field label="Email">
             <input
               value={email}
@@ -75,7 +170,7 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
               placeholder="you@company.com"
               autoComplete="username"
               onKeyDown={(e) => e.key === "Enter" && submit()}
-              style={inputStyle}
+              className="el-input"
             />
           </Field>
           <Field label="Password">
@@ -86,12 +181,14 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
               type="password"
               autoComplete={mode === "login" ? "current-password" : "new-password"}
               onKeyDown={(e) => e.key === "Enter" && submit()}
-              style={inputStyle}
+              className="el-input"
             />
           </Field>
 
           {error && (
-            <div style={{ fontSize: T.sm, color: C.bad, background: "rgba(224,88,79,.08)", border: "1px solid rgba(224,88,79,.35)", borderRadius: R.control, padding: `${S[2]} ${S[3]}`, lineHeight: "var(--el-lh-snug)" }}>
+            <div role="alert" style={{ fontSize: T.sm, color: C.bad, background: C.badBg,
+                          border: `1px solid ${C.badLine}`, borderRadius: R.control,
+                          padding: `${S[2]} ${S[3]}`, lineHeight: "var(--el-lh-snug)" }}>
               {error}
             </div>
           )}
@@ -99,35 +196,26 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
           <button
             onClick={submit}
             disabled={busy || !email.trim() || !password}
-            style={{
-              marginTop: S[1],
-              padding: `${S[3]} 0`,
-              borderRadius: R.control,
-              border: "none",
-              background: C.accent,
-              color: C.onAccent,
-              fontSize: T.md,
-              fontWeight: 600,
-              cursor: email.trim() && password ? "pointer" : "not-allowed",
-              opacity: email.trim() && password ? 1 : 0.5,
-              transition: "filter .15s"
-            }}
+            className={`el-btn el-btn--primary${busy ? " el-btn--loading" : ""}`}
+            style={{ marginTop: S[1], padding: `${S[3]} 0`, fontSize: T.md }}
           >
-            {busy ? "…" : mode === "login" ? "Sign in" : "Create account & sign in"}
+            {mode === "login" ? "Sign in" : "Create account & sign in"}
           </button>
         </div>
 
         <div style={{ marginTop: S[5], fontSize: T.sm, color: C.dim, maxWidth: 360 }}>
           {mode === "login" ? "First time setting this up? " : "Already have an account? "}
-          <span
+          <button
             onClick={() => {
               setMode(mode === "login" ? "signup" : "login");
               setError(null);
+              setShowPassword(true);
             }}
-            style={{ color: C.accent, fontWeight: 500 }}
+            className="el-btn el-btn--sm"
+            style={{ color: C.accent, fontWeight: 500, padding: `0 ${S[1]}` }}
           >
             {mode === "login" ? "Create the admin account" : "Sign in instead"}
-          </span>
+          </button>
         </div>
       </div>
     </div>

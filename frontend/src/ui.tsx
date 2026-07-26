@@ -213,6 +213,67 @@ export function Button({
   );
 }
 
+/**
+ * A control that needs an account.
+ *
+ * Guests can read every screen, but the server refuses anything above `viewer`.
+ * Rendering the button as normal and letting it 403 is the worst option: the
+ * user clicks, waits, and gets an error that reads like a bug. Hiding it is
+ * only marginally better — the demo then looks like it has no features.
+ *
+ * So the control stays visible and visibly disabled, and says what would
+ * unlock it.
+ */
+export function SignedInOnly({
+  can,
+  reason = "Sign in to do this",
+  children,
+}: {
+  /** The permission the caller already computed (e.g. canReview()). */
+  can: boolean;
+  reason?: string;
+  children: ReactNode;
+}) {
+  if (can) return <>{children}</>;
+  return (
+    <span
+      title={reason}
+      // The wrapper takes the pointer events so the disabled control inside
+      // still surfaces a tooltip; a disabled <button> fires no hover events.
+      style={{ display: "inline-flex", cursor: "not-allowed" }}
+    >
+      <span aria-hidden style={{ pointerEvents: "none", opacity: 0.45, display: "inline-flex" }}>
+        {children}
+      </span>
+      <span className="el-sr-only">{reason}</span>
+    </span>
+  );
+}
+
+/** A quiet banner telling a guest what they are looking at. */
+export function GuestBanner({ onSignIn }: { onSignIn: () => void }) {
+  return (
+    <div
+      style={{
+        display: "flex", alignItems: "center", gap: S[3], flexWrap: "wrap",
+        maxWidth: MEASURE, marginBottom: S[5],
+        padding: `${S[2]} ${S[4]}`,
+        background: C.bgRaised, border: `1px solid ${C.border2}`,
+        borderRadius: R.card, fontSize: T.sm, color: C.muted,
+      }}
+    >
+      <Icon name="info" size={14} style={{ color: C.info }} />
+      <span style={{ flex: 1, minWidth: 200 }}>
+        You're browsing as a guest — everything here is real data, but running
+        investigations and changing settings needs an account.
+      </span>
+      <Button variant="ghost" size="sm" onClick={onSignIn}>
+        Sign in
+      </Button>
+    </div>
+  );
+}
+
 /** Kept for the existing call sites; both are now the same component. */
 export function PrimaryButton({ children, onClick, style }: {
   children: ReactNode; onClick?: () => void; style?: CSSProperties;

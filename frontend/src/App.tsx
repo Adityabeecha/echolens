@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Evidence, ProductRow, api, getToken, onAuthError, setActiveProduct, setToken } from "./api";
+import { Evidence, ProductRow, api, getToken, isGuest, onAuthError, setActiveProduct, setGuest, setToken } from "./api";
 import { CaseTab, GLOBAL_SCREENS, Screen, caseTabFor } from "./nav";
 import { useRouter } from "./router";
 import { C, T, sans } from "./theme";
@@ -32,7 +32,9 @@ export default function App() {
   const [evidence, setEvidence] = useState<Evidence | null>(null);
   const [newCaseOpen, setNewCaseOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
-  const [authed, setAuthed] = useState<boolean>(!!getToken());
+  // "In the app" is either a real session or an accepted guest visit. A guest
+  // has no token, so `authed` alone would bounce them straight back to Login.
+  const [authed, setAuthed] = useState<boolean>(!!getToken() || isGuest());
   const [products, setProducts] = useState<ProductRow[]>([]);
   const [booted, setBooted] = useState(false);
   const [deleting, setDeleting] = useState<ProductRow | null>(null);
@@ -45,7 +47,10 @@ export default function App() {
 
   // A 401 anywhere (expired/absent token) bounces back to the login screen.
   useEffect(() => {
-    onAuthError(() => setAuthed(false));
+    // A 401 ends the session — but a guest browsing a guest-enabled deployment
+    // has no session to end, and bouncing them to Login on one unlucky request
+    // would look like the demo breaking.
+    onAuthError(() => { if (!isGuest()) setAuthed(false); });
   }, []);
 
   // Keep the api client's scope in step with the URL, before any screen fetches.
@@ -135,6 +140,9 @@ export default function App() {
 
   const logout = () => {
     setToken(null);
+    // Clear guest too: "Sign out" must return to the door, not silently drop
+    // the user into a read-only session they did not ask for.
+    setGuest(false);
     setAuthed(false);
     clearToasts();  // a previous session's failures must not greet the next user
   };

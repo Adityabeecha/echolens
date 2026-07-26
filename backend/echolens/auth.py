@@ -22,6 +22,16 @@ _RANK = {"viewer": 0, "reviewer": 1, "admin": 2}
 
 DEV_ADMIN = {"id": 0, "email": "dev@localhost", "role": "admin"}
 
+# The principal for an unauthenticated visitor when ALLOW_GUEST is on.
+#
+# `viewer` on purpose, and never anything higher. A guest can read every screen
+# but cannot reach a single endpoint guarded by require_role("reviewer") or
+# ("admin") — which is every endpoint that spends OpenAI credits, mutates a
+# case, connects a source, or deletes a product. `id: None` because no row in
+# `users` backs this principal; anything that writes an author id must not
+# silently attribute it to user 0.
+GUEST = {"id": None, "email": None, "role": "viewer", "guest": True}
+
 
 # ── password + token helpers ────────────────────────────────────────────
 
@@ -67,14 +77,56 @@ def authenticate(session, email: str, password: str) -> User | None:
     return None
 
 
+# Marker stored in `password_hash` for accounts that authenticate via Google.
+# It is not a bcrypt hash, so verify_password can never match it and the
+# password endpoint cannot be used to sign in as a Google user. `password_hash`
+# is NOT NULL, hence a sentinel rather than a null.
+SSO_ONLY = "!sso-google"
+
+
+def upsert_google_user(session, email: str, role: str) -> User:
+    """Find or create the local user behind a verified Google account.
+
+    An existing password account with the same address is linked, not
+    duplicated or overwritten: the email came from a verified Google claim, so
+    it is the same person, and clobbering their stored hash would silently
+    disable their password login.
+    """
+    user = session.scalars(select(User).where(User.email == email)).first()
+    if user:
+        # Only ever raise a role, never lower it: an admin who signs in with
+        # Google while not on the allowlist must not be demoted to reviewer.
+        if _RANK.get(role, 0) > _RANK.get(user.role, 0):
+            user.role = role
+            session.flush()
+        return user
+    user = User(email=email, password_hash=SSO_ONLY, role=role)
+    session.add(user)
+    session.flush()
+    return user
+
+
 # ── FastAPI dependencies ────────────────────────────────────────────────
 
 def current_user(request: Request) -> dict:
-    """Return the authenticated principal. In dev mode, a synthetic admin."""
+    """Return the authenticated principal.
+
+    Three ways to arrive here without a token:
+      - dev mode           -> synthetic ADMIN (local development only)
+      - ALLOW_GUEST on     -> read-only GUEST (public demo)
+      - neither            -> 401
+
+    A malformed or expired token is always a 401, even with guests allowed: a
+    token that fails to verify is a broken session to be re-authenticated, not
+    an anonymous visitor, and silently downgrading it would hide expiry from
+    the user and make a tampered token look like a successful anonymous call.
+    """
     if not settings.auth_required:
         return DEV_ADMIN
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
+        if settings.allow_guest:
+            return dict(GUEST)
         raise HTTPException(401, "missing bearer token")
     try:
         payload = decode_token(auth.split(" ", 1)[1])

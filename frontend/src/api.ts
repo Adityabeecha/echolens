@@ -50,6 +50,27 @@ export function canReview(): boolean {
 export function isAdmin(): boolean {
   return _role === "admin";
 }
+
+// ── guest mode ──────────────────────────────────────────────────────────
+// A visitor with no token, on a deployment that allows guests. They see every
+// screen with real data; the server refuses anything above `viewer`, so the UI
+// disables those controls rather than letting them fail at the API.
+const GUEST_KEY = "echolens_guest";
+let _guest = localStorage.getItem(GUEST_KEY) === "1";
+
+export function setGuest(on: boolean): void {
+  _guest = on;
+  if (on) localStorage.setItem(GUEST_KEY, "1");
+  else localStorage.removeItem(GUEST_KEY);
+}
+/** Browsing without an account. */
+export function isGuest(): boolean {
+  return _guest && !_token;
+}
+/** True when the user is signed in properly. */
+export function isAuthed(): boolean {
+  return !!_token;
+}
 export function onAuthError(fn: () => void): void {
   _onAuthError = fn;
 }
@@ -675,6 +696,17 @@ export const api = {
     post<{ token: string; role: string }>("/auth/login", { email, password }),
   signup: (email: string, password: string) =>
     post<{ id: number; email: string; role: string; token: string }>("/auth/signup", { email, password }),
+  /** Exchange a Google ID token for an EchoLens token. */
+  google: (credential: string) =>
+    post<{ token: string; role: string; email: string }>("/auth/google", { credential }),
+  /** Which sign-in options this deployment offers. Safe without a token. */
+  authConfig: () =>
+    get<{
+      google_client_id: string;
+      google_enabled: boolean;
+      allow_guest: boolean;
+      auth_required: boolean;
+    }>("/auth/config"),
   me: () => get<AuthUser>("/auth/me"),
   products: () => get<{ products: ProductRow[]; active_product_id: number | null }>("/products"),
   activateProduct: (id: number) =>
