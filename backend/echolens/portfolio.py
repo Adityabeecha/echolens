@@ -30,6 +30,10 @@ W_UNTRIAGED = 4.0
 W_TREND = 25.0        # multiplied by the negative-rate delta (0..1)
 W_STALE_DATA = 6.0
 
+# Below this many reviews in a window, a negative-review RATE is noise. Reporting
+# "100% negative" off one review is a statistic-shaped guess.
+MIN_RATE_SAMPLE = 5
+
 BANDS = (
     (60.0, "on_fire", "Needs you today"),
     (25.0, "attention", "Worth a look"),
@@ -50,7 +54,7 @@ def _band(score: float) -> tuple[str, str]:
     return "healthy", "Nothing demanding attention"
 
 
-def _negative_rate(session: Session, product: str | None, start, end) -> float:
+def _negative_rate(session: Session, product: str | None, start, end) -> float | None:
     """Share of reviews in the window that are negative. A rate, not a count —
     the only way a 3-review app and a 30,000-review app compare honestly.
 
@@ -65,7 +69,13 @@ def _negative_rate(session: Session, product: str | None, start, end) -> float:
                Review.created_at >= start, Review.created_at < end)
     ).one()
     total, negatives = row[0] or 0, row[1] or 0
-    return (negatives / total) if total else 0.0
+    # None, not 0.0, when the window is too thin to be a rate. A single review
+    # used to award the FULL trend weight and print "negative reviews up 75 pts"
+    # as fact; and an empty window scored 0.0, indistinguishable from a genuine
+    # 0% negative rate.
+    if total < MIN_RATE_SAMPLE:
+        return None
+    return negatives / total
 
 
 def product_snapshot(session: Session, product: Product, now: datetime) -> dict:
@@ -132,8 +142,9 @@ def product_snapshot(session: Session, product: Product, now: datetime) -> dict:
     # ── trend: is sentiment getting worse? ─────────────────────────────
     recent = _negative_rate(session, product.name, now - timedelta(days=7), now)
     baseline = _negative_rate(session, product.name, now - timedelta(days=35), now - timedelta(days=7))
-    delta = round(recent - baseline, 4)
-    if baseline > 0 and delta > 0.02:
+    has_rate = recent is not None and baseline is not None
+    delta = round(recent - baseline, 4) if has_rate else 0.0
+    if has_rate and baseline > 0 and delta > 0.02:
         score += W_TREND * min(1.0, delta / max(baseline, 0.01))
         reasons.append({
             "kind": "trend", "weight": round(W_TREND * min(1.0, delta / max(baseline, 0.01)), 1),
@@ -167,10 +178,10 @@ def product_snapshot(session: Session, product: Product, now: datetime) -> dict:
         "open_problems": high + medium,
         "regressions": len(regressed),
         "untriaged": len(untriaged),
-        "negative_rate_pct": round(100 * recent, 1),
-        "negative_rate_delta_pct": round(100 * delta, 1),
+        "negative_rate_pct": round(100 * recent, 1) if recent is not None else None,
+        "negative_rate_delta_pct": round(100 * delta, 1) if has_rate else None,
         "confirmed_fixes": len(confirmed_inv),
-        "has_data": bool(sources) or recent > 0,
+        "has_data": bool(sources) or bool(recent),
     }
 
 

@@ -34,6 +34,11 @@ _REASON_GUIDANCE = {
 }
 
 
+# The curve is not acted on below this many reviewed findings — the same
+# threshold `sufficient` reports, so the system cannot claim a measurement
+# is untrustworthy and steer on it at the same time.
+SUFFICIENT_N = 20
+
 def _verdict(session: Session, finding: Finding) -> str | None:
     """'approve' / 'challenge' from the finding's latest review, or None."""
     fb = session.scalars(
@@ -81,12 +86,18 @@ def calibration(session: Session, product_id: int | None = None) -> dict:
     gap = round(mean_conf - overall_rate, 3) if (mean_conf is not None and overall_rate is not None) else None
     return {
         "n_reviewed": n,
-        "sufficient": n >= 20,                 # exit criterion: curve needs ≥20
+        "sufficient": n >= SUFFICIENT_N,       # exit criterion: curve needs ≥20
         "points": points,
         "overall_approval_rate": overall_rate,
         "mean_stated_confidence": mean_conf,
         "overconfidence_gap": gap,
-        "overconfident": bool(gap is not None and n >= 8 and gap >= 0.1),
+        # Only ACT on the curve once it is trustworthy by the module's own
+        # standard. This fired at n>=8 while `sufficient` said n<20 was not
+        # enough — the system declared its own measurement unreliable and then
+        # used it to permanently bias every future investigator prompt. At n=8
+        # with a 0.75 approval rate the 95% CI is roughly [0.45, 1.05]: a gap
+        # indistinguishable from zero.
+        "overconfident": bool(gap is not None and n >= SUFFICIENT_N and gap >= 0.1),
         "headline": _headline(points, overall_rate),
     }
 

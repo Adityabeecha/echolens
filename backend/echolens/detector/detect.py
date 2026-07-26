@@ -126,6 +126,11 @@ def _derived_terms(texts: list[str], k: int = 5) -> list[tuple[str, str]]:
 
 # Severity thresholds on the z-score.
 SEV1_Z, SEV2_Z, SEV3_Z = 3.0, 2.0, 1.0
+# Ceiling for the zero-variance fallback in _zscore. A perfectly stable baseline
+# makes a true z-score undefined, and the effect-size substitute is a ratio that
+# can be arbitrarily large — capped here so "the baseline was flat" can never
+# read as stronger proof than a genuine multi-sigma spike.
+ZERO_VAR_Z_CAP = 4.0
 
 
 @dataclass
@@ -149,8 +154,15 @@ def _severity(z: float) -> str:
 
 
 def _daily_counts(rows, key, start: datetime, end: datetime) -> list[float]:
+    """Daily counts over (start, end] — start-exclusive, end-inclusive.
+
+    Both ends used to be inclusive, so a 28+7 day span produced 36 buckets and
+    the baseline slice was 29 days while every docstring, description string and
+    window label said 28. One day of drift is small, but it made the emitted
+    "vs trailing 28d baseline" text false.
+    """
     daily: dict = defaultdict(float)
-    d = start.date()
+    d = start.date() + timedelta(days=1)
     while d <= end.date():
         daily[d] = 0.0
         d += timedelta(days=1)
@@ -162,13 +174,38 @@ def _daily_counts(rows, key, start: datetime, end: datetime) -> list[float]:
 
 
 def _zscore(recent: list[float], baseline: list[float]) -> tuple[float, float]:
-    """(z, delta_pct) of the recent mean against the baseline distribution."""
+    """(z, delta_pct) of the recent mean against the baseline distribution.
+
+    A zero-variance baseline used to return z=0.0, which every caller reads as
+    "no signal" — so the CLEANEST possible evidence was the one guaranteed to be
+    discarded. A product sitting at exactly 5.0 stars for a month and then
+    collapsing to 1.0 has std_b == 0, and the collapse scored zero.
+
+    When the baseline does not vary, a z-score is undefined rather than zero, so
+    we fall back to a scale-free effect size: how large the shift is relative to
+    the baseline level. It is deliberately conservative (a change has to be
+    proportionally large to clear the same threshold) and it is capped, because
+    a jump from a baseline of zero is unbounded and must not report as infinity.
+    """
     if not recent or not baseline:
         return 0.0, 0.0
     mean_r, mean_b = statistics.mean(recent), statistics.mean(baseline)
     std_b = statistics.stdev(baseline) if len(baseline) > 1 else 0.0
-    z = (mean_r - mean_b) / std_b if std_b > 0 else 0.0
     delta = (mean_r - mean_b) / mean_b if mean_b else 0.0
+
+    if std_b > 0:
+        z = (mean_r - mean_b) / std_b
+    elif mean_r == mean_b:
+        z = 0.0                      # genuinely flat: no signal, correctly
+    elif mean_b > 0:
+        # Perfectly stable baseline. Treat one baseline-unit of movement as one
+        # sigma; capped so a large ratio cannot masquerade as overwhelming proof.
+        z = max(-ZERO_VAR_Z_CAP, min(ZERO_VAR_Z_CAP, (mean_r - mean_b) / mean_b))
+    else:
+        # Baseline of exactly zero (e.g. nobody ever complained about this).
+        # Any sustained appearance is meaningful, but the ratio is undefined —
+        # score it by absolute volume, still capped.
+        z = min(ZERO_VAR_Z_CAP, mean_r) if mean_r > 0 else 0.0
     return round(z, 2), round(delta, 3)
 
 
@@ -198,7 +235,15 @@ def detect_volume_spike(session: Session, as_of: datetime | None = None,
 
 
 def _share_series(rows, text_of, day_of, terms, start, as_of, negatives_only):
-    """Per-day share (%) of items mentioning the term."""
+    """Per-day share (%) of items mentioning the term, for days that HAVE data.
+
+    A day with no reviews used to append 0.0 — a measured "0% of complaints were
+    about this" — which is not what an empty day means. On a sparse corpus those
+    zeros dragged the baseline toward nothing, and a theme mentioned by 100% of
+    negatives on every day it appeared was reported as a SEV1 surge against a
+    baseline it had never actually fallen below. Days without data are omitted,
+    so the mean is over observations rather than over the calendar.
+    """
     by_day_total: dict = defaultdict(int)
     by_day_hit: dict = defaultdict(int)
     for r in rows:
@@ -211,12 +256,25 @@ def _share_series(rows, text_of, day_of, terms, start, as_of, negatives_only):
         if match_score(text_of(r), terms) > 0:
             by_day_hit[day] += 1
     d = start.date()
-    series = []
+    series: list[tuple] = []
     while d <= as_of.date():
         tot = by_day_total.get(d, 0)
-        series.append(100 * by_day_hit.get(d, 0) / tot if tot else 0.0)
+        if tot:
+            series.append((d, 100 * by_day_hit.get(d, 0) / tot))
         d += timedelta(days=1)
     return series
+
+
+def _split_by_date(series: list[tuple], as_of, recent_days: int):
+    """(baseline, recent) shares split on the calendar, not on list position.
+
+    Index slicing assumed one entry per day. Now that days without data are
+    omitted, `series[-7:]` would silently reach back weeks on a sparse corpus.
+    """
+    cutoff = (as_of - timedelta(days=recent_days)).date()
+    baseline = [v for d, v in series if d <= cutoff]
+    recent = [v for d, v in series if d > cutoff]
+    return baseline, recent
 
 
 def detect_rating_drop(session: Session, as_of: datetime | None = None,
@@ -234,16 +292,26 @@ def detect_rating_drop(session: Session, as_of: datetime | None = None,
     for r in rows:
         if start.date() <= r.created_at.date() <= as_of.date():
             daily[r.created_at.date()].append(r.rating)
-    days = sorted(daily)
-    series = [statistics.mean(daily[d]) for d in days if daily[d]]
-    if len(series) <= win.recent:
+    # Split by DATE, not by row index. Slicing `series[-recent:]` took the last
+    # 7 days-that-happened-to-have-reviews, which on a sparse corpus can span
+    # months — while the description still claimed "the last 7 days".
+    cutoff = (as_of - timedelta(days=win.recent)).date()
+    baseline = [statistics.mean(daily[d]) for d in sorted(daily) if daily[d] and d <= cutoff]
+    recent = [statistics.mean(daily[d]) for d in sorted(daily) if daily[d] and d > cutoff]
+    if not baseline or not recent or len(baseline) < 2:
         return None
-    baseline, recent = series[:-win.recent], series[-win.recent:]
     mean_b, mean_r = statistics.mean(baseline), statistics.mean(recent)
-    std_b = statistics.stdev(baseline) if len(baseline) > 1 else 0.0
+    std_b = statistics.stdev(baseline)
     drop = mean_b - mean_r
-    z = round(drop / std_b, 2) if std_b > 0 else 0.0
-    if drop < 0.3 or z < SEV3_Z:   # not a meaningful drop
+    if drop < 0.3:                 # not a meaningful drop
+        return None
+    if std_b > 0:
+        z = round(drop / std_b, 2)
+    else:
+        # Same zero-variance blind spot as _zscore: a rock-steady rating that
+        # collapses is the strongest signal there is, and it scored zero.
+        z = round(min(ZERO_VAR_Z_CAP, drop / mean_b) if mean_b else 0.0, 2)
+    if z < SEV3_Z:
         return None
     return Candidate(
         slug="auto-rating-drop", type="rating_drop",
@@ -278,7 +346,10 @@ def detect_theme_surges(session: Session, as_of: datetime | None = None,
         terms = terms_of(term)
         series = _share_series(reviews, lambda r: r.text, lambda r: r.created_at.date(),
                                terms, start, as_of, negatives_only=True)
-        baseline, recent = series[:-win.recent], series[-win.recent:]
+        baseline, recent = _split_by_date(series, as_of, win.recent)
+        # A baseline of fewer than two observed days cannot establish normal.
+        if len(baseline) < 2 or not recent:
+            continue
         z, delta = _zscore(recent, baseline)
         if z < SEV3_Z or statistics.mean(recent) < 3:
             continue
@@ -295,7 +366,9 @@ def detect_theme_surges(session: Session, as_of: datetime | None = None,
         terms = terms_of(term)
         series = _share_series(posts, lambda p: p.text_snippet, lambda p: p.created_at.date(),
                                terms, start, as_of, negatives_only=False)
-        baseline, recent = series[:-win.recent], series[-win.recent:]
+        baseline, recent = _split_by_date(series, as_of, win.recent)
+        if len(baseline) < 2 or not recent:
+            continue
         z, delta = _zscore(recent, baseline)
         if z < SEV3_Z:
             continue

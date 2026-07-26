@@ -20,6 +20,7 @@ Three commitments shape it:
 """
 from __future__ import annotations
 
+import math
 import statistics
 from datetime import datetime, timedelta, timezone
 
@@ -46,6 +47,10 @@ LABEL_EFFORT: dict[str, str] = {
     "epic": "large", "major": "large", "architecture": "large", "large": "large",
     "breaking-change": "large", "needs-design": "large",
 }
+
+# Age saturates rather than multiplying without limit. At this many days a
+# problem has proven it is not self-resolving; beyond it, more age adds little.
+PERSISTENCE_HALF_LIFE = 30.0
 
 QUARTER_CAPACITY_DAYS = 20.0   # a sane default sprint-ish capacity; caller overrides
 PLAN_KEY = "backlog_plan"
@@ -96,8 +101,11 @@ def estimate_effort(session: Session, finding: Finding,
     watch = session.scalars(select(FixWatch).where(
         FixWatch.finding_id == finding.id).order_by(FixWatch.id.desc())).first()
     if watch is not None:
+        # ext_id is repo-qualified ("owner/repo#123"), so match on the suffix —
+        # a bare "#123" lookup silently found nothing and every item fell
+        # through to "effort unknown".
         issue = session.scalars(select(Issue).where(
-            Issue.ext_id == f"#{watch.issue_number}")).first()
+            Issue.ext_id.like(f"%#{watch.issue_number}"))).first()
         days, basis = _label_effort(issue.labels if issue else None)
         if days is not None:
             return {"days": days, "basis": basis, "known": True}
@@ -141,14 +149,28 @@ def rating_recovery(impact: dict, confidence: float) -> dict:
 
 
 def resolution_rate(session: Session, product_id: int | None) -> float:
+    """Share of resolved cases that ended in a verified fix, in [0, 1].
+
+    Counted over DISTINCT investigations, not FixWatch rows. One case can carry
+    several watches (link_issue dedupes on (repo, issue_number), not on
+    finding_id, and two endpoints can each file an issue for the same finding),
+    so the raw watch count could exceed the number of resolved cases and push
+    this above 1.0. That made `1 - rate` negative, which flipped the sign of
+    every score below and sorted the WORST problems last — the highest-severity,
+    longest-open items were systematically excluded from the quarter plan.
+    Clamped as a second line of defence.
+    """
     inv_stmt = select(Investigation).where(Investigation.status == "resolved")
     w_stmt = select(FixWatch).where(FixWatch.status == "confirmed")
     if product_id is not None:
         inv_stmt = inv_stmt.where(Investigation.product_id == product_id)
         w_stmt = w_stmt.where(FixWatch.product_id == product_id)
-    resolved = len(session.scalars(inv_stmt).all())
-    confirmed = len(session.scalars(w_stmt).all())
-    return round(confirmed / resolved, 3) if resolved else 0.0
+    resolved_ids = {i.id for i in session.scalars(inv_stmt).all()}
+    if not resolved_ids:
+        return 0.0
+    confirmed_ids = {w.investigation_id for w in session.scalars(w_stmt).all()
+                     if w.investigation_id in resolved_ids}
+    return round(min(1.0, len(confirmed_ids) / len(resolved_ids)), 3)
 
 
 def backlog(session: Session, product_id: int | None = None,
@@ -181,7 +203,13 @@ def backlog(session: Session, product_id: int | None = None,
         conf = float(finding.confidence or 0.0)
         sev = severity(conf, impact)
         volume = int(impact.get("affected_volume", 0) or 0)
-        persistence = max(1, (now - (aware_utc(inv.created_at) or now)).days)
+        age_days = max(1, (now - (aware_utc(inv.created_at) or now)).days)
+        # Persistence SATURATES. As a raw multiplier it dominated everything: a
+        # 730-day-old trivial case outscored a 1-day-old critical one by ~730x
+        # regardless of severity or volume. Age is evidence that a problem is
+        # not self-resolving, and that evidence stops accumulating — a two-year
+        # -old problem is not twice as urgent as a one-year-old one.
+        persistence = 1.0 + math.log1p(age_days / PERSISTENCE_HALF_LIFE)
 
         # The stated formula: severity x volume x persistence x (1 - resolution).
         # (volume + 1) so a real severity signal isn't zeroed by a corpus that
@@ -203,10 +231,15 @@ def backlog(session: Session, product_id: int | None = None,
             "severity": sev,
             "score": round(score, 2),
             "volume": volume,
-            "persistence_days": persistence,
+            "persistence_days": age_days,
             "effort": effort,
-            # impact-per-effort: the actual PM calculus, not impact alone
-            "value_per_day": round(score / max(0.5, effort["days"]), 2),
+            # Impact-per-effort: the actual PM calculus. When effort is UNKNOWN
+            # we rank on impact alone rather than dividing by DEFAULT_EFFORT —
+            # the docstring always promised that, but the default was applied
+            # unconditionally and silently reordered the backlog on a number
+            # nobody supplied.
+            "value_per_day": round(
+                score / max(0.5, effort["days"]) if effort.get("known") else score, 2),
             "projected": recovery,
             "evidence_refs": evidence,
             "evidence_count": len(evidence),

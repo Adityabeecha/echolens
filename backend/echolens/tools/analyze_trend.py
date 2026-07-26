@@ -56,16 +56,20 @@ def analyze_trend(
         return {"term": term, "days": len(series), "changepoint": None,
                 "note": "not enough data for a trend"}
 
-    # Changepoint: the split that maximizes the difference of means on either side.
+    # Changepoint: the split with the largest shift in mean, in EITHER direction.
+    # This compared raw `gap > best_gap` starting from -1.0, so a strictly
+    # declining series (every gap negative, often below -1.0) never set best_i —
+    # a real recovery reported "no changepoint" and the baseline silently became
+    # the mean of the whole series. `if best_i` was also falsy at index 0.
     best_i, best_gap, best_before, best_after = None, -1.0, 0.0, 0.0
     for i in range(2, len(series) - 1):
         before = statistics.mean(series[:i])
         after = statistics.mean(series[i:])
-        gap = after - before
+        gap = abs(after - before)
         if gap > best_gap:
             best_i, best_gap, best_before, best_after = i, gap, before, after
 
-    baseline = statistics.mean(series[: best_i]) if best_i else statistics.mean(series)
+    baseline = statistics.mean(series[:best_i]) if best_i is not None else statistics.mean(series)
     peak = max(series)
     peak_day = days[series.index(peak)]
     multiplier = round(best_after / best_before, 1) if best_before > 0 else None
@@ -76,8 +80,12 @@ def analyze_trend(
         "baseline_per_day": round(baseline, 2),
         "peak_per_day": peak,
         "peak_day": peak_day.isoformat(),
+        # direction stated explicitly: a "multiplier" alone cannot tell a
+        # recovery from a surge, and the agent quotes this as evidence.
         "changepoint": {
-            "date": days[best_i].isoformat() if best_i else None,
+            "direction": ("rising" if best_after > best_before
+                          else "falling" if best_after < best_before else "flat"),
+            "date": days[best_i].isoformat() if best_i is not None else None,
             "before_mean": round(best_before, 2),
             "after_mean": round(best_after, 2),
             "multiplier": multiplier,  # e.g. 8.4 → "8.4x jump at the changepoint"

@@ -184,7 +184,8 @@ export interface Decision {
 }
 export interface Severity {
   score: number;
-  band: "high" | "medium" | "low";
+  /** "unknown" means impact could not be measured — not that it is small. */
+  band: "high" | "medium" | "low" | "unknown";
 }
 export interface FixChartPoint {
   date: string;
@@ -272,7 +273,7 @@ export interface CaseRow {
   title: string;
   status: string;
   why: string;
-  severity: "high" | "medium" | "low" | null;
+  severity: "high" | "medium" | "low" | "unknown" | null;
   severity_score: number | null;
   confidence: number | null;
   impact: { affected_pct: number; affected_volume: number } | null;

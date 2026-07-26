@@ -83,4 +83,7 @@ export const SEVERITY: Record<string, { label: string; color: string }> = {
   high: { label: "High", color: C.bad },
   medium: { label: "Medium", color: C.accent },
   low: { label: "Low", color: C.dim },
+  // Not a severity — an admission. Impact could not be measured (too few recent
+  // negatives to form a share), and saying "Low" there would claim we looked.
+  unknown: { label: "Impact unknown", color: C.ghost },
 };

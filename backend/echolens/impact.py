@@ -29,6 +29,9 @@ _GENERIC = {
 }
 
 RECENT_DAYS = 7
+# Below this many recent negative reviews, a percentage share is noise dressed
+# as a statistic (1 of 1 is "100%"), so it is not reported as one.
+MIN_SHARE_DENOMINATOR = 5
 BASELINE_DAYS = 28
 
 
@@ -67,7 +70,12 @@ def quantify(session: Session, anomaly, finding_json: dict, product: str | None 
     recent_neg = [r for r in recent if r.rating <= 2]
     matching = [r for r in recent_neg if terms and match_score(r.text, terms) > 0]
 
-    affected_pct = round(100 * len(matching) / len(recent_neg), 1) if recent_neg else 0.0
+    # A share needs a denominator big enough to be a share. 1-of-1 is "100% of
+    # negative reviews" on a sample of one, which then contributes 0.5 to
+    # impact_score and pushes severity toward high on a single review.
+    affected_pct = (round(100 * len(matching) / len(recent_neg), 1)
+                    if len(recent_neg) >= MIN_SHARE_DENOMINATOR else 0.0)
+    share_measurable = len(recent_neg) >= MIN_SHARE_DENOMINATOR
     base_avg = _mean_rating(baseline)
     recent_avg = _mean_rating(recent)
     rating_impact = (round(max(0.0, base_avg - recent_avg), 2)
@@ -85,10 +93,15 @@ def quantify(session: Session, anomaly, finding_json: dict, product: str | None 
     # a single 0..1 impact score used for severity + alert routing
     impact_score = min(1.0, 0.5 * (affected_pct / 100) + 0.3 * min(1.0, len(matching) / 40)
                        + 0.2 * min(1.0, rating_impact / 0.6))
+    # Whether we could measure impact AT ALL. Without this, an unmeasured case
+    # and a genuinely tiny one both scored 0.0 and both rendered as "low" — the
+    # difference between "we looked and it is small" and "we could not look".
+    measured = bool(share_measurable or len(matching) or rating_impact)
 
     return {
         "cross_source": cross,
         "terms": terms,
+        "measured": measured,                    # False = no data, NOT "low impact"
         "affected_pct": affected_pct,            # % of recent negative reviews on this theme
         "affected_volume": len(matching),         # count of those reviews (last 7d)
         "recent_negatives": len(recent_neg),
@@ -152,8 +165,26 @@ def _blast_radius(session, terms, recent_start) -> dict:
 
 def severity(confidence: float, impact: dict) -> dict:
     """Severity = how bad × how sure. Confidence is the agent's; impact is the
-    deterministic score. Drives alert routing (instant vs digest)."""
-    score = round(max(0.0, min(1.0, confidence)) * impact.get("impact_score", 0.0), 3)
+    deterministic score. Drives alert routing (instant vs digest).
+
+    `impact_score` is clamped: it was only bounded at its own construction site,
+    so any other producer could hand in a value above 1.0 and yield a severity
+    score above 1.0 — a number outside its own stated range.
+
+    A band of "unknown" is returned when impact could not be measured at all.
+    Previously that case scored 0.0 and rendered as "low", which is a claim:
+    it told the reader we had looked and found little, when we had not looked.
+    """
+    raw = impact.get("impact_score", 0.0)
+    try:
+        raw = max(0.0, min(1.0, float(raw)))
+    except (TypeError, ValueError):
+        raw = 0.0
+    score = round(max(0.0, min(1.0, confidence)) * raw, 3)
+    # `measured` is absent on findings written before it existed; treat a
+    # present impact payload as measured so old rows keep their band.
+    if impact.get("measured") is False:
+        return {"score": score, "band": "unknown"}
     band = "high" if score >= 0.5 else "medium" if score >= 0.25 else "low"
     return {"score": score, "band": band}
 

@@ -14,6 +14,16 @@ from echolens.db.models import AnomalyEvent, Finding, FixWatch, Investigation, R
 from echolens.impact import theme_terms
 
 
+def _signature(terms: list[str] | None) -> tuple:
+    """An order-independent key for "the same problem".
+
+    Uses the whole normalised term set rather than a positional slice, so adding
+    one unrelated early-sorting term cannot silently re-key an existing pattern.
+    """
+    norm = {str(t).strip().lower() for t in (terms or []) if str(t).strip()}
+    return tuple(sorted(norm))
+
+
 def patterns(session: Session, product_id: int | None = None) -> list[dict]:
     """Every validated pattern for this product, most-verified first. Grouped by
     theme signature so repeated confirmations accumulate a verified count."""
@@ -27,7 +37,13 @@ def patterns(session: Session, product_id: int | None = None) -> list[dict]:
         anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv else None
         rec = session.scalars(select(Recommendation).where(
             Recommendation.finding_id == w.finding_id).order_by(Recommendation.rank)).first()
-        sig = tuple(sorted(w.terms)[:3])
+        # Signature over the FULL term set, order-independent. `sorted(terms)[:3]`
+        # kept the three alphabetically smallest, discarding relevance order, so
+        # two watches for the same problem with slightly different term lists got
+        # different signatures and verified_count never accumulated — which
+        # suppressed exactly the strongest priors, since matching_pattern ranks
+        # by verified_count.
+        sig = _signature(w.terms)
         if not sig:
             continue
         p = groups.setdefault(sig, {

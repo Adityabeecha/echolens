@@ -55,11 +55,30 @@ def test_calibration_curve_and_headline():
 
 def test_overconfidence_detected():
     s = _session()
-    # states 90% but only ~40% approved → overconfident
+    # states 90% but only ~40% approved → overconfident, at a sample size the
+    # module itself calls sufficient (>= 20 reviewed findings).
+    specs = [(0.9, "approve", None)] * 8 + [(0.9, "challenge", "wrong_cause")] * 12
+    _seed_reviewed(s, specs)
+    cal = calibration(s)
+    assert cal["n_reviewed"] >= 20 and cal["sufficient"] is True
+    assert cal["overconfidence_gap"] > 0.1 and cal["overconfident"] is True
+
+
+def test_overconfidence_is_not_acted_on_below_the_sufficient_sample():
+    """The gap was acted on from n>=8 while `sufficient` reported n<20 as not
+    enough — the system called its own measurement untrustworthy and then used
+    it to permanently bias every future investigator prompt. At n=10 with a 40%
+    approval rate the confidence interval is far too wide to steer on."""
+    from echolens.calibration import guidance_text
+    s = _session()
     specs = [(0.9, "approve", None)] * 4 + [(0.9, "challenge", "wrong_cause")] * 6
     _seed_reviewed(s, specs)
     cal = calibration(s)
-    assert cal["overconfidence_gap"] > 0.1 and cal["overconfident"] is True
+    assert cal["n_reviewed"] == 10
+    assert cal["sufficient"] is False
+    assert cal["overconfidence_gap"] > 0.1, "the gap is still MEASURED and reported"
+    assert cal["overconfident"] is False, "...but not acted on"
+    assert "CALIBRATION:" not in guidance_text(s)
 
 
 # ── challenge autopsies → weak spots (exit criterion #3, part 1) ─────────
