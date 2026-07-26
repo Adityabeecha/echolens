@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChatCitation, api } from "../api";
 import { C, MEASURE, R, S, T, mono, sans } from "../theme";
 import { Label, ScreenHeader } from "../ui";
+import { Icon } from "../components/Icon";
 
 interface Turn {
   role: "you" | "echolens";
@@ -118,9 +119,10 @@ function Bubble({ turn, onOpenInvestigation }: { turn: Turn; onOpenInvestigation
         {turn.text}
       </div>
       {turn.investigationId != null && (
-        <button onClick={() => onOpenInvestigation(turn.investigationId!)} className="el-btn"
-          style={{ marginTop: S[2], background: "transparent", border: `1px solid ${C.accent}66`, color: C.accent, borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base }}>
-          ▸ Watch case #{turn.investigationId} stream
+        <button onClick={() => onOpenInvestigation(turn.investigationId!)}
+          className="el-btn el-btn--ghost"
+          style={{ marginTop: S[2] }}>
+          <Icon name="play" size={12} /> Watch case #{turn.investigationId} stream
         </button>
       )}
       {turn.citations && turn.citations.length > 0 && (

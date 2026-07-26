@@ -473,8 +473,8 @@ function ThemeCard({ theme, selected, onToggle }: {
 }) {
   const [open, setOpen] = useState(false);
   const trend =
-    theme.trend === "up" ? { s: "▲", c: C.bad } :
-    theme.trend === "down" ? { s: "▼", c: C.good } : null;
+    theme.trend === "up" ? { s: "arrowUp", c: C.bad } :
+    theme.trend === "down" ? { s: "arrowDown", c: C.good } : null;
   return (
     <div className="el-card" style={{ padding: `${S[3]} ${S[4]}` }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: S[3] }}>
@@ -491,7 +491,7 @@ function ThemeCard({ theme, selected, onToggle }: {
             </span>
             {trend && (
               <span style={{ fontFamily: mono, fontSize: T.micro, color: trend.c }}>
-                {trend.s} {theme.trend}
+                <Icon name={trend.s} size={11} /> {theme.trend}
               </span>
             )}
             {theme.label_source === "verbatim" && (

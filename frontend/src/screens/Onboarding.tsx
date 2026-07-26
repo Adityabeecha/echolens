@@ -209,7 +209,7 @@ function Backfilling({ product, onDone, onReviewSignals }: {
         <div style={{ padding: `${S[2]} ${S[3]}`, border: `1px solid ${C.bad}55`,
                       background: `${C.bad}12`, borderRadius: R.control, color: C.text3,
                       fontSize: T.sm, lineHeight: "var(--el-lh-normal)" }}>
-          ⚠ Lost contact while backfilling — {err}. The snapshot below may be
+          <Icon name="warning" size={14} style={{ display: "inline", verticalAlign: "-2px" }} /> Lost contact while backfilling — {err}. The snapshot below may be
           out of date.
         </div>
       )}

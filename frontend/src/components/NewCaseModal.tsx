@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../api";
 import { toast } from "./Toast";
 import { C, R, S, T, mono } from "../theme";
+import { Icon } from "./Icon";
 
 const TIERS: { key: string; name: string; detail: string }[] = [
   { key: "quick", name: "Quick look", detail: "5 iter · $0.25 · shallow — may only skim a few reviews" },
@@ -58,7 +59,7 @@ export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onSt
         <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[4] }}>
           <div style={{ fontSize: T.lg, fontWeight: 600 }}>Open a case</div>
           <button onClick={onClose} style={{ marginLeft: "auto", background: "none", border: "none", color: C.muted, fontSize: T.lg }}>
-            ✕
+            <Icon name="close" size={15} />
           </button>
         </div>
         <div style={{ fontSize: T.sm, color: C.muted, marginBottom: S[1] }}>What should the investigator look into?</div>

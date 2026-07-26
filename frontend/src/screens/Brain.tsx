@@ -3,6 +3,7 @@ import { BrainEdge, ChangeReview, api } from "../api";
 import { useAsync } from "../hooks";
 import { C, MEASURE, R, S, T, mono, sans } from "../theme";
 import { Bar, Centered, EmptyState, ErrorState, Label, ScreenHeader } from "../ui";
+import { Icon } from "../components/Icon";
 
 const RISK: Record<string, { color: string; label: string }> = {
   high: { color: C.bad, label: "HIGH RISK" },
@@ -252,7 +253,7 @@ function Oracle() {
         <div style={{ marginTop: S[3], padding: `${S[3]} ${S[3]}`, background: `${C.bad}12`,
                       border: `1px solid ${C.bad}55`, borderRadius: R.control, fontSize: T.sm,
                       color: C.text3, display: "flex", alignItems: "center", gap: S[2] }}>
-          <span style={{ color: C.bad }}>⚠</span>
+          <Icon name="warning" size={14} style={{ color: C.bad }} />
           <span>Couldn't reach the product's history — {askError}</span>
         </div>
       )}

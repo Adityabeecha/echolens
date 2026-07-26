@@ -5,6 +5,7 @@ import { money } from "../../format";
 import { useTrace } from "../../hooks";
 import { C, R, S, T, KIND_COLOR, mono } from "../../theme";
 import { Bar, Label } from "../../ui";
+import { Icon } from "../../components/Icon";
 
 interface Props {
   inv: Investigation;
@@ -89,27 +90,27 @@ export function TraceTab({ inv, onOpenEvidence, onReload }: Props) {
           {canReplay && replayIdx === null && (
             <div onClick={() => { setReplayIdx(0); setPlaying(true); setFollow(true); }}
               className="el-btn" style={replayBtn(false)}>
-              ▸ Replay
+              <Icon name="play" size={11} /> Replay
             </div>
           )}
           {replayIdx !== null && (
             <>
               <div onClick={() => setPlaying((p) => !p)} className="el-btn" style={replayBtn(true)}>
-                {playing ? "⏸" : "▸"} {replayIdx}/{steps.length}
+                <Icon name={playing ? "pause" : "play"} size={11} /> {replayIdx}/{steps.length}
               </div>
               {[1, 2, 5].map((sp) => (
                 <div key={sp} onClick={() => setSpeed(sp)} className="el-btn"
                   style={replayBtn(speed === sp)}>{sp}×</div>
               ))}
               <div onClick={() => { setReplayIdx(null); setPlaying(false); }} className="el-btn"
-                style={replayBtn(false)}>✕</div>
+                style={replayBtn(false)} aria-label="Exit replay"><Icon name="close" size={11} /></div>
             </>
           )}
           {replayIdx === null && (
             <div onClick={() => setFollow((f) => !f)} className="el-btn"
               style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".06em", padding: `${S[1]} ${S[2]}`,
                        borderRadius: R.sm, color: follow ? C.accent : C.ghost }}>
-              {follow ? "◉ FOLLOW" : "○ FOLLOW"}
+              <Icon name={follow ? "dot" : "circle"} size={10} /> FOLLOW
             </div>
           )}
         </div>
@@ -187,19 +188,19 @@ export function TraceTab({ inv, onOpenEvidence, onReload }: Props) {
               {inv.paused ? (
                 <SecondaryBtn onClick={() =>
                   control("resume", () => api.resume(inv.id), "Investigation resumed.")}>
-                  ▸ Resume
+                  <Icon name="play" size={12} /> Resume
                 </SecondaryBtn>
               ) : (
                 <SecondaryBtn onClick={() =>
                   control("pause", () => api.pause(inv.id), "Investigation paused.")}>
-                  ⏸ Pause
+                  <Icon name="pause" size={12} /> Pause
                 </SecondaryBtn>
               )}
               <SecondaryBtn
                 active={inv.escalated}
                 onClick={() => control("escalate", () => api.escalate(inv.id),
                   "Escalated — this case now runs on a bigger budget.")}>
-                {inv.escalated ? "✓ Escalated" : "Escalate"}
+                {inv.escalated ? <><Icon name="check" size={12} /> Escalated</> : "Escalate"}
               </SecondaryBtn>
             </div>
           </>
@@ -362,9 +363,9 @@ function TraceRow({ step, last, selHyp, onOpenEvidence, evidence }: {
               <div style={{ fontFamily: mono, fontSize: T.sm, color: C.info,
                             wordBreak: "break-all" }}>{c.code}</div>
               <div style={{ marginTop: S[2], padding: `${S[2]} ${S[3]}`, background: "rgba(224,88,79,.07)",
-                            border: "1px solid rgba(224,88,79,.35)", borderRadius: R.control,
+                            border: `1px solid ${C.badLine}`, borderRadius: R.control,
                             fontFamily: mono, fontSize: T.xs, color: C.bad }}>
-                ✕ {c.error}
+                <Icon name="close" size={11} style={{ display: "inline" }} /> {c.error}
               </div>
               <div style={{ fontSize: T.sm, color: C.muted, marginTop: S[1] }}>{c.text}</div>
             </>

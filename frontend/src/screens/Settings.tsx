@@ -5,6 +5,7 @@ import { money } from "../format";
 import { useAsync } from "../hooks";
 import { C, MEASURE, R, S, T, mono } from "../theme";
 import { Bar, Centered, ErrorState, Label, ScreenHeader } from "../ui";
+import { Icon } from "../components/Icon";
 
 interface Props {
   product: ProductRow | null;
@@ -183,9 +184,11 @@ function LimitsPanel({ limits, onSaved }: {
             {admin && (
               <div style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
                 <button className="el-btn" aria-label={`Increase ${f.name}`}
-                  onClick={() => adjust(f.key, f.step, f.min, f.max)} style={stepBtn}>▲</button>
+                  onClick={() => adjust(f.key, f.step, f.min, f.max)} style={stepBtn}>
+                  <Icon name="chevronUp" size={12} /></button>
                 <button className="el-btn" aria-label={`Decrease ${f.name}`}
-                  onClick={() => adjust(f.key, -f.step, f.min, f.max)} style={stepBtn}>▼</button>
+                  onClick={() => adjust(f.key, -f.step, f.min, f.max)} style={stepBtn}>
+                  <Icon name="chevronDown" size={12} /></button>
               </div>
             )}
           </div>

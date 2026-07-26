@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Evidence } from "../api";
 import { C, R, S, T, mono } from "../theme";
+import { Icon } from "./Icon";
 
 export function EvidenceSheet({ evidence, onClose }: { evidence: Evidence | null; onClose: () => void }) {
   useEffect(() => {
@@ -44,7 +45,7 @@ export function EvidenceSheet({ evidence, onClose }: { evidence: Evidence | null
             {evidence.source}
           </span>
           <button onClick={onClose} style={{ marginLeft: "auto", background: "none", border: "none", color: C.muted, fontSize: T.lg }}>
-            ✕
+            <Icon name="close" size={15} />
           </button>
         </div>
         <div style={{ padding: 16, background: C.bgRaised, border: `1px solid ${C.border}`, borderRadius: R.control, fontSize: T.base, lineHeight: "var(--el-lh-normal)", color: C.text2 }}>

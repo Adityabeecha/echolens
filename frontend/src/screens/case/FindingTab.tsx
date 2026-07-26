@@ -5,6 +5,7 @@ import { pct } from "../../format";
 import { SEVERITY } from "../../status";
 import { C, MEASURE, R, S, T, mono } from "../../theme";
 import { EmptyState, Label } from "../../ui";
+import { Icon } from "../../components/Icon";
 
 interface Props {
   inv: Investigation;
@@ -197,7 +198,7 @@ export function FindingTab({
 
         {approved && (
           <Banner color={C.good} style={{ marginTop: S[6], marginBottom: 0 }}>
-            ✓ You approved this finding. It stays under Resolved until a fix is verified.
+            <Icon name="check" size={14} style={{ display: "inline", verticalAlign: "-2px" }} /> You approved this finding. It stays under Resolved until a fix is verified.
           </Banner>
         )}
 

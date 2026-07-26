@@ -2,6 +2,7 @@ import { api } from "../api";
 import { useAsync } from "../hooks";
 import { C, MEASURE, R, S, T, mono } from "../theme";
 import { Centered, EmptyState, ErrorState, Label, ScreenHeader } from "../ui";
+import { Icon } from "../components/Icon";
 
 interface Props {
   onGoMemory: () => void;
@@ -88,7 +89,7 @@ function Flow({ trigger, cause, fix }: { trigger: string; cause: string; fix: st
       {steps.map(([k, v, color], i) => (
         <div key={k} style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: S[3], alignItems: "baseline" }}>
           <div style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".08em", color }}>
-            {i > 0 ? "↓ " : ""}
+            {i > 0 && <Icon name="arrowDown" size={11} style={{ display: "inline" }} />}
             {k}
           </div>
           <div style={{ fontSize: T.base, color: C.text2, lineHeight: "var(--el-lh-snug)" }}>{v || "—"}</div>

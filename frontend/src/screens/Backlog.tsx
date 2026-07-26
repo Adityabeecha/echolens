@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { BacklogItem, QuarterPlan, api, canReview } from "../api";
 import { C, MEASURE, R, S, T, mono, sans } from "../theme";
 import { Bar, Centered, EmptyState, ErrorState, Label, ScreenHeader } from "../ui";
+import { Icon } from "../components/Icon";
 
 const BAND: Record<string, string> = { high: C.bad, medium: C.accent, low: C.dim };
 
@@ -150,7 +151,7 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
               <div style={{ maxWidth: MEASURE, marginBottom: S[4], padding: `${S[2]} ${S[4]}`,
                             border: `1px solid ${C.border3}`, background: C.card2,
                             borderRadius: R.control, fontSize: T.sm, color: C.muted, lineHeight: "var(--el-lh-normal)" }}>
-                ⓘ {plan.unknown_effort} item{plan.unknown_effort === 1 ? " has" : "s have"} no
+                {plan.unknown_effort} item{plan.unknown_effort === 1 ? " has" : "s have"} no
                 effort signal yet — no linked issue labels and no fix history to learn from. They're
                 ranked on impact alone rather than on a guessed estimate.
               </div>
@@ -252,7 +253,8 @@ function Row({ item, inPlan, busy, canEdit, onToggle, onOpen, note }: {
         <div style={{ display: "flex", gap: S[3], marginTop: S[2], flexWrap: "wrap" }}>
           <button onClick={() => setOpen((o) => !o)} className="el-btn"
             style={{ fontFamily: mono, fontSize: T.micro, color: C.dim }}>
-            {open ? "▾ hide evidence" : `▸ ${item.evidence_count} evidence`}
+            <Icon name={open ? "chevronDown" : "chevronRight"} size={11} />
+            {open ? "hide evidence" : `${item.evidence_count} evidence`}
           </button>
           {item.projected.confident && (
             <span style={{ fontFamily: mono, fontSize: T.micro, color: C.good }}>
