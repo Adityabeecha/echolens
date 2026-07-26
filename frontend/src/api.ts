@@ -221,6 +221,10 @@ export interface Finding {
   severity?: Severity;
   fix?: FixStatus | null;
   addenda?: { question: string; answer: string; dimension: string }[];
+  /** Set when the claim-grounding guard rejected the drafted prose. */
+  grounding_violations?: string[];
+  /** The rejected text, kept for audit — never presented as the conclusion. */
+  rejected_draft?: string;
 }
 export interface Recommendation {
   rank: number;

@@ -633,7 +633,33 @@ class Investigator:
                         f"sentence must cite existing evidence ids inline: {violations}")
             finding = candidate | {"grounding_violations": violations}
 
-        if finding is None:  # deterministic honest fallback, no causal claims
+        # An ungrounded draft is NOT publishable. Previously the last failing
+        # candidate was kept and returned, so its uncited causal prose reached
+        # the reviewer verbatim — and the only consequence was a status downgrade
+        # gated on `status == "resolved"`, meaning a case already ending in
+        # needs_human or insufficient_evidence published the violation with no
+        # consequence at all. The violation marker was also never rendered.
+        # Governing rule 2 is "no causal claim without an evidence chain"; a
+        # guard that detects a violation and publishes it anyway is not a guard.
+        violations = finding.get("grounding_violations") if finding else None
+        if violations:
+            state["status"] = "needs_human"
+            state["status_reason"] = "claim-grounding scan flagged uncited causal claims"
+            finding = {
+                "summary": (finding or {}).get("summary", "Cause could not be stated with evidence"),
+                # The rejected prose is preserved for audit but is NOT the finding.
+                "prose": ("A cause was drafted but could not be tied to specific evidence, so it "
+                          "is not being presented as a conclusion. The reasoning trace and the "
+                          "evidence below show what was actually established."),
+                "confidence": guards.best_confidence(state["hypotheses"]),
+                "supported_hypothesis": None,
+                "checked": sorted({e["source"] for e in state["evidence"]}),
+                "what_would_settle_it": ("Evidence directly linking the proposed cause to the "
+                                         "symptom — the draft asserted it without a citation."),
+                "grounding_violations": violations,
+                "rejected_draft": (finding or {}).get("prose", ""),
+            }
+        elif finding is None:  # deterministic honest fallback, no causal claims
             finding = {
                 "summary": f"Investigation ended: {state['status']}",
                 "prose": f"Status: {state['status']}. {state['status_reason']}",
@@ -642,9 +668,6 @@ class Investigator:
                 "checked": sorted({e["source"] for e in state["evidence"]}),
                 "what_would_settle_it": "Re-run with a larger budget or additional sources.",
             }
-        if finding.get("grounding_violations") and state["status"] == "resolved":
-            state["status"] = "needs_human"
-            state["status_reason"] = "claim-grounding scan flagged uncited causal claims"
         return finding
 
     # ── run ────────────────────────────────────────────────────────────

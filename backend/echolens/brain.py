@@ -224,7 +224,6 @@ def calibrate_from_history(session: Session, product_id: int | None = None,
         inv_stmt = inv_stmt.where(Investigation.product_id == product_id)
 
     hits = misses = tested = 0
-    subsystems_seen = {sub for sub, _ in edges}
     for inv in session.scalars(inv_stmt).all():
         finding = session.scalars(select(Finding).where(
             Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
@@ -236,11 +235,18 @@ def calibrate_from_history(session: Session, product_id: int | None = None,
         subs = set(_classify(text, SUBSYSTEMS))
         syms = set(_classify(text, SYMPTOMS))
         for (sub, sym), edge in edges.items():
-            if sub not in subs or sub not in subsystems_seen:
+            if sub not in subs:
                 continue
-            # only cases NOT already baked into the edge count as fresh trials
-            if inv.id in (edge.case_ids or []):
+            # Grade each case against each edge EXACTLY ONCE, ever. `case_ids`
+            # is provenance (the confirmed fixes that mined the edge) and is
+            # reset by rebuild(), so using it as the seen-set meant every
+            # resolved case without a confirmed fix was re-graded on every call
+            # — five clicks of "rebuild" walked confidence 0.80 -> 0.90 on an
+            # unchanged corpus, which is corroboration invented from nothing.
+            graded = edge.graded_case_ids or []
+            if inv.id in graded or inv.id in (edge.case_ids or []):
                 continue
+            edge.graded_case_ids = graded + [inv.id]
             tested += 1
             if sym in syms:
                 edge.supports += 1

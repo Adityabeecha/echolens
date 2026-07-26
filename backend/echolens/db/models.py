@@ -43,7 +43,10 @@ class Issue(Base):
     __tablename__ = "issues"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    ext_id: Mapped[str] = mapped_column(String(64), unique=True)  # e.g. "#2841"
+    # Repo-qualified ("owner/repo#123") and NOT globally unique: two tracked
+    # repos legitimately both have an issue #1. Uniqueness is per (ext_id,
+    # product), enforced by the collector's scoped lookup.
+    ext_id: Mapped[str] = mapped_column(String(64), index=True)
     title: Mapped[str] = mapped_column(Text)
     body_snippet: Mapped[str] = mapped_column(Text)
     state: Mapped[str] = mapped_column(String(16), default="open")
@@ -109,6 +112,12 @@ class KnowledgeEdge(Base):
     refutes: Mapped[int] = mapped_column(Integer, default=0)    # times predicted, didn't hold
     verified_count: Mapped[int] = mapped_column(Integer, default=0)  # distinct confirmed fixes
     case_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)   # findings behind it
+    # Every investigation already GRADED against this edge. Distinct from
+    # case_ids (which is provenance — the confirmed fixes that mined it) because
+    # calibrate_from_history must never score the same case twice: it used to
+    # re-grade the whole corpus on every call, so pressing "rebuild" five times
+    # manufactured corroboration out of nothing.
+    graded_case_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
     terms: Mapped[list | None] = mapped_column(JSON, nullable=True)      # matching vocabulary
     last_seen: Mapped[datetime | None] = mapped_column(nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="active")   # active|retired
@@ -119,7 +128,9 @@ class Release(Base):
     __tablename__ = "releases"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    version: Mapped[str] = mapped_column(String(32), unique=True)
+    # Not globally unique: two products can both ship "v1.0.0". The version
+    # string stays bare because get_release_notes prefix-matches it.
+    version: Mapped[str] = mapped_column(String(32), index=True)
     notes: Mapped[str] = mapped_column(Text)
     released_at: Mapped[datetime] = mapped_column(index=True)
     product: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)

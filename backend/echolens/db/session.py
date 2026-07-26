@@ -34,6 +34,7 @@ _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("anomaly_events", "window_start", "TIMESTAMP"),
     ("anomaly_events", "window_end", "TIMESTAMP"),
     ("anomaly_events", "merged_into_id", "INTEGER"),
+    ("knowledge_edges", "graded_case_ids", "JSON"),
     ("investigations", "product_id", "INTEGER"),
     ("findings", "product_id", "INTEGER"),
     ("fix_watches", "product_id", "INTEGER"),

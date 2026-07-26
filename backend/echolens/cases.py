@@ -140,6 +140,13 @@ def derive_status(inv: Investigation, finding: Finding | None,
     """
     if inv.status == "running":
         return RUNNING, "Investigating now."
+    # A case the dedupe migration retired is not a live case. Without this branch
+    # it fell through to NEEDS_REVIEW and a merged duplicate reappeared on the
+    # action queue, while backlog/portfolio (which filter status == "resolved")
+    # never showed it — two surfaces, two answers, the exact split this module
+    # exists to prevent.
+    if inv.status == "merged_duplicate":
+        return DISMISSED, "Merged into another case covering the same signal."
     if watch is not None:
         if watch.status == "confirmed":
             return VERIFIED_FIXED, "A fix shipped and the complaints stopped."
@@ -147,6 +154,9 @@ def derive_status(inv: Investigation, finding: Finding | None,
             return REGRESSED, "This was fixed once and has come back."
         if watch.status == "persists_reopened":
             return REGRESSED, "The fix shipped but the complaints continued."
+        if watch.status == "inconclusive":
+            return NEEDS_HUMAN, ("Complaints fell after the fix but not enough to call it "
+                                 "fixed — your call on whether it worked.")
     if finding is not None and finding.status == "challenged":
         return DISMISSED, "You challenged this finding; it was re-opened as a new case."
     if inv.status == "budget_exhausted":

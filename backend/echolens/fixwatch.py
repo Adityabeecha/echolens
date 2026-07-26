@@ -72,10 +72,23 @@ def complaint_series(session: Session, terms: list[str], start: datetime, end: d
 
 
 def _rate(session: Session, terms: list[str], start: datetime, end: datetime,
-          product: str | None = None) -> float:
-    """Average daily matching-negative-review count over the window, for ONE product."""
+          product: str | None = None) -> float | None:
+    """Average daily matching-negative-review count, or None when unobservable.
+
+    Returns None rather than 0.0 for an empty window. The two are completely
+    different claims — "we watched and saw no complaints" versus "we have not
+    watched yet" — and collapsing them into 0.0 is what let a stalled collector
+    read as a verified fix.
+    """
     series = complaint_series(session, terms, start, end, product)
-    return round(sum(s["count"] for s in series) / max(1, len(series)), 3)
+    if not series:
+        return None
+    return round(sum(s["count"] for s in series) / len(series), 3)
+
+
+# A fix cannot be judged on a window shorter than this: complaints arrive with a
+# lag, so "no complaints yet" two days after the fix means nothing.
+MIN_OBSERVATION_DAYS = 5
 
 
 def link_issue(session: Session, finding: Finding, repo: str, issue_number: int,
@@ -144,17 +157,35 @@ def evaluate(session: Session, as_of: datetime | None = None) -> list[dict]:
         now = aware_utc(as_of) or reference_now(session, product)
         fix = aware_utc(watch.fix_date)
         window_end = fix + timedelta(days=watch.window_days)
-        post = _rate(session, watch.terms, fix, min(now, window_end), product)
+        observed_end = min(now, window_end)
+        observed_days = (observed_end - fix).days
+        post = _rate(session, watch.terms, fix, observed_end, product)
         watch.post_rate = post
         base = watch.baseline_rate or 0.0
         window_over = now >= window_end
         result = "watching"
+
+        # Nothing can be concluded without a real observation window. `post` is
+        # None when the window is empty (a stalled collector can make `now`
+        # EARLIER than the fix date, which used to produce 0.0 and read as a
+        # perfect fix), and a window shorter than MIN_OBSERVATION_DAYS has not
+        # given complaints time to arrive.
+        if post is None or observed_days < MIN_OBSERVATION_DAYS:
+            out.append({"watch_id": watch.id, "finding_id": watch.finding_id,
+                        "status": "watching", "baseline_rate": base, "post_rate": post,
+                        "why": "not enough post-fix data to judge yet"})
+            continue
+
         if base > 0 and post <= base * CONFIRM_DROP:
             result = _confirm(session, watch)
         elif window_over and (base == 0 or post >= base * PERSIST_KEEP):
             result = _reopen(session, watch)
-        elif window_over:  # elapsed, ambiguous improvement → still call it confirmed
-            result = _confirm(session, watch)
+        elif window_over:
+            # The 40–60% band: better, but not the "complaints stopped" the UI
+            # claims a confirmed fix means. Escalate to a human instead of
+            # silently banking it as verified — a false confirmation here is
+            # mined by the brain and patterns as ground truth.
+            result = _inconclusive(session, watch)
         session.flush()
         out.append({"watch_id": watch.id, "finding_id": watch.finding_id,
                     "status": result, "baseline_rate": base, "post_rate": post})
@@ -175,6 +206,20 @@ def _confirm(session: Session, watch: FixWatch) -> str:
         from echolens.logging import get_logger
         get_logger("fixwatch").warning("brain_rebuild_failed", error=str(err))
     return "confirmed"
+
+
+def _inconclusive(session: Session, watch: FixWatch) -> str:
+    """The window elapsed and complaints fell, but not far enough to call it fixed.
+
+    Previously this band was recorded as "confirmed" outright, so a complaint
+    rate still at 59% of baseline was banked as a verified fix — then mined by
+    the brain as proof that a cause→fix pair works. A partial improvement is a
+    real result, but it is a human's call, not the machine's.
+    """
+    watch.status = "inconclusive"
+    watch.chart_json = before_after(session, watch)
+    session.flush()
+    return "inconclusive"
 
 
 def _reopen(session: Session, watch: FixWatch) -> str:
@@ -200,7 +245,9 @@ def check_regressions(session: Session, as_of: datetime | None = None) -> list[d
         now = aware_utc(as_of) or reference_now(session, product)
         recent = _rate(session, watch.terms, now - timedelta(days=REGRESS_WINDOW), now, product)
         base = watch.baseline_rate or 0.0
-        if base > 0 and recent >= base * REGRESS_BACK:
+        # `recent is None` means the window was unobservable, not that complaints
+        # are absent — never declare a regression (or its absence) from no data.
+        if recent is not None and base > 0 and recent >= base * REGRESS_BACK:
             watch.status = "regressed"
             orig = session.get(Investigation, watch.investigation_id)
             finding = session.get(Finding, watch.finding_id)

@@ -24,6 +24,10 @@ const FIX_META: Record<string, { label: string; color: string; body: string }> =
     label: "Verified fixed", color: C.good,
     body: "Complaints dropped and stayed down after the fix shipped. This is what earns a pattern.",
   },
+  inconclusive: {
+    label: "Inconclusive", color: C.accent,
+    body: "Complaints fell after the fix, but not far enough to call it fixed. This is a partial improvement, not a verified one — your call on whether it worked.",
+  },
   persists_reopened: {
     label: "Fix didn't hold", color: C.bad,
     body: "The issue closed but the complaints continued at the same rate. The case was re-opened.",

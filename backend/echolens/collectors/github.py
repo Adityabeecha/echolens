@@ -83,10 +83,15 @@ class GitHubCollector(Collector):
 
     def _ingest_issue(self, session: Session, item: dict) -> tuple[bool, str | None]:
         num = item.get("number")
-        ext_id = f"#{num}"
+        # Qualified by repo. `#1` alone is globally unique in the schema, so two
+        # tracked repos that both have issue #1 collided: the second was reported
+        # as a duplicate and silently dropped, AND the `existing` branch below
+        # overwrote the first repo's state/labels/reactions with the second's.
+        ext_id = _issue_ext_id(self.identifier, num)
         updated = _dt(item.get("updated_at"))
         wm = iso(updated) if updated else None
-        existing = session.scalars(select(Issue).where(Issue.ext_id == ext_id)).first()
+        existing = session.scalars(select(Issue).where(
+            Issue.ext_id == ext_id, Issue.product == self.product)).first()
         labels = [l.get("name") for l in item.get("labels", []) if isinstance(l, dict)]
         reactions = (item.get("reactions") or {}).get("total_count", 0)
         if existing:  # refresh mutable fields, but it's not a NEW insert
@@ -108,13 +113,24 @@ class GitHubCollector(Collector):
         if not version:
             return False, None
         published = _dt(item.get("published_at"))
-        if session.scalars(select(Release).where(Release.version == version)).first():
+        # Scope the dedupe by product. The version string itself is left alone:
+        # get_release_notes matches it with a PREFIX LIKE ("3.2%"), so prefixing
+        # the repo would break every version lookup the agent makes. Uniqueness
+        # is enforced by the (version, product) pair at the query level.
+        if session.scalars(select(Release).where(
+                Release.version == version, Release.product == self.product)).first():
             return False, iso(published) if published else None
         session.add(Release(
             version=version, notes=(item.get("body") or item.get("name") or "")[:4000],
             released_at=published or datetime.now(timezone.utc), product=self.product,
         ))
         return True, iso(published) if published else None
+
+
+def _issue_ext_id(repo: str, number) -> str:
+    """Repo-qualified issue id. Fits String(64): repos are <= 100 chars but the
+    owner/name pair plus a number is comfortably short in practice, and we clamp."""
+    return f"{repo}#{number}"[:64]
 
 
 def _dt(v) -> datetime | None:

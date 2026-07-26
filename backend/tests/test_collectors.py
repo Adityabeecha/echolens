@@ -66,6 +66,35 @@ def test_github_issues_labels_reactions_and_releases(db):
     issue = db.query(Issue).one()
     assert issue.reactions == 9 and issue.labels == ["bug", "battery"]
     assert db.query(Release).one().version == "3.2.0"
+    # Repo-qualified so a second repo's #42 cannot collide with this one.
+    assert issue.ext_id == "lumo/app#42"
+
+
+def test_two_repos_with_the_same_issue_number_do_not_collide(db):
+    """Issue.ext_id used to be a bare "#42" with a GLOBAL unique constraint and
+    an unscoped dedupe lookup. The second repo's issue was reported as a
+    duplicate and dropped, AND the refresh branch overwrote the first repo's
+    state/labels/reactions with the second repo's values."""
+    def payload(title, reactions, label):
+        return {"issues": [{"number": 1, "title": title, "body": "b", "state": "open",
+                            "labels": [{"name": label}],
+                            "reactions": {"total_count": reactions},
+                            "created_at": "2026-07-11T00:00:00Z",
+                            "updated_at": "2026-07-11T00:00:00Z"}],
+                "releases": [{"tag_name": "1.0.0", "name": "v1", "body": "notes",
+                              "published_at": "2026-07-08T00:00:00Z"}]}
+
+    a = GitHubCollector("orgA/appA", product="A", fetch_fn=lambda: payload("A issue", 5, "bug")).run(db)
+    b = GitHubCollector("orgB/appB", product="B", fetch_fn=lambda: payload("B issue", 2, "docs")).run(db)
+    assert a.inserted == 2 and b.inserted == 2, "both repos must store their own rows"
+
+    issues = {i.product: i for i in db.query(Issue).all()}
+    assert set(issues) == {"A", "B"}
+    assert issues["A"].reactions == 5 and issues["A"].labels == ["bug"],         "repo A must not be overwritten by repo B"
+    assert issues["B"].reactions == 2 and issues["B"].labels == ["docs"]
+
+    # Two products shipping the same version string both keep their notes.
+    assert {r.product for r in db.query(Release).all()} == {"A", "B"}
 
 
 def test_collector_records_error_without_crashing(db):

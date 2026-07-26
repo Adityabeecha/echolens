@@ -105,6 +105,34 @@ export function FindingTab({
           </Banner>
         )}
 
+        {f.grounding_violations && f.grounding_violations.length > 0 && (
+          <div style={{ marginBottom: 18, padding: "14px 16px",
+                        border: `1px solid ${C.bad}66`, background: `${C.bad}12`,
+                        borderRadius: 8, maxWidth: 720 }}>
+            <Label style={{ color: C.bad, marginBottom: 7 }}>
+              CLAIM-GROUNDING GUARD BLOCKED THIS DRAFT
+            </Label>
+            <div style={{ fontSize: 13, color: C.text3, lineHeight: 1.6 }}>
+              EchoLens drafted a cause but could not tie{" "}
+              {f.grounding_violations.length === 1 ? "one sentence" : "some sentences"} to specific
+              evidence, so the draft is not being shown as a conclusion. This is the honesty rule
+              working, not a failure — treat the evidence below as what was actually established.
+            </div>
+            {f.rejected_draft && (
+              <details style={{ marginTop: 10 }}>
+                <summary style={{ fontSize: 12.5, color: C.muted, cursor: "pointer" }}>
+                  Show the rejected draft (for audit — not a finding)
+                </summary>
+                <div style={{ fontSize: 12.5, color: C.dim, marginTop: 8, lineHeight: 1.6,
+                              fontStyle: "italic", paddingLeft: 10,
+                              borderLeft: `2px solid ${C.bad}44` }}>
+                  {f.rejected_draft}
+                </div>
+              </details>
+            )}
+          </div>
+        )}
+
         {inv.data_notes && inv.data_notes.length > 0 && (
           <div style={{ marginBottom: 18, padding: "12px 16px", border: `1px solid ${C.bad}44`,
                         background: `${C.bad}12`, borderRadius: 8 }}>
