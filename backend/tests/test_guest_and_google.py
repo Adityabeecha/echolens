@@ -313,3 +313,75 @@ def test_a_non_rs256_algorithm_is_refused(monkeypatch):
     with pytest.raises(google_auth.GoogleAuthError) as e:
         google_auth.verify_id_token(hs)
     assert "algorithm" in str(e.value)
+
+
+# ── guests see demo products only ──────────────────────────────────────
+# A public demo URL must not list the workspace's real products.
+
+def _app_client(monkeypatch):
+    """A TestClient over an isolated DB holding one demo and one real product."""
+    from fastapi.testclient import TestClient
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    import echolens.db.session as db_session
+    from echolens.db.models import Base, Product
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                           poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, expire_on_commit=False)
+    with Session() as s:
+        s.add_all([Product(name="Lumo (demo)", is_demo=True),
+                   Product(name="Firefox", is_demo=False)])
+        s.commit()
+    monkeypatch.setattr(db_session, "_engine", engine)
+    monkeypatch.setattr(db_session, "_SessionLocal", Session)
+    monkeypatch.setattr(db_session, "get_engine", lambda db_url=None: engine)
+    from echolens.api.app import app
+    return TestClient(app)
+
+
+def test_guest_products_list_hides_real_products(monkeypatch):
+    monkeypatch.setattr(settings, "echolens_env", "staging")
+    monkeypatch.setattr(settings, "allow_guest", True)
+    monkeypatch.setattr(settings, "guest_demo_only", True)
+    tc = _app_client(monkeypatch)
+
+    names = [p["name"] for p in tc.get("/products").json()["products"]]
+    assert names == ["Lumo (demo)"], f"a guest must see only demo products, got {names}"
+
+
+def test_guest_cannot_reach_a_real_product_by_id(monkeypatch, tmp_path):
+    """404, not 403: a 403 would confirm the product exists."""
+    monkeypatch.setattr(settings, "echolens_env", "staging")
+    monkeypatch.setattr(settings, "allow_guest", True)
+    monkeypatch.setattr(settings, "guest_demo_only", True)
+    tc = _app_client(monkeypatch)
+
+    assert tc.get("/cases?product_id=2").status_code == 404   # Firefox
+    assert tc.get("/cases?product_id=1").status_code == 200   # Lumo
+
+
+def test_guest_portfolio_does_not_leak_real_product_names(monkeypatch):
+    monkeypatch.setattr(settings, "echolens_env", "staging")
+    monkeypatch.setattr(settings, "allow_guest", True)
+    monkeypatch.setattr(settings, "guest_demo_only", True)
+    tc = _app_client(monkeypatch)
+
+    board = tc.get("/portfolio").json()
+    assert [p["product"] for p in board["products"]] == ["Lumo (demo)"]
+    # Transfer stats compare real products, so they are withheld entirely.
+    assert board["transfer"] is None
+    assert tc.get("/portfolio/transfers").json()["transfers"] == []
+
+
+def test_the_flag_can_be_turned_off(monkeypatch, tmp_path):
+    """A private deployment may want guests to see everything."""
+    monkeypatch.setattr(settings, "echolens_env", "staging")
+    monkeypatch.setattr(settings, "allow_guest", True)
+    monkeypatch.setattr(settings, "guest_demo_only", False)
+    tc = _app_client(monkeypatch)
+
+    names = [p["name"] for p in tc.get("/products").json()["products"]]
+    assert len(names) == 2

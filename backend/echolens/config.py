@@ -122,6 +122,12 @@ class Settings(BaseSettings):
     # any visitor spend the deployment's OpenAI credits and delete its data.
     allow_guest: bool = False
 
+    # Guests see ONLY products flagged `is_demo`. A public demo otherwise
+    # exposes every real product in the workspace — their reviews, findings and
+    # costs — to anyone with the URL. Applies to guests only; a signed-in user
+    # still sees everything their role allows.
+    guest_demo_only: bool = True
+
     # ── Google sign-in ──────────────────────────────────────────────────
     # The OAuth client id from the Google Cloud console. Sign-in is offered by
     # the frontend only when this is set, so an unconfigured deployment simply

@@ -67,6 +67,12 @@ hides or disables the controls:
 - approve, challenge or queue anything
 - create or delete a product, or change budgets
 
+Guests only ever see products marked as **demo** (`GUEST_DEMO_ONLY=true`, the
+default). Everything else in your workspace stays invisible to them — it is not
+merely hidden in the UI, the API returns 404 for a real product even if a
+visitor guesses its id. Mark the product you want to show with `is_demo`, and
+your other products stay private on the same deployment.
+
 > This is **not** the same as `ECHOLENS_ENV=dev`. Dev mode admits anonymous
 > callers as a full **admin**, which on a public URL would let any visitor
 > spend your credits and delete your data. Never use `dev` for a link you
@@ -97,6 +103,7 @@ the id, which is designed to be public.
 | `GOOGLE_CLIENT_ID` | *(blank)* | Enables the Google button. Blank = no Google option. |
 | `GOOGLE_DEFAULT_ROLE` | `reviewer` | Role a Google user gets. Set to `viewer` to make every Google sign-in read-only too. |
 | `GOOGLE_ADMIN_EMAILS` | *(blank)* | Comma-separated emails that get **admin**. Put your own address here. |
+| `GUEST_DEMO_ONLY` | `true` | Guests see only products flagged `is_demo`. Set `false` only on a private deployment. |
 
 **Note on cost:** with the default `reviewer`, anyone who signs in with Google
 can start investigations, which bills your OpenAI account. If you are sharing

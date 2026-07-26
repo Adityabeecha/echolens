@@ -493,7 +493,26 @@ def auth_me(user: dict = Depends(current_user)) -> dict:
 
 # ── v8.0: products are the scope of everything ──────────────────────────
 
-def _scope(session, product_id: int | None):
+def _guest_locked(user: dict | None) -> bool:
+    """True when this caller may only see demo products.
+
+    A guest is an anonymous visitor on a public URL. Without this they saw
+    every real product in the workspace — reviews, findings, costs and all —
+    because `is_demo` was recorded but never enforced anywhere.
+    """
+    return bool(user and user.get("guest") and settings.guest_demo_only)
+
+
+def _visible_products(session, user: dict | None = None):
+    """The products this caller may see, newest-id-last."""
+    from echolens.db.models import Product
+    q = select(Product).order_by(Product.id)
+    if _guest_locked(user):
+        q = q.where(Product.is_demo == True)  # noqa: E712
+    return session.scalars(q).all()
+
+
+def _scope(session, product_id: int | None, user: dict | None = None):
     """The product this request is scoped to: the explicit id, else the first.
 
     An explicit id that does not exist is a 404, not a silent redirect. This
@@ -501,14 +520,22 @@ def _scope(session, product_id: int | None):
     link, deleted product, typo) quietly operated on somebody else's data —
     PUT /backlog/plan saved the PM's edits onto Product #1's backlog, and
     /anomalies/scan scanned the wrong corpus, with no error surfaced anywhere.
+
+    Guests are confined to demo products here, at the single choke point every
+    scoped route already passes through, rather than in each route. A real
+    product requested by id is a 404 for them — the same answer as a product
+    that does not exist, so the response does not confirm it is there.
     """
     from echolens.db.models import Product
     if product_id is not None:
         p = session.get(Product, product_id)
         if p is None:
             raise HTTPException(404, f"no product with id {product_id}")
+        if _guest_locked(user) and not p.is_demo:
+            raise HTTPException(404, f"no product with id {product_id}")
         return p
-    return session.scalars(select(Product).order_by(Product.id)).first()
+    rows = _visible_products(session, user)
+    return rows[0] if rows else None
 
 
 def _owned(session, model, resource_id: int, product_id: int | None):
@@ -584,7 +611,9 @@ def list_products(user: dict = Depends(current_user)) -> dict:
     to decide between Today and the add-product wizard (server-derived)."""
     from echolens.db.models import Product, User
     with session_scope() as session:
-        rows = session.scalars(select(Product).order_by(Product.id)).all()
+        # Guests see only demo products: this list drives the switcher, so
+        # anything here is a product the visitor can open.
+        rows = _visible_products(session, user)
         active = None
         u = _user_row(session, user)
         if u is not None and u.last_active_product_id:
@@ -898,7 +927,7 @@ def brain_view(product_id: int | None = None, include_retired: bool = False,
     symptoms — with the confidence each belief has earned."""
     from echolens.brain import edges
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         pid = p.id if p else None
         return {"edges": edges(session, pid, include_retired=include_retired),
                 "retired": edges(session, pid, include_retired=True) if include_retired else None,
@@ -911,7 +940,7 @@ def brain_rebuild(product_id: int | None = None,
     """Re-mine edges from confirmed fixes and grade them against resolved cases."""
     from echolens.brain import calibrate_from_history, edges, rebuild
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         pid = p.id if p else None
         built = rebuild(session, pid)
         graded = calibrate_from_history(session, pid)
@@ -931,7 +960,7 @@ def brain_review(body: ReviewDoc, request: Request,
     BEFORE it ships. Prevention, not detection."""
     from echolens.brain import review_change
     with session_scope() as session:
-        p = _scope(session, body.product_id)
+        p = _scope(session, body.product_id, user)
         return {**review_change(session, body.text, p.id if p else None),
                 "product": p.name if p else None}
 
@@ -948,7 +977,7 @@ def brain_ask(body: BrainQuestion, request: Request,
     """The onboarding oracle: 'what usually goes wrong here?', cited to real cases."""
     from echolens.brain import ask
     with session_scope() as session:
-        p = _scope(session, body.product_id)
+        p = _scope(session, body.product_id, user)
         return ask(session, body.question, p.id if p else None, p.name if p else None)
 
 
@@ -960,7 +989,7 @@ def backlog_view(product_id: int | None = None,
     """Every open problem, ranked by impact-per-effort, each line defended."""
     from echolens.backlog import backlog
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         return {**backlog(session, p.id if p else None), "product": p.name if p else None}
 
 
@@ -970,7 +999,7 @@ def backlog_plan_view(product_id: int | None = None, capacity_days: float | None
     """The proposed "what to fix next" draft, respecting the PM's own edits."""
     from echolens.backlog import quarter_plan
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         return {**quarter_plan(session, p.id if p else None, capacity_days),
                 "product": p.name if p else None}
 
@@ -989,7 +1018,7 @@ def backlog_plan_save(body: PlanBody,
     """The PM edits and owns the plan; a later re-rank proposes around it."""
     from echolens.backlog import quarter_plan, save_plan
     with session_scope() as session:
-        p = _scope(session, body.product_id)
+        p = _scope(session, body.product_id, user)
         pid = p.id if p else None
         save_plan(session, pid, included=body.included, excluded=body.excluded,
                   notes=body.notes, capacity_days=body.capacity_days)
@@ -1008,7 +1037,7 @@ def feedback_graph(product_id: int | None = None, days: int = 90, limit: int = 1
     """
     from echolens.feedback_graph import build_graph
     with session_scope() as session:
-        prod = _scope(session, product_id)
+        prod = _scope(session, product_id, user)
         if prod is None:
             return {"nodes": [], "product": None, "channels": []}
         llm = _metered_llm(session, "feedback_graph") if settings.openai_api_key else None
@@ -1021,7 +1050,7 @@ def graph_channels(product_id: int | None = None,
     """Which channels this product has, and how much each contributes."""
     from echolens.feedback import CHANNELS, channel_meta, collect_items, configured_channels
     with session_scope() as session:
-        prod = _scope(session, product_id)
+        prod = _scope(session, product_id, user)
         name = prod.name if prod else None
         items = collect_items(session, name, negatives_only=False)
         counts: dict[str, int] = {}
@@ -1075,7 +1104,7 @@ def feed_candidates(product_id: int | None = None, limit: int = 6, refresh: bool
     from echolens.themes.discover import cached_themes
 
     with session_scope() as session:
-        prod = _scope(session, product_id)
+        prod = _scope(session, product_id, user)
         if prod is None:
             return {"candidates": [], "product": None, "engine": "none"}
         llm = _metered_llm(session, "themes") if settings.openai_api_key else None
@@ -1121,7 +1150,7 @@ def queue_themes(request: Request, body: QueueThemes,
     from echolens.orchestrator.queue import enqueue_theme, queue_view
 
     with session_scope() as session:
-        prod = _scope(session, body.product_id)
+        prod = _scope(session, body.product_id, user)
         pid = prod.id if prod else None
         queued, already = [], []
         for i, slug in enumerate(body.slugs):
@@ -1150,7 +1179,7 @@ def queue_themes(request: Request, body: QueueThemes,
 def queue_list(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     from echolens.orchestrator.queue import queue_view
     with session_scope() as session:
-        prod = _scope(session, product_id)
+        prod = _scope(session, product_id, user)
         pid = prod.id if prod else None
         return queue_view(session, pid, _daily_limit(session, pid))
 
@@ -1192,7 +1221,7 @@ def snapshot(product: str | None = None, product_id: int | None = None, days: in
     from echolens.onboarding.snapshot import health_snapshot
     with session_scope() as session:
         if product is None:
-            p = _scope(session, product_id)
+            p = _scope(session, product_id, user)
             product = p.name if p else None
         return health_snapshot(session, product=product, days=days)
 
@@ -1210,7 +1239,7 @@ def anomalies_scan(product_id: int | None = None,
                    user: dict = Depends(require_role("reviewer"))) -> dict:
     from echolens.detector.detect import scan
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         events = scan(session, product=(p.name if p else None), product_id=(p.id if p else None))
         return {"detected": [e.slug for e in events], "product": p.name if p else None}
 
@@ -1218,7 +1247,7 @@ def anomalies_scan(product_id: int | None = None,
 @app.get("/anomalies")
 def list_anomalies(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         stmt = select(AnomalyEvent).where(AnomalyEvent.merged_into_id.is_(None))
         if p is not None:
             stmt = stmt.where(AnomalyEvent.product_id == p.id)
@@ -1235,7 +1264,7 @@ def list_cases(product_id: int | None = None, user: dict = Depends(current_user)
     here so the same case cannot look like two different things on two screens.
     """
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         return case_view(session, p.id if p else None)
 
 
@@ -1263,7 +1292,7 @@ def anomalies_triage(request: Request, run: bool = False, product_id: int | None
     to_run: list[tuple[int, str]] = []
     skipped_already_triaged = 0
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         pid = p.id if p else None
         # A preview (run=false) must not consume the pending queue — see
         # Orchestrator.triage(persist=...).
@@ -1317,7 +1346,7 @@ def start_investigation(request: Request, body: NewCase,
     """Start an investigation for an existing anomaly, or open a manual case
     from a free-text description. Runs in the background; poll the trace."""
     with session_scope() as session:
-        prod = _scope(session, body.product_id)
+        prod = _scope(session, body.product_id, user)
         pid = prod.id if prod else None
         opened_by = "anomaly"
         if body.anomaly_slug:
@@ -1366,7 +1395,7 @@ def start_investigation(request: Request, body: NewCase,
 @app.get("/investigations")
 def list_investigations(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         stmt = select(Investigation).order_by(Investigation.id.desc())
         if p is not None:
             stmt = stmt.where(Investigation.product_id == p.id)
@@ -1380,7 +1409,7 @@ def list_investigations(product_id: int | None = None, user: dict = Depends(curr
 def get_investigation(inv_id: int, product_id: int | None = None,
                       user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         inv = _owned(session, Investigation, inv_id, p.id if p else None)
         return _investigation_dict(session, inv)
 
@@ -1424,7 +1453,7 @@ def _resume_investigation_bg(inv_id: int) -> None:
 def pause_investigation(inv_id: int, product_id: int | None = None,
                        user: dict = Depends(require_role("reviewer"))) -> dict:
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         inv = _owned(session, Investigation, inv_id, p.id if p else None)
         inv.paused = True
         return {"status": "pausing", "id": inv_id}
@@ -1434,7 +1463,7 @@ def pause_investigation(inv_id: int, product_id: int | None = None,
 def resume_investigation(inv_id: int, product_id: int | None = None,
                         user: dict = Depends(require_role("reviewer"))) -> dict:
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         inv = _owned(session, Investigation, inv_id, p.id if p else None)
         if inv.status != "running":
             raise HTTPException(422, f"cannot resume a {inv.status} investigation")
@@ -1447,7 +1476,7 @@ def resume_investigation(inv_id: int, product_id: int | None = None,
 def escalate_investigation(inv_id: int, product_id: int | None = None,
                           user: dict = Depends(require_role("reviewer"))) -> dict:
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         inv = _owned(session, Investigation, inv_id, p.id if p else None)
         inv.escalated = True
         return {"status": "escalated", "id": inv_id, "by": user["email"]}
@@ -1457,7 +1486,7 @@ def escalate_investigation(inv_id: int, product_id: int | None = None,
 def get_trace(inv_id: int, after: int = 0, product_id: int | None = None,
               user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         inv = _owned(session, Investigation, inv_id, p.id if p else None)
         steps = session.scalars(select(TraceStep).where(
             TraceStep.investigation_id == inv_id, TraceStep.seq > after
@@ -1503,7 +1532,7 @@ async def stream_trace(inv_id: int, request: Request, product_id: int | None = N
             raise HTTPException(401, "missing or invalid token")
 
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         _owned(session, Investigation, inv_id, p.id if p else None)
 
     async def gen():
@@ -1548,7 +1577,7 @@ def review_finding(finding_id: int, body: ReviewBody, product_id: int | None = N
                    user: dict = Depends(require_role("reviewer"))) -> dict:
     from echolens import review
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         finding = _owned_finding(session, finding_id, p.id if p else None)
         if body.action == "approve":
             review.approve(session, finding, body.note, user_id=user["id"])
@@ -1574,7 +1603,7 @@ def calibration_view(product_id: int | None = None, user: dict = Depends(current
     """v5.0 trust page: stated-confidence-vs-approval curve + known weak spots."""
     from echolens.calibration import calibration, weak_spots
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         pid = p.id if p else None
         return {**calibration(session, pid), "weak_spots": weak_spots(session, pid),
                 "product": p.name if p else None}
@@ -1586,7 +1615,7 @@ def recommend_finding(request: Request, finding_id: int, product_id: int | None 
                       user: dict = Depends(require_role("reviewer"))) -> dict:
     from echolens.recommender.recommend import recommend
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         finding = _owned_finding(session, finding_id, p.id if p else None)
         recs = recommend(session, finding)
         return {"recommendations": [
@@ -1647,7 +1676,7 @@ def finding_issue_markdown(finding_id: int, product_id: int | None = None,
     from echolens.exporting import finding_ticket
     from echolens.notify import deep_link
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         finding = _owned_finding(session, finding_id, p.id if p else None)
         repo = _github_repo(session, finding.product_id)
         inv = session.get(Investigation, finding.investigation_id)
@@ -1664,7 +1693,7 @@ def finding_github_issue(finding_id: int, product_id: int | None = None,
     from echolens.integrations.github_issue import GitHubIssueError, create_issue
     from echolens.notify import deep_link
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         finding = _owned_finding(session, finding_id, p.id if p else None)
         repo = _github_repo(session)
         if not repo:
@@ -1691,7 +1720,7 @@ def finding_notify(finding_id: int, product_id: int | None = None,
     """Send a finding's alert now (bypasses the severity gate)."""
     from echolens.notify import notify_finding
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         finding = _owned_finding(session, finding_id, p.id if p else None)
         return notify_finding(session, finding, force=True)
 
@@ -1843,7 +1872,7 @@ def alerts_digest(hours: int = 24, product_id: int | None = None,
     from echolens.impact import severity
     from echolens.notify import _send_slack, deep_link
     with session_scope() as session:
-        prod = _scope(session, product_id)
+        prod = _scope(session, product_id, user)
         since = datetime.now(timezone.utc) - timedelta(hours=hours)
         f_stmt = select(Finding).order_by(Finding.id.desc())
         if prod is not None:
@@ -1928,7 +1957,7 @@ def fixwatch_evaluate(user: dict = Depends(require_role("reviewer"))) -> dict:
 def fixwatch_list(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     from echolens.db.models import FixWatch
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         stmt = select(FixWatch).order_by(FixWatch.id.desc())
         if p is not None:
             stmt = stmt.where(FixWatch.product_id == p.id)
@@ -1946,7 +1975,7 @@ def patterns_view(product_id: int | None = None, user: dict = Depends(current_us
     """The validated pattern library — (trigger, cause, fix) proven by confirmed fixes."""
     from echolens.patterns import patterns
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         return {"patterns": patterns(session, p.id if p else None),
                 "product": p.name if p else None}
 
@@ -1957,7 +1986,7 @@ def overview(product_id: int | None = None, user: dict = Depends(current_user)) 
     import statistics as _stats
     from echolens.db.models import FixWatch
     with session_scope() as session:
-        prod = _scope(session, product_id)
+        prod = _scope(session, product_id, user)
         pid = prod.id if prod else None
         w_stmt = select(FixWatch)
         if pid is not None:
@@ -2032,7 +2061,7 @@ def chat_endpoint(body: ChatBody, request: Request,
     for an investigate-intent question — launches a case that streams in-thread."""
     from echolens import chat as chat_mod
     with session_scope() as session:
-        prod = _scope(session, body.product_id)
+        prod = _scope(session, body.product_id, user)
         pid = prod.id if prod else None
         decision = chat_mod.route(session, body.message, product_id=pid,
                                   product_name=(prod.name if prod else None))
@@ -2071,7 +2100,7 @@ def finding_followup(finding_id: int, body: FollowupBody, request: Request,
     as an addendum — no full re-investigation."""
     from echolens.chat import followup
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         finding = _owned_finding(session, finding_id, p.id if p else None)
         return followup(session, finding, body.question)
 
@@ -2081,7 +2110,7 @@ def brief_view(product_id: int | None = None, user: dict = Depends(current_user)
     """Preview the weekly brief (also what the scheduled send composes)."""
     from echolens.brief import weekly_brief
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         return {**weekly_brief(session, product_id=(p.id if p else None)),
                 "product": p.name if p else None}
 
@@ -2129,7 +2158,11 @@ def portfolio_view(user: dict = Depends(current_user)) -> dict:
     this is the screen you open before you know which product to open."""
     from echolens.portfolio import portfolio, transfer_stats
     with session_scope() as session:
-        return {**portfolio(session), "transfer": transfer_stats(session)}
+        demo_only = _guest_locked(user)
+        return {**portfolio(session, demo_only=demo_only),
+                # Cross-product transfer learning compares real products, so it
+                # is withheld from a demo visitor rather than filtered to one.
+                "transfer": None if demo_only else transfer_stats(session)}
 
 
 @app.get("/portfolio/brief")
@@ -2137,7 +2170,7 @@ def portfolio_brief_view(user: dict = Depends(current_user)) -> dict:
     """The weekly brief for everything you own, ranked globally by impact."""
     from echolens.portfolio import portfolio_brief
     with session_scope() as session:
-        return portfolio_brief(session)
+        return portfolio_brief(session, demo_only=_guest_locked(user))
 
 
 @app.get("/portfolio/themes")
@@ -2150,7 +2183,7 @@ def portfolio_themes(days: int = 30, limit: int = 8, user: dict = Depends(curren
     from echolens.db.models import Product
     from echolens.vocab import FAMILIES, canonical_theme, compare_theme
     with session_scope() as session:
-        products = session.scalars(select(Product).order_by(Product.id)).all()
+        products = _visible_products(session, user)
         names = [p.name for p in products]
         if not names:
             return {"themes": [], "products": [], "days": days}
@@ -2189,6 +2222,10 @@ def portfolio_transfers(user: dict = Depends(current_user)) -> dict:
     shortcut is measurable."""
     from echolens.portfolio import recent_transfers, transfer_stats
     with session_scope() as session:
+        # Transfers are inherently cross-product: every row names a real
+        # product a demo visitor must not see.
+        if _guest_locked(user):
+            return {"transfers": [], "stats": None}
         return {"transfers": recent_transfers(session), "stats": transfer_stats(session)}
 
 
@@ -2197,7 +2234,7 @@ def themes_view(product_id: int | None = None, user: dict = Depends(current_user
     """Theme lifecycle: emergence → peak → resolved / chronic (>60d unresolved)."""
     from echolens.themes import theme_lifecycle
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         return {"themes": theme_lifecycle(session, product_id=(p.id if p else None)),
                 "product": p.name if p else None}
 
@@ -2205,7 +2242,7 @@ def themes_view(product_id: int | None = None, user: dict = Depends(current_user
 @app.get("/costs")
 def costs(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         calls = _product_llm_calls(session, p.id if p else None)
         per_agent: dict[str, Any] = {}
         for c in calls:
@@ -2352,7 +2389,7 @@ def _product_llm_calls(session, product_id: int | None):
 @app.get("/feed/summary")
 def feed_summary(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         pid = p.id if p else None
         today = _today()
         invs = _product_investigations(session, pid)
@@ -2368,7 +2405,7 @@ def feed_summary(product_id: int | None = None, user: dict = Depends(current_use
 @app.get("/archive")
 def archive(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         pid = p.id if p else None
         costs = _cost_by_investigation(session, pid)
         rows = []
@@ -2420,7 +2457,7 @@ def sources(product_id: int | None = None, user: dict = Depends(current_user)) -
     from echolens.collectors.registry import source_health
     from echolens.db.models import CollectorState
     with session_scope() as session:
-        prod = _scope(session, product_id)
+        prod = _scope(session, product_id, user)
         s_stmt = select(CollectorState)
         if prod is not None:
             s_stmt = s_stmt.where(CollectorState.product_id == prod.id)
@@ -2488,7 +2525,7 @@ def sources(product_id: int | None = None, user: dict = Depends(current_user)) -
 @app.get("/costs/summary")
 def costs_summary(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
-        p = _scope(session, product_id)
+        p = _scope(session, product_id, user)
         pid = p.id if p else None
         calls = _product_llm_calls(session, pid)
         invs = _product_investigations(session, pid)

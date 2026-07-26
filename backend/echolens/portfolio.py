@@ -185,11 +185,21 @@ def product_snapshot(session: Session, product: Product, now: datetime) -> dict:
     }
 
 
-def portfolio(session: Session, as_of: datetime | None = None) -> dict:
-    """Every product, ranked by how much it needs the PM today."""
+def visible_products(session: Session, demo_only: bool = False):
+    """Products a caller may see. `demo_only` confines a public-demo guest to
+    products flagged `is_demo`, so a shared URL cannot list real ones."""
+    q = select(Product).order_by(Product.id)
+    if demo_only:
+        q = q.where(Product.is_demo == True)  # noqa: E712
+    return session.scalars(q).all()
+
+
+def portfolio(session: Session, as_of: datetime | None = None,
+              demo_only: bool = False) -> dict:
+    """Every product the caller may see, ranked by how much it needs them today."""
     now = as_of or datetime.now(timezone.utc)
     rows = [product_snapshot(session, p, now)
-            for p in session.scalars(select(Product).order_by(Product.id)).all()]
+            for p in visible_products(session, demo_only)]
     rows.sort(key=lambda r: (-r["score"], r["product"]))
     on_fire = [r for r in rows if r["band"] == "on_fire"]
     return {
@@ -217,7 +227,8 @@ def _verdict(rows: list[dict], on_fire: list[dict]) -> str:
 
 # ── portfolio brief ─────────────────────────────────────────────────────
 
-def portfolio_brief(session: Session, as_of: datetime | None = None) -> dict:
+def portfolio_brief(session: Session, as_of: datetime | None = None,
+                    demo_only: bool = False) -> dict:
     """One brief for everything you own, ranked by impact across products.
 
     Not a concatenation of per-product briefs — the ranking is global, so the
@@ -228,10 +239,10 @@ def portfolio_brief(session: Session, as_of: datetime | None = None) -> dict:
 
     now = as_of or datetime.now(timezone.utc)
     since = now - timedelta(days=7)
-    board = portfolio(session, now)
+    board = portfolio(session, now, demo_only)
 
     per_product, problems, fixes, regressions = [], [], [], []
-    for p in session.scalars(select(Product).order_by(Product.id)).all():
+    for p in visible_products(session, demo_only):
         b = weekly_brief(session, now, p.id)
         per_product.append({"product": p.name, "product_id": p.id, "brief": b})
         for np in b["new_problems"]:
