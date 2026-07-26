@@ -23,6 +23,9 @@ export function useRouter(initial: Route) {
   // Set while we're the ones changing the hash, so the listener doesn't treat
   // our own navigation as a browser Back.
   const selfNav = useRef(false);
+  // Latest route, readable from callbacks without making them depend on it.
+  const routeRef = useRef(route);
+  routeRef.current = route;
 
   useEffect(() => {
     const onPop = () => {
@@ -37,7 +40,11 @@ export function useRouter(initial: Route) {
       setRoute(next);
     };
     window.addEventListener("hashchange", onPop);
-    return () => window.removeEventListener("hashchange", onPop);
+    window.addEventListener("popstate", onPop);
+    return () => {
+      window.removeEventListener("hashchange", onPop);
+      window.removeEventListener("popstate", onPop);
+    };
   }, []);
 
   const navigate = useCallback((next: Route, opts?: { replace?: boolean }) => {
@@ -68,15 +75,24 @@ export function useRouter(initial: Route) {
   }, []);
 
   const back = useCallback(() => {
-    const prev = stack.current.pop();
-    if (!prev) {
+    // Delegate to the BROWSER. This used to replaceState onto the previous
+    // route, which overwrote the current history entry instead of popping it:
+    // Today -> Cases -> Case34, press in-app Back, and browser history became
+    // [Today, Cases, Cases] — so the browser Back button appeared to do nothing
+    // and every subsequent press was off by one. history.back() fires popstate,
+    // which the listener below turns into the same state change.
+    if (stack.current.length > 0) {
       window.history.back();
       return;
     }
+    // Nothing of ours on the stack (deep link straight into a case): fall back
+    // to the parent list rather than leaving the browser to exit the app.
+    const fallback: Route = { screen: "cases", productId: routeRef.current.productId };
+    stack.current = [];
     selfNav.current = true;
-    window.history.replaceState(null, "", formatRoute(prev));
+    window.history.pushState(null, "", formatRoute(fallback));
     selfNav.current = false;
-    setRoute(prev);
+    setRoute(fallback);
   }, []);
 
   /**

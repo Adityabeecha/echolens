@@ -61,7 +61,7 @@ export function Calibration({ onGoCases }: { onGoCases: () => void }) {
         {data.overconfident && (
           <Notice color={C.bad}>
             Systematic overconfidence detected: stated confidence averages{" "}
-            {pct(data.mean_stated_confidence)} but only {pct(data.overall_approval_rate)} of findings are approved
+            {fracPct(data.mean_stated_confidence)} but only {fracPct(data.overall_approval_rate)} of findings are approved
             (~{Math.round((data.overconfidence_gap ?? 0) * 100)} pts high). A corrective note is now injected into every
             new investigation's prompt.
           </Notice>
@@ -106,7 +106,10 @@ function Notice({ children, color }: { children: React.ReactNode; color: string 
   );
 }
 
-const pct = (x: number | null) => (x == null ? "—" : `${Math.round(x * 100)}%`);
+/** Local: these values are 0..1 FRACTIONS, whereas format.ts `pct` takes an
+ *  already-scaled percentage. Renamed so the two can never be confused — an
+ *  accidental import of the shared one would render 0.85 as "1%". */
+const fracPct = (x: number | null) => (x == null ? "—" : `${Math.round(x * 100)}%`);
 
 function CalibrationChart({ data }: { data: Cal }) {
   const W = 340;
@@ -155,7 +158,7 @@ function CalibrationChart({ data }: { data: Cal }) {
           stroke={C.bg}
           strokeWidth={1}
         >
-          <title>{`stated ${Math.round(p.midpoint * 100)}% → approved ${pct(p.approval_rate)} (${p.count})`}</title>
+          <title>{`stated ${Math.round(p.midpoint * 100)}% → approved ${fracPct(p.approval_rate)} (${p.count})`}</title>
         </circle>
       ))}
       {/* axis captions */}

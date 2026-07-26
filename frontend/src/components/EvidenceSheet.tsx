@@ -13,8 +13,15 @@ export function EvidenceSheet({ evidence, onClose }: { evidence: Evidence | null
 
   return (
     <>
-      <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(6,7,10,.55)", zIndex: 20 }} />
+      <div onClick={onClose} aria-hidden="true"
+           style={{ position: "fixed", inset: 0, background: "rgba(6,7,10,.55)", zIndex: 20 }} />
       <div
+        // Announced as a dialog. Without a role a screen reader treated this as
+        // ordinary page content, so focus stayed on the obscured page behind it
+        // and Tab cycled through the case detail rather than the sheet.
+        role="dialog"
+        aria-modal="true"
+        aria-label="Evidence detail"
         style={{
           position: "fixed",
           top: 0,

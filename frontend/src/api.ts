@@ -783,6 +783,15 @@ export const api = {
   // (401, 403, 500) resolved as success and Settings reported "Limit saved."
   setLimits: (limits: { daily_investigations?: number; per_case_budget?: number; per_case_wall_min?: number }) =>
     put<Record<string, number>>("/settings/limits", limits),
-  // SSE URL for the live trace (EventSource cannot go through fetch)
-  traceStreamUrl: (id: number) => `${BASE}/investigations/${id}/trace/stream`,
+  // SSE URL for the live trace. EventSource cannot set an Authorization header,
+  // so the token rides in the query string — without it the endpoint 401s in
+  // every non-dev environment and the "live" trace silently degrades to polling.
+  traceStreamUrl: (id: number) => {
+    const qs = new URLSearchParams();
+    const t = getToken();
+    if (t) qs.set("token", t);
+    if (_productId != null) qs.set("product_id", String(_productId));
+    const q = qs.toString();
+    return `${BASE}/investigations/${id}/trace/stream${q ? `?${q}` : ""}`;
+  },
 };

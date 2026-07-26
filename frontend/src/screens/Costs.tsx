@@ -102,8 +102,14 @@ export function Costs({ onGoSettings }: { onGoSettings: () => void }) {
                   <span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>{r.tokens}</span>
                   <span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>{r.queries}</span>
                   <span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>{r.time}</span>
+                  {/* Through money() like the tiles above. Rendering the
+                      server's pre-formatted string here put "$0.00" beside a
+                      tile reading "$0.0031" — the same quantity, two formats,
+                      which is exactly what format.ts exists to prevent. */}
                   <span style={{ fontFamily: mono, fontSize: 11.5, color: C.text,
-                                 textAlign: "right" }}>{r.cost}</span>
+                                 textAlign: "right" }}>
+                    {money(Number(String(r.cost).replace(/[^0-9.]/g, "")))}
+                  </span>
                 </div>
               ))}
             </div>

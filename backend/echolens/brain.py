@@ -107,8 +107,12 @@ def rebuild(session: Session, product_id: int | None = None) -> dict:
     preserved across a rebuild so learning is not thrown away.
     """
     stmt = select(FixWatch).where(FixWatch.status == "confirmed")
-    if product_id is not None:
-        stmt = stmt.where(FixWatch.product_id == product_id)
+    # The KnowledgeEdge query below always filters `product_id == product_id`
+    # (which renders as IS NULL when it is None), but this FixWatch query only
+    # filtered when it was not None — so rebuild(None) mined every product's
+    # confirmed fixes into one NULL-scoped edge set, mixing products' failure
+    # models together. Scope both the same way.
+    stmt = stmt.where(FixWatch.product_id == product_id)
 
     # preserve prediction outcomes (refutes / extra supports) across rebuilds
     prior = {(e.subsystem, e.symptom): e for e in session.scalars(

@@ -47,20 +47,26 @@ export function CaseDetail({
       .then((d) => { setInv(d); setError(null); })
       .catch((e) => setError(String(e).replace("Error: ", "")));
 
-  // Poll while the case is live; stop the moment it settles.
+  // Poll while the case is LIVE — which includes queued work that has not
+  // started yet. The interval used to be torn down on the first non-running
+  // tick and never re-established, so opening a queued case froze the screen:
+  // when the queue promoted it to running seconds later the UI never noticed,
+  // and pause/resume left the detail stale until a manual reload.
   useEffect(() => {
     let alive = true;
     let timer: ReturnType<typeof setInterval> | null = null;
+    const settled = (d: Investigation) =>
+      d.status !== "running" && d.case_status !== "queued";
     const tick = () =>
       api.investigation(caseId)
         .then((d) => {
           if (!alive) return;
           setInv(d);
           setError(null);
-          if (d.status !== "running" && timer) { clearInterval(timer); timer = null; }
+          if (settled(d) && timer) { clearInterval(timer); timer = null; }
         })
         .catch((e) => alive && setError(String(e).replace("Error: ", "")));
-    tick();
+    void tick();
     timer = setInterval(tick, 1500);
     return () => { alive = false; if (timer) clearInterval(timer); };
   }, [caseId]);
@@ -169,6 +175,22 @@ export function CaseDetail({
           })}
         </div>
       </div>
+
+      {/* An error AFTER the first successful load used to be stored and never
+          rendered, so a failed refresh left stale data on screen while a toast
+          said the action had succeeded — the UI contradicting itself. */}
+      {error && (
+        <div style={{ flex: "none", margin: "10px 28px 0", padding: "9px 13px",
+                      border: `1px solid ${C.bad}55`, background: `${C.bad}12`,
+                      borderRadius: 8, fontSize: 12.5, color: C.text3,
+                      display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ color: C.bad }}>⚠</span>
+          <span style={{ flex: 1 }}>Couldn't refresh this case — {error}</span>
+          <span onClick={load} className="el-btn" role="button" tabIndex={0}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") load(); }}
+            style={{ color: C.accent, cursor: "pointer" }}>Retry</span>
+        </div>
+      )}
 
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex" }}>
         {tab === "finding" && (

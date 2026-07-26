@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChatCitation, api } from "../api";
 import { C, mono, sans } from "../theme";
 import { Label, ScreenHeader } from "../ui";
@@ -25,6 +25,11 @@ export function Chat({ onOpenInvestigation, productName }: {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // Chat is keyed on the product, so switching products unmounts it mid-flight.
+  // The reply belonged to the OLD product's scope, so applying it after the
+  // switch would attribute one product's answer to another.
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
 
   const send = async (msg?: string) => {
     const message = (msg ?? input).trim();
@@ -34,6 +39,7 @@ export function Chat({ onOpenInvestigation, productName }: {
     setBusy(true);
     try {
       const r = await api.chat(message);
+      if (!alive.current) return;
       setTurns((t) => [...t, {
         role: "echolens", text: r.text, citations: r.citations,
         investigationId: r.type === "investigation" ? r.investigation_id : undefined,
@@ -45,6 +51,7 @@ export function Chat({ onOpenInvestigation, productName }: {
         : raw;
       setTurns((t) => [...t, { role: "echolens", text }]);
     } finally {
+      if (!alive.current) return;
       setBusy(false);
       requestAnimationFrame(() => {
         if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;

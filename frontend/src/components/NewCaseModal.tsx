@@ -71,8 +71,18 @@ export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onSt
         <div style={{ fontSize: 12.5, color: C.muted, margin: "14px 0 6px" }}>Budget</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {TIERS.map((t) => (
+            // A radio group, and now actually operable as one. With no role,
+            // tabIndex or key handler a keyboard-only user could reach the
+            // textarea and the submit button but COULD NOT change the budget
+            // tier at all — it was permanently locked to the default.
             <div
               key={t.key}
+              role="radio"
+              aria-checked={tier === t.key}
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setTier(t.key); }
+              }}
               onClick={() => setTier(t.key)}
               style={{ padding: "7px 10px", border: `1px solid ${tier === t.key ? "rgba(240,166,60,.45)" : C.border3}`, borderRadius: 6, cursor: "pointer", background: tier === t.key ? "rgba(240,166,60,.06)" : "transparent" }}
             >

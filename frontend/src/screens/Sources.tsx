@@ -54,7 +54,7 @@ export function Sources({ onAddProduct, productName }: {
   };
 
   if (loading && !data) return <Centered>Loading sources…</Centered>;
-  if (error) {
+  if (error && !data) {
     return (
       <div style={{ padding: 28 }}>
         <ErrorState title="Couldn't load your sources" onRetry={reload} />
@@ -112,10 +112,10 @@ export function Sources({ onAddProduct, productName }: {
           </div>
         )}
         <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 880 }}>
-          {data?.connected.map((s) => {
+          {data?.connected.map((s, i) => {
             const col = STATUS_COLOR[s.status] ?? C.muted;
             return (
-              <div key={s.name + s.detail} style={{ display: "grid", gridTemplateColumns: "minmax(180px,1.2fr) 120px minmax(140px,1fr) 120px", gap: 14, alignItems: "center", padding: "15px 18px", background: C.card, border: `1px solid ${C.border2}`, borderRadius: 10 }}>
+              <div key={`${i}-${s.name}-${s.detail}`} style={{ display: "grid", gridTemplateColumns: "minmax(180px,1.2fr) 120px minmax(140px,1fr) 120px", gap: 14, alignItems: "center", padding: "15px 18px", background: C.card, border: `1px solid ${C.border2}`, borderRadius: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
                   <div style={{ width: 30, height: 30, borderRadius: 7, background: C.hover, border: `1px solid ${C.border3}`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: mono, fontSize: 12, color: C.accent, flex: "none" }}>
                     {s.icon}
@@ -199,13 +199,16 @@ function ConnectForm({ onDone }: { onDone: () => void }) {
     <div style={{ maxWidth: 880, marginBottom: 18, padding: 18, background: C.card, border: `1px solid ${C.border2}`, borderRadius: 12 }}>
       <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Connect a data source</div>
       <div style={{ display: "grid", gridTemplateColumns: "150px 1fr 1fr auto", gap: 10, alignItems: "center" }}>
-        <select value={source} onChange={(e) => setSource(e.target.value)} style={input}>
+        <select value={source} onChange={(e) => setSource(e.target.value)} style={input}
+          aria-label="Source type">
           <option value="play_store">Play Store</option>
           <option value="app_store">App Store</option>
           <option value="github">GitHub</option>
         </select>
-        <input value={identifier} onChange={(e) => setIdentifier(e.target.value)} placeholder={hint} style={input} />
-        <input value={product} onChange={(e) => setProduct(e.target.value)} placeholder="product name (optional)" style={input} />
+        <input value={identifier} onChange={(e) => setIdentifier(e.target.value)} placeholder={hint}
+          aria-label="Source identifier" style={input} />
+        <input value={product} onChange={(e) => setProduct(e.target.value)} placeholder="product name (optional)"
+          aria-label="Product name" style={input} />
         <button onClick={submit} disabled={!identifier.trim() || busy} className="el-btn"
           style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: 7, padding: "9px 16px", fontWeight: 600, fontSize: 13, cursor: identifier.trim() ? "pointer" : "not-allowed", opacity: identifier.trim() ? 1 : 0.5 }}>
           {busy ? "…" : "Connect"}
@@ -252,10 +255,12 @@ function ImportForm({ onDone }: { onDone: (msg: string) => void }) {
         <span style={{ fontFamily: mono, color: C.text3 }}>date</span>, <span style={{ fontFamily: mono, color: C.text3 }}>version</span>.
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 10, alignItems: "center" }}>
-        <input type="file" accept=".csv,text/csv" onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+        <input type="file" accept=".csv,text/csv" aria-label="CSV file to import"
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           style={{ ...input, padding: "7px 9px" }} />
         <input value={product} onChange={(e) => setProduct(e.target.value)} placeholder="product name (optional)" style={input} />
-        <input value={sourceLabel} onChange={(e) => setSourceLabel(e.target.value)} placeholder="source label (e.g. app_store)" style={input} />
+        <input value={sourceLabel} onChange={(e) => setSourceLabel(e.target.value)} placeholder="source label (e.g. app_store)"
+          aria-label="Source label" style={input} />
         <button onClick={submit} disabled={!file || busy} className="el-btn"
           style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: 7, padding: "9px 16px", fontWeight: 600, fontSize: 13, cursor: file ? "pointer" : "not-allowed", opacity: file ? 1 : 0.5 }}>
           {busy ? "Importing…" : "Import"}

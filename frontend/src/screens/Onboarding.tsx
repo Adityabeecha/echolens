@@ -163,6 +163,7 @@ function Backfilling({ product, onDone, onReviewSignals }: {
 
   useEffect(() => {
     let alive = true;
+    let failures = 0;
     const poll = async () => {
       try {
         const s = await api.onboardStatus(product);
@@ -174,7 +175,15 @@ function Backfilling({ product, onDone, onReviewSignals }: {
           timer.current = null;
         }
       } catch (e) {
-        if (alive) setErr(String(e).replace("Error: ", ""));
+        if (!alive) return;
+        setErr(String(e).replace("Error: ", ""));
+        // Stop after repeated failures instead of polling a dead backend
+        // forever behind a frozen snapshot that still looks like progress.
+        failures += 1;
+        if (failures >= 5 && timer.current) {
+          window.clearInterval(timer.current);
+          timer.current = null;
+        }
       }
     };
     poll();
@@ -195,6 +204,14 @@ function Backfilling({ product, onDone, onReviewSignals }: {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+      {err && status && (
+        <div style={{ padding: "10px 14px", border: `1px solid ${C.bad}55`,
+                      background: `${C.bad}12`, borderRadius: 8, color: C.text3,
+                      fontSize: 12.5, lineHeight: 1.5 }}>
+          ⚠ Lost contact while backfilling — {err}. The snapshot below may be
+          out of date.
+        </div>
+      )}
       {/* source health */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {status.sources.map((s) => {

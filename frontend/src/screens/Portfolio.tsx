@@ -188,6 +188,15 @@ function ProductRow({ p, onOpen, onOpenInvestigation }: {
 
         {p.top_problem && (
           <div
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                onOpenInvestigation(p.top_problem!.investigation_id);
+              }
+            }}
             onClick={(e) => { e.stopPropagation(); onOpenInvestigation(p.top_problem!.investigation_id); }}
             style={{ marginTop: 10, fontSize: 12.5, color: C.muted, display: "flex", gap: 8,
                      alignItems: "baseline" }}

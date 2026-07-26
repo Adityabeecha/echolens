@@ -108,8 +108,12 @@ class _SparkIndex:
                 .where(Review.rating <= 2, Review.created_at >= self.start.replace(tzinfo=None))
                 .order_by(Review.created_at.desc())
                 .limit(SPARK_REVIEW_CAP))
-        if product is not None:
-            stmt = stmt.where(Review.product == product)
+        # No product means no corpus to draw from — NOT "every product's".
+        # Unscoped, one product's sparklines were drawn from another's reviews.
+        if product is None:
+            self.rows = []
+            return
+        stmt = stmt.where(Review.product == product)
         self.rows = [(text.lower(), created) for text, created in session.execute(stmt)
                      if text and created]
 
@@ -266,9 +270,10 @@ def case_rows(session: Session, product_id: int | None,
         q_stmt = q_stmt.where(QueuedInvestigation.product_id == product_id)
     pending_q = sorted(session.scalars(q_stmt).all(),
                        key=lambda r: (r.priority, r.selection_order, r.id))
+    queued_rows: list[dict] = []
     for position, row in enumerate(pending_q, start=1):
         anomaly = session.get(AnomalyEvent, row.anomaly_id) if row.anomaly_id else None
-        rows.insert(0, {
+        queued_rows.append({
             "id": None,
             "queue_id": row.id,
             "title": case_title(None, anomaly, row.title),
@@ -287,7 +292,12 @@ def case_rows(session: Session, product_id: int | None,
             "position": position,
             "spark": spark.series(_terms(None, anomaly)),
         })
-    return rows
+    # Queued work leads the list, IN QUEUE ORDER. This was built with
+    # `rows.insert(0, ...)` inside the loop, so each insert pushed the previous
+    # one down and the block rendered 3, 2, 1 — while each card's own label
+    # correctly read "position 1", "position 2", "position 3". The list
+    # contradicted itself.
+    return queued_rows + rows
 
 
 def signal_rows(session: Session, product_id: int | None,

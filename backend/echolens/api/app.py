@@ -6,6 +6,7 @@ Milestone-3 Investigation screen consumes.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 import time
@@ -90,7 +91,12 @@ def _bootstrap() -> None:
                                 settings.bootstrap_admin_password, "admin")
                     log.info("bootstrap_admin_created", email=settings.bootstrap_admin_email)
     except Exception as err:
-        log.error("bootstrap_failed", error=str(err))
+        # Loud, and specific about the consequence: with no admin and
+        # auth_signup blocked in production, the instance cannot be administered
+        # at all. A one-line "bootstrap_failed" gave no hint of that.
+        log.error("bootstrap_failed", error=str(err),
+                  consequence="no admin user may exist; set BOOTSTRAP_ADMIN_EMAIL/PASSWORD "
+                              "and restart, or the instance cannot be administered")
 
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["240/minute"])
@@ -266,6 +272,11 @@ def _try_notify(session, finding) -> None:
 
 
 _queue_worker_active: set[int | None] = set()
+# The set above is mutated from several request threads. `if x in s: ... s.add(x)`
+# is check-then-act: two concurrent POSTs both passed the membership test before
+# either added, so two drain workers ran for one product and the daily cap was
+# a suggestion. The docstring below claimed this could not happen.
+_queue_worker_lock = threading.Lock()
 
 
 def _drain_queue_bg(product_id: int | None) -> None:
@@ -277,9 +288,10 @@ def _drain_queue_bg(product_id: int | None) -> None:
     """
     from echolens.orchestrator import queue as q
 
-    if product_id in _queue_worker_active:
-        return
-    _queue_worker_active.add(product_id)
+    with _queue_worker_lock:
+        if product_id in _queue_worker_active:
+            return
+        _queue_worker_active.add(product_id)
     try:
         while True:
             with session_scope() as session:
@@ -308,7 +320,30 @@ def _drain_queue_bg(product_id: int | None) -> None:
             with session_scope() as session:
                 q.finish(session, queue_id, investigation_id, ok=ok)
     finally:
-        _queue_worker_active.discard(product_id)
+        with _queue_worker_lock:
+            _queue_worker_active.discard(product_id)
+
+
+def _fail_investigation(session, inv_row, reason: str) -> None:
+    """End a case honestly instead of leaving it stuck at "running"."""
+    inv_row.status = "insufficient_evidence"
+    inv_row.resolved_at = datetime.now(timezone.utc)
+    notes = list(inv_row.data_notes or [])
+    notes.append(f"Investigation could not run: {reason}.")
+    inv_row.data_notes = notes
+    session.flush()
+
+
+def _mark_investigation_failed(investigation_id: int, error: str) -> None:
+    """Best-effort status write from a failed background thread, on its own
+    session — the one that raised is already rolled back."""
+    try:
+        with session_scope() as session:
+            row = session.get(Investigation, investigation_id)
+            if row is not None and row.status == "running":
+                _fail_investigation(session, row, f"an internal error stopped it ({error[:120]})")
+    except Exception as err:
+        log.error("mark_failed_failed", investigation_id=investigation_id, error=str(err))
 
 
 def _run_investigation_bg(investigation_id: int, tier: str) -> None:
@@ -317,22 +352,40 @@ def _run_investigation_bg(investigation_id: int, tier: str) -> None:
     from echolens.investigator.graph import Investigator
     from echolens.recommender.recommend import recommend
 
-    with session_scope() as session:
-        inv_row = session.get(Investigation, investigation_id)
-        anomaly = session.get(AnomalyEvent, inv_row.anomaly_id)
-        anomaly.status = "investigating"
-        inv = Investigator(session, anomaly, tier=tier,
-                           existing_investigation=inv_row).run()
-        finding = session.scalars(select(Finding).where(
-            Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
-        if finding is not None:
-            recommend(session, finding)
-            _try_notify(session, finding)
+    try:
+        with session_scope() as session:
+            inv_row = session.get(Investigation, investigation_id)
+            if inv_row is None:
+                log.error("run_investigation_missing", investigation_id=investigation_id)
+                return
+            anomaly = session.get(AnomalyEvent, inv_row.anomaly_id) if inv_row.anomaly_id else None
+            if anomaly is None:
+                # Deleting a product purges its anomalies while an investigation
+                # for it may still be queued. This used to dereference None,
+                # kill the daemon thread silently, and leave the case at
+                # "running" FOREVER — invisible in /archive (which skips running)
+                # and un-resumable, because resume re-enters the same crash.
+                _fail_investigation(session, inv_row, "its source signal no longer exists")
+                return
+            anomaly.status = "investigating"
+            inv = Investigator(session, anomaly, tier=tier,
+                               existing_investigation=inv_row).run()
+            finding = session.scalars(select(Finding).where(
+                Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
+            if finding is not None:
+                recommend(session, finding)
+                _try_notify(session, finding)
+    except Exception as err:
+        # A dead background thread must not strand the case. Without this the row
+        # sat at "running" permanently with no error anywhere the user could see.
+        log.error("run_investigation_failed", investigation_id=investigation_id, error=str(err))
+        _mark_investigation_failed(investigation_id, str(err))
 
 
 # ── endpoints ──────────────────────────────────────────────────────────
 
-from echolens.auth import authenticate, create_token, create_user, current_user, require_role
+from echolens.auth import (
+    authenticate, create_token, create_user, current_user, decode_token, require_role)
 
 
 class SignupBody(BaseModel):
@@ -397,14 +450,58 @@ def auth_me(user: dict = Depends(current_user)) -> dict:
 # ── v8.0: products are the scope of everything ──────────────────────────
 
 def _scope(session, product_id: int | None):
-    """The product this request is scoped to: the explicit id, else the first
-    product. Returns None only when no products exist at all."""
+    """The product this request is scoped to: the explicit id, else the first.
+
+    An explicit id that does not exist is a 404, not a silent redirect. This
+    used to fall through to "the first product", so `?product_id=999` (stale
+    link, deleted product, typo) quietly operated on somebody else's data —
+    PUT /backlog/plan saved the PM's edits onto Product #1's backlog, and
+    /anomalies/scan scanned the wrong corpus, with no error surfaced anywhere.
+    """
     from echolens.db.models import Product
     if product_id is not None:
         p = session.get(Product, product_id)
-        if p is not None:
-            return p
+        if p is None:
+            raise HTTPException(404, f"no product with id {product_id}")
+        return p
     return session.scalars(select(Product).order_by(Product.id)).first()
+
+
+def _owned(session, model, resource_id: int, product_id: int | None):
+    """Fetch a row by id and REFUSE it if it belongs to another product.
+
+    Product scoping was applied as a WHERE clause on list endpoints and nowhere
+    else, so every single-resource route (`GET /investigations/{id}`,
+    `POST /findings/{id}/review`, …) served or mutated any id the caller could
+    guess, across every product in the workspace. Filtering a list is not
+    authorisation; this is the enforcement point those routes never had.
+
+    A cross-product id returns 404, not 403 — a 403 confirms the row exists.
+    """
+    row = session.get(model, resource_id)
+    if row is None:
+        raise HTTPException(404, f"no such {model.__tablename__.rstrip('s')}")
+    if product_id is not None and getattr(row, "product_id", None) not in (None, product_id):
+        raise HTTPException(404, f"no such {model.__tablename__.rstrip('s')}")
+    return row
+
+
+def _owned_finding(session, finding_id: int, product_id: int | None):
+    """A finding, verified to belong to the caller's product.
+
+    Findings carry product_id directly, but older rows may not, so fall back to
+    the parent investigation's scope rather than letting a NULL wave it through.
+    """
+    finding = session.get(Finding, finding_id)
+    if finding is None:
+        raise HTTPException(404, "no such finding")
+    owner = finding.product_id
+    if owner is None:
+        inv = session.get(Investigation, finding.investigation_id)
+        owner = inv.product_id if inv else None
+    if product_id is not None and owner not in (None, product_id):
+        raise HTTPException(404, "no such finding")
+    return finding
 
 
 def _user_row(session, user: dict):
@@ -783,7 +880,9 @@ class ReviewDoc(BaseModel):
 
 
 @app.post("/brain/review")
-def brain_review(body: ReviewDoc, user: dict = Depends(current_user)) -> dict:
+@limiter.limit("20/minute")
+def brain_review(body: ReviewDoc, request: Request,
+                 user: dict = Depends(current_user)) -> dict:
     """Design-doc / PR review: flag a proposed change against learned history
     BEFORE it ships. Prevention, not detection."""
     from echolens.brain import review_change
@@ -799,7 +898,9 @@ class BrainQuestion(BaseModel):
 
 
 @app.post("/brain/ask")
-def brain_ask(body: BrainQuestion, user: dict = Depends(current_user)) -> dict:
+@limiter.limit("20/minute")
+def brain_ask(body: BrainQuestion, request: Request,
+              user: dict = Depends(current_user)) -> dict:
     """The onboarding oracle: 'what usually goes wrong here?', cited to real cases."""
     from echolens.brain import ask
     with session_scope() as session:
@@ -898,7 +999,12 @@ async def import_feedback(file: UploadFile = File(...), channel: str = "support"
                           user: dict = Depends(require_role("admin"))) -> dict:
     """Import support tickets / in-app feedback / forum threads from a CSV."""
     from echolens.importers.feedback_csv import import_feedback_csv
-    raw = await file.read()
+    # Bounded. `await file.read()` with no cap pulled the entire upload into
+    # memory (and csv.DictReader then held a second copy), so one large POST
+    # could OOM the single worker this deployment runs.
+    raw = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"file too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)")
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -1020,7 +1126,12 @@ async def import_reviews(file: UploadFile = File(...), product: str = "", source
     """Import a CSV of reviews from any export (App Store, Zendesk, spreadsheet).
     Widens the evidence base beyond the live scrapers. Idempotent by content hash."""
     from echolens.importers.csv_reviews import import_reviews_csv
-    raw = await file.read()
+    # Bounded. `await file.read()` with no cap pulled the entire upload into
+    # memory (and csv.DictReader then held a second copy), so one large POST
+    # could OOM the single worker this deployment runs.
+    raw = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"file too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)")
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -1222,11 +1333,11 @@ def list_investigations(product_id: int | None = None, user: dict = Depends(curr
 
 
 @app.get("/investigations/{inv_id}")
-def get_investigation(inv_id: int, user: dict = Depends(current_user)) -> dict:
+def get_investigation(inv_id: int, product_id: int | None = None,
+                      user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
-        inv = session.get(Investigation, inv_id)
-        if inv is None:
-            raise HTTPException(404, "no such investigation")
+        p = _scope(session, product_id)
+        inv = _owned(session, Investigation, inv_id, p.id if p else None)
         return _investigation_dict(session, inv)
 
 
@@ -1266,21 +1377,21 @@ def _resume_investigation_bg(inv_id: int) -> None:
 
 
 @app.post("/investigations/{inv_id}/pause")
-def pause_investigation(inv_id: int, user: dict = Depends(require_role("reviewer"))) -> dict:
+def pause_investigation(inv_id: int, product_id: int | None = None,
+                       user: dict = Depends(require_role("reviewer"))) -> dict:
     with session_scope() as session:
-        inv = session.get(Investigation, inv_id)
-        if inv is None:
-            raise HTTPException(404, "no such investigation")
+        p = _scope(session, product_id)
+        inv = _owned(session, Investigation, inv_id, p.id if p else None)
         inv.paused = True
         return {"status": "pausing", "id": inv_id}
 
 
 @app.post("/investigations/{inv_id}/resume")
-def resume_investigation(inv_id: int, user: dict = Depends(require_role("reviewer"))) -> dict:
+def resume_investigation(inv_id: int, product_id: int | None = None,
+                        user: dict = Depends(require_role("reviewer"))) -> dict:
     with session_scope() as session:
-        inv = session.get(Investigation, inv_id)
-        if inv is None:
-            raise HTTPException(404, "no such investigation")
+        p = _scope(session, product_id)
+        inv = _owned(session, Investigation, inv_id, p.id if p else None)
         if inv.status != "running":
             raise HTTPException(422, f"cannot resume a {inv.status} investigation")
         inv.paused = False
@@ -1289,48 +1400,96 @@ def resume_investigation(inv_id: int, user: dict = Depends(require_role("reviewe
 
 
 @app.post("/investigations/{inv_id}/escalate")
-def escalate_investigation(inv_id: int, user: dict = Depends(require_role("reviewer"))) -> dict:
+def escalate_investigation(inv_id: int, product_id: int | None = None,
+                          user: dict = Depends(require_role("reviewer"))) -> dict:
     with session_scope() as session:
-        inv = session.get(Investigation, inv_id)
-        if inv is None:
-            raise HTTPException(404, "no such investigation")
+        p = _scope(session, product_id)
+        inv = _owned(session, Investigation, inv_id, p.id if p else None)
         inv.escalated = True
         return {"status": "escalated", "id": inv_id, "by": user["email"]}
 
 
 @app.get("/investigations/{inv_id}/trace")
-def get_trace(inv_id: int, after: int = 0, user: dict = Depends(current_user)) -> dict:
+def get_trace(inv_id: int, after: int = 0, product_id: int | None = None,
+              user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
-        inv = session.get(Investigation, inv_id)
-        if inv is None:
-            raise HTTPException(404, "no such investigation")
+        p = _scope(session, product_id)
+        inv = _owned(session, Investigation, inv_id, p.id if p else None)
         steps = session.scalars(select(TraceStep).where(
             TraceStep.investigation_id == inv_id, TraceStep.seq > after
         ).order_by(TraceStep.seq)).all()
         return {"status": inv.status, "steps": [_trace_dict(t) for t in steps]}
 
 
+# An SSE tail must end. Without a ceiling the generator looped forever whenever
+# a case was stuck at "running" (which, before the _run_investigation_bg guard,
+# happened whenever a background thread died), pinning a threadpool worker and
+# opening a DB connection twice a second until the pool was exhausted.
+SSE_MAX_SECONDS = 15 * 60
+
+
+def _sse(event: str, payload: dict) -> str:
+    """One server-sent event. Kept as a helper so the wire format lives in one
+    place rather than being re-escaped at four call sites."""
+    return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+
+
 @app.get("/investigations/{inv_id}/trace/stream")
-def stream_trace(inv_id: int, user: dict = Depends(current_user)) -> StreamingResponse:
-    """SSE tail of the trace_steps table until the investigation stops running."""
-    def gen():
+async def stream_trace(inv_id: int, request: Request, product_id: int | None = None,
+                       token: str | None = None) -> StreamingResponse:
+    """SSE tail of the trace_steps table until the investigation stops running.
+
+    Auth accepts `?token=` as well as the Authorization header. EventSource
+    cannot set headers, so requiring one made this endpoint 401 in every
+    non-dev environment — the browser silently fell back to polling and the
+    "live trace" never worked in production at all. Same JWT; it is in the query
+    string because SSE leaves nowhere else to put it.
+    """
+    if settings.auth_required:
+        header = request.headers.get("Authorization", "")
+        raw = header.split(" ", 1)[1] if header.startswith("Bearer ") else token
+        ok = False
+        if raw:
+            try:
+                int(decode_token(raw)["sub"])
+                ok = True
+            except Exception:
+                ok = False
+        if not ok:
+            raise HTTPException(401, "missing or invalid token")
+
+    with session_scope() as session:
+        p = _scope(session, product_id)
+        _owned(session, Investigation, inv_id, p.id if p else None)
+
+    async def gen():
         sent = 0
+        started = time.monotonic()
         while True:
+            # Stop when the client goes away. Nothing checked this, so closing
+            # the tab left the loop running server-side until the case settled.
+            if await request.is_disconnected():
+                return
+            if time.monotonic() - started > SSE_MAX_SECONDS:
+                yield _sse("done", {"status": "stream_timeout"})
+                return
             with session_scope() as session:
                 inv = session.get(Investigation, inv_id)
                 if inv is None:
-                    yield f"event: error\ndata: {json.dumps({'error': 'not found'})}\n\n"
+                    yield _sse("error", {"error": "not found"})
                     return
                 steps = session.scalars(select(TraceStep).where(
                     TraceStep.investigation_id == inv_id, TraceStep.seq > sent
                 ).order_by(TraceStep.seq)).all()
                 for t in steps:
                     sent = t.seq
-                    yield f"event: step\ndata: {json.dumps(_trace_dict(t))}\n\n"
+                    yield _sse("step", _trace_dict(t))
                 if inv.status != "running":
-                    yield f"event: done\ndata: {json.dumps({'status': inv.status})}\n\n"
+                    yield _sse("done", {"status": inv.status})
                     return
-            time.sleep(0.5)
+            # await, not time.sleep: a blocking sleep held a threadpool worker
+            # hostage for the entire life of the stream.
+            await asyncio.sleep(0.5)
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
@@ -1341,13 +1500,12 @@ class ReviewBody(BaseModel):
 
 
 @app.post("/findings/{finding_id}/review")
-def review_finding(finding_id: int, body: ReviewBody,
+def review_finding(finding_id: int, body: ReviewBody, product_id: int | None = None,
                    user: dict = Depends(require_role("reviewer"))) -> dict:
     from echolens import review
     with session_scope() as session:
-        finding = session.get(Finding, finding_id)
-        if finding is None:
-            raise HTTPException(404, "no such finding")
+        p = _scope(session, product_id)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
         if body.action == "approve":
             review.approve(session, finding, body.note, user_id=user["id"])
             return {"status": "approved", "finding_id": finding_id, "by": user["email"]}
@@ -1380,13 +1538,12 @@ def calibration_view(product_id: int | None = None, user: dict = Depends(current
 
 @app.post("/findings/{finding_id}/recommend")
 @limiter.limit("10/minute")  # each call hits the LLM — cap runaway spend
-def recommend_finding(request: Request, finding_id: int,
+def recommend_finding(request: Request, finding_id: int, product_id: int | None = None,
                       user: dict = Depends(require_role("reviewer"))) -> dict:
     from echolens.recommender.recommend import recommend
     with session_scope() as session:
-        finding = session.get(Finding, finding_id)
-        if finding is None:
-            raise HTTPException(404, "no such finding")
+        p = _scope(session, product_id)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
         recs = recommend(session, finding)
         return {"recommendations": [
             {"rank": r.rank, "action": r.action, "impact": r.impact, "effort": r.effort}
@@ -1414,27 +1571,41 @@ def _metered_llm(session, agent_prefix: str):
     return OpenAIClient(on_call=_record)
 
 
-def _github_repo(session) -> str | None:
-    """The repo to file issues into: the single connected GitHub source, else
-    the configured default. (Our beachhead is one product per workspace.)"""
+def _github_repo(session, product_id: int | None = None) -> str | None:
+    """The repo to file a finding's issue into — THIS product's repo.
+
+    This used to return a repo only when exactly one was connected workspace-wide
+    and otherwise fall back to GITHUB_DEFAULT_REPO. The moment a second product
+    was added, every finding from every product filed into the default repo:
+    verified by test, issues for product B landed in product A's tracker (or in
+    whatever GITHUB_DEFAULT_REPO named). Scoped first, global single-repo second,
+    configured default last.
+    """
     from echolens.db.models import CollectorState
-    rows = session.scalars(select(CollectorState).where(
-        CollectorState.source == "github", CollectorState.enabled == True)).all()  # noqa: E712
+    base = select(CollectorState).where(
+        CollectorState.source == "github", CollectorState.enabled == True)  # noqa: E712
+    if product_id is not None:
+        scoped = session.scalars(base.where(CollectorState.product_id == product_id)).all()
+        if len(scoped) == 1:
+            return scoped[0].identifier
+        if len(scoped) > 1:
+            return scoped[0].identifier  # deterministic: first configured wins
+    rows = session.scalars(base).all()
     if len(rows) == 1:
         return rows[0].identifier
     return settings.github_default_repo or None
 
 
 @app.get("/findings/{finding_id}/issue")
-def finding_issue_markdown(finding_id: int, user: dict = Depends(current_user)) -> dict:
+def finding_issue_markdown(finding_id: int, product_id: int | None = None,
+                          user: dict = Depends(current_user)) -> dict:
     """Copy-to-clipboard, ticket-ready markdown for a finding."""
     from echolens.exporting import finding_ticket
     from echolens.notify import deep_link
     with session_scope() as session:
-        finding = session.get(Finding, finding_id)
-        if finding is None:
-            raise HTTPException(404, "no such finding")
-        repo = _github_repo(session)
+        p = _scope(session, product_id)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
+        repo = _github_repo(session, finding.product_id)
         inv = session.get(Investigation, finding.investigation_id)
         ticket = finding_ticket(session, finding, repo=repo,
                                 deep_link=deep_link(inv.id) if inv else None)
@@ -1442,15 +1613,15 @@ def finding_issue_markdown(finding_id: int, user: dict = Depends(current_user)) 
 
 
 @app.post("/findings/{finding_id}/github-issue")
-def finding_github_issue(finding_id: int, user: dict = Depends(require_role("reviewer"))) -> dict:
+def finding_github_issue(finding_id: int, product_id: int | None = None,
+                         user: dict = Depends(require_role("reviewer"))) -> dict:
     """Open a GitHub issue from a finding, evidence chain included."""
     from echolens.exporting import finding_ticket
     from echolens.integrations.github_issue import GitHubIssueError, create_issue
     from echolens.notify import deep_link
     with session_scope() as session:
-        finding = session.get(Finding, finding_id)
-        if finding is None:
-            raise HTTPException(404, "no such finding")
+        p = _scope(session, product_id)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
         repo = _github_repo(session)
         if not repo:
             raise HTTPException(422, "No GitHub repo connected. Connect a repo on Sources, or set GITHUB_DEFAULT_REPO.")
@@ -1460,7 +1631,10 @@ def finding_github_issue(finding_id: int, user: dict = Depends(require_role("rev
         try:
             issue = create_issue(repo, ticket["title"], ticket["body"])
         except GitHubIssueError as err:
-            raise HTTPException(422, str(err))
+            # Log the upstream body, return a generic message. GitHubIssueError
+            # embeds `resp.text[:200]` verbatim, which was echoed to any viewer.
+            log.warning("github_issue_failed", finding_id=finding_id, error=str(err))
+            raise HTTPException(422, "could not create the GitHub issue — see server logs")
         from echolens.fixwatch import link_issue
         if issue.get("number"):
             link_issue(session, finding, repo, int(issue["number"]), issue.get("url", ""))
@@ -1468,13 +1642,13 @@ def finding_github_issue(finding_id: int, user: dict = Depends(require_role("rev
 
 
 @app.post("/findings/{finding_id}/notify")
-def finding_notify(finding_id: int, user: dict = Depends(require_role("reviewer"))) -> dict:
+def finding_notify(finding_id: int, product_id: int | None = None,
+                   user: dict = Depends(require_role("reviewer"))) -> dict:
     """Send a finding's alert now (bypasses the severity gate)."""
     from echolens.notify import notify_finding
     with session_scope() as session:
-        finding = session.get(Finding, finding_id)
-        if finding is None:
-            raise HTTPException(404, "no such finding")
+        p = _scope(session, product_id)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
         return notify_finding(session, finding, force=True)
 
 
@@ -1494,10 +1668,16 @@ def _slack_note(payload: dict) -> str:
 def _do_approve(finding_id: int, note: str) -> dict:
     from echolens import review as review_mod
     with session_scope() as session:
+        # No product scope here on purpose: this runs from a Slack button,
+        # which has no request context and is workspace-wide by design. The
+        # SLACK_ACTION_TOKEN is the authorisation boundary for this path.
         finding = session.get(Finding, finding_id)
         if finding is None:
             raise HTTPException(404, "no such finding")
-        review_mod.approve(session, finding, note)
+        # user_id=None was written silently, so a Slack-originated approval left
+        # no attributable actor in the audit trail. There is no JWT on this path,
+        # so record the channel it came from rather than pretending it was nobody.
+        review_mod.approve(session, finding, f"[via Slack] {note}" if note else "[via Slack]")
         result = {"status": "approved", "finding_id": finding.id}
         if settings.auto_create_issue_on_approve:
             result["issue"] = _auto_issue(session, finding)
@@ -1507,6 +1687,9 @@ def _do_approve(finding_id: int, note: str) -> dict:
 def _do_challenge(finding_id: int, note: str) -> int:
     from echolens import review as review_mod
     with session_scope() as session:
+        # No product scope here on purpose: this runs from a Slack button,
+        # which has no request context and is workspace-wide by design. The
+        # SLACK_ACTION_TOKEN is the authorisation boundary for this path.
         finding = session.get(Finding, finding_id)
         if finding is None:
             raise HTTPException(404, "no such finding")
@@ -1521,6 +1704,7 @@ def _slack_challenge_bg(finding_id: int, note: str) -> None:
 
 
 @app.post("/integrations/slack/act")
+@limiter.limit("30/minute")  # a challenge here runs a FULL investigation
 async def slack_act(request: Request) -> dict:
     """Reply-to-act from Slack: an approve/challenge button (or a simple JSON
     body) maps to the review endpoint. No dashboard visit required.
@@ -1556,7 +1740,11 @@ async def slack_act(request: Request) -> dict:
         note = _slack_note(payload)
 
     expected = settings.slack_action_token
-    if not expected or token != expected:
+    # compare_digest, not `!=`: a short-circuiting string compare leaks the
+    # token a character at a time to anyone who can time the response, and this
+    # endpoint carries full reviewer-equivalent power.
+    import hmac as _hmac
+    if not expected or not _hmac.compare_digest(str(token), str(expected)):
         raise HTTPException(401, "invalid or missing slack action token")
     if action not in ("approve", "challenge") or finding_id is None:
         raise HTTPException(422, "provide action (approve|challenge) and finding_id")
@@ -1581,7 +1769,7 @@ def _auto_issue(session, finding) -> dict:
     from echolens.exporting import finding_ticket
     from echolens.integrations.github_issue import GitHubIssueError, create_issue
     from echolens.notify import deep_link
-    repo = _github_repo(session)
+    repo = _github_repo(session, getattr(finding, "product_id", None))
     if not repo:
         return {"error": "no repo configured"}
     inv = session.get(Investigation, finding.investigation_id)
@@ -1597,15 +1785,26 @@ def _auto_issue(session, finding) -> dict:
 
 
 @app.post("/alerts/digest")
-def alerts_digest(hours: int = 24, user: dict = Depends(require_role("reviewer"))) -> dict:
+def alerts_digest(hours: int = 24, product_id: int | None = None,
+                  user: dict = Depends(require_role("reviewer"))) -> dict:
     """Daily rollup: post one summary of findings drafted in the last `hours` to
-    Slack. Used by the scheduled GitHub Action so PMs get a quiet digest."""
+    Slack. Used by the scheduled GitHub Action so PMs get a quiet digest.
+
+    Product-scoped. This used to select every Finding in the workspace, so any
+    reviewer could blast findings from EVERY product to the single configured
+    webhook — cross-product disclosure triggered by a principal who may only be
+    meant to see one of them.
+    """
     from datetime import timedelta
     from echolens.impact import severity
     from echolens.notify import _send_slack, deep_link
     with session_scope() as session:
+        prod = _scope(session, product_id)
         since = datetime.now(timezone.utc) - timedelta(hours=hours)
-        findings = [f for f in session.scalars(select(Finding).order_by(Finding.id.desc())).all()
+        f_stmt = select(Finding).order_by(Finding.id.desc())
+        if prod is not None:
+            f_stmt = f_stmt.where(Finding.product_id == prod.id)
+        findings = [f for f in session.scalars(f_stmt).all()
                     if f.created_at and aware_utc(f.created_at) >= since]
         if not findings:
             return {"sent": False, "reason": "no findings in window"}
@@ -1632,13 +1831,20 @@ async def github_webhook(request: Request) -> dict:
     the metric it was meant to fix (verified signature if a secret is set)."""
     raw = await request.body()
     secret = settings.github_webhook_secret
-    if secret:
-        import hashlib
-        import hmac
-        sig = request.headers.get("x-hub-signature-256", "")
-        expected = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(sig, expected):
-            raise HTTPException(401, "invalid webhook signature")
+    # Verification is MANDATORY. It used to be wrapped in `if secret:`, and the
+    # secret defaults to "" — so out of the box any unauthenticated caller could
+    # POST a forged issues/closed event, which starts a fix-watch, writes a
+    # fix_date and a baseline_rate, and fabricates "the fix shipped on date D".
+    # That then propagates into the brain and patterns as ground truth.
+    if not secret:
+        raise HTTPException(
+            503, "GITHUB_WEBHOOK_SECRET is not configured; refusing unverified webhooks")
+    import hashlib
+    import hmac
+    sig = request.headers.get("x-hub-signature-256", "")
+    expected = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        raise HTTPException(401, "invalid webhook signature")
     event = request.headers.get("x-github-event", "")
     try:
         payload = json.loads(raw or b"{}")
@@ -1655,7 +1861,11 @@ async def github_webhook(request: Request) -> dict:
                 pass
         from echolens.fixwatch import on_issue_closed
         with session_scope() as session:
-            watch = on_issue_closed(session, repo, int(issue.get("number", 0)), closed_at)
+            try:
+                issue_number = int(issue.get("number", 0))
+            except (TypeError, ValueError):
+                raise HTTPException(400, "issue.number must be an integer")
+            watch = on_issue_closed(session, repo, issue_number, closed_at)
             return {"ok": True, "watch_id": watch.id if watch else None,
                     "status": watch.status if watch else "no_matching_finding"}
     return {"ok": True, "ignored": event or "unknown"}
@@ -1771,7 +1981,9 @@ class ChatBody(BaseModel):
 
 
 @app.post("/chat")
-def chat_endpoint(body: ChatBody, user: dict = Depends(current_user)) -> dict:
+@limiter.limit("20/minute")  # every message hits the LLM
+def chat_endpoint(body: ChatBody, request: Request,
+                  user: dict = Depends(current_user)) -> dict:
     """Ask the verified knowledge anything. Returns a finding-cited answer, or —
     for an investigate-intent question — launches a case that streams in-thread."""
     from echolens import chat as chat_mod
@@ -1807,15 +2019,16 @@ class FollowupBody(BaseModel):
 
 
 @app.post("/findings/{finding_id}/followup")
-def finding_followup(finding_id: int, body: FollowupBody,
+@limiter.limit("20/minute")  # each follow-up is an LLM call
+def finding_followup(finding_id: int, body: FollowupBody, request: Request,
+                     product_id: int | None = None,
                      user: dict = Depends(require_role("reviewer"))) -> dict:
     """Targeted follow-up on a finding (e.g. 'does this affect iOS too?') appended
     as an addendum — no full re-investigation."""
     from echolens.chat import followup
     with session_scope() as session:
-        finding = session.get(Finding, finding_id)
-        if finding is None:
-            raise HTTPException(404, "no such finding")
+        p = _scope(session, product_id)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
         return followup(session, finding, body.question)
 
 
@@ -1968,6 +2181,8 @@ def costs(product_id: int | None = None, user: dict = Depends(current_user)) -> 
 
 
 # ── UI-facing aggregates (Milestone 3) ─────────────────────────────────
+
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024   # 25 MB is a very large review export
 
 _HUMAN_BY_STATUS = {"resolved": "Approved"}
 

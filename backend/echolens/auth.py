@@ -78,9 +78,14 @@ def current_user(request: Request) -> dict:
         raise HTTPException(401, "missing bearer token")
     try:
         payload = decode_token(auth.split(" ", 1)[1])
-    except JWTError:
+        # int(payload["sub"]) sat OUTSIDE this try, so a correctly-signed token
+        # carrying sub="abc" raised ValueError and a token with no sub raised
+        # KeyError — neither is a JWTError, so both escaped as an unhandled 500
+        # with a stack trace instead of a clean 401.
+        uid = int(payload["sub"])
+    except (JWTError, KeyError, ValueError, TypeError, AttributeError):
         raise HTTPException(401, "invalid or expired token")
-    return {"id": int(payload["sub"]), "email": payload.get("email"), "role": payload.get("role", "viewer")}
+    return {"id": uid, "email": payload.get("email"), "role": payload.get("role", "viewer")}
 
 
 def require_role(minimum: str):

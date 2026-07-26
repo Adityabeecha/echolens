@@ -51,14 +51,18 @@ export function Today({
 
   // "Open" = a real problem with no verified fix. Ranked by how bad it is, and
   // deduped against the action queue so Today never shows one case twice.
-  const surfaced = new Set(needsYou.map((r) => r.id));
-  const openProblems = rows
+  // `id` is null for queued rows, so a null must never make it into the dedupe
+  // set — one null would hide every other null-id row.
+  const surfaced = new Set(needsYou.map((r) => r.id).filter((id): id is number => id != null));
+  const allOpenProblems = rows
     .filter((r) => ["resolved", "needs_review", "needs_human", "regressed"].includes(r.status))
-    .filter((r) => !surfaced.has(r.id))
+    .filter((r) => r.id == null || !surfaced.has(r.id))
     .sort((a, b) =>
       (b.severity_score ?? 0) - (a.severity_score ?? 0) ||
-      (b.impact?.affected_pct ?? 0) - (a.impact?.affected_pct ?? 0))
-    .slice(0, 5);
+      (b.impact?.affected_pct ?? 0) - (a.impact?.affected_pct ?? 0));
+  const OPEN_PROBLEM_LIMIT = 5;
+  const openProblems = allOpenProblems.slice(0, OPEN_PROBLEM_LIMIT);
+  const hiddenOpenProblems = allOpenProblems.length - openProblems.length;
 
   const cancelQueued = async (row: CaseRow) => {
     if (row.queue_id == null) return;
@@ -112,9 +116,9 @@ export function Today({
                 <Reassurance running={running.length} queued={queued.length} product={product} />
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 9, maxWidth: 940 }}>
-                  {staleSources.map((s) => (
+                  {staleSources.map((s, i) => (
                     <ActionRow
-                      key={`src-${s.name}-${s.detail}`}
+                      key={`src-${i}-${s.name}-${s.detail}`}
                       title={
                         s.error
                           ? `${s.name} stopped collecting — findings may be based on old data`
@@ -174,7 +178,11 @@ export function Today({
             {/* ── c. what is biggest ────────────────────────────────── */}
             <Section
               title="TOP OPEN PROBLEMS"
-              count={openProblems.length}
+              // The TOTAL, not the truncated list. This read openProblems.length
+              // AFTER slice(0,5), so 30 open problems rendered as
+              // "TOP OPEN PROBLEMS · 5" — a count the user had no reason to
+              // doubt and no way to correct.
+              count={allOpenProblems.length}
               action={{ label: "Plan the quarter →", onClick: onGoPlan }}
             >
               {openProblems.length === 0 ? (
@@ -196,6 +204,22 @@ export function Today({
                     <CaseCard key={`open-${r.id}`} row={r}
                               onOpen={(row) => row.id != null && onOpenCase(row.id, row.status)} />
                   ))}
+                  {hiddenOpenProblems > 0 && (
+                    <span
+                      onClick={() => onGoCases("needs-review")}
+                      className="el-btn"
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") onGoCases("needs-review");
+                      }}
+                      style={{ fontSize: 12.5, color: C.accent, cursor: "pointer",
+                               padding: "4px 2px" }}
+                    >
+                      {hiddenOpenProblems} more open{" "}
+                      {hiddenOpenProblems === 1 ? "problem" : "problems"} in Cases →
+                    </span>
+                  )}
                 </div>
               )}
             </Section>

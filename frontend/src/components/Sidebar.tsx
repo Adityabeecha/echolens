@@ -146,7 +146,10 @@ export function Sidebar({
   const showSystem = systemOpen || inSystem;
 
   // What is ACTUALLY running, asked of the server.
-  const { data: live } = useAsync(() => api.investigations(), [screen, activeId]);
+  // Deps are the PRODUCT only. `screen` in here meant clicking through the five
+  // System nav items fired five identical /investigations requests in a second,
+  // and the component is keyed on the product anyway.
+  const { data: live } = useAsync(() => api.investigations(), [activeId]);
   const running = (live?.investigations ?? []).filter((i) => i.status === "running");
 
   const isActive = (key: Screen) => {

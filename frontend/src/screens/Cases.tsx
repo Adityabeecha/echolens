@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CaseRow, SignalRow, ThemeCandidate, api, canReview } from "../api";
 import { CaseCard } from "../components/CaseCard";
 import { withToast } from "../components/Toast";
@@ -61,6 +61,19 @@ export function Cases({
   const [busy, setBusy] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<number | null>(null);
   const [signalsOpen, setSignalsOpen] = useState(params.signals === "1");
+  // Local mirror of the search box. Writing straight to the URL on every
+  // keystroke called history.replaceState 20 times for a 20-character query;
+  // Safari throws SecurityError past ~100 calls / 30s, uncaught, which tripped
+  // the ErrorBoundary and blanked the screen mid-search.
+  const [search, setSearch] = useState(params.q ?? "");
+  useEffect(() => setSearch(params.q ?? ""), [params.q]);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if ((params.q ?? "") !== search) setParams({ q: search || null });
+    }, 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
   const reviewer = canReview();
 
   const tab = params.tab ?? "all";
@@ -204,8 +217,8 @@ export function Cases({
         <Select value={range} onChange={(v) => setParams({ range: v })}
                 options={RANGES.map((r) => [r.key, r.label] as [string, string])} />
         <input
-          value={q}
-          onChange={(e) => setParams({ q: e.target.value })}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
           placeholder="Search cases…"
           aria-label="Search cases"
           style={{ width: 200, background: C.card, border: `1px solid ${C.border3}`,
@@ -255,7 +268,16 @@ export function Cases({
               className="el-btn"
               role="button"
               tabIndex={0}
-              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setSignalsOpen((o) => !o); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  // Mirror the click handler exactly. This only flipped local
+                  // state, so a keyboard user's expanded Signals section never
+                  // reached the URL and their shared link arrived collapsed —
+                  // breaking the shareable-view guarantee for keyboard users only.
+                  setSignalsOpen((o) => !o);
+                  setParams({ signals: signalsOpen ? null : "1" });
+                }
+              }}
               style={{ cursor: "pointer" }}
             >
               <Label style={{ color: selectable > 0 ? C.info : C.faint }}>

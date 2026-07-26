@@ -25,9 +25,16 @@ function emit() {
   listeners.forEach((l) => l(items));
 }
 
+/** Most toasts on screen at once. Failures never auto-dismiss, so without a
+ *  cap a backend outage stacked them past the viewport in a fixed, unscrollable
+ *  column that covered the app and pushed its own dismiss buttons off-screen. */
+const MAX_TOASTS = 4;
+
 function push(text: string, kind: ToastItem["kind"], retry?: () => void): number {
   const id = nextId++;
-  items = [...items, { id, text, kind, retry }];
+  // Drop the OLDEST once full: the newest failure is the one describing what
+  // the user just tried to do.
+  items = [...items, { id, text, kind, retry }].slice(-MAX_TOASTS);
   emit();
   // Failures stay until dismissed — an error you can miss is an error you will.
   if (kind !== "fail") setTimeout(() => dismiss(id), 4200);
@@ -36,6 +43,13 @@ function push(text: string, kind: ToastItem["kind"], retry?: () => void): number
 
 export function dismiss(id: number) {
   items = items.filter((t) => t.id !== id);
+  emit();
+}
+
+/** Clear everything — called on sign-out so one user's failures never greet
+ *  the next. `items` is module-global and survived the React tree unmounting. */
+export function clearToasts() {
+  items = [];
   emit();
 }
 

@@ -8,7 +8,7 @@ import { EvidenceSheet } from "./components/EvidenceSheet";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { NewCaseModal } from "./components/NewCaseModal";
 import { DeleteProductModal } from "./components/DeleteProductModal";
-import { Toasts } from "./components/Toast";
+import { Toasts, clearToasts, toast } from "./components/Toast";
 import { Today } from "./screens/Today";
 import { Cases } from "./screens/Cases";
 import { CaseDetail } from "./screens/CaseDetail";
@@ -136,6 +136,7 @@ export default function App() {
   const logout = () => {
     setToken(null);
     setAuthed(false);
+    clearToasts();  // a previous session's failures must not greet the next user
   };
 
   if (!authed) return <Login onAuthed={() => setAuthed(true)} />;
@@ -174,6 +175,12 @@ export default function App() {
     >
       {!fullscreen && (
         <Sidebar
+          // Keyed on the product for the same reason every screen is: child
+          // effects flush BEFORE parent effects, so on a product switch the
+          // sidebar's own fetch fired while api.ts still held the previous
+          // _productId — showing the old product's running cases under the new
+          // product's name. Remounting makes the scope change unmissable.
+          key={activeId ?? "none"}
           screen={screen}
           go={go}
           onLogout={logout}
@@ -187,7 +194,9 @@ export default function App() {
 
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column",
                     overflow: "hidden" }}>
-        <ErrorBoundary resetKey={`${screen}:${caseId}:${activeId}`} onGoHome={() => go("today")}>
+        <ErrorBoundary // The tab is part of the key: a TraceTab that threw stayed broken when
+          // you switched to Finding, because nothing in the key had changed.
+          resetKey={`${screen}:${caseId}:${route.tab ?? ""}:${activeId}`} onGoHome={() => go("today")}>
           {/* Product-scoped screens remount per product so they re-fetch; the
               case detail is keyed by case id for the same reason. */}
           {screen === "today" && (
@@ -344,12 +353,20 @@ export default function App() {
   function finishOnboarding(target: Screen, extra?: Record<string, string>) {
     api.products().then((r) => {
       setProducts(r.products);
-      const newest = r.products[r.products.length - 1];
+      // By created_at (then id), not array position. GET /products carries no
+      // ordering guarantee, so "the last element" could be any product — you
+      // could finish adding "Acme" and land on Today for a different app.
+      const newest = [...r.products].sort((a, b) =>
+        String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")) || b.id - a.id)[0];
       if (!newest) return;
       setActiveProduct(newest.id);
       api.activateProduct(newest.id).catch(() => {});
       bumpReload();
       navigate({ screen: target, productId: newest.id, params: extra }, { replace: true });
+    }).catch(() => {
+      // Without this the wizard sat on its completed state forever with no
+      // feedback if the refresh failed.
+      toast.fail("Couldn't load your new product — reload the page to continue.");
     });
   }
 }

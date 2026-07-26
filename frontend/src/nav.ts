@@ -134,7 +134,10 @@ export function parseRoute(hash: string): Route | null {
   let rest = parts;
   if (parts[0] === "p" && parts[1]) {
     productId = parseInt(parts[1], 10);
-    if (Number.isNaN(productId)) productId = null;
+    // A product id is a positive integer. parseInt("-5") is -5, not NaN, so
+    // "#/p/-5/today" produced scoped requests with product_id=-5 on first paint,
+    // before the boot check could reject it.
+    if (!Number.isFinite(productId) || productId <= 0) productId = null;
     rest = parts.slice(2);
   }
 

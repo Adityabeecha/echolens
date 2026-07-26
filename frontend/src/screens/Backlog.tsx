@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BacklogItem, QuarterPlan, api, canReview } from "../api";
 import { C, mono, sans } from "../theme";
 import { Bar, Centered, EmptyState, ErrorState, Label, ScreenHeader } from "../ui";
@@ -24,6 +24,7 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const [capacity, setCapacity] = useState<number>(20);
   const reviewer = canReview();
 
@@ -43,7 +44,12 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
   useEffect(() => load(), []);
 
   const commit = async (included: number[], excluded: number[], days = capacity) => {
-    if (!reviewer) return;
+    // `saving` only disables the buttons on the NEXT render, so two fast clicks
+    // both read the same pre-mutation plan and the second overwrote the first —
+    // one dropped item silently reappeared with no explanation. This ref is set
+    // synchronously, so the second call is refused before it can read stale ids.
+    if (!reviewer || savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     try {
       setPlan(await api.saveBacklogPlan({ included, excluded, capacity_days: days }));
@@ -51,6 +57,7 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
     } catch (e) {
       setError(String(e).replace("Error: ", ""));
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -105,7 +112,17 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
                   type="number" min={1} max={200} value={capacity}
                   disabled={!reviewer}
                   onChange={(e) => setCapacity(Number(e.target.value))}
-                  onBlur={() => commit(inIds, outIds, capacity)}
+                  // Clamp on commit. Number("") is 0 and Number("abc") is NaN,
+                  // and min/max are not enforced by React — clearing the field
+                  // saved capacity_days: 0, which emptied the plan and rendered
+                  // "COMMITTED 14d OF 0d" with no error anywhere.
+                  onBlur={() => {
+                    const safe = Number.isFinite(capacity) && capacity >= 1
+                      ? Math.min(200, Math.round(capacity))
+                      : 1;
+                    if (safe !== capacity) setCapacity(safe);
+                    commit(inIds, outIds, safe);
+                  }}
                   style={{ width: 90, background: C.bgRaised, border: `1px solid ${C.border3}`,
                            borderRadius: 7, color: C.text, fontFamily: mono, fontSize: 14,
                            padding: "8px 10px" }}

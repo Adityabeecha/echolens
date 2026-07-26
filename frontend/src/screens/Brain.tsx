@@ -193,16 +193,22 @@ function Oracle() {
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [answer, setAnswer] = useState<string | null>(null);
+  const [askError, setAskError] = useState<string | null>(null);
 
   const ask = async (question: string) => {
     const text = question.trim();
     if (!text || busy) return;
     setBusy(true);
+    setAskError(null);
     try {
       const r = await api.brainAsk(text);
       setAnswer(r.answer);
     } catch (e) {
-      setAnswer(String(e).replace("Error: ", ""));
+      // An API error must NOT render in the answer panel styled exactly like a
+      // grounded response — on a screen whose whole premise is "cited to real
+      // history", "/brain/ask → 500" read as product knowledge.
+      setAnswer(null);
+      setAskError(String(e).replace("Error: ", ""));
     } finally {
       setBusy(false);
     }
@@ -243,6 +249,14 @@ function Oracle() {
           </span>
         ))}
       </div>
+      {askError && (
+        <div style={{ marginTop: 13, padding: "11px 14px", background: `${C.bad}12`,
+                      border: `1px solid ${C.bad}55`, borderRadius: 9, fontSize: 12.5,
+                      color: C.text3, display: "flex", alignItems: "center", gap: 9 }}>
+          <span style={{ color: C.bad }}>⚠</span>
+          <span>Couldn't reach the product's history — {askError}</span>
+        </div>
+      )}
       {answer && (
         <div style={{ marginTop: 13, padding: "13px 15px", background: C.card2,
                       border: `1px solid ${C.border2}`, borderRadius: 9, fontSize: 13,

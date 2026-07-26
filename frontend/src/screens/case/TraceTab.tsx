@@ -254,6 +254,10 @@ function HypothesisCard({ h, selected, onPick }: {
   const color = h.status === "supported" ? C.good : h.status === "rejected" ? C.bad : C.accent;
   return (
     <div onClick={onPick}
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPick(); } }}
       style={{ padding: "13px 14px", background: C.card,
                border: `1px solid ${selected ? C.accent : h.status === "active" ? "rgba(240,166,60,.45)" : C.border2}`,
                borderRadius: 9, opacity: selected || h.status !== "rejected" ? 1 : 0.62,
@@ -334,6 +338,15 @@ function TraceRow({ step, last, selHyp, onOpenEvidence, evidence }: {
                 </span>
               </div>
               <div
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    const ev = evidence.find((x) => x.id === c.id);
+                    if (ev) onOpenEvidence(ev);
+                  }
+                }}
                 onClick={() => {
                   const ev = evidence.find((e) => e.id === c.id);
                   if (ev) onOpenEvidence(ev);

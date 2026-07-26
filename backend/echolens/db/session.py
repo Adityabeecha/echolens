@@ -75,8 +75,12 @@ def init_db(db_url: str | None = None) -> None:
         with sessionmaker(bind=engine, expire_on_commit=False)() as s:
             backfill_products(s)
             s.commit()
-    except Exception:  # never block startup on the backfill
-        pass
+    except Exception as err:  # never block startup on the backfill — but never hide it
+        # A failed backfill leaves rows with product_id NULL, which every
+        # `WHERE product_id = ?` filter then hides while they remain reachable by
+        # direct id. Silently invisible data is worse than a loud failure.
+        from echolens.logging import get_logger
+        get_logger("db").error("product_backfill_failed", error=str(err))
 
 
 @contextmanager

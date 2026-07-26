@@ -153,7 +153,16 @@ def followup(session: Session, finding: Finding, question: str) -> dict:
     query = " ".join(terms[:3]) or finding.summary[:40]
     q = question.lower()
     dimension = "os" if any(w in q for w in ("ios", "android", "os", "device", "platform")) else "version"
-    res = compare_cohorts(session, term=query, dimension=dimension)
+    # Scoped to the finding's own product. Unscoped, this compared cohorts across
+    # EVERY product and then wrote the result into this finding's addenda as a
+    # permanent, citation-less claim ("concentrates in 3.2") about a version
+    # string that might belong to a different app entirely.
+    product_name = None
+    if inv is not None and inv.product_id is not None:
+        from echolens.db.models import Product
+        prod = session.get(Product, inv.product_id)
+        product_name = prod.name if prod else None
+    res = compare_cohorts(session, term=query, dimension=dimension, product=product_name)
     top = res.get("highest_cohort")
     ratio = res.get("highest_vs_next_ratio")
     if top and top != "unknown":

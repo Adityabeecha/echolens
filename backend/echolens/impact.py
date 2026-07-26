@@ -81,7 +81,7 @@ def quantify(session: Session, anomaly, finding_json: dict, product: str | None 
     rating_impact = (round(max(0.0, base_avg - recent_avg), 2)
                      if base_avg is not None and recent_avg is not None else 0.0)
 
-    blast = _blast_radius(session, terms, recent_start)
+    blast = _blast_radius(session, terms, recent_start, product)
 
     # v10: the same complaint filed in two places is ONE affected person. Counting
     # it per channel inflates impact exactly when a problem is being escalated —
@@ -147,14 +147,20 @@ def _cross_source_impact(session, terms, product, start, end) -> dict:
                 "channels": [], "distinct_channels": 0}
 
 
-def _blast_radius(session, terms, recent_start) -> dict:
+def _blast_radius(session, terms, recent_start, product: str | None = None) -> dict:
     """Which app version the complaint concentrates in (the decoy-killer, reused
-    for prioritisation). Deterministic cohort counting."""
+    for prioritisation). Deterministic cohort counting.
+
+    Scoped by product. compare_cohorts accepts `product` and this never passed
+    it, so every other product's reviews were pooled into this product's version
+    cohorts — and the result is rendered as fact ("concentrated in 3.2, 4x the
+    next version") where "3.2" could be a different app's version string.
+    """
     if not terms:
         return {"dimension": "version", "top_cohort": None, "ratio": None, "exclusive": False}
     from echolens.tools.compare_cohorts import compare_cohorts
     res = compare_cohorts(session, term=" ".join(terms), dimension="version",
-                          date_from=recent_start.date().isoformat())
+                          date_from=recent_start.date().isoformat(), product=product)
     return {
         "dimension": "version",
         "top_cohort": res.get("highest_cohort"),

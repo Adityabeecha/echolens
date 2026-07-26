@@ -843,7 +843,13 @@ class Investigator:
         finding = self._draft_finding(final)
         try:  # v4.0 impact quantification — deterministic, never fail the run over it
             from echolens.impact import quantify
-            finding["impact"] = quantify(self.session, self.anomaly, finding)
+            # Scoped. This omitted `product`, so impact was quantified over the
+            # WHOLE corpus — every other product's reviews included — while the
+            # class docstring above promises "an investigation may only read ITS
+            # product's corpus". impact_score drives severity, alert routing and
+            # backlog rank, so a busy neighbour distorted this product's numbers.
+            finding["impact"] = quantify(self.session, self.anomaly, finding,
+                                         product=self._product_name)
         except Exception as err:
             log.error("impact_quantify_failed", error=str(err))
         final["finding"] = finding
