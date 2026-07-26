@@ -74,6 +74,9 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
   const browseAsGuest = () => {
     setGuest(true);
     setToken(null);
+    // Explicitly viewer: a browser holding "admin" from a previous session
+    // would otherwise carry it into the guest visit and unlock UI the server
+    // will refuse. Boot re-confirms this against /auth/me anyway.
     setRole("viewer");
     onAuthed();
   };

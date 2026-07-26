@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Evidence, ProductRow, api, getToken, isAdmin, isGuest, onAuthError, setActiveProduct, setGuest, setToken } from "./api";
+import { Evidence, ProductRow, api, getToken, isAdmin, isGuest, onAuthError, setActiveProduct, setGuest, setRole, setToken } from "./api";
 import { CaseTab, GLOBAL_SCREENS, Screen, caseTabFor } from "./nav";
 import { useRouter } from "./router";
 import { useWorkWatcher } from "./hooks";
@@ -64,10 +64,21 @@ export default function App() {
   useEffect(() => {
     if (!authed) return;
     let alive = true;
+    // Ask the server who we are BEFORE deciding anything on role.
+    //
+    // The role was read from localStorage, which is stale after any change of
+    // deployment mode and editable by anyone with devtools. A browser left
+    // holding `echolens_role: "admin"` from an earlier dev-mode session was
+    // treated as an admin and pushed into the product wizard, where every
+    // action then 403'd. The server is the only authority on this; the local
+    // copy is now just a cache to avoid a flash of the wrong UI.
     api
-      .products()
+      .me()
+      .then((me) => { if (alive && me?.role) setRole(me.role); })
+      .catch(() => { /* offline: fall back to the cached role */ })
+      .then(() => api.products())
       .then((r) => {
-        if (!alive) return;
+        if (!alive || !r) return;
         setProducts(r.products);
         setBooted(true);
 
@@ -145,6 +156,12 @@ export default function App() {
 
   const bumpReload = useCallback(() => setReloadKey((k) => k + 1), []);
 
+  /** Dismiss the onboarding overlay and return to the app behind it. */
+  const closeOnboarding = useCallback(
+    () => navigate({ screen: "today", productId: activeId }, { replace: true }),
+    [navigate, activeId],
+  );
+
   // While anything is queued or running, watch for it to finish and refresh
   // every list when it does. Without this a queued case sat at "Queued" until
   // the user reloaded the page by hand — the work had actually completed, but
@@ -155,6 +172,9 @@ export default function App() {
 
   const logout = () => {
     setToken(null);
+    // Drop the cached role too. Leaving "admin" behind is what let a stale
+    // value from an earlier session decide the next one's UI.
+    setRole("viewer");
     // Clear guest too: "Sign out" must return to the door, not silently drop
     // the user into a read-only session they did not ask for.
     setGuest(false);
@@ -178,10 +198,11 @@ export default function App() {
   const { screen } = route;
   const caseId = route.id ?? null;
   const params = route.params ?? {};
-  // Onboarding owns the whole window: a half-connected product has nothing to
-  // navigate to, and leaving the nav live invited exactly the mis-scoped cases
-  // that filed work under the previous product.
-  const fullscreen = screen === "onboarding";
+  // Onboarding is an overlay, not a takeover. It used to replace the whole
+  // window with the nav hidden, so arriving there with nothing to add — an
+  // empty workspace, or no permission to create a product — was a dead end
+  // with no way back. It now sits above the running app and can be dismissed.
+  const onboarding = screen === "onboarding";
   const key = activeId ?? "none";
 
   return (
@@ -199,7 +220,7 @@ export default function App() {
         overflow: "hidden"
       }}
     >
-      {!fullscreen && (
+      {(
         <Sidebar
           // Keyed on the product for the same reason every screen is: child
           // effects flush BEFORE parent effects, so on a product switch the
@@ -225,7 +246,9 @@ export default function App() {
           resetKey={`${screen}:${caseId}:${route.tab ?? ""}:${activeId}`} onGoHome={() => go("today")}>
           {/* Product-scoped screens remount per product so they re-fetch; the
               case detail is keyed by case id for the same reason. */}
-          {screen === "today" && (
+          {/* `onboarding` renders Today underneath: the wizard is a layer over
+              the running app now, so there has to be an app behind it. */}
+          {(screen === "today" || onboarding) && (
             <Today
               key={key}
               productName={productName}
@@ -321,9 +344,12 @@ export default function App() {
             />
           )}
 
-          {screen === "onboarding" && (
+          {onboarding && (
             <Onboarding
-              canSkip={products.length > 0}
+              // Always dismissible. "Can I skip this?" is not the same question
+              // as "does a product exist yet?" — the answer is always yes.
+              canSkip
+              onClose={closeOnboarding}
               onProductCreated={(id) => {
                 // Scope everything to the new product straight away.
                 setActiveProduct(id);
@@ -331,11 +357,7 @@ export default function App() {
                 api.activateProduct(id).catch(() => {});
               }}
               onCancel={() => {
-                // With no products there is no Today worth showing, so a guest
-                // who cannot proceed goes back to the door rather than bouncing
-                // between two empty screens.
-                if (products.length === 0 && !isAdmin()) logout();
-                else navigate({ screen: "today", productId: activeId }, { replace: true });
+                closeOnboarding();
               }}
               onDone={() => finishOnboarding("today")}
               onReviewSignals={() => finishOnboarding("cases", { signals: "1" })}

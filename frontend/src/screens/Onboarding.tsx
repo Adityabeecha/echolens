@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { OnboardStatus, Snapshot, api, isAdmin, isGuest } from "../api";
 import { plural } from "../format";
+import { useDialog } from "../hooks";
 import { C, MEASURE, R, S, T, mono, sans } from "../theme";
 import { Button, Dot, Label } from "../ui";
 import { Icon } from "../components/Icon";
@@ -9,59 +10,115 @@ interface Props {
   onDone: () => void; // land on Today for the new product
   /** Hand off to Cases → Signals, where triage actually happens. */
   onReviewSignals: () => void;
-  canSkip: boolean; // first run has nothing to skip to; later, "cancel" is allowed
+  canSkip: boolean;
   onCancel: () => void;
+  /** Dismiss the overlay. Always available — nobody is trapped here. */
+  onClose: () => void;
   /** Called the moment the product exists, so it becomes the active scope
    *  immediately. Without this, anything started from this wizard was filed
    *  against the PREVIOUS product. */
   onProductCreated: (id: number, name: string) => void;
 }
 
-// The first-run wizard: two inputs → hands-off backfill → live health snapshot →
-// a populated feed. The wait is never blank: the snapshot fills in as data lands.
-export function Onboarding({ onDone, onReviewSignals, canSkip, onCancel, onProductCreated }: Props) {
+/**
+ * Add a product: two inputs → hands-off backfill → live health snapshot.
+ *
+ * A LAYER over the running app, not a screen that replaces it. It used to own
+ * the whole window with the nav hidden, so landing here with nothing to add —
+ * an empty workspace, or no permission to create a product — was a dead end.
+ * Now the app stays visible behind it and it can always be closed.
+ */
+export function Onboarding({
+  onDone, onReviewSignals, canSkip, onCancel, onClose, onProductCreated,
+}: Props) {
   const [phase, setPhase] = useState<"form" | "running">("form");
   const [product, setProduct] = useState("");
+  // Escape closes, focus is trapped inside, and it returns to the opener.
+  // Not while a backfill is running: closing mid-import hides an operation the
+  // user cannot then confirm finished.
+  const ref = useDialog(onClose, phase === "form");
 
-  // Creating a product needs admin. A guest — or any signed-in viewer — sent
-  // here got a form where every button 403s, with the nav hidden and no way
-  // out. Say so instead, and always offer an exit.
-  if (!isAdmin()) return <NoAccess guest={isGuest()} canSkip={canSkip} onCancel={onCancel} />;
-
-  return (
-    <div style={{ height: "100%", overflow: "auto", background: C.bg }}>
-      <div style={{ maxWidth: MEASURE, margin: "0 auto", padding: `${S[12]} ${S[6]} ${S[12]}` }}>
-        <div style={{ display: "flex", alignItems: "center", gap: S[3], marginBottom: S[1] }}>
-          <Logo />
-          <div style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".14em", color: C.faint }}>
-            ADD YOUR PRODUCT
-          </div>
-        </div>
-        <h1 style={{ fontSize: T.display, fontWeight: 700, letterSpacing: "-.02em", margin: "10px 0 8px" }}>
-          {phase === "form" ? "Point EchoLens at your app" : `Setting up ${product}`}
-        </h1>
-        <p style={{ fontSize: T.md, color: C.muted, lineHeight: "var(--el-lh-normal)", margin: "0 0 28px", maxWidth: 620 }}>
-          {phase === "form"
-            ? "Give it a Play Store package and (optionally) a GitHub repo. EchoLens backfills 90 days of reviews, issues and releases, builds a baseline, and surfaces what needs your attention — hands-off from here."
-            : "Backfilling your feedback. Here's what we've found so far — no need to wait for it to finish."}
-        </p>
-
+  const body = !isAdmin()
+    ? <NoAccess guest={isGuest()} />
+    : (
+      <>
+        <WizardHeader phase={phase} product={product} />
         {phase === "form" ? (
-          <OnboardForm
-            onStarted={(p, id) => {
-              // Switch scope FIRST: everything started from here belongs to the
-              // product being onboarded, not the one that happened to be active.
-              onProductCreated(id, p);
-              setProduct(p);
-              setPhase("running");
-            }}
+        <OnboardForm
+          onStarted={(p, id) => {
+            // Switch scope FIRST: everything started from here belongs to the
+            // product being onboarded, not the one that happened to be active.
+            onProductCreated(id, p);
+            setProduct(p);
+            setPhase("running");
+          }}
             canSkip={canSkip}
             onCancel={onCancel}
           />
         ) : (
           <Backfilling product={product} onDone={onDone} onReviewSignals={onReviewSignals} />
         )}
+      </>
+    );
+
+  return (
+    <>
+      <div
+        onClick={phase === "form" ? onClose : undefined}
+        aria-hidden="true"
+        style={{ position: "fixed", inset: 0, background: "rgba(6,7,10,.72)", zIndex: 40 }}
+      />
+      <div
+        ref={ref}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Add a product"
+        style={{
+          position: "fixed", inset: 0, zIndex: 41, overflow: "auto",
+          display: "flex", alignItems: "flex-start", justifyContent: "center",
+          padding: S[6],
+        }}
+      >
+        <div style={{
+          position: "relative", width: "100%", maxWidth: 760, margin: "auto",
+          background: C.bg, border: `1px solid ${C.border3}`,
+          borderRadius: R.overlay, boxShadow: "var(--el-e4)",
+          padding: `${S[8]} ${S[8]} ${S[10]}`,
+        }}>
+          {/* The X. Onboarding is never mandatory. */}
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="el-btn el-btn--sm"
+            style={{ position: "absolute", top: S[4], right: S[4], color: C.dim, padding: S[1] }}
+          >
+            <Icon name="close" size={16} />
+          </button>
+          {body}
+        </div>
       </div>
+    </>
+  );
+}
+
+/** The wizard's heading, which changes with the phase. */
+function WizardHeader({ phase, product }: { phase: "form" | "running"; product: string }) {
+  return (
+    <div style={{ marginBottom: S[6] }}>
+      <div style={{ display: "flex", alignItems: "center", gap: S[3], marginBottom: S[2] }}>
+        <Logo />
+        <Label>Add your product</Label>
+      </div>
+      <h1 style={{ fontSize: T.xl, fontWeight: 700, letterSpacing: "-.01em",
+                   margin: `0 0 ${S[2]}` }}>
+        {phase === "form" ? "Point EchoLens at your app" : `Setting up ${product}`}
+      </h1>
+      <p style={{ fontSize: T.base, color: C.muted, lineHeight: "var(--el-lh-normal)",
+                  margin: 0, maxWidth: 560 }}>
+        {phase === "form"
+          ? "Give it a Play Store package and (optionally) a GitHub repo. EchoLens backfills 90 days of reviews, issues and releases, builds a baseline, and surfaces what needs your attention."
+          : "Backfilling your feedback. Here's what we've found so far — no need to wait for it to finish."}
+      </p>
     </div>
   );
 }
@@ -74,31 +131,22 @@ export function Onboarding({ onDone, onReviewSignals, canSkip, onCancel, onProdu
  * to land on a form that 403s on submit, with the nav hidden because
  * onboarding renders fullscreen — a dead end with no back button.
  */
-function NoAccess({ guest, canSkip, onCancel }: {
-  guest: boolean; canSkip: boolean; onCancel: () => void;
-}) {
+function NoAccess({ guest }: { guest: boolean }) {
   return (
-    <div style={{ height: "100%", overflow: "auto", background: C.bg }}>
-      <div style={{ maxWidth: 620, margin: "0 auto", padding: `${S[12]} ${S[6]}` }}>
-        <div style={{ display: "flex", alignItems: "center", gap: S[3], marginBottom: S[5] }}>
-          <Logo />
-          <span style={{ fontWeight: 700, fontSize: T.md, color: C.text }}>EchoLens</span>
-        </div>
-        <h1 style={{ fontSize: T.xl, fontWeight: 700, letterSpacing: "-.01em", margin: `0 0 ${S[3]}` }}>
-          {guest ? "This demo has no product connected yet" : "You need admin access to add a product"}
-        </h1>
-        <p style={{ fontSize: T.md, color: C.muted, lineHeight: "var(--el-lh-normal)",
-                    margin: `0 0 ${S[6]}` }}>
-          {guest
-            ? "Connecting an app pulls 90 days of reviews and issues, which costs money to run — so it is kept to the workspace owner. Everything else is browsable."
-            : "Ask an admin to connect one, then everything here becomes available to you."}
-        </p>
-        {/* Always an exit. The nav is hidden on this screen, so without this
-            there is genuinely no way back. */}
-        <Button variant="ghost" icon="chevronLeft" onClick={onCancel}>
-          {canSkip ? "Back to the app" : "Back to sign in"}
-        </Button>
+    <div style={{ maxWidth: 520 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: S[3], marginBottom: S[4] }}>
+        <Logo />
+        <Label>Add your product</Label>
       </div>
+      <h1 style={{ fontSize: T.xl, fontWeight: 700, letterSpacing: "-.01em",
+                   margin: `0 0 ${S[3]}` }}>
+        {guest ? "Connecting a product needs an account" : "You need admin access to add a product"}
+      </h1>
+      <p style={{ fontSize: T.base, color: C.muted, lineHeight: "var(--el-lh-normal)", margin: 0 }}>
+        {guest
+          ? "Backfilling an app pulls 90 days of reviews and issues, which costs money to run — so it is kept to the workspace owner. Close this and carry on exploring; everything else is browsable."
+          : "Ask an admin to connect one, then everything here becomes available to you."}
+      </p>
     </div>
   );
 }

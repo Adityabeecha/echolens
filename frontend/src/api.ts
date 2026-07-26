@@ -685,9 +685,11 @@ export interface ProductRow {
 // ── endpoints ────────────────────────────────────────────────────────
 
 export interface AuthUser {
-  id: number;
-  email: string;
+  id: number | null;
+  email: string | null;
   role: string;
+  /** True when the server admitted this request with no token at all. */
+  guest?: boolean;
 }
 
 export const api = {
