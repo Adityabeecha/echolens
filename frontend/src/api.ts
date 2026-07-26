@@ -725,16 +725,19 @@ export const api = {
     get<{ investigations: { id: number; status: string; opened_by: string; anomaly_id: number | null }[] }>(
       scoped("/investigations")
     ),
-  investigation: (id: number) => get<Investigation>(`/investigations/${id}`),
+  // scoped(): without the active product the server falls back to the FIRST
+  // product, and the ownership check then 404s any case belonging to another
+  // one — which is every case in a product you added second.
+  investigation: (id: number) => get<Investigation>(scoped(`/investigations/${id}`)),
   trace: (id: number, after = 0) =>
-    get<{ status: string; steps: TraceStep[] }>(`/investigations/${id}/trace?after=${after}`),
+    get<{ status: string; steps: TraceStep[] }>(scoped(`/investigations/${id}/trace?after=${after}`)),
   startInvestigation: (body: { anomaly_slug?: string; description?: string; tier?: string }) =>
     post<{ status: string; investigation_id: number; anomaly_id: number }>("/investigations", {
       ...body,
       product_id: getActiveProduct(),
     }),
   review: (findingId: number, action: "approve" | "challenge", note = "", reason?: string) =>
-    post<{ status: string; reopened_investigation_id?: number }>(`/findings/${findingId}/review`, {
+    post<{ status: string; reopened_investigation_id?: number }>(scoped(`/findings/${findingId}/review`), {
       action,
       note,
       reason,
@@ -769,10 +772,11 @@ export const api = {
   chat: (message: string) => post<ChatResponse>("/chat", { message, product_id: getActiveProduct() }),
   brief: () => get<WeeklyBrief>(scoped("/brief")),
   findingFollowup: (findingId: number, question: string) =>
-    post<{ question: string; answer: string; investigation_id: number }>(`/findings/${findingId}/followup`, { question }),
-  pause: (id: number) => post(`/investigations/${id}/pause`),
-  resume: (id: number) => post(`/investigations/${id}/resume`),
-  escalate: (id: number) => post(`/investigations/${id}/escalate`),
+    post<{ question: string; answer: string; investigation_id: number }>(
+      scoped(`/findings/${findingId}/followup`), { question }),
+  pause: (id: number) => post(scoped(`/investigations/${id}/pause`)),
+  resume: (id: number) => post(scoped(`/investigations/${id}/resume`)),
+  escalate: (id: number) => post(scoped(`/investigations/${id}/escalate`)),
   sources: () => get<SourcesResp>(scoped("/sources")),
   importReviews: (file: File, product?: string, source = "csv") => {
     const fd = new FormData();
@@ -806,10 +810,11 @@ export const api = {
   snapshot: (product?: string) =>
     get<Snapshot>(product ? `/snapshot?product=${encodeURIComponent(product)}` : scoped("/snapshot")),
   findingIssue: (findingId: number) =>
-    get<{ title: string; body: string; repo: string | null }>(`/findings/${findingId}/issue`),
+    get<{ title: string; body: string; repo: string | null }>(scoped(`/findings/${findingId}/issue`)),
   createGithubIssue: (findingId: number) =>
-    post<{ repo: string; number: number; url: string }>(`/findings/${findingId}/github-issue`),
-  notifyFinding: (findingId: number) => post<{ routed: string; sent?: string[] }>(`/findings/${findingId}/notify`),
+    post<{ repo: string; number: number; url: string }>(scoped(`/findings/${findingId}/github-issue`)),
+  notifyFinding: (findingId: number) =>
+    post<{ routed: string; sent?: string[] }>(scoped(`/findings/${findingId}/notify`)),
   costsSummary: () => get<CostsSummary>(scoped("/costs/summary")),
   // Goes through put(): the raw fetch() never checked r.ok, so a rejected save
   // (401, 403, 500) resolved as success and Settings reported "Limit saved."

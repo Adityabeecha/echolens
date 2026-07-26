@@ -186,3 +186,66 @@ def test_verification_rejects_a_self_signed_token(monkeypatch):
         "attacker-key", algorithm="HS256")
     with pytest.raises(google_auth.GoogleAuthError):
         google_auth.verify_id_token(forged)
+
+
+# ── product scoping of queued themes ───────────────────────────────────
+# Reported symptom: after adding a SECOND product and queueing a theme on it,
+# opening the resulting case returned 404.
+
+def test_two_products_get_their_own_anomaly_for_the_same_theme(db):
+    """Slugs are namespaced per product by the API, but the lookup that decides
+    "does this already exist?" ignored the product, so the second product's
+    theme could adopt the first product's anomaly — and the case created from
+    it then belonged to the wrong product and 404'd on open."""
+    from echolens.db.models import Product
+    from echolens.orchestrator.queue import enqueue_theme
+
+    a = Product(name="Aurora"); b = Product(name="Borealis")
+    db.add_all([a, b]); db.flush()
+
+    r1 = enqueue_theme(db, product_id=a.id, slug=f"theme-p{a.id}-battery",
+                       statement="Battery drains overnight")
+    r2 = enqueue_theme(db, product_id=b.id, slug=f"theme-p{b.id}-battery",
+                       statement="Battery drains overnight")
+
+    assert r1["status"] == "queued"
+    assert r2["status"] == "queued", "the second product must not be told it is 'already' queued"
+
+    from echolens.db.models import AnomalyEvent
+    an1 = db.get(AnomalyEvent, r1["anomaly_id"])
+    an2 = db.get(AnomalyEvent, r2["anomaly_id"])
+    assert an1.id != an2.id
+    assert an1.product_id == a.id
+    assert an2.product_id == b.id
+
+
+def test_find_existing_is_scoped_to_the_product(db):
+    """A theme queued on product A must not read as existing on product B."""
+    from echolens.db.models import Product
+    from echolens.orchestrator.queue import enqueue_theme, find_existing
+
+    a = Product(name="Aurora"); b = Product(name="Borealis")
+    db.add_all([a, b]); db.flush()
+    slug = "theme-shared-battery"          # same slug on purpose
+    enqueue_theme(db, product_id=a.id, slug=slug, statement="Battery")
+
+    assert find_existing(db, a.id, slug) is not None, "A's own theme is already queued"
+    assert find_existing(db, b.id, slug) is None, "B must be free to queue its own"
+
+
+def test_legacy_unscoped_anomaly_is_claimed_not_duplicated(db):
+    """Rows created before product scoping have product_id=None. Queueing that
+    theme should adopt the row for the product rather than leaving a NULL that
+    no scoped query will match again."""
+    from echolens.db.models import AnomalyEvent, Product
+    from echolens.orchestrator.queue import enqueue_theme
+
+    p = Product(name="Aurora"); db.add(p); db.flush()
+    legacy = AnomalyEvent(slug="theme-legacy", type="manual_theme", metric="m",
+                          delta=0.0, z=0.0, window="90d", description="old",
+                          status="pending", product_id=None)
+    db.add(legacy); db.flush()
+
+    r = enqueue_theme(db, product_id=p.id, slug="theme-legacy", statement="old")
+    assert r["anomaly_id"] == legacy.id, "should reuse the row, not duplicate it"
+    assert db.get(AnomalyEvent, legacy.id).product_id == p.id

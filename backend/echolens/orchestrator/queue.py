@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from echolens.db.models import AnomalyEvent, Investigation, QueuedInvestigation
@@ -55,13 +55,40 @@ def open_case_for(session: Session, anomaly_id: int) -> Investigation | None:
     ).first()
 
 
+def _anomaly_for(session: Session, product_id: int | None, slug: str) -> AnomalyEvent | None:
+    """The anomaly with this slug BELONGING TO THIS PRODUCT.
+
+    Slugs are derived from complaint text, so two products with the same
+    complaint ("battery-drain") legitimately share one. Looking a slug up
+    without the product returned whichever row was created first, which meant a
+    second product's theme resolved to the FIRST product's anomaly: the case
+    was created under the wrong product and then 404'd on open, because the
+    ownership check correctly refused a cross-product row.
+
+    A NULL product_id on an existing row is treated as matching, so rows
+    predating product scoping are still found rather than silently duplicated.
+    """
+    q = select(AnomalyEvent).where(AnomalyEvent.slug == slug)
+    if product_id is not None:
+        # `IN (id, NULL)` would NOT match a NULL row: in SQL, `NULL = NULL` is
+        # unknown, not true, so IN silently skips it. A legacy unscoped row was
+        # then invisible here and the caller tried to INSERT a duplicate slug,
+        # which the unique index rejects. IS NULL has to be spelled out.
+        q = q.where(or_(AnomalyEvent.product_id == product_id,
+                        AnomalyEvent.product_id.is_(None)))
+    # Prefer this product's own row over a legacy unscoped one.
+    return session.scalars(
+        q.order_by(AnomalyEvent.product_id.is_(None), AnomalyEvent.id.desc())
+    ).first()
+
+
 def find_existing(session: Session, product_id: int | None, slug: str) -> dict | None:
-    """Is this theme/anomaly already being handled?
+    """Is this theme/anomaly already being handled, FOR THIS PRODUCT?
 
     Selecting something that is already under investigation must show "already
     under investigation -> view case", never queue a duplicate.
     """
-    anomaly = session.scalars(select(AnomalyEvent).where(AnomalyEvent.slug == slug)).first()
+    anomaly = _anomaly_for(session, product_id, slug)
     if anomaly is None:
         return None
     queued = session.scalars(
@@ -92,7 +119,10 @@ def enqueue_theme(session: Session, *, product_id: int | None, slug: str, statem
     if existing is not None:
         return {"status": "already", **existing}
 
-    anomaly = session.scalars(select(AnomalyEvent).where(AnomalyEvent.slug == slug)).first()
+    # Scoped to the product for the same reason as find_existing: an unscoped
+    # slug lookup adopted another product's anomaly, so the investigation was
+    # created against the wrong product_id and 404'd when opened.
+    anomaly = _anomaly_for(session, product_id, slug)
     if anomaly is None:
         anomaly = AnomalyEvent(
             slug=slug, type="manual_theme", metric="theme volume",
@@ -102,6 +132,11 @@ def enqueue_theme(session: Session, *, product_id: int | None, slug: str, statem
         session.flush()
     else:
         anomaly.status = "pending"
+        # Claim a legacy unscoped row for this product rather than leaving a
+        # NULL that no product-scoped query will ever match again.
+        if anomaly.product_id is None and product_id is not None:
+            anomaly.product_id = product_id
+        session.flush()
 
     row = QueuedInvestigation(
         product_id=product_id, anomaly_id=anomaly.id, status="queued",

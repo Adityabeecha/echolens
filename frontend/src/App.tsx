@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Evidence, ProductRow, api, getToken, isGuest, onAuthError, setActiveProduct, setGuest, setToken } from "./api";
 import { CaseTab, GLOBAL_SCREENS, Screen, caseTabFor } from "./nav";
 import { useRouter } from "./router";
+import { useWorkWatcher } from "./hooks";
 import { C, T, sans } from "./theme";
 import { Sidebar } from "./components/Sidebar";
 import { EvidenceSheet } from "./components/EvidenceSheet";
@@ -137,6 +138,14 @@ export default function App() {
   );
 
   const bumpReload = useCallback(() => setReloadKey((k) => k + 1), []);
+
+  // While anything is queued or running, watch for it to finish and refresh
+  // every list when it does. Without this a queued case sat at "Queued" until
+  // the user reloaded the page by hand — the work had actually completed, but
+  // nothing on screen said so. Keyed on reloadKey so queueing something (which
+  // bumps it) also wakes the watcher; it stops polling once nothing is in
+  // flight, so an idle workspace issues no requests.
+  useWorkWatcher(activeId, reloadKey, bumpReload);
 
   const logout = () => {
     setToken(null);

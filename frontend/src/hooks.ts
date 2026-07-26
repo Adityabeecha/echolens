@@ -112,6 +112,67 @@ export function useDialog(onClose: () => void, enabled = true) {
   return ref;
 }
 
+/**
+ * While anything is queued or running, poll for completion and fire `onSettle`
+ * when the in-flight count drops.
+ *
+ * Queueing a case used to leave the screen frozen at "Queued": nothing polled,
+ * so the list only refreshed on a manual reload, and the case appeared to have
+ * been swallowed. The investigation itself is streamed on its own detail
+ * screen, but the LISTS had no idea it had finished.
+ *
+ * Polls only while there is something to wait for, so an idle workspace makes
+ * no requests at all.
+ */
+export function useWorkWatcher(
+  productId: number | null,
+  /** Bumps when the caller starts work, so the watcher wakes up. */
+  wakeKey: number,
+  onSettle: () => void,
+  intervalMs = 4000,
+) {
+  const settle = useRef(onSettle);
+  settle.current = onSettle;
+  // Survives re-renders so a count change is measured against the last poll,
+  // not against a value reset by the render the poll itself triggered.
+  const inFlight = useRef<number | null>(null);
+
+  useEffect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    inFlight.current = null;
+
+    const tick = async () => {
+      if (stopped) return;
+      let busy = 0;
+      try {
+        const r = await api.investigations();
+        busy = (r.investigations ?? []).filter(
+          (i) => i.status === "running" || i.status === "queued",
+        ).length;
+        const before = inFlight.current;
+        inFlight.current = busy;
+        // Refresh when something FINISHED — the count fell — so the lists show
+        // the new status without the user reloading the page.
+        if (before != null && busy < before) settle.current();
+      } catch {
+        // A failed poll is not worth surfacing: the screens have their own
+        // error states, and this is a background refresh.
+        return; // stop rather than hammer a backend that is down
+      }
+      // Idle workspace makes no further requests. `wakeKey` restarts this
+      // effect when the user queues something new.
+      if (!stopped && busy > 0) timer = setTimeout(tick, intervalMs);
+    };
+
+    void tick();
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [productId, wakeKey, intervalMs]);
+}
+
 /** Consecutive polling failures before we stop and say so. */
 const MAX_POLL_FAILURES = 5;
 
