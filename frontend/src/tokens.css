@@ -1,33 +1,145 @@
-/* Design tokens extracted from echolens-ui-build/project/EchoLens.dc.html */
+/* ============================================================================
+   EchoLens design tokens — the single source of truth.
+
+   Previously this file and theme.ts defined the same 27 values twice, and
+   components imported the JS copy, so these variables styled almost nothing.
+   Now theme.ts reads FROM here (via var()), so there is one definition per
+   value and changing it here changes it everywhere.
+   ========================================================================= */
 :root {
+  /* ── surface ────────────────────────────────────────────────────────────
+     Four levels, not six. `card` and `card2` used to differ by 1/255 on one
+     channel — a distinction nobody could see but everybody had to choose. */
   --el-bg: #0e0f13;
   --el-bg-raised: #101117;
   --el-bg-card: #15161c;
-  --el-bg-card-2: #14151c;
   --el-bg-hover: #1b1d26;
   --el-bg-active: #1e202b;
+  /* Kept as an alias so existing card2 references stay valid. */
+  --el-bg-card-2: var(--el-bg-card);
+
+  /* ── border ──────────────────────────────────────────────────────────── */
   --el-border: #22242e;
   --el-border-2: #262933;
   --el-border-3: #2e3140;
-  --el-border-4: #3a3e4d;
-  --el-text: #e9eaee;
-  --el-text-2: #d7d9e0;
-  --el-text-3: #c6c8d1;
-  --el-text-muted: #9a9daa;
-  --el-text-dim: #7c7f8c;
-  --el-text-faint: #6b6e7b;
-  --el-text-ghost: #565968;
-  --el-accent: #f0a63c;
+  /* Was #3a3e4d at 1.80:1 — invisible as a control edge. Lifted to clear the
+     3:1 non-text contrast floor so focus rings and inputs are actually seen. */
+  --el-border-4: #565b70;
+
+  /* ── text ────────────────────────────────────────────────────────────────
+     Every value below passes WCAG AA (4.5:1) on --el-bg-card, the darkest
+     surface text ever sits on. Measured, not estimated. */
+  --el-text: #e9eaee;        /* 15.0:1 */
+  --el-text-2: #d7d9e0;      /* 12.8:1 */
+  --el-text-3: #c6c8d1;      /* 10.8:1 */
+  --el-text-muted: #9a9daa;  /*  6.7:1 */
+  --el-text-dim: #8b8e9c;    /*  5.4:1 — was #7c7f8c (4.53, marginal) */
+  --el-text-faint: #9296a3;  /*  6.0:1 — was #6b6e7b (3.56, FAILED AA) */
+  --el-text-ghost: #868a99;  /*  5.2:1 — was #565968 (2.60, FAILED badly) */
+
+  /* ── accent ──────────────────────────────────────────────────────────── */
+  --el-accent: #f0a63c;      /* 8.8:1 on card */
   --el-accent-hover: #f7bd6a;
   --el-accent-deep: #b06f1a;
-  --el-on-accent: #17130a;
+  --el-on-accent: #17130a;   /* 9.0:1 on accent */
+
+  /* Named accent alphas. These replace 30 hand-written rgba() literals that
+     were the same colours at nine ad-hoc opacities. */
+  --el-accent-bg: rgba(240, 166, 60, 0.1);
+  --el-accent-bg-hover: rgba(240, 166, 60, 0.16);
+  --el-accent-line: rgba(240, 166, 60, 0.35);
+  --el-accent-line-strong: rgba(240, 166, 60, 0.55);
+
+  /* ── semantic ────────────────────────────────────────────────────────── */
   --el-good: #4cc077;
+  --el-good-bg: rgba(76, 192, 119, 0.1);
+  --el-good-line: rgba(76, 192, 119, 0.35);
   --el-bad: #e0584f;
+  --el-bad-bg: rgba(224, 88, 79, 0.1);
+  --el-bad-line: rgba(224, 88, 79, 0.35);
   --el-info: #8fd0ff;
+  --el-info-bg: rgba(143, 208, 255, 0.1);
+  --el-info-line: rgba(143, 208, 255, 0.35);
+
   --el-track: #23252f;
   --el-scrollbar: #2a2d38;
-  --el-font: "IBM Plex Sans", sans-serif;
-  --el-mono: "IBM Plex Mono", monospace;
+
+  /* ── type ────────────────────────────────────────────────────────────────
+     Seven steps, no half-pixels. Replaces 25 sizes of which eleven were
+     fractional — the reason the whole interface rendered slightly soft. */
+  --el-font: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --el-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --el-fs-micro: 10px;   /* mono labels, tags */
+  --el-fs-xs: 11px;      /* dense metadata */
+  --el-fs-sm: 12px;      /* secondary body, table cells */
+  --el-fs-base: 13px;    /* body — the default */
+  --el-fs-md: 15px;      /* card titles, emphasis */
+  --el-fs-lg: 18px;      /* screen headings */
+  --el-fs-xl: 24px;      /* section numbers */
+  --el-fs-display: 36px; /* the score, and nothing else */
+
+  --el-lh-tight: 1.25;
+  --el-lh-snug: 1.4;
+  --el-lh-normal: 1.55;
+
+  --el-ls-wide: 0.08em;   /* mono labels */
+  --el-ls-tight: -0.01em; /* large headings */
+
+  --el-fw-normal: 400;
+  --el-fw-medium: 500;
+  --el-fw-semi: 600;
+  --el-fw-bold: 700;
+
+  /* ── space ───────────────────────────────────────────────────────────────
+     4px base. Replaces 86 padding strings and 20 gap values in which every
+     integer from 1 to 14 appeared. */
+  --el-s1: 4px;
+  --el-s2: 8px;
+  --el-s3: 12px;
+  --el-s4: 16px;
+  --el-s5: 20px;
+  --el-s6: 24px;
+  --el-s8: 32px;
+  --el-s10: 40px;
+  --el-s12: 48px;
+
+  /* ── shape ───────────────────────────────────────────────────────────────
+     Four radii with a rule: controls 6, cards 10, overlays 14, pills full.
+     Replaces 14 values with six of them between 6 and 12. */
+  --el-r-sm: 4px;
+  --el-r-control: 6px;
+  --el-r-card: 10px;
+  --el-r-overlay: 14px;
+  --el-r-pill: 999px;
+
+  /* ── elevation ───────────────────────────────────────────────────────────
+     A real scale. All five previous shadows were pure black at unrelated
+     blurs; on a blue-tinted dark surface that reads as dirt, not depth, so
+     these are tinted toward the background hue. */
+  --el-e1: 0 1px 2px rgba(6, 7, 12, 0.4);
+  --el-e2: 0 4px 12px rgba(6, 7, 12, 0.45);
+  --el-e3: 0 12px 32px rgba(6, 7, 12, 0.55);
+  --el-e4: 0 24px 64px rgba(6, 7, 12, 0.65);
+
+  /* ── motion ────────────────────────────────────────────────────────────── */
+  --el-dur-fast: 120ms;
+  --el-dur: 180ms;
+  --el-dur-slow: 320ms;
+  --el-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* ── layout ──────────────────────────────────────────────────────────────
+     One content measure, replacing 20 hardcoded maxWidth values. */
+  --el-measure: 1040px;
+  --el-gutter: var(--el-s6);
+  --el-sidebar-w: 216px;
+}
+
+/* Narrower gutters once the viewport can't afford them. */
+@media (max-width: 900px) {
+  :root {
+    --el-gutter: var(--el-s4);
+  }
 }
 
 html,
@@ -35,7 +147,14 @@ body {
   margin: 0;
   padding: 0;
   background: var(--el-bg);
+  color: var(--el-text);
   height: 100%;
+  font-family: var(--el-font);
+  font-size: var(--el-fs-base);
+  line-height: var(--el-lh-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 * {
   box-sizing: border-box;
@@ -53,12 +172,35 @@ a:hover {
 }
 ::-webkit-scrollbar-thumb {
   background: var(--el-scrollbar);
-  border-radius: 6px;
+  border-radius: var(--el-r-control);
   border: 2px solid var(--el-bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--el-border-4);
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* ── focus ────────────────────────────────────────────────────────────────
+   Applies to [role="button"] and [tabindex] too. The old rule targeted only
+   `button` and `a`, so the 33 <div role="button"> controls in the app had NO
+   visible focus ring at all — a keyboard-navigation dead end. */
+:where(button, a, [role="button"], [tabindex]:not([tabindex="-1"]), input, textarea, select):focus-visible {
+  outline: 2px solid var(--el-accent);
+  outline-offset: 2px;
+  border-radius: var(--el-r-control);
+}
+/* Never remove the ring without replacing it. */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+button {
+  font-family: inherit;
+}
+
+/* ── keyframes ──────────────────────────────────────────────────────────── */
 @keyframes elPulse {
   0%,
   100% {
@@ -68,70 +210,206 @@ a:hover {
     opacity: 0.35;
   }
 }
-@keyframes elGlow {
+@keyframes elSkeleton {
   0%,
   100% {
-    box-shadow: 0 0 0 1px rgba(240, 166, 60, 0.35), 0 0 18px rgba(240, 166, 60, 0.1);
+    opacity: 0.45;
   }
   50% {
-    box-shadow: 0 0 0 1px rgba(240, 166, 60, 0.7), 0 0 26px rgba(240, 166, 60, 0.22);
+    opacity: 0.8;
   }
 }
-@keyframes elBar {
-  0%,
-  100% {
+@keyframes elSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes elFadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
     opacity: 1;
-  }
-  50% {
-    opacity: 0.65;
-  }
-}
-textarea:focus,
-input:focus {
-  outline: 1px solid rgba(240, 166, 60, 0.5);
-}
-button {
-  font-family: inherit;
-}
-button:focus-visible,
-a:focus-visible {
-  outline: 2px solid var(--el-accent);
-  outline-offset: 2px;
-}
-@media (prefers-reduced-motion: reduce) {
-  * {
-    animation: none !important;
-    transition: none !important;
+    transform: none;
   }
 }
 
-/* Interactive case-file cards: hover lift + border warm-up. Border/background
-   live here (not inline) so :hover can override them. */
+/* ── surfaces ─────────────────────────────────────────────────────────────
+   Class-based so :hover/:active/:focus-visible can actually be expressed.
+   Inline styles cannot hold a pseudo-class, which is why the app had no
+   press feedback anywhere. */
 .el-card {
   background: var(--el-bg-card);
   border: 1px solid var(--el-border-2);
-  border-radius: 10px;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
+  border-radius: var(--el-r-card);
+  transition:
+    border-color var(--el-dur) var(--el-ease),
+    box-shadow var(--el-dur) var(--el-ease),
+    transform var(--el-dur-fast) var(--el-ease);
 }
 .el-card--click {
   cursor: pointer;
 }
 .el-card--click:hover {
   border-color: var(--el-border-4);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--el-e2);
   transform: translateY(-1px);
 }
-/* Primary/ghost buttons: subtle brighten on hover. */
+.el-card--click:active {
+  transform: translateY(0);
+  box-shadow: var(--el-e1);
+}
+
+/* ── buttons ──────────────────────────────────────────────────────────────
+   Full state cycle: default / hover / active / focus / disabled / loading. */
 .el-btn {
-  transition: filter 0.15s ease, background 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--el-s2);
+  font-family: inherit;
+  font-size: var(--el-fs-base);
+  font-weight: var(--el-fw-medium);
+  line-height: 1;
+  padding: var(--el-s2) var(--el-s4);
+  border-radius: var(--el-r-control);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--el-text-2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--el-dur) var(--el-ease),
+    border-color var(--el-dur) var(--el-ease),
+    color var(--el-dur) var(--el-ease),
+    transform var(--el-dur-fast) var(--el-ease),
+    opacity var(--el-dur) var(--el-ease);
 }
 .el-btn:hover {
-  filter: brightness(1.08);
+  background: var(--el-bg-hover);
+  color: var(--el-text);
 }
-/* Clickable table rows: background warms on hover. */
+/* Physical press. The app previously had no :active state anywhere. */
+.el-btn:active {
+  transform: translateY(1px);
+}
+.el-btn[disabled],
+.el-btn[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+.el-btn[disabled]:hover,
+.el-btn[aria-disabled="true"]:hover {
+  background: transparent;
+  color: var(--el-text-2);
+}
+
+.el-btn--primary {
+  background: var(--el-accent);
+  color: var(--el-on-accent);
+  font-weight: var(--el-fw-semi);
+}
+.el-btn--primary:hover {
+  background: var(--el-accent-hover);
+  color: var(--el-on-accent);
+}
+.el-btn--primary[disabled]:hover {
+  background: var(--el-accent);
+}
+
+.el-btn--ghost {
+  border-color: var(--el-accent-line);
+  color: var(--el-accent);
+}
+.el-btn--ghost:hover {
+  background: var(--el-accent-bg);
+  border-color: var(--el-accent-line-strong);
+  color: var(--el-accent-hover);
+}
+
+.el-btn--quiet {
+  color: var(--el-text-muted);
+}
+.el-btn--quiet:hover {
+  background: var(--el-bg-hover);
+  color: var(--el-text);
+}
+
+.el-btn--danger {
+  border-color: var(--el-bad-line);
+  color: var(--el-bad);
+}
+.el-btn--danger:hover {
+  background: var(--el-bad-bg);
+  color: var(--el-bad);
+}
+
+.el-btn--sm {
+  font-size: var(--el-fs-sm);
+  padding: var(--el-s1) var(--el-s3);
+}
+
+/* Loading: a spinner replaces the label without the button changing size. */
+.el-btn--loading {
+  position: relative;
+  color: transparent !important;
+  pointer-events: none;
+}
+.el-btn--loading::after {
+  content: "";
+  position: absolute;
+  width: 13px;
+  height: 13px;
+  border: 2px solid currentcolor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  color: var(--el-text-2);
+  animation: elSpin 0.7s linear infinite;
+}
+.el-btn--primary.el-btn--loading::after {
+  color: var(--el-on-accent);
+}
+
+/* ── inputs ─────────────────────────────────────────────────────────────── */
+.el-input {
+  width: 100%;
+  background: var(--el-bg-raised);
+  border: 1px solid var(--el-border-3);
+  border-radius: var(--el-r-control);
+  color: var(--el-text);
+  font-family: inherit;
+  font-size: var(--el-fs-base);
+  padding: var(--el-s2) var(--el-s3);
+  transition:
+    border-color var(--el-dur) var(--el-ease),
+    background var(--el-dur) var(--el-ease);
+}
+.el-input::placeholder {
+  color: var(--el-text-dim);
+}
+.el-input:hover:not(:disabled) {
+  border-color: var(--el-border-4);
+}
+.el-input:focus {
+  border-color: var(--el-accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--el-accent-bg);
+}
+.el-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.el-input[aria-invalid="true"] {
+  border-color: var(--el-bad);
+}
+
+/* ── rows ─────────────────────────────────────────────────────────────────
+   Table rows and list rows. Hairline between, never boxed per row. */
 .el-row {
   background: var(--el-bg-card);
-  transition: background 0.12s ease;
+  transition: background var(--el-dur-fast) var(--el-ease);
 }
 .el-row--click {
   cursor: pointer;
@@ -139,12 +417,48 @@ a:focus-visible {
 .el-row--click:hover {
   background: var(--el-bg-hover);
 }
-@keyframes elSkeleton {
-  0%,
-  100% {
-    opacity: 0.5;
-  }
-  50% {
-    opacity: 0.85;
+.el-row--click:active {
+  background: var(--el-bg-active);
+}
+
+/* ── utilities ──────────────────────────────────────────────────────────── */
+.el-mono {
+  font-family: var(--el-mono);
+  font-variant-numeric: tabular-nums;
+}
+/* Numbers in tables must not jitter as they update. */
+.el-num {
+  font-family: var(--el-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+.el-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.el-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── motion preference ────────────────────────────────────────────────────
+   Existing behaviour, preserved. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

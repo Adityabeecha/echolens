@@ -29,7 +29,7 @@ export interface StatusMeta {
 }
 
 const amber = (label: string, extra: Partial<StatusMeta> = {}): StatusMeta => ({
-  label, color: C.accent, bg: "rgba(240,166,60,.1)", border: "rgba(240,166,60,.35)", ...extra,
+  label, color: C.accent, bg: C.accentBg, border: C.accentLine, ...extra,
 });
 
 export const STATUS: Record<CaseStatus, StatusMeta> = {
@@ -38,14 +38,13 @@ export const STATUS: Record<CaseStatus, StatusMeta> = {
   needs_review: amber("Needs review", { needsYou: true }),
   needs_human: amber("Needs human", { needsYou: true }),
   resolved: {
-    label: "Resolved", color: C.good, bg: "rgba(76,192,119,.1)", border: "rgba(76,192,119,.35)",
+    label: "Resolved", color: C.good, bg: C.goodBg, border: C.goodLine,
   },
   verified_fixed: {
-    label: "Verified fixed", color: C.good,
-    bg: "rgba(76,192,119,.1)", border: "rgba(76,192,119,.35)",
+    label: "Verified fixed", color: C.good, bg: C.goodBg, border: C.goodLine,
   },
   regressed: {
-    label: "Regressed", color: C.bad, bg: "rgba(224,88,79,.1)", border: "rgba(224,88,79,.35)",
+    label: "Regressed", color: C.bad, bg: C.badBg, border: C.badLine,
     needsYou: true,
   },
   dismissed: { label: "Dismissed", color: C.muted, bg: C.hover, border: C.border3 },
