@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api";
+import { useDialog } from "../hooks";
 import { toast } from "./Toast";
 import { C, R, S, T, mono } from "../theme";
 import { Icon } from "./Icon";
@@ -15,6 +16,9 @@ export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onSt
   const [tier, setTier] = useState("standard");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // This dialog had no Escape handler, no dialog role and no focus management
+  // at all: opening it left the keyboard on the page behind it.
+  const ref = useDialog(onClose, !busy);
 
   const submit = async () => {
     if (!desc.trim()) return;
@@ -39,8 +43,13 @@ export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onSt
 
   return (
     <>
-      <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(6,7,10,.6)", zIndex: 30 }} />
+      <div onClick={onClose} aria-hidden="true"
+           style={{ position: "fixed", inset: 0, background: "rgba(6,7,10,.6)", zIndex: 30 }} />
       <div
+        ref={ref}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Open a case"
         style={{
           position: "fixed",
           top: "50%",
@@ -48,17 +57,19 @@ export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onSt
           transform: "translate(-50%,-50%)",
           width: 520,
           maxWidth: "92vw",
-          background: C.card2,
+          background: C.card,
           border: `1px solid ${C.border3}`,
           borderRadius: R.overlay,
           zIndex: 31,
-          padding: 24,
-          boxShadow: "0 30px 80px rgba(0,0,0,.55)"
+          padding: S[6],
+          boxShadow: "var(--el-e4)"
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[4] }}>
           <div style={{ fontSize: T.lg, fontWeight: 600 }}>Open a case</div>
-          <button onClick={onClose} style={{ marginLeft: "auto", background: "none", border: "none", color: C.muted, fontSize: T.lg }}>
+          <button onClick={onClose} aria-label="Close"
+                  className="el-btn el-btn--sm"
+                  style={{ marginLeft: "auto", color: C.muted }}>
             <Icon name="close" size={15} />
           </button>
         </div>

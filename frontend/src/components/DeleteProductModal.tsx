@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { DeletionPreview, ProductRow, api } from "../api";
-import { useAsync } from "../hooks";
+import { useAsync, useDialog } from "../hooks";
 import { C, R, S, T, mono, sans } from "../theme";
 
 interface Props {
@@ -22,13 +22,9 @@ export function DeleteProductModal({ product, onClose, onDeleted }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !busy) onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, busy]);
+  // Escape is ignored mid-delete: closing the dialog while the request is in
+  // flight would hide an operation the user cannot then confirm finished.
+  const ref = useDialog(onClose, !busy);
 
   const matches = typed.trim() === product.name;
 
@@ -63,6 +59,7 @@ export function DeleteProductModal({ product, onClose, onDeleted }: Props) {
     >
       <div
         onClick={(e) => e.stopPropagation()}
+        ref={ref}
         role="dialog"
         aria-modal="true"
         aria-label={`Delete ${product.name}`}

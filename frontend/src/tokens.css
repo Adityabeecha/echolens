@@ -460,15 +460,28 @@ button {
    without losing navigation. Phone: it becomes a horizontal bar at the top. */
 @media (max-width: 1024px) {
   :root {
-    --el-sidebar-w: 60px;
+    --el-sidebar-w: 64px;
   }
-  /* Hide label text, keep the icon and the a11y name. */
-  .el-shell nav[aria-label="Main"] .el-btn > span:not([aria-hidden]),
-  .el-shell nav[aria-label="Main"] .el-btn {
-    font-size: 0;
+  /* Labels are hidden the accessible way: clipped, not `display: none` and not
+     `font-size: 0`. The text stays in the accessibility tree, so a screen
+     reader still announces "Cases" while the sighted user sees only the icon.
+     Each control also carries a `title`, giving a hover tooltip. */
+  .el-shell nav[aria-label="Main"] .el-nav-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
-  .el-shell nav[aria-label="Main"] .el-btn svg {
-    font-size: initial;
+  /* Wide-only furniture: the product switcher and the running-investigations
+     badge are unreadable at 64px, so they fold away entirely rather than
+     truncating into nonsense. */
+  .el-shell nav[aria-label="Main"] .el-nav-wide {
+    display: none;
   }
   .el-shell nav[aria-label="Main"] .el-btn {
     justify-content: center;

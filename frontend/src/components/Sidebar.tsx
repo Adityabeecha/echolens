@@ -28,7 +28,7 @@ function ProductSwitcher({ products, activeId, onSwitch, onAdd, onDelete }: {
   const active = products.find((p) => p.id === activeId) ?? products[0];
   if (!active) return null;
   return (
-    <div style={{ position: "relative", margin: `0 ${S[3]} ${S[3]}` }}>
+    <div className="el-nav-wide" style={{ position: "relative", margin: `0 ${S[3]} ${S[3]}` }}>
       <button
         onClick={() => setOpen((o) => !o)}
         className="el-btn"
@@ -189,6 +189,7 @@ export function Sidebar({
         <button
           onClick={() => go("portfolio")}
           className="el-btn"
+          title="Every product you own, ranked"
           aria-current={screen === "portfolio" ? "page" : undefined}
           style={{ display: "flex", alignItems: "center", gap: S[3],
                    margin: `0 ${S[3]} ${S[2]}`, padding: `${S[2]} ${S[2]}`,
@@ -198,7 +199,7 @@ export function Sidebar({
         >
           <Icon name="portfolio" size={15}
                 style={{ color: screen === "portfolio" ? C.accent : C.dim }} />
-          <span style={{ fontSize: T.base }}>All products</span>
+          <span className="el-nav-label" style={{ fontSize: T.base }}>All products</span>
           <span className="el-num" style={{ marginLeft: "auto", fontSize: T.micro,
                          color: C.faint }}>
             {products.length}
@@ -225,7 +226,7 @@ export function Sidebar({
       {running.length > 0 && (
         <button
           onClick={() => go("today")}
-          className="el-btn"
+          className="el-btn el-nav-wide"
           style={{ margin: `${S[3]} ${S[3]} ${S[1]}`, padding: `${S[2]} ${S[3]}`,
                    border: `1px solid ${C.border2}`, borderRadius: R.control,
                    background: C.card, flexDirection: "column", alignItems: "flex-start",
@@ -251,6 +252,7 @@ export function Sidebar({
         <button
           onClick={() => setSystemOpen((o) => !o)}
           className="el-btn el-btn--sm"
+          title="Sources, patterns, calibration, costs and settings"
           aria-expanded={showSystem}
           style={{ display: "flex", alignItems: "center", gap: S[2],
                    padding: `${S[1]} ${S[2]}`, width: "100%", justifyContent: "flex-start",
@@ -258,7 +260,7 @@ export function Sidebar({
                    letterSpacing: "var(--el-ls-wide)", color: C.ghost }}
         >
           <Icon name={showSystem ? "chevronDown" : "chevronRight"} size={12} />
-          SYSTEM
+          <span className="el-nav-label">SYSTEM</span>
         </button>
         {showSystem && (
           <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
@@ -274,12 +276,13 @@ export function Sidebar({
         <button
           onClick={onLogout}
           className="el-btn"
+          title="Sign out"
           style={{ margin: `${S[1]} ${S[3]} ${S[3]}`, padding: `${S[2]} ${S[2]}`,
                    borderRadius: R.control, color: C.muted, fontSize: T.sm,
                    justifyContent: "flex-start", gap: S[3] }}
         >
           <Icon name="signout" size={15} style={{ color: C.dim }} />
-          Sign out
+          <span className="el-nav-label">Sign out</span>
         </button>
       )}
     </nav>
@@ -314,7 +317,9 @@ function NavRow({ item, active, onClick, small }: {
       )}
       <Icon name={item.icon} size={small ? 14 : 16}
             style={{ color: active ? C.accent : C.dim }} />
-      {item.label}
+      {/* Wrapped, not a bare text node, so the collapsed-sidebar breakpoint can
+          hide the label without also blanking the icon or the accessible name. */}
+      <span className="el-nav-label">{item.label}</span>
     </button>
   );
 }

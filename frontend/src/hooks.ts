@@ -37,6 +37,81 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []): {
   return { data, error, loading, reload };
 }
 
+/**
+ * Dialog behaviour, in one place: Escape closes, focus moves in on open and
+ * returns on close, and Tab cycles inside rather than escaping behind.
+ *
+ * Every modal previously implemented some subset of this. `NewCaseModal` had
+ * none of it, and none of the three moved focus at all — so opening a dialog
+ * with the keyboard left you tabbing through the page underneath it, with no
+ * visible indication of where you were.
+ *
+ * Returns a ref to put on the dialog element.
+ */
+export function useDialog(onClose: () => void, enabled = true) {
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const root = ref.current;
+    const previous = document.activeElement as HTMLElement | null;
+
+    // No `offsetParent` check: it is null for any `position: fixed` element,
+    // which is exactly what these dialogs are, so filtering on it discarded
+    // every candidate. Hidden controls are excluded explicitly instead.
+    const focusable = () =>
+      Array.from(
+        root?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      ).filter((el) => !el.hasAttribute("hidden") && el.getAttribute("aria-hidden") !== "true");
+
+    // Focus the first real control, not the dialog itself, so a screen reader
+    // lands on something actionable.
+    //
+    // Deferred a frame: on the effect's first run the dialog's children have
+    // been committed but the browser has not laid them out, so `offsetParent`
+    // is still null for all of them and the focusable filter returns nothing.
+    // Focus then stayed on the button that opened the dialog.
+    const raf = requestAnimationFrame(() => {
+      const first = focusable()[0];
+      (first ?? root)?.focus();
+    });
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const items = focusable();
+      if (items.length === 0) return;
+      const firstEl = items[0];
+      const lastEl = items[items.length - 1];
+      // Wrap at both ends so Tab never reaches the page behind the dialog.
+      if (e.shiftKey && document.activeElement === firstEl) {
+        e.preventDefault();
+        lastEl.focus();
+      } else if (!e.shiftKey && document.activeElement === lastEl) {
+        e.preventDefault();
+        firstEl.focus();
+      }
+    };
+
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      cancelAnimationFrame(raf);
+      document.removeEventListener("keydown", onKey, true);
+      // Send focus back where it came from, so closing a dialog does not dump
+      // the caret at the top of the document.
+      previous?.focus?.();
+    };
+  }, [onClose, enabled]);
+
+  return ref;
+}
+
 /** Consecutive polling failures before we stop and say so. */
 const MAX_POLL_FAILURES = 5;
 

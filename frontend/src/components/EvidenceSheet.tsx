@@ -1,14 +1,12 @@
-import { useEffect } from "react";
 import { Evidence } from "../api";
+import { useDialog } from "../hooks";
 import { C, R, S, T, mono } from "../theme";
 import { Icon } from "./Icon";
 
 export function EvidenceSheet({ evidence, onClose }: { evidence: Evidence | null; onClose: () => void }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // Escape, focus-in on open, focus-return on close, and a Tab cycle that
+  // stays inside the sheet.
+  const ref = useDialog(onClose, !!evidence);
 
   if (!evidence) return null;
 
@@ -20,6 +18,7 @@ export function EvidenceSheet({ evidence, onClose }: { evidence: Evidence | null
         // Announced as a dialog. Without a role a screen reader treated this as
         // ordinary page content, so focus stayed on the obscured page behind it
         // and Tab cycled through the case detail rather than the sheet.
+        ref={ref}
         role="dialog"
         aria-modal="true"
         aria-label="Evidence detail"
