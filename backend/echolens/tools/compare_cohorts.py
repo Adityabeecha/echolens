@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from echolens.db.models import Review
-from echolens.tools._util import match_score, parse_date, terms_of
+from echolens.tools._util import cap_items, match_score, parse_date, terms_of
 
 
 def compare_cohorts(
@@ -76,10 +76,17 @@ def compare_cohorts(
             ratio = round(top_share / next_share, 1)
         elif top_share > 0:
             only_in_top = True  # the complaint appears in ONLY the top cohort — strongest signal
+    # Cap the RETURNED list, not the comparison: `ratio` and `only_in_top` above
+    # are computed over every cohort, so truncating earlier would change the
+    # answer. Unbounded output was the problem (one entry per distinct version
+    # or OS string, which on a long-lived app is hundreds), not the maths.
+    shown, total_cohorts = cap_items(cohorts)
     return {
         "term": term, "dimension": dimension,
         "held_fixed": {"os_version": os_version, "version_prefix": version_prefix},
-        "cohorts": cohorts,
+        "cohorts": shown,
+        "total_cohorts": total_cohorts,
+        "truncated": total_cohorts > len(shown),
         "highest_cohort": top["cohort"] if top else None,
         "highest_vs_next_ratio": ratio,  # e.g. 4.0 → "4x more than the next cohort"
         "only_in_top_cohort": only_in_top,  # true → effectively exclusive to that cohort

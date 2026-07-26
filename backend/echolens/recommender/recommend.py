@@ -53,8 +53,21 @@ def recommend(session: Session, finding: Finding, llm: LLMClient | None = None) 
         return []  # no confirmed cause → nothing to act on yet (honesty over hustle)
 
     if llm is None:
+        # Record the spend. This used to discard it with `on_call=lambda *a: None`,
+        # so the recommender — which sends the full finding plus every hypothesis
+        # and every evidence row, one of the largest prompts in the system, on
+        # EVERY completed investigation — appeared in no cost report and counted
+        # against no daily budget. client.py's docstring promises every call is
+        # logged to llm_calls; for this path it was not true.
+        from echolens.db.models import LLMCall
         from echolens.llm.openai_client import OpenAIClient
-        llm = OpenAIClient(on_call=lambda *a: None)
+
+        def _record(agent, model, tokens_in, tokens_out, cost, ms):
+            session.add(LLMCall(investigation_id=finding.investigation_id, agent=agent,
+                                model=model, tokens_in=tokens_in, tokens_out=tokens_out,
+                                cost=cost, ms=ms))
+
+        llm = OpenAIClient(on_call=_record)
 
     hyps = session.query(HypothesisRow).filter_by(investigation_id=finding.investigation_id).all()
     evs = session.query(EvidenceRow).filter_by(investigation_id=finding.investigation_id).all()

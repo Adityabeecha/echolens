@@ -866,10 +866,7 @@ def feedback_graph(product_id: int | None = None, days: int = 90, limit: int = 1
         prod = _scope(session, product_id)
         if prod is None:
             return {"nodes": [], "product": None, "channels": []}
-        llm = None
-        if settings.openai_api_key:
-            from echolens.llm.openai_client import OpenAIClient
-            llm = OpenAIClient(on_call=lambda *a: None)
+        llm = _metered_llm(session, "feedback_graph") if settings.openai_api_key else None
         return build_graph(session, prod.name, llm=llm, days=days, limit=limit)
 
 
@@ -931,10 +928,7 @@ def feed_candidates(product_id: int | None = None, limit: int = 6, refresh: bool
         prod = _scope(session, product_id)
         if prod is None:
             return {"candidates": [], "product": None, "engine": "none"}
-        llm = None
-        if settings.openai_api_key:
-            from echolens.llm.openai_client import OpenAIClient
-            llm = OpenAIClient(on_call=lambda *a: None)
+        llm = _metered_llm(session, "themes") if settings.openai_api_key else None
         result = cached_themes(session, prod.name, llm=llm, limit=limit,
                                package_name=prod.package_name, force=refresh)
         out = []
@@ -1400,6 +1394,25 @@ def recommend_finding(request: Request, finding_id: int,
 
 
 # ── v4.0: actionable delivery (tickets, GitHub issues, Slack, alerts) ────
+
+def _metered_llm(session, agent_prefix: str):
+    """An OpenAIClient whose spend is RECORDED.
+
+    These call sites used `on_call=lambda *a: None`, so LLM work done outside an
+    investigation (theme discovery, the feedback graph) was invisible to every
+    cost report and counted against no budget. investigation_id is None because
+    there is no case to attribute it to — but the tokens and dollars are real and
+    now appear in the ledger.
+    """
+    from echolens.llm.openai_client import OpenAIClient
+
+    def _record(agent, model, tokens_in, tokens_out, cost, ms):
+        session.add(LLMCall(investigation_id=None, agent=f"{agent_prefix}.{agent}",
+                            model=model, tokens_in=tokens_in, tokens_out=tokens_out,
+                            cost=cost, ms=ms))
+
+    return OpenAIClient(on_call=_record)
+
 
 def _github_repo(session) -> str | None:
     """The repo to file issues into: the single connected GitHub source, else

@@ -57,3 +57,4 @@ class InvState(TypedDict, total=False):
     pending_delegate: dict | None  # {specialist, focus} — v2.0 delegation
     last_tool: dict | None      # {name, args, result} or {name, args, error}
     proposed: dict | None       # plan's declared conclusion, validated by check
+    over_budget: bool           # set by the pre-flight check in _plan

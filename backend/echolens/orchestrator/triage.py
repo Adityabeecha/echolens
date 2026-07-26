@@ -118,13 +118,17 @@ class Orchestrator:
         ))
 
     def _investigations_today(self, as_of: datetime) -> int:
-        # Bound the scan to recent rows (don't load every investigation ever), then
-        # match the exact local date in Python — robust across SQLite (naive) and
-        # Postgres (aware) storage without a dialect-specific date cast.
-        cutoff = as_of.replace(tzinfo=None) - timedelta(days=2)
-        rows = self.session.scalars(select(Investigation).where(
-            Investigation.created_at >= cutoff)).all()
-        return sum(1 for r in rows if r.created_at and r.created_at.date() == as_of.date())
+        """Cases opened today for THIS product.
+
+        Delegates to the queue's implementation instead of keeping a second one.
+        The two disagreed on both axes that matter: this copy counted across
+        EVERY product (so with N products the shared cap was consumed N-fold and
+        one busy product starved the rest) and compared `r.created_at.date()`
+        without aware_utc, unlike the queue's version. Two implementations of one
+        cap can only ever agree by accident.
+        """
+        from echolens.orchestrator.queue import investigations_today
+        return investigations_today(self.session, self.product_id, as_of)
 
     def triage(self, as_of: datetime | None = None, persist: bool = True) -> list[Decision]:
         """`persist=False` makes this a true preview: decisions are returned but

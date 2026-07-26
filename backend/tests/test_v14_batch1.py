@@ -146,8 +146,15 @@ def test_ungrounded_prose_is_never_published_as_the_finding():
                 "checked": ["play_store"], "what_would_settle_it": "n/a",
             }, tokens_in=10, tokens_out=10, model="test", ms=1)
 
+    from echolens.config import BUDGET_TIERS
+    from echolens.investigator.state import Budget
+
     inv = Investigator.__new__(Investigator)
     inv.llm = AlwaysUngrounded()
+    # _draft_finding consults the budget before its optional RETRY, so a bare
+    # instance needs one. Fresh budget = the retry is allowed, which is the
+    # path under test (both attempts must fail grounding).
+    inv.budget = Budget(tier=BUDGET_TIERS["standard"])
     state = {"status": "needs_human", "status_reason": "conflicting evidence",
              "trigger": {}, "hypotheses": [], "evidence": []}
     finding = Investigator._draft_finding(inv, state)

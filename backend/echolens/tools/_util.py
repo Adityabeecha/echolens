@@ -25,8 +25,19 @@ def snippet(text: str, cap: int = TOOL_SNIPPET_MAX_CHARS) -> str:
 
 
 def cap_items(items: list, limit: int | None = None) -> tuple[list, int]:
-    """Return (top-k items, total count before truncation)."""
-    k = min(limit or TOOL_RESULT_MAX_ITEMS, TOOL_RESULT_MAX_ITEMS)
+    """Return (top-k items, total count before truncation).
+
+    `limit` is model-supplied and therefore adversarial by default. A negative
+    value made `items[:k]` a slice from the END — cap_items(range(500), -5)
+    returned 495 items instead of 12, dumping the whole result set into LLM
+    context and blowing a token cap that (before the pre-flight check) was only
+    consulted afterwards. Coerced to a sane positive integer.
+    """
+    try:
+        k = int(limit) if limit is not None else TOOL_RESULT_MAX_ITEMS
+    except (TypeError, ValueError):
+        k = TOOL_RESULT_MAX_ITEMS
+    k = max(1, min(k, TOOL_RESULT_MAX_ITEMS))
     return items[:k], len(items)
 
 

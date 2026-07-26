@@ -157,6 +157,14 @@ class Investigator:
     def _plan(self, state: InvState) -> InvState:
         state["pending_tool"] = None
         state["pending_delegate"] = None
+        # PRE-FLIGHT. The caps were consulted only in _check, at the END of a
+        # plan->act->update cycle, so a run sitting at 119k/120k tokens still
+        # executed a full iteration — two LLM calls and a tool result — and the
+        # cap was merely OBSERVED to be blown afterwards, by an unbounded margin.
+        # Refusing here means the ceiling is enforced rather than recorded.
+        if guards.budget_exceeded(self.budget):
+            state["over_budget"] = True
+            return state
         prompt = render_state(
             state["trigger"], state["hypotheses"],
             [{k: e[k] for k in ("id", "source", "ref", "snippet", "supports", "contradicts")}
@@ -226,6 +234,15 @@ class Investigator:
         state["pending_delegate"] = None
         name = deleg.get("specialist")
         focus = deleg.get("focus", "")
+        # Delegation is WORK and must be charged for. _specialist_context runs up
+        # to three full corpus queries and run_specialist makes an LLM call, none
+        # of which touched tool_calls — so a model that chose "delegate" every
+        # step burned the whole run while the budget reported tool_calls 0/20,
+        # the one number a reader takes as "how much work did this do".
+        self.budget.tool_calls += 1
+        if guards.budget_exceeded(self.budget):
+            self._trace("CHECK", {"text": f"Skipped {name}: no budget left to delegate."})
+            return state
         context = self._specialist_context(name, focus)
         result = run_specialist(self.llm, name, context)
         if result is None:
@@ -535,9 +552,16 @@ class Investigator:
             "hypotheses": state["hypotheses"],
             "evidence": state["evidence"],
             "trigger": state["trigger"],
+            # `extended`/`extension_factor` MUST be checkpointed. Without them a
+            # resumed run restored a budget already at the extended ceiling but
+            # flagged un-extended, so the one-time 50% extension was granted
+            # again on every resume — and resume_running() fires on every app
+            # start, so a crash-loop during a deploy granted it without limit.
             "budget": {"iterations": self.budget.iterations, "tool_calls": self.budget.tool_calls,
                        "tokens": self.budget.tokens, "cost_usd": self.budget.cost_usd,
-                       "elapsed_s": self.budget.elapsed_s()},
+                       "elapsed_s": self.budget.elapsed_s(),
+                       "extended": self.budget.extended,
+                       "extension_factor": self.budget.extension_factor},
             "executed_calls": sorted(self._executed_calls),
             "recent": self._recent[-6:],
         }
@@ -620,6 +644,15 @@ class Investigator:
         evidence_ids = {e["id"] for e in state["evidence"]}
         finding: dict | None = None
         for attempt in range(2):
+            # The RETRY is discretionary and must respect the budget. The first
+            # attempt is not: a case that spent its budget still owes the user an
+            # answer, and refusing to draft one would turn every exhausted run
+            # into a blank. But the second attempt is an optional improvement, so
+            # it only happens if there is still budget for it — this call carries
+            # the largest prompt in the run (full hypotheses + full evidence) and
+            # used to fire unconditionally after the caps were already blown.
+            if attempt > 0 and guards.budget_exceeded(self.budget):
+                break
             try:
                 res = self.llm.complete_json(FINDING_SYSTEM, context, FINDING_SCHEMA, "investigator.finding")
             except LLMFormatError:
@@ -686,6 +719,8 @@ class Investigator:
         inv.budget.tokens = b.get("tokens", 0)
         inv.budget.cost_usd = b.get("cost_usd", 0.0)
         inv.budget.prior_elapsed_s = b.get("elapsed_s", 0.0)  # wall-clock survives restart
+        inv.budget.extended = bool(b.get("extended", False))
+        inv.budget.extension_factor = float(b.get("extension_factor", 1.0))
         inv._executed_calls = set(ckpt.get("executed_calls", []))
         inv._recent = list(ckpt.get("recent", []))
         inv._trace("THINK", {"text": f"Resumed after interruption at iteration {inv.budget.iterations}; "
@@ -707,7 +742,8 @@ class Investigator:
         graph.set_entry_point("plan")
         graph.add_conditional_edges(
             "plan",
-            lambda s: "act" if s.get("pending_tool")
+            lambda s: "check" if s.get("over_budget")
+            else "act" if s.get("pending_tool")
             else "delegate" if s.get("pending_delegate")
             else "check",
         )

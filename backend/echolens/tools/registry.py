@@ -160,6 +160,37 @@ TOOLS: dict[str, ToolSpec] = {
 }
 
 
+def _coerce(tool: str, key: str, value, prop: dict):
+    """Coerce one model-supplied argument to its declared schema type.
+
+    Raises ValueError on a value that cannot be honoured. A wrong argument must
+    fail loudly as a FAIL trace step the agent can see and correct — silently
+    falling through to a default branch produces a confident answer to a
+    question nobody asked.
+    """
+    want = prop.get("type")
+    enum = prop.get("enum")
+
+    if want == "integer":
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{tool}.{key}: expected an integer, got {value!r}")
+        if key == "limit":
+            value = max(1, value)      # a non-positive limit is never meaningful
+    elif want == "number":
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{tool}.{key}: expected a number, got {value!r}")
+    elif want == "string" and not isinstance(value, str):
+        value = str(value)
+
+    if enum and value not in enum:
+        raise ValueError(f"{tool}.{key}: must be one of {enum}, got {value!r}")
+    return value
+
+
 def run_tool(session: Session, name: str, args: dict, product: str | None = None) -> dict:
     """Execute a registered tool. Raises KeyError/TypeError/ValueError on bad
     calls — the investigator records those as FAIL trace steps.
@@ -170,8 +201,19 @@ def run_tool(session: Session, name: str, args: dict, product: str | None = None
     gets to widen. The caller passes it; every tool that can filter, does.
     """
     spec = TOOLS[name]
-    allowed = set(spec.args_schema.get("properties", {}))
-    clean = {k: v for k, v in args.items() if k in allowed and v is not None}
+    props = spec.args_schema.get("properties", {})
+    allowed = set(props)
+    # Filter by key AND coerce by declared type. This used to filter on the key
+    # alone, so the declared "integer"/"enum" types in every tool schema were
+    # decorative: `limit: -5` reached cap_items and returned 495 items,
+    # `rating_max: "3"` reached a SQL comparison against an integer column, and
+    # `dimension: "banana"` silently fell through to the default branch and
+    # returned version cohorts labelled as whatever the model asked for.
+    clean: dict = {}
+    for k, v in args.items():
+        if k not in allowed or v is None:
+            continue
+        clean[k] = _coerce(name, k, v, props.get(k) or {})
     missing = [k for k in spec.args_schema.get("required", []) if k not in clean]
     if missing:
         raise ValueError(f"{name}: missing required args {missing}")

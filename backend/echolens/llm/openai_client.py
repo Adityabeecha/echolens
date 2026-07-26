@@ -67,9 +67,10 @@ class OpenAIClient:
 
     def complete_json(self, system: str, user: str, json_schema: dict, agent: str) -> LLMResult:
         last_err: Exception | None = None
+        prompt = user
         for _attempt in range(2):  # one retry specifically for malformed JSON
             start = time.monotonic()
-            resp = self._create_with_backoff(system, user, json_schema)
+            resp = self._create_with_backoff(system, prompt, json_schema)
             ms = int((time.monotonic() - start) * 1000)
             usage = resp.usage
             tokens_in = usage.prompt_tokens if usage else 0
@@ -82,4 +83,13 @@ class OpenAIClient:
                 return LLMResult(parsed=parsed, tokens_in=tokens_in, tokens_out=tokens_out, ms=ms, model=self.model)
             except (json.JSONDecodeError, IndexError) as err:
                 last_err = err
+                # Tell the model what went wrong. The retry used to re-send a
+                # byte-identical prompt at a fixed temperature, so a deterministic
+                # formatting failure reproduced exactly — two API calls, two
+                # bills, one guaranteed-identical failure.
+                raw = (resp.choices[0].message.content or "") if resp.choices else ""
+                prompt = (f"{user}\n\nYOUR PREVIOUS REPLY WAS NOT VALID JSON and could not be "
+                          f"parsed ({err}). Return ONLY a single JSON object matching the "
+                          f"schema — no prose, no code fences. Your previous reply began: "
+                          f"{raw[:200]!r}")
         raise LLMFormatError(f"{agent}: model returned malformed JSON twice: {last_err}")
