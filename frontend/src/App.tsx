@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Evidence, ProductRow, api, getToken, isGuest, onAuthError, setActiveProduct, setGuest, setToken } from "./api";
+import { Evidence, ProductRow, api, getToken, isAdmin, isGuest, onAuthError, setActiveProduct, setGuest, setToken } from "./api";
 import { CaseTab, GLOBAL_SCREENS, Screen, caseTabFor } from "./nav";
 import { useRouter } from "./router";
 import { useWorkWatcher } from "./hooks";
@@ -73,7 +73,13 @@ export default function App() {
 
         if (r.products.length === 0) {
           setActiveProduct(null);
-          navigate({ screen: "onboarding", productId: null }, { replace: true });
+          // Only an admin can actually complete this wizard. A guest browsing
+          // an empty demo used to be redirected into a form where every button
+          // 403s, with the nav hidden — a dead end. Everyone else lands on
+          // Today, whose empty states explain the situation and stay navigable.
+          if (isAdmin()) {
+            navigate({ screen: "onboarding", productId: null }, { replace: true });
+          }
           return;
         }
 
@@ -324,7 +330,13 @@ export default function App() {
                 api.products().then((r) => setProducts(r.products)).catch(() => {});
                 api.activateProduct(id).catch(() => {});
               }}
-              onCancel={() => navigate({ screen: "today", productId: activeId }, { replace: true })}
+              onCancel={() => {
+                // With no products there is no Today worth showing, so a guest
+                // who cannot proceed goes back to the door rather than bouncing
+                // between two empty screens.
+                if (products.length === 0 && !isAdmin()) logout();
+                else navigate({ screen: "today", productId: activeId }, { replace: true });
+              }}
               onDone={() => finishOnboarding("today")}
               onReviewSignals={() => finishOnboarding("cases", { signals: "1" })}
             />

@@ -141,8 +141,11 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
           </div>
         )}
 
+        {/* width, not just maxWidth: the Google button measures this box to size
+            its iframe, and an auto-width box measures as its content (zero on
+            first paint) rather than as the column. */}
         {googleId && (
-          <div style={{ maxWidth: 360, marginTop: S[4] }}>
+          <div style={{ width: "100%", maxWidth: 360, marginTop: S[4] }}>
             <GoogleButton clientId={googleId} onCredential={signInWithGoogle} disabled={busy} />
           </div>
         )}

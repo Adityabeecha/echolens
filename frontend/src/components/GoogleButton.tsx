@@ -77,28 +77,54 @@ export function GoogleButton({
     if (!clientId) return;
     let cancelled = false;
 
+    // The width last drawn, so a redraw that does not change anything is
+    // skipped. Without this the ResizeObserver reacts to the size change that
+    // draw() itself causes and loops.
+    let drawnAt = 0;
+
+    const draw = () => {
+      if (cancelled || !host.current || !window.google) return;
+      // Google renders into an iframe at a FIXED pixel width, so CSS cannot
+      // stretch it — a hardcoded 320 left it visibly narrower than the
+      // full-width buttons above and below. Measure the container and pass
+      // that instead, so it lines up with everything else in the column.
+      // Google clamps this to [200, 400].
+      const w = Math.round(host.current.getBoundingClientRect().width);
+      const width = Math.max(200, Math.min(400, w || 360));
+      if (width === drawnAt) return;
+      drawnAt = width;
+      host.current.innerHTML = ""; // re-render cleanly at the new width
+      window.google.accounts.id.renderButton(host.current, {
+        theme: "filled_black",
+        size: "large",
+        text: "signin_with",
+        shape: "rectangular",
+        logo_alignment: "left",
+        width,
+      });
+    };
+
     loadScript()
       .then(() => {
-        if (cancelled || !host.current || !window.google) return;
+        if (cancelled || !window.google) return;
         window.google.accounts.id.initialize({
           client_id: clientId,
           callback: (res: { credential?: string }) => {
             if (res?.credential) cb.current(res.credential);
           },
         });
-        window.google.accounts.id.renderButton(host.current, {
-          theme: "filled_black",
-          size: "large",
-          text: "signin_with",
-          shape: "rectangular",
-          logo_alignment: "left",
-          width: 320,
-        });
+        draw();
       })
       .catch(() => !cancelled && setFailed(true));
 
+    // Redraw when the column resizes, otherwise the button keeps the width it
+    // happened to have at first paint.
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => draw()) : null;
+    if (ro && host.current) ro.observe(host.current);
+
     return () => {
       cancelled = true;
+      ro?.disconnect();
     };
   }, [clientId]);
 
@@ -128,9 +154,10 @@ export function GoogleButton({
       // Google renders its own button here; while it is in flight the box keeps
       // its height so the form does not jump when it appears.
       style={{
+        // 40px matches the height of the primary button above it, so the form
+        // does not jump when Google's iframe finally paints.
         minHeight: 40,
-        display: "flex",
-        justifyContent: "center",
+        width: "100%",
         opacity: disabled ? 0.5 : 1,
         pointerEvents: disabled ? "none" : "auto",
       }}

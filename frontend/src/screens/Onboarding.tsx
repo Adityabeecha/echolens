@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { OnboardStatus, Snapshot, api } from "../api";
+import { OnboardStatus, Snapshot, api, isAdmin, isGuest } from "../api";
 import { plural } from "../format";
 import { C, MEASURE, R, S, T, mono, sans } from "../theme";
-import { Dot, Label } from "../ui";
+import { Button, Dot, Label } from "../ui";
 import { Icon } from "../components/Icon";
 
 interface Props {
@@ -22,6 +22,11 @@ interface Props {
 export function Onboarding({ onDone, onReviewSignals, canSkip, onCancel, onProductCreated }: Props) {
   const [phase, setPhase] = useState<"form" | "running">("form");
   const [product, setProduct] = useState("");
+
+  // Creating a product needs admin. A guest — or any signed-in viewer — sent
+  // here got a form where every button 403s, with the nav hidden and no way
+  // out. Say so instead, and always offer an exit.
+  if (!isAdmin()) return <NoAccess guest={isGuest()} canSkip={canSkip} onCancel={onCancel} />;
 
   return (
     <div style={{ height: "100%", overflow: "auto", background: C.bg }}>
@@ -56,6 +61,43 @@ export function Onboarding({ onDone, onReviewSignals, canSkip, onCancel, onProdu
         ) : (
           <Backfilling product={product} onDone={onDone} onReviewSignals={onReviewSignals} />
         )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The screen a non-admin gets instead of the wizard.
+ *
+ * Reached two ways: a guest exploring a demo whose workspace has no products
+ * yet, or a signed-in viewer/reviewer who clicked "Add a product". Both used
+ * to land on a form that 403s on submit, with the nav hidden because
+ * onboarding renders fullscreen — a dead end with no back button.
+ */
+function NoAccess({ guest, canSkip, onCancel }: {
+  guest: boolean; canSkip: boolean; onCancel: () => void;
+}) {
+  return (
+    <div style={{ height: "100%", overflow: "auto", background: C.bg }}>
+      <div style={{ maxWidth: 620, margin: "0 auto", padding: `${S[12]} ${S[6]}` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: S[3], marginBottom: S[5] }}>
+          <Logo />
+          <span style={{ fontWeight: 700, fontSize: T.md, color: C.text }}>EchoLens</span>
+        </div>
+        <h1 style={{ fontSize: T.xl, fontWeight: 700, letterSpacing: "-.01em", margin: `0 0 ${S[3]}` }}>
+          {guest ? "This demo has no product connected yet" : "You need admin access to add a product"}
+        </h1>
+        <p style={{ fontSize: T.md, color: C.muted, lineHeight: "var(--el-lh-normal)",
+                    margin: `0 0 ${S[6]}` }}>
+          {guest
+            ? "Connecting an app pulls 90 days of reviews and issues, which costs money to run — so it is kept to the workspace owner. Everything else is browsable."
+            : "Ask an admin to connect one, then everything here becomes available to you."}
+        </p>
+        {/* Always an exit. The nav is hidden on this screen, so without this
+            there is genuinely no way back. */}
+        <Button variant="ghost" icon="chevronLeft" onClick={onCancel}>
+          {canSkip ? "Back to the app" : "Back to sign in"}
+        </Button>
       </div>
     </div>
   );
