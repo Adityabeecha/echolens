@@ -88,15 +88,38 @@ def verify_id_token(token: str) -> dict:
             options={"verify_at_hash": False},
         )
 
+    # Read the header BEFORE any network work. This is unverified data, used
+    # only to decide whether a refetch could possibly help — never trusted.
     try:
-        claims = _decode(_keys())
+        header = jwt.get_unverified_header(token)
     except JWTError as err:
-        # A key id we do not know usually means Google rotated: refetch once
-        # before rejecting, so a rotation is not an outage.
-        try:
-            claims = _decode(_keys(force=True))
-        except JWTError:
-            raise GoogleAuthError(f"invalid Google token: {err}") from err
+        raise GoogleAuthError(f"invalid Google token: {err}") from err
+    kid = header.get("kid")
+    # Google signs with RS256. Refusing anything else here also closes the
+    # `alg: none` and HMAC-confusion classes of attack outright.
+    if header.get("alg") != "RS256" or not kid:
+        raise GoogleAuthError("invalid Google token: unexpected signing algorithm")
+
+    jwks = _keys()
+    known = {k.get("kid") for k in jwks.get("keys", [])}
+    if kid not in known:
+        # An unrecognised key id is the ONE case a refetch can fix: Google
+        # rotates keys, so a rotation must not look like an outage. Every other
+        # failure (garbage string, bad signature, wrong audience) refetches
+        # nothing, so a flood of junk credentials cannot be turned into a flood
+        # of outbound requests to Google.
+        jwks = _keys(force=True)
+
+    try:
+        claims = _decode(jwks)
+    except JWTError as err:
+        raise GoogleAuthError(f"invalid Google token: {err}") from err
+    except Exception as err:
+        # jose raises JWKError (a KeyError subclass, NOT a JWTError) for a
+        # malformed key set, so it escaped this handler entirely and surfaced
+        # as an unhandled 500 with a stack trace instead of a clean 401.
+        # Verification failing for ANY reason is a rejection, never a crash.
+        raise GoogleAuthError(f"invalid Google token: {type(err).__name__}") from err
 
     # `iss` is checked above only for the canonical form; Google also uses the
     # bare hostname, so accept either and reject anything else.

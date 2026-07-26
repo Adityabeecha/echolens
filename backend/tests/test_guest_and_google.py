@@ -249,3 +249,67 @@ def test_legacy_unscoped_anomaly_is_claimed_not_duplicated(db):
     r = enqueue_theme(db, product_id=p.id, slug="theme-legacy", statement="old")
     assert r["anomaly_id"] == legacy.id, "should reuse the row, not duplicate it"
     assert db.get(AnomalyEvent, legacy.id).product_id == p.id
+
+
+def test_junk_credentials_do_not_hammer_google(monkeypatch):
+    """A refetch of Google's key set is only justified by an UNKNOWN key id
+    (a rotation). Refetching on every failure turned a flood of junk
+    credentials into a flood of outbound requests to Google."""
+    from echolens import google_auth
+    monkeypatch.setattr(settings, "google_client_id", "test-client.apps.googleusercontent.com")
+
+    fetches = {"n": 0}
+
+    def fake_keys(force=False):
+        fetches["n"] += 1
+        return {"keys": [{"kid": "real-key-id"}]}
+
+    monkeypatch.setattr(google_auth, "_keys", fake_keys)
+
+    for bad in ("not-a-jwt", "", "a.b.c", "x.y", "null"):
+        with pytest.raises(google_auth.GoogleAuthError):
+            google_auth.verify_id_token(bad)
+
+    assert fetches["n"] == 0, "malformed tokens must not trigger a JWKS fetch"
+
+
+def test_an_unknown_key_id_does_trigger_one_refetch(monkeypatch):
+    """The rotation case: a well-formed RS256 token whose kid we have not seen
+    should refetch once before being judged."""
+    from echolens import google_auth
+    monkeypatch.setattr(settings, "google_client_id", "test-client.apps.googleusercontent.com")
+
+    fetches = {"n": 0}
+
+    def fake_keys(force=False):
+        fetches["n"] += 1
+        return {"keys": [{"kid": "known-key"}]}
+
+    monkeypatch.setattr(google_auth, "_keys", fake_keys)
+
+    # A well-formed RS256 header carrying a kid the cache has never seen. Hand
+    # built because jose will not sign RS256 without a real private key, and
+    # the header alone is what drives the refetch decision.
+    import base64, json
+    def seg(obj):
+        return base64.urlsafe_b64encode(json.dumps(obj).encode()).rstrip(b"=").decode()
+    header = seg({"alg": "RS256", "kid": "rotated-key"})
+    payload = seg({"email": "a@b.com"})
+    token = header + "." + payload + ".sig"
+    with pytest.raises(google_auth.GoogleAuthError):
+        google_auth.verify_id_token(token)
+    assert fetches["n"] == 2, "one cached read, then one forced refetch"
+
+
+def test_a_non_rs256_algorithm_is_refused(monkeypatch):
+    """Closes the `alg: none` / HMAC-confusion class outright."""
+    from jose import jwt as jose_jwt
+    from echolens import google_auth
+    monkeypatch.setattr(settings, "google_client_id", "test-client.apps.googleusercontent.com")
+    monkeypatch.setattr(google_auth, "_keys", lambda force=False: {"keys": [{"kid": "k"}]})
+
+    hs = jose_jwt.encode({"email": "a@evil.com"}, "attacker", algorithm="HS256",
+                         headers={"kid": "k"})
+    with pytest.raises(google_auth.GoogleAuthError) as e:
+        google_auth.verify_id_token(hs)
+    assert "algorithm" in str(e.value)

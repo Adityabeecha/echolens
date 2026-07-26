@@ -352,6 +352,25 @@ button {
   padding: var(--el-s1) var(--el-s3);
 }
 
+/* A button whose content is a block of text rather than a label.
+   `.el-btn` centres its content and sets `white-space: nowrap` — correct for
+   an inline control, but it clips a wrapped paragraph at BOTH ends. Any
+   card-shaped button (a selectable hypothesis, a product row) needs this. */
+.el-btn.el-btn--block {
+  /* Doubled class for specificity: `.el-btn` sets justify-content and the UA
+     stylesheet gives <button> `text-align: center`, both of which have to lose
+     here or the text stays centred. */
+  display: block;
+  width: 100%;
+  text-align: left;
+  white-space: normal;
+  line-height: var(--el-lh-normal);
+  justify-content: flex-start;
+}
+.el-btn--block:active {
+  transform: none;
+}
+
 /* Loading: a spinner replaces the label without the button changing size. */
 .el-btn--loading {
   position: relative;

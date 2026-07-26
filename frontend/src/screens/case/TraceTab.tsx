@@ -253,10 +253,13 @@ function HypothesisCard({ h, selected, onPick }: {
 }) {
   const color = h.status === "supported" ? C.good : h.status === "rejected" ? C.bad : C.accent;
   return (
-    <button className="el-btn" onClick={onPick}
+    // `el-btn` is for inline controls: it centres its content and sets
+    // white-space: nowrap, which clipped these multi-line statements at BOTH
+    // ends. A card whose content is block text needs the layout reset.
+    <button className="el-btn el-btn--block" onClick={onPick}
       aria-pressed={selected}
       style={{ padding: `${S[3]} ${S[3]}`, background: C.card,
-               border: `1px solid ${selected ? C.accent : h.status === "active" ? "rgba(240,166,60,.45)" : C.border2}`,
+               border: `1px solid ${selected ? C.accent : h.status === "active" ? C.accentLine : C.border2}`,
                borderRadius: R.control, opacity: selected || h.status !== "rejected" ? 1 : 0.62 }}>
       <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[2] }}>
         <span style={{ fontFamily: mono, fontSize: T.xs, color }}>{h.id}</span>
