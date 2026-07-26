@@ -26,13 +26,12 @@ export function Patterns({ onGoMemory, onGoCases }: Props) {
       <ScreenHeader
         title="Patterns"
         product={data.product}
-        subtitle="FIXES THAT WERE PROVEN TO WORK"
+        subtitle="Fixes that were proven to work"
         right={
-          <span onClick={onGoMemory} className="el-btn" role="button" tabIndex={0}
-            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onGoMemory(); }}
-            style={{ fontSize: T.sm, color: C.dim, cursor: "pointer" }}>
+          <button onClick={onGoMemory} className="el-btn"
+            style={{ fontSize: T.sm, color: C.dim }}>
             What else this product has taught EchoLens →
-          </span>
+          </button>
         }
       />
       <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>

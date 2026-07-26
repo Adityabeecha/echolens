@@ -11,6 +11,7 @@ import { EvidenceTab } from "./case/EvidenceTab";
 import { FindingTab } from "./case/FindingTab";
 import { HistoryTab } from "./case/HistoryTab";
 import { TraceTab } from "./case/TraceTab";
+import { Icon } from "../components/Icon";
 
 interface Props {
   caseId: number;
@@ -37,7 +38,7 @@ interface Props {
  */
 export function CaseDetail({
   caseId, tab, productName, onTab, onBack, backLabel, onOpenEvidence, onOpenCase,
-  onReviewed, onGoCalibration, onGoPatterns,
+  onReviewed, onGoCalibration, onGoPatterns
 }: Props) {
   const [inv, setInv] = useState<Investigation | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -89,7 +90,7 @@ export function CaseDetail({
   // dead end; the ones that would be empty say so in the label instead.
   const counts: Partial<Record<CaseTab, number>> = {
     evidence: inv.evidence.length,
-    history: inv.history?.length ?? 0,
+    history: inv.history?.length ?? 0
   };
 
   return (
@@ -97,11 +98,10 @@ export function CaseDetail({
       {/* persistent header — the same facts whichever tab you're on */}
       <div style={{ flex: "none", borderBottom: `1px solid ${C.border}`, padding: `${S[3]} ${S[6]} 0` }}>
         <div style={{ display: "flex", alignItems: "center", gap: S[3], flexWrap: "wrap" }}>
-          <span onClick={onBack} className="el-btn" role="button" tabIndex={0}
-            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onBack(); }}
-            style={{ color: C.dim, cursor: "pointer", fontSize: T.base, whiteSpace: "nowrap" }}>
+          <button onClick={onBack} className="el-btn"
+            style={{ color: C.dim, fontSize: T.base, whiteSpace: "nowrap" }}>
             ← Back to {backLabel}
-          </span>
+          </button>
           <div style={{ width: 1, height: 16, background: C.border2 }} />
           <span style={{ fontFamily: mono, fontSize: T.sm, color: C.accent }}>CASE #{caseId}</span>
           <span style={{ fontFamily: mono, fontSize: T.xs, color: C.faint }}>
@@ -125,18 +125,15 @@ export function CaseDetail({
           )}
           {impact && <span style={{ fontSize: T.sm, color: C.muted }}>{impact}</span>}
           {finding?.confidence != null && (
-            <span
+            <button
               onClick={onGoCalibration}
               className="el-btn"
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onGoCalibration(); }}
               title="How well EchoLens's stated confidence has matched your verdicts"
-              style={{ fontFamily: mono, fontSize: T.xs, color: C.dim, cursor: "pointer",
+              style={{ fontFamily: mono, fontSize: T.xs, color: C.dim,
                        textDecoration: "underline dotted", textUnderlineOffset: 3 }}
             >
               confidence {finding.confidence.toFixed(2)}
-            </span>
+            </button>
           )}
         </div>
 
@@ -153,10 +150,10 @@ export function CaseDetail({
                 onClick={() => onTab(t)}
                 className="el-btn"
                 style={{
-                  background: "transparent", border: "none", cursor: "pointer",
+                  background: "transparent", border: "none",
                   padding: `${S[2]} ${S[3]}`, fontSize: T.base, fontFamily: "inherit",
                   color: active ? C.text : C.muted,
-                  borderBottom: `2px solid ${active ? C.accent : "transparent"}`,
+                  borderBottom: `2px solid ${active ? C.accent : "transparent"}`
                 }}
               >
                 {CASE_TAB_LABEL[t]}
@@ -184,11 +181,10 @@ export function CaseDetail({
                       border: `1px solid ${C.bad}55`, background: `${C.bad}12`,
                       borderRadius: R.control, fontSize: T.sm, color: C.text3,
                       display: "flex", alignItems: "center", gap: S[2] }}>
-          <span style={{ color: C.bad }}>⚠</span>
+          <Icon name="warning" size={14} style={{ color: C.bad }} />
           <span style={{ flex: 1 }}>Couldn't refresh this case — {error}</span>
-          <span onClick={load} className="el-btn" role="button" tabIndex={0}
-            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") load(); }}
-            style={{ color: C.accent, cursor: "pointer" }}>Retry</span>
+          <button onClick={load} className="el-btn"
+            style={{ color: C.accent }}>Retry</button>
         </div>
       )}
 

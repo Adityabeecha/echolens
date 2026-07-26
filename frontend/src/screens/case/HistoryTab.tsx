@@ -2,17 +2,18 @@ import { Investigation } from "../../api";
 import { when } from "../../format";
 import { C, MEASURE, R, S, T, mono } from "../../theme";
 import { EmptyState } from "../../ui";
+import { Icon } from "../../components/Icon";
 
 const KIND: Record<string, { color: string; icon: string }> = {
-  opened: { color: C.muted, icon: "●" },
-  finding: { color: C.accent, icon: "◆" },
-  approved: { color: C.good, icon: "✓" },
-  challenged: { color: C.bad, icon: "✕" },
-  reopen: { color: C.info, icon: "↻" },
-  issue: { color: C.info, icon: "⌥" },
-  fix_shipped: { color: C.accent, icon: "▲" },
-  verified: { color: C.good, icon: "✓" },
-  regressed: { color: C.bad, icon: "⚠" },
+  opened: { color: C.muted, icon: "dot" },
+  finding: { color: C.accent, icon: "diamond" },
+  approved: { color: C.good, icon: "check" },
+  challenged: { color: C.bad, icon: "close" },
+  reopen: { color: C.info, icon: "retry" },
+  issue: { color: C.info, icon: "keyboard" },
+  fix_shipped: { color: C.accent, icon: "shipped" },
+  verified: { color: C.good, icon: "check" },
+  regressed: { color: C.bad, icon: "warning" },
 };
 
 /**
@@ -41,7 +42,7 @@ export function HistoryTab({ inv, onOpenCase }: {
     <div style={{ flex: 1, overflow: "auto" }}>
       <div style={{ maxWidth: MEASURE, padding: `${S[6]} ${S[6]} ${S[12]}` }}>
         {events.map((e, i) => {
-          const k = KIND[e.kind] ?? { color: C.muted, icon: "●" };
+          const k = KIND[e.kind] ?? { color: C.muted, icon: "dot" };
           const last = i === events.length - 1;
           return (
             <div key={i} style={{ display: "grid", gridTemplateColumns: "26px 1fr",
@@ -49,9 +50,9 @@ export function HistoryTab({ inv, onOpenCase }: {
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
                 <div style={{ width: 22, height: 22, borderRadius: "50%", flex: "none",
                               border: `1px solid ${k.color}66`, background: C.card,
-                              color: k.color, fontSize: T.micro, display: "flex",
-                              alignItems: "center", justifyContent: "center" }}>
-                  {k.icon}
+                              color: k.color, display: "grid",
+                              placeItems: "center" }}>
+                  <Icon name={k.icon} size={12} />
                 </div>
                 <div style={{ width: 1, flex: 1, minHeight: 12,
                               background: last ? "transparent" : C.border2 }} />
@@ -64,13 +65,13 @@ export function HistoryTab({ inv, onOpenCase }: {
                 <div style={{ fontSize: T.base, color: C.text2, marginTop: S[1], lineHeight: "var(--el-lh-normal)" }}>
                   {e.text}
                   {e.case_id != null && (
-                    <span onClick={() => onOpenCase(e.case_id!)} className="el-btn" role="button"
-                      tabIndex={0}
-                      onKeyDown={(ev) => { if (ev.key === "Enter") onOpenCase(e.case_id!); }}
-                      style={{ color: C.accent, cursor: "pointer", marginLeft: 8,
-                               fontFamily: mono, fontSize: T.sm }}>
-                      open case #{e.case_id} →
-                    </span>
+                    <button onClick={() => onOpenCase(e.case_id!)}
+                      className="el-btn el-btn--sm"
+                      style={{ color: C.accent, marginLeft: S[2],
+                               fontFamily: mono, fontSize: T.sm, padding: `0 ${S[1]}` }}>
+                      open case #{e.case_id}
+                      <Icon name="arrowRight" size={11} />
+                    </button>
                   )}
                 </div>
                 {e.note && (

@@ -84,7 +84,7 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
       <ScreenHeader
         title="Plan"
         product={plan.product}
-        subtitle="OPEN PROBLEMS, RANKED BY VALUE PER ENGINEER-DAY"
+        subtitle="Open problems, ranked by value per engineer-day"
         back={{ label: backLabel, onClick: onBack }}
         right={
           <span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>
@@ -225,17 +225,14 @@ function Row({ item, inPlan, busy, canEdit, onToggle, onOpen, note }: {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: S[2], flexWrap: "wrap" }}>
           <span style={{ fontFamily: mono, fontSize: T.xs, color: C.faint }}>#{item.rank}</span>
-          <span
+          <button
             onClick={() => onOpen(item.investigation_id, "resolved")}
             className="el-btn"
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => { if (e.key === "Enter") onOpen(item.investigation_id, "resolved"); }}
-            style={{ fontSize: T.md, fontWeight: 600, color: C.text, cursor: "pointer",
+            style={{ fontSize: T.md, fontWeight: 600, color: C.text,
                      flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
                      whiteSpace: "nowrap" }}>
             {item.summary}
-          </span>
+          </button>
           <span style={{ fontFamily: mono, fontSize: T.micro, padding: `0 ${S[2]}`, borderRadius: R.card,
                          background: `${band}1a`, border: `1px solid ${band}55`, color: band }}>
             {item.effort.days}d
@@ -253,11 +250,10 @@ function Row({ item, inPlan, busy, canEdit, onToggle, onOpen, note }: {
         )}
 
         <div style={{ display: "flex", gap: S[3], marginTop: S[2], flexWrap: "wrap" }}>
-          <span onClick={() => setOpen((o) => !o)} className="el-btn" role="button" tabIndex={0}
-            onKeyDown={(e) => { if (e.key === "Enter") setOpen((o) => !o); }}
-            style={{ fontFamily: mono, fontSize: T.micro, color: C.dim, cursor: "pointer" }}>
+          <button onClick={() => setOpen((o) => !o)} className="el-btn"
+            style={{ fontFamily: mono, fontSize: T.micro, color: C.dim }}>
             {open ? "▾ hide evidence" : `▸ ${item.evidence_count} evidence`}
-          </span>
+          </button>
           {item.projected.confident && (
             <span style={{ fontFamily: mono, fontSize: T.micro, color: C.good }}>
               +{item.projected.stars.toFixed(2)}★ if fixed

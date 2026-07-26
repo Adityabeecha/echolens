@@ -14,28 +14,28 @@ interface Props {
 const FIX_META: Record<string, { label: string; color: string; body: string }> = {
   issue_open: {
     label: "Issue open", color: C.info,
-    body: "The issue is filed and open. When it closes, EchoLens starts a 14-day watch on the complaints it was meant to stop.",
+    body: "The issue is filed and open. When it closes, EchoLens starts a 14-day watch on the complaints it was meant to stop."
   },
   watching: {
     label: "In verification", color: C.accent,
-    body: "The issue closed. EchoLens is watching complaint volume for 14 days to see whether the fix actually worked.",
+    body: "The issue closed. EchoLens is watching complaint volume for 14 days to see whether the fix actually worked."
   },
   confirmed: {
     label: "Verified fixed", color: C.good,
-    body: "Complaints dropped and stayed down after the fix shipped. This is what earns a pattern.",
+    body: "Complaints dropped and stayed down after the fix shipped. This is what earns a pattern."
   },
   inconclusive: {
     label: "Inconclusive", color: C.accent,
-    body: "Complaints fell after the fix, but not far enough to call it fixed. This is a partial improvement, not a verified one — your call on whether it worked.",
+    body: "Complaints fell after the fix, but not far enough to call it fixed. This is a partial improvement, not a verified one — your call on whether it worked."
   },
   persists_reopened: {
     label: "Fix didn't hold", color: C.bad,
-    body: "The issue closed but the complaints continued at the same rate. The case was re-opened.",
+    body: "The issue closed but the complaints continued at the same rate. The case was re-opened."
   },
   regressed: {
     label: "Regressed", color: C.bad,
-    body: "The complaints stopped, then came back. Something re-introduced the cause.",
-  },
+    body: "The complaints stopped, then came back. Something re-introduced the cause."
+  }
 };
 
 /**
@@ -80,7 +80,7 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
     setBusy("create");
     const r = await withToast(() => api.createGithubIssue(f.id), {
       success: (res) => `Opened GitHub issue #${res.number} in ${res.repo}.`,
-      failure: "Couldn't open the GitHub issue",
+      failure: "Couldn't open the GitHub issue"
     });
     setBusy(null);
     if (r) await onReload();
@@ -90,7 +90,7 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
     setBusy("notify");
     await withToast(() => api.notifyFinding(f.id), {
       success: (res) => `Sent to ${res.routed}.`,
-      failure: "Couldn't send that notification",
+      failure: "Couldn't send that notification"
     });
     setBusy(null);
   };
@@ -108,7 +108,7 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
             </span>
             <a href={fix.issue_url} target="_blank" rel="noreferrer"
               style={{ fontFamily: mono, fontSize: T.sm, color: C.info, textDecoration: "none" }}>
-              open on GitHub ↗
+              open on GitHub
             </a>
             <div style={{ flex: 1 }} />
             <button onClick={copyIssue} disabled={!!busy} className="el-btn"
@@ -128,10 +128,9 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
                 {busy === "copy" ? "Copying…" : "Copy as issue"}
               </button>
               {canCreate && (
-                <button onClick={createIssue} disabled={!!busy} className="el-btn"
+                <button onClick={createIssue} disabled={!!busy} className="el-btn el-btn--primary"
                   style={{ background: C.accent, color: C.onAccent, border: "none",
-                           borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base, fontWeight: 600,
-                           cursor: "pointer" }}>
+                           borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base, fontWeight: 600 }}>
                   {busy === "create" ? "Creating…" : "Create GitHub issue"}
                 </button>
               )}
@@ -174,11 +173,10 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
               )}
             </div>
             {fix.status === "confirmed" && (
-              <div onClick={onGoPatterns} className="el-btn" role="button" tabIndex={0}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onGoPatterns(); }}
-                style={{ marginTop: S[3], fontSize: T.sm, color: C.dim, cursor: "pointer" }}>
+              <button onClick={onGoPatterns} className="el-btn"
+                style={{ marginTop: S[3], fontSize: T.sm, color: C.dim }}>
                 This confirmed fix taught EchoLens a pattern — see Patterns →
-              </div>
+              </button>
             )}
           </>
         )}
@@ -189,14 +187,14 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
 
 const ghost: React.CSSProperties = {
   background: "transparent", color: C.text2, border: `1px solid ${C.border3}`,
-  borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base, cursor: "pointer",
+  borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base
 };
 
 function BeforeAfterChart({ chart }: { chart: NonNullable<FixStatus["chart"]> }) {
   const max = Math.max(1, ...chart.before.map((p) => p.count), ...chart.after.map((p) => p.count));
   const Bars = ({ points, color }: { points: { date: string; count: number }[]; color: string }) => (
     <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 0, height: 60 }}>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 1, height: 60 }}>
         {points.map((p) => (
           <div key={p.date} title={`${p.date}: ${p.count}`}
             style={{ flex: 1, height: `${Math.max(2, (p.count / max) * 100)}%`, background: color,

@@ -19,7 +19,7 @@ export function CaseCard({
   onOpen,
   onAction,
   compact,
-  busy,
+  busy
 }: {
   row: CaseRow;
   onOpen?: (row: CaseRow) => void;
@@ -51,7 +51,7 @@ export function CaseCard({
       <div
         style={{
           flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: S[4],
-          padding: compact ? `${S[3]} ${S[4]}` : `${S[4]} ${S[5]}`,
+          padding: compact ? `${S[3]} ${S[4]}` : `${S[4]} ${S[5]}`
         }}
       >
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -59,7 +59,7 @@ export function CaseCard({
             className={compact ? "el-truncate" : undefined}
             style={{
               fontSize: compact ? T.base : T.md, fontWeight: 600, color: C.text,
-              lineHeight: "var(--el-lh-snug)",
+              lineHeight: "var(--el-lh-snug)"
             }}
           >
             {row.title}
@@ -128,7 +128,7 @@ export function StatusChip({ status }: { status: string }) {
         padding: `2px ${S[2]}`,
         borderRadius: R.pill, background: meta.bg, border: `1px solid ${meta.border}`,
         fontSize: T.xs, fontWeight: 500, color: meta.color, whiteSpace: "nowrap",
-        lineHeight: "var(--el-lh-normal)",
+        lineHeight: "var(--el-lh-normal)"
       }}
     >
       {meta.pulse && (

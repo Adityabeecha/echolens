@@ -67,7 +67,7 @@ const P: Record<string, string> = {
   plus: "M12 5v14M5 12h14",
   // History kinds.
   shipped: "M12 19V5M5 12l7-7 7 7",
-  keyboard: "M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h8M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z",
+  keyboard: "M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h8M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z"
 };
 
 /** Icons drawn as solid shapes rather than strokes. */
@@ -80,7 +80,7 @@ export function Icon({
   size = 16,
   className,
   style,
-  title,
+  title
 }: {
   name: IconName | string;
   size?: number;

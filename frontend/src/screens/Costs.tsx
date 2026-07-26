@@ -9,7 +9,7 @@ const ROW_STATUS_COLOR: Record<string, string> = {
   running: C.accent,
   needs_human: C.accent,
   insufficient_evidence: C.muted,
-  budget_exhausted: C.bad,
+  budget_exhausted: C.bad
 };
 
 const COLS = "64px 1.5fr 90px 90px 90px 100px";
@@ -46,13 +46,12 @@ export function Costs({ onGoSettings }: { onGoSettings: () => void }) {
       <ScreenHeader
         title="Costs"
         product={data.product}
-        subtitle="WHAT EVERY CASE COST TO RUN"
+        subtitle="What every case cost to run"
         right={
-          <span onClick={onGoSettings} className="el-btn" role="button" tabIndex={0}
-            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onGoSettings(); }}
-            style={{ fontSize: T.sm, color: C.dim, cursor: "pointer" }}>
+          <button onClick={onGoSettings} className="el-btn"
+            style={{ fontSize: T.sm, color: C.dim }}>
             Budgets and limits are in Settings →
-          </span>
+          </button>
         }
       />
 

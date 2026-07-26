@@ -27,7 +27,7 @@ function Prose({ text, evidence, onOpenEvidence }: {
         const ev = evidence.find((e) => e.id === m[1]);
         return (
           <sup key={i} onClick={() => ev && onOpenEvidence(ev)}
-            style={{ fontFamily: mono, fontSize: T.micro, color: C.accent, cursor: "pointer",
+            style={{ fontFamily: mono, fontSize: T.micro, color: C.accent,
                      padding: `0 ${S[1]}`, background: "rgba(240,166,60,.1)", borderRadius: R.sm,
                      marginLeft: 2 }}>
             {m[1]}
@@ -40,7 +40,7 @@ function Prose({ text, evidence, onOpenEvidence }: {
 
 /** The answer: what's broken, how bad, what to do — and your verdict on it. */
 export function FindingTab({
-  inv, onOpenEvidence, onOpenTrace, onOpenCase, onReload, onReviewed,
+  inv, onOpenEvidence, onOpenTrace, onOpenCase, onReload, onReviewed
 }: Props) {
   const [challengeOpen, setChallengeOpen] = useState(false);
   const [note, setNote] = useState("");
@@ -73,7 +73,7 @@ export function FindingTab({
     setBusy(true);
     const ok = await withToast(() => api.review(f.id, "approve"), {
       success: "Finding approved — the case is now Resolved.",
-      failure: "Couldn't approve that finding",
+      failure: "Couldn't approve that finding"
     });
     setBusy(false);
     if (ok) { await onReload(); onReviewed(); }
@@ -120,7 +120,7 @@ export function FindingTab({
             </div>
             {f.rejected_draft && (
               <details style={{ marginTop: S[2] }}>
-                <summary style={{ fontSize: T.sm, color: C.muted, cursor: "pointer" }}>
+                <summary style={{ fontSize: T.sm, color: C.muted }}>
                   Show the rejected draft (for audit — not a finding)
                 </summary>
                 <div style={{ fontSize: T.sm, color: C.dim, marginTop: S[2], lineHeight: "var(--el-lh-normal)",
@@ -162,11 +162,10 @@ export function FindingTab({
               <span style={{ color: C.text3 }}>What would settle it:</span> {f.what_would_settle_it}
             </div>
           )}
-          <div onClick={onOpenTrace} className="el-btn" role="button" tabIndex={0}
-            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onOpenTrace(); }}
-            style={{ marginTop: S[4], fontSize: T.sm, color: C.dim, cursor: "pointer" }}>
+          <button onClick={onOpenTrace} className="el-btn"
+            style={{ marginTop: S[4], fontSize: T.sm, color: C.dim }}>
             See how we got here →
-          </div>
+          </button>
         </div>
 
         {inv.recommendations.length > 0 && (
@@ -210,7 +209,7 @@ export function FindingTab({
 
         {!approved && !challenged && reviewer && (
           <div style={{ display: "flex", gap: S[3], marginTop: S[6], alignItems: "flex-start" }}>
-            <button onClick={approve} disabled={busy} className="el-btn"
+            <button onClick={approve} disabled={busy} className="el-btn el-btn--primary"
               style={{ padding: `${S[3]} ${S[6]}`, borderRadius: R.control, border: "none", background: C.accent,
                        color: C.onAccent, fontSize: T.md, fontWeight: 600,
                        cursor: busy ? "wait" : "pointer" }}>
@@ -219,8 +218,7 @@ export function FindingTab({
             <div style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
               <button onClick={() => setChallengeOpen((o) => !o)} className="el-btn"
                 style={{ padding: `${S[3]} ${S[6]}`, borderRadius: R.control, border: `1px solid ${C.border4}`,
-                         background: "transparent", color: C.text, fontSize: T.md, fontWeight: 500,
-                         cursor: "pointer" }}>
+                         background: "transparent", color: C.text, fontSize: T.md, fontWeight: 500 }}>
                 Challenge
               </button>
               <span style={{ fontSize: T.xs, color: C.faint }}>
@@ -246,7 +244,7 @@ export function FindingTab({
               ].map(([val, label]) => (
                 <button key={val} onClick={() => setReason((r) => (r === val ? "" : val))}
                   className="el-btn"
-                  style={{ fontSize: T.sm, padding: `${S[1]} ${S[3]}`, borderRadius: R.pill, cursor: "pointer",
+                  style={{ fontSize: T.sm, padding: `${S[1]} ${S[3]}`, borderRadius: R.pill,
                            border: `1px solid ${reason === val ? C.accent : C.border3}`,
                            background: reason === val ? "rgba(240,166,60,.12)" : "transparent",
                            color: reason === val ? C.accent : C.muted }}>
@@ -263,7 +261,7 @@ export function FindingTab({
                        fontFamily: "inherit", fontSize: T.base, padding: 10, resize: "vertical",
                        boxSizing: "border-box" }}
             />
-            <button onClick={submitChallenge} disabled={!note.trim() || busy} className="el-btn"
+            <button onClick={submitChallenge} disabled={!note.trim() || busy} className="el-btn el-btn--primary"
               style={{ marginTop: S[2], padding: `${S[2]} ${S[4]}`, borderRadius: R.control, border: "none",
                        background: C.accent, color: C.onAccent, fontSize: T.base, fontWeight: 600,
                        cursor: note.trim() && !busy ? "pointer" : "not-allowed",
@@ -366,8 +364,7 @@ function WhyNotPanel({ inv, onOpenEvidence }: {
                   {killers.map((e) => (
                     <div key={e.id} onClick={() => onOpenEvidence(e)}
                       style={{ fontSize: T.sm, color: C.text3, lineHeight: "var(--el-lh-snug)",
-                               borderLeft: `2px solid ${C.bad}66`, paddingLeft: 10,
-                               cursor: "pointer" }}>
+                               borderLeft: `2px solid ${C.bad}66`, paddingLeft: 10 }}>
                       <span style={{ fontFamily: mono, fontSize: T.micro, color: C.bad,
                                      marginRight: 6 }}>{e.id}</span>“{e.snippet}”
                     </div>
@@ -399,7 +396,7 @@ function FollowupCard({ findingId, addenda, onAdded }: {
     setBusy(true);
     const ok = await withToast(() => api.findingFollowup(findingId, q.trim()), {
       success: "Answered — added below as an addendum.",
-      failure: "Couldn't answer that follow-up",
+      failure: "Couldn't answer that follow-up"
     });
     setBusy(false);
     if (ok) { setQ(""); await onAdded(); }

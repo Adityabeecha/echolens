@@ -108,7 +108,7 @@ export function TraceTab({ inv, onOpenEvidence, onReload }: Props) {
           {replayIdx === null && (
             <div onClick={() => setFollow((f) => !f)} className="el-btn"
               style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".06em", padding: `${S[1]} ${S[2]}`,
-                       borderRadius: R.sm, color: follow ? C.accent : C.ghost, cursor: "pointer" }}>
+                       borderRadius: R.sm, color: follow ? C.accent : C.ghost }}>
               {follow ? "◉ FOLLOW" : "○ FOLLOW"}
             </div>
           )}
@@ -214,7 +214,7 @@ function replayBtn(active: boolean): React.CSSProperties {
     fontFamily: mono, fontSize: T.micro, letterSpacing: ".04em", padding: `${S[1]} ${S[2]}`, borderRadius: R.sm,
     border: `1px solid ${active ? C.accent : C.border3}`,
     background: active ? "rgba(240,166,60,.12)" : "transparent",
-    color: active ? C.accent : C.muted, cursor: "pointer",
+    color: active ? C.accent : C.muted
   };
 }
 
@@ -226,8 +226,7 @@ function SecondaryBtn({ children, onClick, active }: {
       style={{ flex: 1, padding: `${S[2]} 0`, borderRadius: R.control,
                border: `1px solid ${active ? "rgba(76,192,119,.4)" : C.border4}`,
                background: active ? "rgba(76,192,119,.08)" : C.hover,
-               color: active ? C.good : C.text, fontSize: T.sm, fontWeight: 500,
-               cursor: "pointer" }}>
+               color: active ? C.good : C.text, fontSize: T.sm, fontWeight: 500 }}>
       {children}
     </button>
   );
@@ -253,15 +252,11 @@ function HypothesisCard({ h, selected, onPick }: {
 }) {
   const color = h.status === "supported" ? C.good : h.status === "rejected" ? C.bad : C.accent;
   return (
-    <div onClick={onPick}
-      role="button"
-      tabIndex={0}
+    <button className="el-btn" onClick={onPick}
       aria-pressed={selected}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPick(); } }}
       style={{ padding: `${S[3]} ${S[3]}`, background: C.card,
                border: `1px solid ${selected ? C.accent : h.status === "active" ? "rgba(240,166,60,.45)" : C.border2}`,
-               borderRadius: R.control, opacity: selected || h.status !== "rejected" ? 1 : 0.62,
-               cursor: "pointer" }}>
+               borderRadius: R.control, opacity: selected || h.status !== "rejected" ? 1 : 0.62 }}>
       <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[2] }}>
         <span style={{ fontFamily: mono, fontSize: T.xs, color }}>{h.id}</span>
         <span style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".06em", padding: `0 ${S[1]}`,
@@ -279,7 +274,7 @@ function HypothesisCard({ h, selected, onPick }: {
       <div style={{ fontFamily: mono, fontSize: T.micro, color: C.dim, marginTop: S[2] }}>
         evidence +{h.evidence_for.length} for · −{h.evidence_against.length} against
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -337,9 +332,7 @@ function TraceRow({ step, last, selHyp, onOpenEvidence, evidence }: {
                   supports {(c.supports ?? []).join(", ")}
                 </span>
               </div>
-              <div
-                role="button"
-                tabIndex={0}
+              <button className="el-btn"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
@@ -352,9 +345,9 @@ function TraceRow({ step, last, selHyp, onOpenEvidence, evidence }: {
                   if (ev) onOpenEvidence(ev);
                 }}
                 style={{ fontSize: T.base, lineHeight: "var(--el-lh-normal)", color: C.text2,
-                         borderLeft: `2px solid ${C.border4}`, paddingLeft: 10, cursor: "pointer" }}>
+                         borderLeft: `2px solid ${C.border4}`, paddingLeft: 10 }}>
                 “{c.text}”
-              </div>
+              </button>
             </>
           )}
           {step.kind === "UPDT" && (

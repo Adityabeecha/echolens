@@ -2,6 +2,7 @@ import { PortfolioProduct, PortfolioTheme, TransferStats, api } from "../api";
 import { useAsync } from "../hooks";
 import { C, MEASURE, R, S, T, mono } from "../theme";
 import { Bar, Centered, ErrorState, Label, ScreenHeader } from "../ui";
+import { Icon } from "../components/Icon";
 
 // Band → the colour that carries "how much does this need me". Semantic, kept
 // separate from the amber accent so a burning product can't be confused with a
@@ -10,7 +11,7 @@ const BAND: Record<string, { color: string; label: string }> = {
   on_fire: { color: C.bad, label: "NEEDS YOU TODAY" },
   attention: { color: C.accent, label: "WORTH A LOOK" },
   watch: { color: C.info, label: "TRENDING" },
-  healthy: { color: C.good, label: "HEALTHY" },
+  healthy: { color: C.good, label: "HEALTHY" }
 };
 
 interface Props {
@@ -47,9 +48,9 @@ export function Portfolio({ onOpenProduct, onOpenInvestigation, onAddProduct }: 
               starts ranking them for you.
             </div>
             {onAddProduct && (
-              <button onClick={onAddProduct} className="el-btn"
-                style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: R.control,
-                         padding: `${S[2]} ${S[4]}`, fontWeight: 600, fontSize: T.base, cursor: "pointer" }}>
+              <button onClick={onAddProduct} className="el-btn el-btn--primary"
+                style={{ borderRadius: R.control,
+                         padding: `${S[2]} ${S[4]}`, fontWeight: 600, fontSize: T.base }}>
                 Add your first product
               </button>
             )}
@@ -64,7 +65,7 @@ export function Portfolio({ onOpenProduct, onOpenInvestigation, onAddProduct }: 
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <ScreenHeader
         title="All products"
-        subtitle="RANKED BY WHAT NEEDS YOU"
+        subtitle="Ranked by what needs you"
         right={
           <span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>
             {data.total_products} PRODUCT{data.total_products === 1 ? "" : "S"} ·{" "}
@@ -142,10 +143,12 @@ function ProductRow({ p, onOpen, onOpenInvestigation }: {
   return (
     <div className="el-row"
       style={{ display: "flex", gap: S[3], padding: `${S[4]} ${S[4]}`, background: C.card,
-               border: `1px solid ${C.border2}`, borderRadius: R.card, cursor: "pointer" }}
+               border: `1px solid ${C.border2}`, borderRadius: R.card }}
       onClick={() => onOpen(p.product_id)}
       role="button" tabIndex={0}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onOpen(p.product_id); }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(p.product_id); }
+      }}
     >
       {/* severity stripe — state as form, not just words */}
       <div style={{ width: 3, borderRadius: R.sm, background: band.color, flex: "none" }} />
@@ -165,7 +168,7 @@ function ProductRow({ p, onOpen, onOpenInvestigation }: {
             {p.has_data ? `${p.negative_rate_pct}% negative` : "no data yet"}
             {p.has_data && trend !== 0 && (
               <span style={{ color: trend > 0 ? C.bad : C.good, marginLeft: 6 }}>
-                {trend > 0 ? "▲" : "▼"} {Math.abs(trend)} pts
+                <Icon name={trend > 0 ? "arrowUp" : "arrowDown"} size={11} /> {Math.abs(trend)} pts
               </span>
             )}
           </span>
@@ -187,9 +190,7 @@ function ProductRow({ p, onOpen, onOpenInvestigation }: {
         )}
 
         {p.top_problem && (
-          <div
-            role="button"
-            tabIndex={0}
+          <button className="el-btn"
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
@@ -207,7 +208,7 @@ function ProductRow({ p, onOpen, onOpenInvestigation }: {
             <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {p.top_problem.summary}
             </span>
-          </div>
+          </button>
         )}
       </div>
     </div>

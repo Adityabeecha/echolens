@@ -52,12 +52,12 @@ export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onSt
           borderRadius: R.overlay,
           zIndex: 31,
           padding: 24,
-          boxShadow: "0 30px 80px rgba(0,0,0,.55)",
+          boxShadow: "0 30px 80px rgba(0,0,0,.55)"
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[4] }}>
           <div style={{ fontSize: T.lg, fontWeight: 600 }}>Open a case</div>
-          <button onClick={onClose} style={{ marginLeft: "auto", background: "none", border: "none", color: C.muted, fontSize: T.lg, cursor: "pointer" }}>
+          <button onClick={onClose} style={{ marginLeft: "auto", background: "none", border: "none", color: C.muted, fontSize: T.lg }}>
             ✕
           </button>
         </div>
@@ -84,7 +84,7 @@ export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onSt
                 if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setTier(t.key); }
               }}
               onClick={() => setTier(t.key)}
-              style={{ padding: `${S[2]} ${S[2]}`, border: `1px solid ${tier === t.key ? "rgba(240,166,60,.45)" : C.border3}`, borderRadius: R.control, cursor: "pointer", background: tier === t.key ? "rgba(240,166,60,.06)" : "transparent" }}
+              style={{ padding: `${S[2]} ${S[2]}`, border: `1px solid ${tier === t.key ? "rgba(240,166,60,.45)" : C.border3}`, borderRadius: R.control, background: tier === t.key ? "rgba(240,166,60,.06)" : "transparent" }}
             >
               <div style={{ fontSize: T.sm, fontWeight: 500, color: C.text2 }}>{t.name}</div>
               <div style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, marginTop: 0 }}>{t.detail}</div>

@@ -47,16 +47,16 @@ export class ErrorBoundary extends Component<Props, State> {
           </pre>
           <div style={{ display: "flex", gap: S[2], justifyContent: "center", marginTop: S[3] }}>
             {this.props.onGoHome && (
-              <button onClick={this.props.onGoHome} className="el-btn"
-                style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: R.control,
-                         padding: `${S[2]} ${S[4]}`, fontSize: T.base, fontWeight: 600, cursor: "pointer" }}>
+              <button onClick={this.props.onGoHome} className="el-btn el-btn--primary"
+                style={{ borderRadius: R.control,
+                         padding: `${S[2]} ${S[4]}`, fontSize: T.base, fontWeight: 600 }}>
                 Go to Today
               </button>
             )}
             <button onClick={() => window.location.reload()} className="el-btn"
               style={{ background: "transparent", color: C.accent,
                        border: `1px solid rgba(240,166,60,.4)`, borderRadius: R.control,
-                       padding: `${S[2]} ${S[4]}`, fontSize: T.base, cursor: "pointer" }}>
+                       padding: `${S[2]} ${S[4]}`, fontSize: T.base }}>
               Reload EchoLens
             </button>
           </div>

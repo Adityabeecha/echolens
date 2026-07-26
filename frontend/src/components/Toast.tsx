@@ -59,7 +59,7 @@ export const toast = {
   ok: (text: string) => push(text, "ok"),
   info: (text: string) => push(text, "info"),
   fail: (text: string, retry?: () => void) =>
-    push(text.replace(/^Error:\s*/, ""), "fail", retry),
+    push(text.replace(/^Error:\s*/, ""), "fail", retry)
 };
 
 /**
@@ -87,7 +87,7 @@ export async function withToast<T>(
 const KIND: Record<ToastItem["kind"], { color: string; icon: string }> = {
   ok: { color: C.good, icon: "check" },
   fail: { color: C.bad, icon: "warning" },
-  info: { color: C.info, icon: "info" },
+  info: { color: C.info, icon: "info" }
 };
 
 export function Toasts() {
@@ -107,7 +107,7 @@ export function Toasts() {
       style={{
         position: "fixed", right: S[5], bottom: S[5], zIndex: 200,
         display: "flex", flexDirection: "column", gap: S[2],
-        maxWidth: "min(420px, calc(100vw - 2 * var(--el-s5)))",
+        maxWidth: "min(420px, calc(100vw - 2 * var(--el-s5)))"
       }}
     >
       {list.map((t) => {
@@ -120,7 +120,7 @@ export function Toasts() {
               padding: `${S[3]} ${S[3]}`, borderRadius: R.card, background: C.card,
               border: `1px solid ${k.color}66`, boxShadow: "var(--el-e3)",
               fontSize: T.base, color: C.text2, lineHeight: "var(--el-lh-normal)",
-              animation: "elFadeUp var(--el-dur-slow) var(--el-ease)",
+              animation: "elFadeUp var(--el-dur-slow) var(--el-ease)"
             }}
           >
             <span style={{ color: k.color, marginTop: 2, flex: "none" }}>

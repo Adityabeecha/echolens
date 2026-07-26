@@ -163,14 +163,17 @@ export default function App() {
 
   return (
     <div
+      className="el-shell"
       style={{
         display: "flex",
-        height: "100vh",
+        // dvh, not vh: on mobile browsers `100vh` measures the viewport WITHOUT
+        // the address bar, so the bottom of the app sat permanently under it.
+        height: "100dvh",
         background: C.bg,
         color: C.text,
         fontFamily: sans,
-        fontSize: T.md,
-        overflow: "hidden",
+        fontSize: T.base,
+        overflow: "hidden"
       }}
     >
       {!fullscreen && (

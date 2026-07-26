@@ -20,7 +20,7 @@ export function Calibration({ onGoCases }: { onGoCases: () => void }) {
     return (
       <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
         <ScreenHeader title="Calibration" product={data.product}
-                      subtitle="STATED CONFIDENCE VS YOUR VERDICTS" />
+                      subtitle="Stated confidence vs your verdicts" />
         <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>
           <EmptyState
             title={`No reviewed findings for ${data.product || "this product"} yet`}
@@ -38,7 +38,7 @@ export function Calibration({ onGoCases }: { onGoCases: () => void }) {
       <ScreenHeader
         title="Calibration"
         product={data.product}
-        subtitle="STATED CONFIDENCE VS YOUR VERDICTS"
+        subtitle="Stated confidence vs your verdicts"
         right={<span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>{data.n_reviewed} REVIEWED FINDINGS</span>}
       />
       <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>

@@ -11,7 +11,7 @@ const STATUS_COLOR: Record<string, string> = {
   Error: C.bad,
   Stale: C.accent,
   "Syncing…": C.accent,
-  Idle: C.muted,
+  Idle: C.muted
 };
 
 export function Sources({ onAddProduct, productName }: {
@@ -67,22 +67,22 @@ export function Sources({ onAddProduct, productName }: {
       <ScreenHeader
         title="Sources"
         product={productName ?? data?.product}
-        subtitle="WHERE THIS PRODUCT'S FEEDBACK COMES FROM"
+        subtitle="Where this product's feedback comes from"
         right={
           reviewer ? (
             <div style={{ display: "flex", gap: S[2], flexWrap: "wrap", justifyContent: "flex-end" }}>
               <button onClick={collect} disabled={!!busy} className="el-btn"
-                style={{ background: "transparent", color: C.muted, border: `1px solid ${C.border3}`, borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base, cursor: "pointer" }}>
+                style={{ background: "transparent", color: C.muted, border: `1px solid ${C.border3}`, borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base }}>
                 {busy === "collect" ? "Collecting…" : "Collect now"}
               </button>
               <GhostButton onClick={() => setShowConnect((s) => !s)}>+ Connect source</GhostButton>
               <button onClick={() => setShowImport((s) => !s)} className="el-btn"
-                style={{ background: "transparent", color: C.muted, border: `1px solid ${C.border3}`, borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base, cursor: "pointer" }}>
-                ⇪ Import CSV
+                style={{ background: "transparent", color: C.muted, border: `1px solid ${C.border3}`, borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base }}>
+                Import CSV
               </button>
               {onAddProduct && (
-                <button onClick={onAddProduct} className="el-btn"
-                  style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base, fontWeight: 600, cursor: "pointer" }}>
+                <button onClick={onAddProduct} className="el-btn el-btn--primary"
+                  style={{ borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base, fontWeight: 600 }}>
                   Add a product
                 </button>
               )}
@@ -122,7 +122,7 @@ export function Sources({ onAddProduct, productName }: {
                   </div>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: T.md, fontWeight: 600 }}>{s.name}</div>
-                    <div style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, marginTop: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.detail}</div>
+                    <div style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.detail}</div>
                   </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
@@ -143,7 +143,7 @@ export function Sources({ onAddProduct, productName }: {
                       onClick={(e) => { e.stopPropagation(); retry(s.source!, s.identifier!); }}
                       disabled={busy === `retry-${s.identifier}`}
                       className="el-btn"
-                      style={{ marginTop: S[1], background: "transparent", color: C.accent, border: `1px solid ${C.accent}55`, borderRadius: R.control, padding: `${S[1]} ${S[2]}`, fontSize: T.xs, cursor: "pointer" }}>
+                      style={{ marginTop: S[1], background: "transparent", color: C.accent, border: `1px solid ${C.accent}55`, borderRadius: R.control, padding: `${S[1]} ${S[2]}`, fontSize: T.xs }}>
                       {busy === `retry-${s.identifier}` ? "Retrying…" : "Retry now"}
                     </button>
                   )}
@@ -209,8 +209,8 @@ function ConnectForm({ onDone }: { onDone: () => void }) {
           aria-label="Source identifier" style={input} />
         <input value={product} onChange={(e) => setProduct(e.target.value)} placeholder="product name (optional)"
           aria-label="Product name" style={input} />
-        <button onClick={submit} disabled={!identifier.trim() || busy} className="el-btn"
-          style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: R.control, padding: `${S[2]} ${S[4]}`, fontWeight: 600, fontSize: T.base, cursor: identifier.trim() ? "pointer" : "not-allowed", opacity: identifier.trim() ? 1 : 0.5 }}>
+        <button onClick={submit} disabled={!identifier.trim() || busy} className="el-btn el-btn--primary"
+          style={{ borderRadius: R.control, padding: `${S[2]} ${S[4]}`, fontWeight: 600, fontSize: T.base, cursor: identifier.trim() ? "pointer" : "not-allowed", opacity: identifier.trim() ? 1 : 0.5 }}>
           {busy ? "…" : "Connect"}
         </button>
       </div>
@@ -261,8 +261,8 @@ function ImportForm({ onDone }: { onDone: (msg: string) => void }) {
         <input value={product} onChange={(e) => setProduct(e.target.value)} placeholder="product name (optional)" style={input} />
         <input value={sourceLabel} onChange={(e) => setSourceLabel(e.target.value)} placeholder="source label (e.g. app_store)"
           aria-label="Source label" style={input} />
-        <button onClick={submit} disabled={!file || busy} className="el-btn"
-          style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: R.control, padding: `${S[2]} ${S[4]}`, fontWeight: 600, fontSize: T.base, cursor: file ? "pointer" : "not-allowed", opacity: file ? 1 : 0.5 }}>
+        <button onClick={submit} disabled={!file || busy} className="el-btn el-btn--primary"
+          style={{ borderRadius: R.control, padding: `${S[2]} ${S[4]}`, fontWeight: 600, fontSize: T.base, cursor: file ? "pointer" : "not-allowed", opacity: file ? 1 : 0.5 }}>
           {busy ? "Importing…" : "Import"}
         </button>
       </div>

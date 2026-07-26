@@ -23,7 +23,7 @@ interface Props {
  * Costs; the levers are here.
  */
 export function Settings({
-  product, onGoCosts, onGoSources, onAddProduct, onDeleteProduct,
+  product, onGoCosts, onGoSources, onAddProduct, onDeleteProduct
 }: Props) {
   const { data, loading, error, reload } = useAsync(() => api.costsSummary(), []);
   const admin = isAdmin();
@@ -45,7 +45,7 @@ export function Settings({
       <ScreenHeader
         title="Settings"
         product={product?.name ?? data.product}
-        subtitle="BUDGETS, LIMITS AND THIS PRODUCT"
+        subtitle="Budgets, limits and this product"
         right={
           <span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>
             SIGNED IN AS {getRole().toUpperCase()}
@@ -73,11 +73,10 @@ export function Settings({
           <div style={{ fontSize: T.sm, color: C.dim, marginTop: S[3], lineHeight: "var(--el-lh-normal)" }}>
             Investigations stop at the per-case caps below, so a runaway case cannot spend the
             month.{" "}
-            <span onClick={onGoCosts} className="el-btn" role="button" tabIndex={0}
-              onKeyDown={(e) => { if (e.key === "Enter") onGoCosts(); }}
-              style={{ color: C.accent, cursor: "pointer" }}>
+            <button onClick={onGoCosts} className="el-btn"
+              style={{ color: C.accent }}>
               See what each case cost →
-            </span>
+            </button>
           </div>
         </div>
 
@@ -96,21 +95,21 @@ export function Settings({
           <div style={{ display: "flex", gap: S[2], marginTop: S[1], flexWrap: "wrap" }}>
             <button onClick={onGoSources} className="el-btn"
               style={{ background: "transparent", color: C.text2, border: `1px solid ${C.border3}`,
-                       borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base, cursor: "pointer" }}>
+                       borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base }}>
               Manage sources
             </button>
             {admin && (
               <button onClick={onAddProduct} className="el-btn"
                 style={{ background: "transparent", color: C.text2,
                          border: `1px solid ${C.border3}`, borderRadius: R.control, padding: `${S[2]} ${S[3]}`,
-                         fontSize: T.base, cursor: "pointer" }}>
+                         fontSize: T.base }}>
                 Add another product
               </button>
             )}
             {admin && product && (
               <button onClick={() => onDeleteProduct(product)} className="el-btn"
                 style={{ background: "transparent", color: C.bad, border: `1px solid ${C.bad}55`,
-                         borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base, cursor: "pointer" }}>
+                         borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base }}>
                 Delete {product.name}
               </button>
             )}
@@ -148,7 +147,7 @@ function LimitsPanel({ limits, onSaved }: {
     setState({ ...state, [key]: next });
     const ok = await withToast(() => api.setLimits({ [key]: next }), {
       success: "Limit saved.",
-      failure: "Couldn't save that limit",
+      failure: "Couldn't save that limit"
     });
     if (!ok) setState(before);
     else onSaved();
@@ -201,5 +200,5 @@ function LimitsPanel({ limits, onSaved }: {
 
 const stepBtn: React.CSSProperties = {
   width: 22, height: 20, borderRadius: R.sm, border: `1px solid ${C.border3}`, background: C.hover,
-  color: C.muted, fontSize: T.micro, cursor: "pointer", lineHeight: 1,
+  color: C.muted, fontSize: T.micro, lineHeight: 1
 };

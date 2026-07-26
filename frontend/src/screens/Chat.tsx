@@ -42,7 +42,7 @@ export function Chat({ onOpenInvestigation, productName }: {
       if (!alive.current) return;
       setTurns((t) => [...t, {
         role: "echolens", text: r.text, citations: r.citations,
-        investigationId: r.type === "investigation" ? r.investigation_id : undefined,
+        investigationId: r.type === "investigation" ? r.investigation_id : undefined
       }]);
     } catch (e) {
       const raw = String(e).replace("Error: ", "");
@@ -61,7 +61,7 @@ export function Chat({ onOpenInvestigation, productName }: {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <ScreenHeader title="Ask" product={productName} subtitle="ANSWERS GROUNDED IN YOUR OWN CASES" />
+      <ScreenHeader title="Ask" product={productName} subtitle="Answers grounded in your own cases" />
 
       <div ref={scrollRef} style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>
         {turns.length === 0 && (
@@ -74,7 +74,7 @@ export function Chat({ onOpenInvestigation, productName }: {
             <div style={{ display: "flex", flexDirection: "column", gap: S[2], alignItems: "flex-start" }}>
               {SUGGESTIONS.map((s) => (
                 <button key={s} onClick={() => send(s)} className="el-btn"
-                  style={{ background: C.card, border: `1px solid ${C.border3}`, borderRadius: R.pill, padding: `${S[2]} ${S[3]}`, color: C.text3, fontSize: T.base, cursor: "pointer", fontFamily: sans }}>
+                  style={{ background: C.card, border: `1px solid ${C.border3}`, borderRadius: R.pill, padding: `${S[2]} ${S[3]}`, color: C.text3, fontSize: T.base, fontFamily: sans }}>
                   {s}
                 </button>
               ))}
@@ -98,8 +98,8 @@ export function Chat({ onOpenInvestigation, productName }: {
           placeholder="Ask about a complaint, cause, or what to fix next…"
           style={{ flex: 1, background: C.bgRaised, border: `1px solid ${C.border3}`, borderRadius: R.control, color: C.text, fontFamily: sans, fontSize: T.md, padding: `${S[3]} ${S[3]}` }}
         />
-        <button onClick={() => send()} disabled={!input.trim() || busy} className="el-btn"
-          style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: R.control, padding: `0 ${S[5]}`, fontWeight: 600, fontSize: T.md, cursor: input.trim() && !busy ? "pointer" : "not-allowed", opacity: input.trim() && !busy ? 1 : 0.5 }}>
+        <button onClick={() => send()} disabled={!input.trim() || busy} className="el-btn el-btn--primary"
+          style={{ borderRadius: R.control, padding: `0 ${S[5]}`, fontWeight: 600, fontSize: T.md, cursor: input.trim() && !busy ? "pointer" : "not-allowed", opacity: input.trim() && !busy ? 1 : 0.5 }}>
           Ask
         </button>
       </div>
@@ -119,7 +119,7 @@ function Bubble({ turn, onOpenInvestigation }: { turn: Turn; onOpenInvestigation
       </div>
       {turn.investigationId != null && (
         <button onClick={() => onOpenInvestigation(turn.investigationId!)} className="el-btn"
-          style={{ marginTop: S[2], background: "transparent", border: `1px solid ${C.accent}66`, color: C.accent, borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base, cursor: "pointer" }}>
+          style={{ marginTop: S[2], background: "transparent", border: `1px solid ${C.accent}66`, color: C.accent, borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base }}>
           ▸ Watch case #{turn.investigationId} stream
         </button>
       )}
@@ -128,7 +128,7 @@ function Bubble({ turn, onOpenInvestigation }: { turn: Turn; onOpenInvestigation
           {turn.citations.map((c) => (
             <button key={c.investigation_id} onClick={() => onOpenInvestigation(c.investigation_id)} className="el-btn"
               title={c.summary}
-              style={{ display: "flex", alignItems: "center", gap: S[1], background: C.card2, border: `1px solid ${C.border3}`, borderRadius: R.control, padding: `${S[1]} ${S[2]}`, cursor: "pointer" }}>
+              style={{ display: "flex", alignItems: "center", gap: S[1], background: C.card2, border: `1px solid ${C.border3}`, borderRadius: R.control, padding: `${S[1]} ${S[2]}` }}>
               <span style={{ fontFamily: mono, fontSize: T.micro, color: C.accent }}>case #{c.investigation_id}</span>
               <span style={{ fontSize: T.sm, color: C.muted, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.summary}</span>
             </button>

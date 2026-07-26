@@ -53,7 +53,7 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
           flexDirection: "column",
           justifyContent: "center",
           padding: narrow ? "0 24px" : "0 56px",
-          borderLeft: narrow ? "none" : `1px solid ${C.border}`,
+          borderLeft: narrow ? "none" : `1px solid ${C.border}`
         }}
       >
         {narrow && <Wordmark />}
@@ -110,7 +110,7 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
               fontWeight: 600,
               cursor: email.trim() && password ? "pointer" : "not-allowed",
               opacity: email.trim() && password ? 1 : 0.5,
-              transition: "filter .15s",
+              transition: "filter .15s"
             }}
           >
             {busy ? "…" : mode === "login" ? "Sign in" : "Create account & sign in"}
@@ -124,7 +124,7 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
               setMode(mode === "login" ? "signup" : "login");
               setError(null);
             }}
-            style={{ color: C.accent, cursor: "pointer", fontWeight: 500 }}
+            style={{ color: C.accent, fontWeight: 500 }}
           >
             {mode === "login" ? "Create the admin account" : "Sign in instead"}
           </span>
@@ -154,7 +154,7 @@ function BrandPanel() {
         display: "flex",
         flexDirection: "column",
         justifyContent: "center",
-        overflow: "hidden",
+        overflow: "hidden"
       }}
     >
       {/* soft amber lens glow, top-left */}
@@ -167,7 +167,7 @@ function BrandPanel() {
           height: 360,
           borderRadius: "50%",
           background: "radial-gradient(circle, rgba(240,166,60,.14), transparent 70%)",
-          pointerEvents: "none",
+          pointerEvents: "none"
         }}
       />
       <div style={{ position: "relative", maxWidth: 460 }}>
@@ -194,7 +194,7 @@ function BrandPanel() {
                   borderRadius: R.sm,
                   border: `1px solid ${s.color}`,
                   color: s.color,
-                  background: C.bg,
+                  background: C.bg
                 }}
               >
                 {s.tag}
@@ -205,7 +205,7 @@ function BrandPanel() {
                   lineHeight: "var(--el-lh-snug)",
                   color: s.tag === "TOOL" ? C.info : C.text3,
                   fontFamily: s.mono ? mono : sans,
-                  paddingTop: 2,
+                  paddingTop: 2
                 }}
               >
                 {s.text}
@@ -254,5 +254,5 @@ const inputStyle: React.CSSProperties = {
   color: C.text,
   fontFamily: "inherit",
   fontSize: T.md,
-  padding: `${S[3]} ${S[3]}`,
+  padding: `${S[3]} ${S[3]}`
 };

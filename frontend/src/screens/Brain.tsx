@@ -40,7 +40,7 @@ export function Brain({ onOpenInvestigation, onBack, backLabel, onGoCases }: Pro
       <ScreenHeader
         title="Product memory"
         product={data.product}
-        subtitle="HOW THIS PRODUCT BREAKS, LEARNED FROM CONFIRMED FIXES"
+        subtitle="How this product breaks, learned from confirmed fixes"
         back={{ label: backLabel, onClick: onBack }}
         right={<span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>
           {edges.length} LEARNED PATTERN{edges.length === 1 ? "" : "S"}
@@ -103,11 +103,11 @@ function EdgeCard({ edge, onOpen }: { edge: BrainEdge; onOpen: (id: number, s?: 
                     fontFamily: mono, fontSize: T.micro, color: C.faint }}>
         <span>{edge.supports} held · {edge.refutes} missed</span>
         {edge.case_ids.slice(0, 4).map((id) => (
-          <span key={id} onClick={() => onOpen(id, "resolved")} className="el-btn" role="button"
-            tabIndex={0} onKeyDown={(ev) => { if (ev.key === "Enter") onOpen(id, "resolved"); }}
-            style={{ color: C.accent, cursor: "pointer" }}>
+          <button key={id} onClick={() => onOpen(id, "resolved")}
+            className="el-btn el-btn--sm"
+            style={{ color: C.accent, padding: `0 ${S[1]}` }}>
             #{id}
-          </span>
+          </button>
         ))}
       </div>
     </div>
@@ -152,8 +152,8 @@ function ReviewBox() {
                  padding: `${S[2]} ${S[3]}`, boxSizing: "border-box", resize: "vertical" }}
       />
       <div style={{ display: "flex", alignItems: "center", gap: S[3], marginTop: S[2] }}>
-        <button onClick={run} disabled={!text.trim() || busy} className="el-btn"
-          style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: R.control,
+        <button onClick={run} disabled={!text.trim() || busy} className="el-btn el-btn--primary"
+          style={{ borderRadius: R.control,
                    padding: `${S[2]} ${S[4]}`, fontWeight: 600, fontSize: T.base,
                    cursor: text.trim() && !busy ? "pointer" : "not-allowed",
                    opacity: text.trim() && !busy ? 1 : 0.5 }}>
@@ -241,12 +241,11 @@ function Oracle() {
       </div>
       <div style={{ display: "flex", gap: S[2], flexWrap: "wrap", marginTop: S[2] }}>
         {suggestions.map((sug) => (
-          <span key={sug} onClick={() => { setQ(sug); ask(sug); }} className="el-btn" role="button"
-            tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter") { setQ(sug); ask(sug); } }}
-            style={{ fontSize: T.xs, color: C.muted, cursor: "pointer", padding: `${S[1]} ${S[2]}`,
+          <button key={sug} onClick={() => { setQ(sug); ask(sug); }} className="el-btn"
+            style={{ fontSize: T.xs, color: C.muted, padding: `${S[1]} ${S[3]}`,
                      borderRadius: R.pill, background: C.hover, border: `1px solid ${C.border3}` }}>
             {sug}
-          </span>
+          </button>
         ))}
       </div>
       {askError && (

@@ -7,6 +7,7 @@ import { useAsync } from "../hooks";
 import { CASE_TABS, SEVERITY } from "../status";
 import { C, MEASURE, R, S, T, mono, sans } from "../theme";
 import { EmptyState, ErrorState, Label, ScreenHeader, Skeleton } from "../ui";
+import { Icon } from "../components/Icon";
 
 interface Props {
   productName: string | null;
@@ -164,11 +165,11 @@ export function Cases({
       <ScreenHeader
         title="Cases"
         product={product}
-        subtitle="EVERY CASE, FROM QUEUED TO VERIFIED"
+        subtitle="Every case, from queued to verified"
         right={
           reviewer ? (
-            <button onClick={onNewCase} className="el-btn"
-              style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: R.control,
+            <button onClick={onNewCase} className="el-btn el-btn--primary"
+              style={{ borderRadius: R.control,
                        padding: `${S[2]} ${S[4]}`, fontWeight: 600, fontSize: T.base, cursor: "pointer" }}>
               + New case
             </button>
@@ -263,27 +264,23 @@ export function Cases({
         <div style={{ maxWidth: MEASURE, marginTop: S[8], borderTop: `1px solid ${C.border}`,
                       paddingTop: 18 }}>
           <div style={{ display: "flex", alignItems: "center", gap: S[3], flexWrap: "wrap" }}>
-            <span
+            {/* A real <button> so click and keyboard run the SAME handler.
+                They used to be two handlers, and the keyboard one only flipped
+                local state — so a keyboard user's expanded Signals section
+                never reached the URL and their shared link arrived collapsed,
+                breaking the shareable-view guarantee for keyboard users only. */}
+            <button
               onClick={() => { setSignalsOpen((o) => !o); setParams({ signals: signalsOpen ? null : "1" }); }}
-              className="el-btn"
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  // Mirror the click handler exactly. This only flipped local
-                  // state, so a keyboard user's expanded Signals section never
-                  // reached the URL and their shared link arrived collapsed —
-                  // breaking the shareable-view guarantee for keyboard users only.
-                  setSignalsOpen((o) => !o);
-                  setParams({ signals: signalsOpen ? null : "1" });
-                }
-              }}
-              style={{ cursor: "pointer" }}
+              className="el-btn el-btn--sm"
+              aria-expanded={signalsOpen}
+              style={{ padding: `${S[1]} ${S[2]}`, marginLeft: `calc(-1 * ${S[2]})` }}
             >
+              <Icon name={signalsOpen ? "chevronDown" : "chevronRight"} size={12}
+                    style={{ color: selectable > 0 ? C.info : C.faint }} />
               <Label style={{ color: selectable > 0 ? C.info : C.faint }}>
-                {signalsOpen ? "▾" : "▸"} SIGNALS — NOT YET CASES · {selectable}
+                Signals · not yet cases · {selectable}
               </Label>
-            </span>
+            </button>
             <div style={{ flex: 1 }} />
             {reviewer && signalsOpen && (
               <>
@@ -408,8 +405,8 @@ export function Cases({
           </span>
           <div style={{ flex: 1 }} />
           <SmallButton onClick={() => setSelected({})}>Clear</SmallButton>
-          <button onClick={investigateSelected} disabled={busy === "queue"} className="el-btn"
-            style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: R.control,
+          <button onClick={investigateSelected} disabled={busy === "queue"} className="el-btn el-btn--primary"
+            style={{ borderRadius: R.control,
                      padding: `${S[2]} ${S[4]}`, fontWeight: 600, fontSize: T.base,
                      cursor: busy === "queue" ? "wait" : "pointer" }}>
             {busy === "queue" ? "Queueing…" : `Investigate selected (${selectedCount})`}
@@ -505,11 +502,12 @@ function ThemeCard({ theme, selected, onToggle }: {
               </span>
             )}
             {theme.verbatims.length > 1 && (
-              <span onClick={() => setOpen((o) => !o)} className="el-btn" role="button" tabIndex={0}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setOpen((o) => !o); }}
-                style={{ fontFamily: mono, fontSize: T.micro, color: C.dim, cursor: "pointer" }}>
-                {open ? "▾ hide reviews" : `▸ ${theme.verbatims.length} reviews`}
-              </span>
+              <button onClick={() => setOpen((o) => !o)} className="el-btn el-btn--sm"
+                aria-expanded={open}
+                style={{ fontFamily: mono, fontSize: T.micro, color: C.dim, padding: `0 ${S[1]}` }}>
+                <Icon name={open ? "chevronDown" : "chevronRight"} size={11} />
+                {open ? "hide reviews" : `${theme.verbatims.length} reviews`}
+              </button>
             )}
           </div>
           {open && (

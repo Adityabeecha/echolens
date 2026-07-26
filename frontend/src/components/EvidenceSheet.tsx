@@ -35,7 +35,7 @@ export function EvidenceSheet({ evidence, onClose }: { evidence: Evidence | null
           display: "flex",
           flexDirection: "column",
           gap: S[3],
-          boxShadow: "-20px 0 50px rgba(0,0,0,.45)",
+          boxShadow: "-20px 0 50px rgba(0,0,0,.45)"
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
@@ -43,7 +43,7 @@ export function EvidenceSheet({ evidence, onClose }: { evidence: Evidence | null
           <span style={{ fontFamily: mono, fontSize: T.micro, padding: `0 ${S[2]}`, border: `1px solid ${C.border3}`, borderRadius: R.sm, color: C.muted, textTransform: "uppercase" }}>
             {evidence.source}
           </span>
-          <button onClick={onClose} style={{ marginLeft: "auto", background: "none", border: "none", color: C.muted, fontSize: T.lg, cursor: "pointer" }}>
+          <button onClick={onClose} style={{ marginLeft: "auto", background: "none", border: "none", color: C.muted, fontSize: T.lg }}>
             ✕
           </button>
         </div>

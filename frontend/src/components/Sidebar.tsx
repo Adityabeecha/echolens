@@ -139,7 +139,7 @@ const UNDER_PATTERNS: Screen[] = ["patterns", "memory"];
 
 export function Sidebar({
   screen, go, onLogout, products = [], activeId = null,
-  onSwitchProduct, onAddProduct, onDeleteProduct,
+  onSwitchProduct, onAddProduct, onDeleteProduct
 }: Props) {
   // The System group opens itself when you are inside it, so you are never on a
   // screen the nav claims you are not on.
@@ -212,7 +212,8 @@ export function Sidebar({
                          onDelete={onDeleteProduct} />
       )}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 0,
+      <div className="el-nav-primary"
+           style={{ display: "flex", flexDirection: "column", gap: 2,
                     padding: `0 ${S[3]}`, overflow: "auto" }}>
         {PRIMARY.map((n) => (
           <NavRow key={n.key} item={n} active={isActive(n.key)} onClick={() => go(n.key)} />
@@ -302,7 +303,7 @@ function NavRow({ item, active, onClick, small }: {
         color: active ? C.text : C.muted,
         fontSize: small ? T.sm : T.base,
         fontWeight: active ? 500 : 400,
-        position: "relative",
+        position: "relative"
       }}
     >
       {/* The active marker is a rail, not just a colour — colour alone is not a

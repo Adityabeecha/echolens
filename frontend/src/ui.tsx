@@ -18,7 +18,7 @@ export function Label({ children, style }: { children: ReactNode; style?: CSSPro
         letterSpacing: "var(--el-ls-wide)",
         textTransform: "uppercase",
         color: C.faint,
-        ...style,
+        ...style
       }}
     >
       {children}
@@ -43,7 +43,7 @@ export function Bar({ pct, color, height = 5 }: { pct: number; color: string; he
           width: `${v}%`,
           borderRadius: R.pill,
           background: color,
-          transition: "width var(--el-dur-slow) var(--el-ease)",
+          transition: "width var(--el-dur-slow) var(--el-ease)"
         }}
       />
     </div>
@@ -58,7 +58,7 @@ export function Spark({
   color,
   width = 84,
   height = 22,
-  title,
+  title
 }: {
   points: number[];
   color: string;
@@ -116,7 +116,7 @@ export function Dot({ color, pulse }: { color: string; pulse?: boolean }) {
         background: color,
         flex: "none",
         display: "block",
-        animation: pulse ? "elPulse 1.6s infinite" : "none",
+        animation: pulse ? "elPulse 1.6s infinite" : "none"
       }}
     />
   );
@@ -128,7 +128,7 @@ export function Chip({
   color,
   bg,
   border,
-  pulse,
+  pulse
 }: {
   label: string;
   color: string;
@@ -150,7 +150,7 @@ export function Chip({
         fontWeight: 500,
         lineHeight: "var(--el-lh-snug)",
         color,
-        whiteSpace: "nowrap",
+        whiteSpace: "nowrap"
       }}
     >
       {pulse && <Dot color={color} pulse />}
@@ -163,7 +163,7 @@ export function Chip({
  * The button.
  *
  * Everything clickable used to be one of two things: a `<button>` with an inline
- * style object, or a `<div role="button">` with a hand-written onKeyDown. There
+ * style object, or a `<button className="el-btn">` with a hand-written onKeyDown. There
  * were 33 of the latter, and because the focus rule targeted `button` and `a`
  * only, none of them showed a focus ring — a third of the interactive surface
  * was invisible to keyboard users. There was also no `:active` state anywhere in
@@ -245,7 +245,7 @@ export function Centered({ children }: { children: ReactNode }) {
         justifyContent: "center",
         color: C.dim,
         fontSize: T.base,
-        padding: S[6],
+        padding: S[6]
       }}
     >
       {children}
@@ -266,7 +266,7 @@ export function ScreenHeader({
   product,
   subtitle,
   right,
-  back,
+  back
 }: {
   title: string;
   product?: string | null;
@@ -285,7 +285,7 @@ export function ScreenHeader({
         borderBottom: `1px solid ${C.border}`,
         background: C.bg,
         flex: "none",
-        flexWrap: "wrap",
+        flexWrap: "wrap"
       }}
     >
       {back && (
@@ -301,7 +301,7 @@ export function ScreenHeader({
             fontWeight: 600,
             letterSpacing: "var(--el-ls-tight)",
             lineHeight: "var(--el-lh-tight)",
-            color: C.text,
+            color: C.text
           }}
         >
           {title}
@@ -315,7 +315,7 @@ export function ScreenHeader({
               color: C.faint,
               letterSpacing: "var(--el-ls-wide)",
               textTransform: "uppercase",
-              marginTop: S[1],
+              marginTop: S[1]
             }}
           >
             {subtitle}
@@ -336,7 +336,7 @@ export function ScreenBody({ children, style }: { children: ReactNode; style?: C
         flex: 1,
         overflow: "auto",
         padding: `${S[6]} var(--el-gutter) ${S[12]}`,
-        ...style,
+        ...style
       }}
     >
       <div style={{ maxWidth: MEASURE }}>{children}</div>
@@ -355,7 +355,7 @@ export function EmptyState({
   body,
   action,
   onAction,
-  icon = "search",
+  icon = "search"
 }: {
   title: string;
   body: ReactNode;
@@ -374,7 +374,7 @@ export function EmptyState({
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        gap: S[2],
+        gap: S[2]
       }}
     >
       <span
@@ -387,7 +387,7 @@ export function EmptyState({
           background: C.bgRaised,
           border: `1px solid ${C.border2}`,
           color: C.dim,
-          marginBottom: S[1],
+          marginBottom: S[1]
         }}
       >
         <Icon name={icon} size={17} />
@@ -409,7 +409,7 @@ export function EmptyState({
 export function ErrorState({
   title = "Can't reach EchoLens",
   detail,
-  onRetry,
+  onRetry
 }: {
   title?: string;
   detail?: string;
@@ -426,7 +426,7 @@ export function ErrorState({
         background: C.card,
         display: "flex",
         gap: S[3],
-        alignItems: "flex-start",
+        alignItems: "flex-start"
       }}
     >
       <span style={{ color: C.bad, marginTop: 0 }}>
@@ -466,7 +466,7 @@ export function Skeleton({ rows = 3, height = 74 }: { rows?: number; height?: nu
             background: C.card,
             border: `1px solid ${C.border2}`,
             animation: "elSkeleton 1.6s infinite",
-            animationDelay: `${i * 0.12}s`,
+            animationDelay: `${i * 0.12}s`
           }}
         />
       ))}

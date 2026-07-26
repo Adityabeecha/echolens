@@ -3,6 +3,7 @@ import { OnboardStatus, Snapshot, api } from "../api";
 import { plural } from "../format";
 import { C, MEASURE, R, S, T, mono, sans } from "../theme";
 import { Dot, Label } from "../ui";
+import { Icon } from "../components/Icon";
 
 interface Props {
   onDone: () => void; // land on Today for the new product
@@ -113,13 +114,13 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
       )}
 
       <div style={{ display: "flex", alignItems: "center", gap: S[3], marginTop: S[1] }}>
-        <button onClick={submit} disabled={!pkg.trim() || busy} className="el-btn"
-          style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: R.control, padding: `${S[3]} ${S[6]}`, fontWeight: 600, fontSize: T.md, fontFamily: sans, cursor: pkg.trim() && !busy ? "pointer" : "not-allowed", opacity: pkg.trim() && !busy ? 1 : 0.5 }}>
+        <button onClick={submit} disabled={!pkg.trim() || busy} className="el-btn el-btn--primary"
+          style={{ borderRadius: R.control, padding: `${S[3]} ${S[6]}`, fontWeight: 600, fontSize: T.md, fontFamily: sans, cursor: pkg.trim() && !busy ? "pointer" : "not-allowed", opacity: pkg.trim() && !busy ? 1 : 0.5 }}>
           {busy ? "Starting backfill…" : "Start backfill"}
         </button>
         {canSkip && (
           <button onClick={onCancel} className="el-btn"
-            style={{ background: "transparent", color: C.muted, border: "none", fontSize: T.base, cursor: "pointer" }}>
+            style={{ background: "transparent", color: C.muted, border: "none", fontSize: T.base }}>
             Cancel
           </button>
         )}
@@ -149,7 +150,7 @@ const inputStyle: React.CSSProperties = {
   color: C.text,
   fontFamily: mono,
   fontSize: T.md,
-  padding: `${S[3]} ${S[3]}`,
+  padding: `${S[3]} ${S[3]}`
 };
 
 // ── step 2: live backfill + snapshot ────────────────────────────────────
@@ -282,7 +283,7 @@ function Backfilling({ product, onDone, onReviewSignals }: {
           <button onClick={onReviewSignals} className="el-btn"
             style={{ background: "transparent", color: C.accent,
                      border: `1px solid rgba(240,166,60,.4)`, borderRadius: R.control, padding: `${S[3]} ${S[5]}`,
-                     fontWeight: 500, fontSize: T.md, cursor: "pointer", fontFamily: sans }}>
+                     fontWeight: 500, fontSize: T.md, fontFamily: sans }}>
             Review {found} {plural(found, "signal")} in Cases
           </button>
         )}
@@ -299,7 +300,7 @@ function Backfilling({ product, onDone, onReviewSignals }: {
 function SnapshotView({ snap }: { snap: Snapshot }) {
   const delta = snap.rating_delta;
   const deltaColor = delta == null ? C.muted : delta >= 0 ? C.good : C.bad;
-  const deltaArrow = delta == null ? "" : delta >= 0 ? "▲" : "▼";
+  const deltaArrow = delta == null ? null : delta >= 0 ? "arrowUp" : "arrowDown";
   const max = Math.max(1, ...snap.weekly.map((w) => w.count));
 
   const tiles = [
@@ -308,8 +309,13 @@ function SnapshotView({ snap }: { snap: Snapshot }) {
       label: "RATING NOW",
       value: snap.rating_now != null ? `${snap.rating_now.toFixed(1)}★` : "—",
       color: C.text,
-      sub: delta != null ? `${deltaArrow} ${Math.abs(delta).toFixed(2)} vs last wk` : undefined,
-      subColor: deltaColor,
+      sub: delta != null ? (
+        <>
+          {deltaArrow && <Icon name={deltaArrow} size={10} style={{ display: "inline" }} />}
+          {" "}{Math.abs(delta).toFixed(2)} vs last wk
+        </>
+      ) : undefined,
+      subColor: deltaColor
     },
     { label: "REVIEWS / DAY", value: String(snap.avg_per_day), color: C.text },
     { label: "NEGATIVE", value: snap.negatives.toLocaleString(), color: C.accent },
@@ -344,7 +350,7 @@ function SnapshotView({ snap }: { snap: Snapshot }) {
 function Notice({ text }: { text: string }) {
   return (
     <div style={{ display: "flex", gap: S[2], padding: `${S[2]} ${S[3]}`, border: `1px solid ${C.border3}`, background: C.card2, borderRadius: R.control, color: C.muted, fontSize: T.sm, lineHeight: "var(--el-lh-normal)" }}>
-      <span style={{ color: C.info, flex: "none" }}>ⓘ</span>
+      <Icon name="info" size={14} style={{ color: C.info, flex: "none" }} />
       {text}
     </div>
   );

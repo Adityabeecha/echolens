@@ -136,8 +136,7 @@ export function DeleteProductModal({ product, onClose, onDeleted }: Props) {
         <div style={{ display: "flex", gap: S[2], justifyContent: "flex-end", marginTop: S[4] }}>
           <button onClick={onClose} disabled={busy} className="el-btn"
             style={{ background: "transparent", color: C.muted, border: `1px solid ${C.border3}`,
-                     borderRadius: R.control, padding: `${S[2]} ${S[4]}`, fontSize: T.base, fontFamily: sans,
-                     cursor: "pointer" }}>
+                     borderRadius: R.control, padding: `${S[2]} ${S[4]}`, fontSize: T.base, fontFamily: sans }}>
             Keep it
           </button>
           <button onClick={remove} disabled={!matches || busy} className="el-btn"

@@ -8,7 +8,7 @@ import { statusMeta } from "../status";
 import { C, E, MEASURE, R, S, T, mono } from "../theme";
 import { Icon } from "../components/Icon";
 import {
-  Button, EmptyState, ErrorState, Label, ScreenBody, ScreenHeader, Skeleton, Spark,
+  Button, EmptyState, ErrorState, Label, ScreenBody, ScreenHeader, Skeleton, Spark
 } from "../ui";
 
 interface Props {
@@ -34,7 +34,7 @@ interface Props {
  * the bottom of Cases where they can be triaged in a batch.
  */
 export function Today({
-  productName, onOpenCase, onGoCases, onGoSources, onGoPlan, reloadKey, bumpReload,
+  productName, onOpenCase, onGoCases, onGoSources, onGoPlan, reloadKey, bumpReload
 }: Props) {
   const cases = useAsync(() => api.cases(), [reloadKey]);
   const portfolio = useAsync(() => api.portfolio(), [reloadKey]);
@@ -72,7 +72,7 @@ export function Today({
     setCancelling(row.queue_id);
     await withToast(() => api.cancelQueued(row.queue_id!), {
       success: "Removed from the queue.",
-      failure: "Couldn't cancel that queued item",
+      failure: "Couldn't cancel that queued item"
     });
     setCancelling(null);
     bumpReload();
@@ -85,7 +85,7 @@ export function Today({
       <ScreenHeader
         title="Today"
         product={product}
-        subtitle="WHAT NEEDS YOU RIGHT NOW"
+        subtitle="What needs you right now"
         right={
           <span style={{ display: "inline-flex", alignItems: "center", gap: S[2],
                          fontFamily: mono, fontSize: T.xs, color: C.muted }}>
@@ -266,7 +266,7 @@ export function Today({
  * being left to imply that the score itself has a history we do not keep.
  */
 function ScoreStrip({
-  me, weekly, onOpenCase, loading,
+  me, weekly, onOpenCase, loading
 }: {
   me: PortfolioProduct | null;
   weekly: { week_start: string; count: number; avg_rating: number | null }[];
@@ -277,7 +277,7 @@ function ScoreStrip({
     on_fire: { color: C.bad, label: "Needs you today" },
     attention: { color: C.accent, label: "Worth a look" },
     watch: { color: C.info, label: "Trending, not urgent" },
-    healthy: { color: C.good, label: "Nothing demanding attention" },
+    healthy: { color: C.good, label: "Nothing demanding attention" }
   };
 
   if (loading) {
@@ -303,7 +303,7 @@ function ScoreStrip({
         background: `linear-gradient(180deg, ${C.bgRaised}, ${C.card})`,
         border: `1px solid ${C.border3}`, borderRadius: R.card,
         boxShadow: E[2], position: "relative", overflow: "hidden",
-        display: "flex", alignItems: "center", gap: S[6], flexWrap: "wrap",
+        display: "flex", alignItems: "center", gap: S[6], flexWrap: "wrap"
       }}
     >
       {/* Band colour as a top rule rather than a barely-visible border tint. */}
@@ -320,7 +320,7 @@ function ScoreStrip({
           {me.has_data && delta !== 0 && (
             <span
               title="Share of reviews that are negative, last 7 days vs the prior month"
-              style={{ display: "inline-flex", alignItems: "center", gap: 0,
+              style={{ display: "inline-flex", alignItems: "center", gap: 2,
                        fontFamily: mono, fontSize: T.sm,
                        color: delta > 0 ? C.bad : C.good, whiteSpace: "nowrap" }}
             >

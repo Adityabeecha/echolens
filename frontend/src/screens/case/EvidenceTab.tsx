@@ -62,9 +62,11 @@ export function EvidenceTab({ inv, onOpenEvidence }: {
           {inv.evidence.map((e) => (
             <div key={e.id} onClick={() => onOpenEvidence(e)} className="el-row el-row--click"
               role="button" tabIndex={0}
-              onKeyDown={(ev) => { if (ev.key === "Enter") onOpenEvidence(e); }}
+              onKeyDown={(ev) => {
+                if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onOpenEvidence(e); }
+              }}
               style={{ display: "grid", gridTemplateColumns: COLS, gap: S[3], padding: `${S[3]} ${S[4]}`,
-                       borderBottom: `1px solid #1c1e27`, cursor: "pointer", background: C.card }}>
+                       borderBottom: `1px solid ${C.border}`, cursor: "pointer", background: C.card }}>
               <span style={{ fontFamily: mono, fontSize: T.xs, color: C.accent }}>{e.id}</span>
               <span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted,
                              textTransform: "uppercase" }}>{e.source}</span>
