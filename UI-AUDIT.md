@@ -300,4 +300,62 @@ the cheap thing to fix.
 
 ---
 
-**Step 1 complete. Awaiting go-ahead before Step 2 (three design directions).**
+---
+
+# Results
+
+Implemented across four commits (`373b9c4`, `1ee32e0`, `1c63ae5`, `8c360d2`).
+Direction: keep the amber-on-near-black forensic identity, fix the execution.
+No new dependencies — `package.json` is unchanged.
+
+## Measured
+
+| Metric | Before | After |
+|---|---:|---:|
+| Distinct raw `fontSize` values | 25 | **0** (7-step scale) |
+| Distinct raw `borderRadius` values | 14 | **1** (a deliberate `0`) |
+| Distinct raw `padding` strings | 86 | **0** (4px scale) |
+| CSS variables used in components | 0 | **129** |
+| `<div role="button">` | 33 | **2** (legitimate containers) |
+| Real `<button>` | 53 | **78** |
+| Unicode dingbats in rendered DOM | ~19 | **0** |
+| Media breakpoints | 1 (in JS) | **4** (in CSS) |
+| Text tokens failing WCAG AA | 3 | **0** |
+
+## Contrast, measured after
+
+| Token | on `bg` | on `card` | |
+|---|---:|---:|---|
+| `dim` | 5.88 | 5.54 | was 4.81 / 4.53 |
+| `faint` | 6.49 | 6.11 | **was 3.78 / 3.56 — failed** |
+| `ghost` | 5.57 | 5.25 | **was 2.76 / 2.60 — failed** |
+| `border4` | 3.26 | 3.07 | was 1.80 / 1.70 (non-text floor is 3.0) |
+
+Every text token now clears 4.5:1 on every surface it is used on.
+
+## Verification
+
+The build passing does not prove the UI renders, so the final state was checked
+by mounting the built bundle in jsdom against a stubbed API and inspecting the
+resulting DOM: **13 real buttons, 10 SVG icons, 2 `role="button"` containers,
+zero dingbats, zero console errors.** jsdom was installed with `--no-save` and
+removed afterwards.
+
+## Two corrections made along the way
+
+1. **A wrong claim in my own first commit.** `border4` was lifted to `#565b70`
+   with a comment stating it cleared the 3:1 non-text floor. Measured: 2.69:1.
+   It did not. Corrected to `#5e6478` (3.07:1).
+2. **A regex rewrite that broke four files.** Converting multi-line
+   `role="button"` elements by pattern-matching JSX mangled the closing tags in
+   `Cases`, `HistoryTab`, `Brain` and `EvidenceTab`. Those were reverted and
+   done by hand. The revert silently took some icon work with it, which a
+   source scan caught afterwards — hence the fourth commit.
+
+## Not done, and why
+
+**Problems #8 and #9 from the ranking.** The Cases list is still cards rather
+than a dense table, and the per-screen layouts below 720px are stacked but not
+redesigned. Both are structural changes to how screens are composed rather than
+presentation-layer fixes, and both carry real regression risk against a working
+app. They are the honest next step if you want to keep going.
