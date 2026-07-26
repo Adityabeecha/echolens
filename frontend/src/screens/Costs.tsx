@@ -1,7 +1,7 @@
 import { api } from "../api";
 import { money } from "../format";
 import { useAsync } from "../hooks";
-import { C, mono } from "../theme";
+import { C, MEASURE, R, S, T, mono } from "../theme";
 import { Centered, EmptyState, ErrorState, Label, ScreenHeader } from "../ui";
 
 const ROW_STATUS_COLOR: Record<string, string> = {
@@ -50,21 +50,21 @@ export function Costs({ onGoSettings }: { onGoSettings: () => void }) {
         right={
           <span onClick={onGoSettings} className="el-btn" role="button" tabIndex={0}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onGoSettings(); }}
-            style={{ fontSize: 12.5, color: C.dim, cursor: "pointer" }}>
+            style={{ fontSize: T.sm, color: C.dim, cursor: "pointer" }}>
             Budgets and limits are in Settings →
           </span>
         }
       />
 
-      <div style={{ flex: 1, overflow: "auto", padding: "22px 28px 60px" }}>
-        <div style={{ display: "flex", gap: 12, maxWidth: 880, flexWrap: "wrap" }}>
+      <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]} ${S[12]}` }}>
+        <div style={{ display: "flex", gap: S[3], maxWidth: MEASURE, flexWrap: "wrap" }}>
           {tiles.map((t) => (
-            <div key={t.label} style={{ flex: 1, minWidth: 170, padding: "16px 18px",
+            <div key={t.label} style={{ flex: 1, minWidth: 170, padding: `${S[4]} ${S[4]}`,
                                         background: C.card, border: `1px solid ${C.border2}`,
-                                        borderRadius: 10 }}>
-              <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".1em",
+                                        borderRadius: R.card }}>
+              <div style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".1em",
                             color: C.faint }}>{t.label}</div>
-              <div style={{ fontSize: 24, fontWeight: 700, marginTop: 8, fontFamily: mono,
+              <div style={{ fontSize: T.xl, fontWeight: 700, marginTop: S[2], fontFamily: mono,
                             color: t.color }}>{t.value}</div>
             </div>
           ))}
@@ -77,12 +77,12 @@ export function Costs({ onGoSettings }: { onGoSettings: () => void }) {
             body="Every investigation records its tokens, tool calls, wall-clock time and dollar cost here as it runs."
           />
         ) : (
-          <div style={{ border: `1px solid ${C.border2}`, borderRadius: 10, overflowX: "auto",
-                        maxWidth: 880 }}>
+          <div style={{ border: `1px solid ${C.border2}`, borderRadius: R.card, overflowX: "auto",
+                        maxWidth: MEASURE }}>
             <div style={{ minWidth: 700 }}>
-              <div style={{ display: "grid", gridTemplateColumns: COLS, gap: 12,
-                            padding: "10px 16px", background: C.card2, fontFamily: mono,
-                            fontSize: 10, letterSpacing: ".08em", color: C.faint,
+              <div style={{ display: "grid", gridTemplateColumns: COLS, gap: S[3],
+                            padding: `${S[2]} ${S[4]}`, background: C.card2, fontFamily: mono,
+                            fontSize: T.micro, letterSpacing: ".08em", color: C.faint,
                             borderBottom: `1px solid ${C.border}` }}>
                 <span>CASE</span>
                 <span>OUTCOME</span>
@@ -92,21 +92,21 @@ export function Costs({ onGoSettings }: { onGoSettings: () => void }) {
                 <span style={{ textAlign: "right" }}>COST</span>
               </div>
               {data.rows.map((r) => (
-                <div key={r.id} style={{ display: "grid", gridTemplateColumns: COLS, gap: 12,
-                                         padding: "12px 16px", borderBottom: `1px solid #1c1e27`,
+                <div key={r.id} style={{ display: "grid", gridTemplateColumns: COLS, gap: S[3],
+                                         padding: `${S[3]} ${S[4]}`, borderBottom: `1px solid #1c1e27`,
                                          alignItems: "center", background: C.card }}>
-                  <span style={{ fontFamily: mono, fontSize: 11.5, color: C.accent }}>{r.id}</span>
-                  <span style={{ fontSize: 12.5, color: ROW_STATUS_COLOR[r.status] ?? C.muted }}>
+                  <span style={{ fontFamily: mono, fontSize: T.xs, color: C.accent }}>{r.id}</span>
+                  <span style={{ fontSize: T.sm, color: ROW_STATUS_COLOR[r.status] ?? C.muted }}>
                     {r.outcome}
                   </span>
-                  <span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>{r.tokens}</span>
-                  <span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>{r.queries}</span>
-                  <span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>{r.time}</span>
+                  <span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>{r.tokens}</span>
+                  <span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>{r.queries}</span>
+                  <span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>{r.time}</span>
                   {/* Through money() like the tiles above. Rendering the
                       server's pre-formatted string here put "$0.00" beside a
                       tile reading "$0.0031" — the same quantity, two formats,
                       which is exactly what format.ts exists to prevent. */}
-                  <span style={{ fontFamily: mono, fontSize: 11.5, color: C.text,
+                  <span style={{ fontFamily: mono, fontSize: T.xs, color: C.text,
                                  textAlign: "right" }}>
                     {money(Number(String(r.cost).replace(/[^0-9.]/g, "")))}
                   </span>

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { OnboardStatus, Snapshot, api } from "../api";
 import { plural } from "../format";
-import { C, mono, sans } from "../theme";
+import { C, MEASURE, R, S, T, mono, sans } from "../theme";
 import { Dot, Label } from "../ui";
 
 interface Props {
@@ -24,17 +24,17 @@ export function Onboarding({ onDone, onReviewSignals, canSkip, onCancel, onProdu
 
   return (
     <div style={{ height: "100%", overflow: "auto", background: C.bg }}>
-      <div style={{ maxWidth: 760, margin: "0 auto", padding: "48px 28px 80px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
+      <div style={{ maxWidth: MEASURE, margin: "0 auto", padding: `${S[12]} ${S[6]} ${S[12]}` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: S[3], marginBottom: S[1] }}>
           <Logo />
-          <div style={{ fontFamily: mono, fontSize: 10.5, letterSpacing: ".14em", color: C.faint }}>
+          <div style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".14em", color: C.faint }}>
             ADD YOUR PRODUCT
           </div>
         </div>
-        <h1 style={{ fontSize: 27, fontWeight: 700, letterSpacing: "-.02em", margin: "10px 0 8px" }}>
+        <h1 style={{ fontSize: T.display, fontWeight: 700, letterSpacing: "-.02em", margin: "10px 0 8px" }}>
           {phase === "form" ? "Point EchoLens at your app" : `Setting up ${product}`}
         </h1>
-        <p style={{ fontSize: 14.5, color: C.muted, lineHeight: 1.6, margin: "0 0 28px", maxWidth: 620 }}>
+        <p style={{ fontSize: T.md, color: C.muted, lineHeight: "var(--el-lh-normal)", margin: "0 0 28px", maxWidth: 620 }}>
           {phase === "form"
             ? "Give it a Play Store package and (optionally) a GitHub repo. EchoLens backfills 90 days of reviews, issues and releases, builds a baseline, and surfaces what needs your attention — hands-off from here."
             : "Backfilling your feedback. Here's what we've found so far — no need to wait for it to finish."}
@@ -92,7 +92,7 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: S[4] }}>
       <Field label="Play Store package" hint="Required — copy it from the store URL (id=…)">
         <input autoFocus value={pkg} onChange={(e) => setPkg(e.target.value)} placeholder="com.spotify.music"
           onKeyDown={(e) => e.key === "Enter" && submit()} style={inputStyle} />
@@ -107,23 +107,23 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
       </Field>
 
       {error && (
-        <div style={{ padding: "10px 14px", border: `1px solid ${C.bad}55`, background: `${C.bad}14`, borderRadius: 8, color: C.bad, fontSize: 13 }}>
+        <div style={{ padding: `${S[2]} ${S[3]}`, border: `1px solid ${C.bad}55`, background: `${C.bad}14`, borderRadius: R.control, color: C.bad, fontSize: T.base }}>
           {error}
         </div>
       )}
 
-      <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: S[3], marginTop: S[1] }}>
         <button onClick={submit} disabled={!pkg.trim() || busy} className="el-btn"
-          style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: 8, padding: "12px 24px", fontWeight: 600, fontSize: 14, fontFamily: sans, cursor: pkg.trim() && !busy ? "pointer" : "not-allowed", opacity: pkg.trim() && !busy ? 1 : 0.5 }}>
+          style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: R.control, padding: `${S[3]} ${S[6]}`, fontWeight: 600, fontSize: T.md, fontFamily: sans, cursor: pkg.trim() && !busy ? "pointer" : "not-allowed", opacity: pkg.trim() && !busy ? 1 : 0.5 }}>
           {busy ? "Starting backfill…" : "Start backfill"}
         </button>
         {canSkip && (
           <button onClick={onCancel} className="el-btn"
-            style={{ background: "transparent", color: C.muted, border: "none", fontSize: 13, cursor: "pointer" }}>
+            style={{ background: "transparent", color: C.muted, border: "none", fontSize: T.base, cursor: "pointer" }}>
             Cancel
           </button>
         )}
-        <span style={{ fontSize: 12, color: C.faint }}>You need admin access to connect a product.</span>
+        <span style={{ fontSize: T.sm, color: C.faint }}>You need admin access to connect a product.</span>
       </div>
     </div>
   );
@@ -132,9 +132,9 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
 function Field({ label, hint, children }: { label: string; hint: string; children: React.ReactNode }) {
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 7 }}>
-        <span style={{ fontSize: 13.5, fontWeight: 600, color: C.text2 }}>{label}</span>
-        <span style={{ fontSize: 12, color: C.faint }}>{hint}</span>
+      <div style={{ display: "flex", alignItems: "baseline", gap: S[2], marginBottom: S[2] }}>
+        <span style={{ fontSize: T.base, fontWeight: 600, color: C.text2 }}>{label}</span>
+        <span style={{ fontSize: T.sm, color: C.faint }}>{hint}</span>
       </div>
       {children}
     </div>
@@ -145,11 +145,11 @@ const inputStyle: React.CSSProperties = {
   width: "100%",
   background: C.bgRaised,
   border: `1px solid ${C.border3}`,
-  borderRadius: 9,
+  borderRadius: R.control,
   color: C.text,
   fontFamily: mono,
-  fontSize: 14,
-  padding: "12px 14px",
+  fontSize: T.md,
+  padding: `${S[3]} ${S[3]}`,
 };
 
 // ── step 2: live backfill + snapshot ────────────────────────────────────
@@ -194,8 +194,8 @@ function Backfilling({ product, onDone, onReviewSignals }: {
     };
   }, [product]);
 
-  if (err && !status) return <div style={{ color: C.bad, fontSize: 13 }}>{err}</div>;
-  if (!status) return <div style={{ color: C.dim, fontSize: 14 }}>Connecting…</div>;
+  if (err && !status) return <div style={{ color: C.bad, fontSize: T.base }}>{err}</div>;
+  if (!status) return <div style={{ color: C.dim, fontSize: T.md }}>Connecting…</div>;
 
   const snap = status.snapshot;
   const anomalies = status.anomalies.filter((a) => a.status === "pending");
@@ -203,17 +203,17 @@ function Backfilling({ product, onDone, onReviewSignals }: {
   const found = anomalies.length + snap.top_themes.length;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: S[5] }}>
       {err && status && (
-        <div style={{ padding: "10px 14px", border: `1px solid ${C.bad}55`,
-                      background: `${C.bad}12`, borderRadius: 8, color: C.text3,
-                      fontSize: 12.5, lineHeight: 1.5 }}>
+        <div style={{ padding: `${S[2]} ${S[3]}`, border: `1px solid ${C.bad}55`,
+                      background: `${C.bad}12`, borderRadius: R.control, color: C.text3,
+                      fontSize: T.sm, lineHeight: "var(--el-lh-normal)" }}>
           ⚠ Lost contact while backfilling — {err}. The snapshot below may be
           out of date.
         </div>
       )}
       {/* source health */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
         {status.sources.map((s) => {
           const color = s.status === "error" ? C.bad : s.status === "healthy" ? C.good : C.accent;
           const label =
@@ -221,12 +221,12 @@ function Backfilling({ product, onDone, onReviewSignals }: {
             s.status === "healthy" ? `${s.items_last_run.toLocaleString()} items pulled` :
             s.never_collected ? "backfilling…" : "syncing…";
           return (
-            <div key={s.source + s.identifier} style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 15px", background: C.card, border: `1px solid ${C.border2}`, borderRadius: 10 }}>
+            <div key={s.source + s.identifier} style={{ display: "flex", alignItems: "center", gap: S[3], padding: `${S[3]} ${S[4]}`, background: C.card, border: `1px solid ${C.border2}`, borderRadius: R.card }}>
               <Dot color={color} pulse={status.backfilling && s.status !== "error" && s.status !== "healthy"} />
-              <span style={{ fontSize: 13.5, fontWeight: 500 }}>{s.source === "play_store" ? "Play Store" : "GitHub"}</span>
-              <span style={{ fontFamily: mono, fontSize: 11.5, color: C.faint }}>{s.identifier}</span>
+              <span style={{ fontSize: T.base, fontWeight: 500 }}>{s.source === "play_store" ? "Play Store" : "GitHub"}</span>
+              <span style={{ fontFamily: mono, fontSize: T.xs, color: C.faint }}>{s.identifier}</span>
               <div style={{ flex: 1 }} />
-              <span style={{ fontSize: 12.5, color: s.status === "error" ? C.bad : C.muted }}>{label}</span>
+              <span style={{ fontSize: T.sm, color: s.status === "error" ? C.bad : C.muted }}>{label}</span>
             </div>
           );
         })}
@@ -235,7 +235,7 @@ function Backfilling({ product, onDone, onReviewSignals }: {
       {ready ? (
         <SnapshotView snap={snap} />
       ) : (
-        <div style={{ padding: "28px 20px", border: `1px dashed ${C.border4}`, borderRadius: 12, textAlign: "center", color: C.dim, fontSize: 13.5 }}>
+        <div style={{ padding: `${S[6]} ${S[5]}`, border: `1px dashed ${C.border4}`, borderRadius: R.card, textAlign: "center", color: C.dim, fontSize: T.base }}>
           {status.backfilling ? "Pulling your first reviews…" : "No reviews came back yet. Check the package name is exactly as it appears in the Play Store URL."}
         </div>
       )}
@@ -245,16 +245,16 @@ function Backfilling({ product, onDone, onReviewSignals }: {
           on the feed, and nowhere else the same way. Triage happens in one
           place: Cases → Signals. */}
       {ready && found > 0 && (
-        <div style={{ padding: "16px 20px", background: C.card, border: `1px solid ${C.border2}`,
-                      borderRadius: 12 }}>
-          <Label style={{ marginBottom: 6, color: C.info }}>WHAT WE FOUND</Label>
-          <div style={{ fontSize: 14, color: C.text2, lineHeight: 1.55 }}>
+        <div style={{ padding: `${S[4]} ${S[5]}`, background: C.card, border: `1px solid ${C.border2}`,
+                      borderRadius: R.card }}>
+          <Label style={{ marginBottom: S[1], color: C.info }}>WHAT WE FOUND</Label>
+          <div style={{ fontSize: T.md, color: C.text2, lineHeight: "var(--el-lh-normal)" }}>
             {found} {plural(found, "signal")} worth a look in {product}'s feedback
             {anomalies.length > 0 && snap.top_themes.length > 0
               ? ` — ${anomalies.length} detected ${plural(anomalies.length, "spike")} and ${snap.top_themes.length} recurring ${plural(snap.top_themes.length, "complaint")}.`
               : "."}
           </div>
-          <div style={{ fontSize: 12.5, color: C.dim, marginTop: 7, lineHeight: 1.55 }}>
+          <div style={{ fontSize: T.sm, color: C.dim, marginTop: S[2], lineHeight: "var(--el-lh-normal)" }}>
             They're waiting under Signals at the bottom of Cases. Tick the ones worth
             investigating and they queue together — nothing is lost by not choosing now.
           </div>
@@ -263,31 +263,31 @@ function Backfilling({ product, onDone, onReviewSignals }: {
 
       {/* data-quality disclosures */}
       {(snap.data_quality.note || snap.data_quality.non_english_note) && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
           {snap.data_quality.note && <Notice text={snap.data_quality.note} />}
           {snap.data_quality.non_english_note && <Notice text={snap.data_quality.non_english_note} />}
         </div>
       )}
 
       {/* CTA */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 6,
+      <div style={{ display: "flex", alignItems: "center", gap: S[3], marginTop: S[1],
                     flexWrap: "wrap" }}>
         <button onClick={onDone} disabled={!ready} className="el-btn"
           style={{ background: ready ? C.accent : C.hover, color: ready ? C.onAccent : C.dim,
-                   border: "none", borderRadius: 8, padding: "12px 24px", fontWeight: 600,
-                   fontSize: 14, cursor: ready ? "pointer" : "not-allowed" }}>
+                   border: "none", borderRadius: R.control, padding: `${S[3]} ${S[6]}`, fontWeight: 600,
+                   fontSize: T.md, cursor: ready ? "pointer" : "not-allowed" }}>
           Go to Today
         </button>
         {ready && found > 0 && (
           <button onClick={onReviewSignals} className="el-btn"
             style={{ background: "transparent", color: C.accent,
-                     border: `1px solid rgba(240,166,60,.4)`, borderRadius: 8, padding: "12px 20px",
-                     fontWeight: 500, fontSize: 14, cursor: "pointer", fontFamily: sans }}>
+                     border: `1px solid rgba(240,166,60,.4)`, borderRadius: R.control, padding: `${S[3]} ${S[5]}`,
+                     fontWeight: 500, fontSize: T.md, cursor: "pointer", fontFamily: sans }}>
             Review {found} {plural(found, "signal")} in Cases
           </button>
         )}
         {status.backfilling && (
-          <span style={{ fontSize: 12.5, color: C.faint }}>
+          <span style={{ fontSize: T.sm, color: C.faint }}>
             Still backfilling — Today keeps filling in.
           </span>
         )}
@@ -316,21 +316,21 @@ function SnapshotView({ snap }: { snap: Snapshot }) {
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: S[4] }}>
+      <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
         {tiles.map((t) => (
-          <div key={t.label} style={{ flex: 1, minWidth: 130, padding: "14px 16px", background: C.card, border: `1px solid ${C.border2}`, borderRadius: 11 }}>
-            <div style={{ fontFamily: mono, fontSize: 9.5, letterSpacing: ".1em", color: C.faint }}>{t.label}</div>
-            <div style={{ fontSize: 23, fontWeight: 700, fontFamily: mono, color: t.color, marginTop: 7 }}>{t.value}</div>
-            {t.sub && <div style={{ fontFamily: mono, fontSize: 10.5, color: t.subColor, marginTop: 3 }}>{t.sub}</div>}
+          <div key={t.label} style={{ flex: 1, minWidth: 130, padding: `${S[3]} ${S[4]}`, background: C.card, border: `1px solid ${C.border2}`, borderRadius: R.card }}>
+            <div style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".1em", color: C.faint }}>{t.label}</div>
+            <div style={{ fontSize: T.xl, fontWeight: 700, fontFamily: mono, color: t.color, marginTop: S[2] }}>{t.value}</div>
+            {t.sub && <div style={{ fontFamily: mono, fontSize: T.micro, color: t.subColor, marginTop: S[1] }}>{t.sub}</div>}
           </div>
         ))}
       </div>
 
       {/* weekly volume bars */}
-      <div style={{ padding: "16px 18px", background: C.card, border: `1px solid ${C.border2}`, borderRadius: 11 }}>
-        <Label style={{ marginBottom: 12 }}>REVIEW VOLUME · LAST 12 WEEKS</Label>
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 5, height: 56 }}>
+      <div style={{ padding: `${S[4]} ${S[4]}`, background: C.card, border: `1px solid ${C.border2}`, borderRadius: R.card }}>
+        <Label style={{ marginBottom: S[3] }}>REVIEW VOLUME · LAST 12 WEEKS</Label>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: S[1], height: 56 }}>
           {snap.weekly.map((w) => (
             <div key={w.week_start} title={`${w.week_start}: ${w.count}`}
               style={{ flex: 1, height: `${Math.max(4, (w.count / max) * 100)}%`, borderRadius: "3px 3px 0 0", background: `linear-gradient(180deg,${C.accent},${C.accentDeep})`, opacity: 0.9 }} />
@@ -343,7 +343,7 @@ function SnapshotView({ snap }: { snap: Snapshot }) {
 
 function Notice({ text }: { text: string }) {
   return (
-    <div style={{ display: "flex", gap: 9, padding: "10px 14px", border: `1px solid ${C.border3}`, background: C.card2, borderRadius: 9, color: C.muted, fontSize: 12.5, lineHeight: 1.5 }}>
+    <div style={{ display: "flex", gap: S[2], padding: `${S[2]} ${S[3]}`, border: `1px solid ${C.border3}`, background: C.card2, borderRadius: R.control, color: C.muted, fontSize: T.sm, lineHeight: "var(--el-lh-normal)" }}>
       <span style={{ color: C.info, flex: "none" }}>ⓘ</span>
       {text}
     </div>

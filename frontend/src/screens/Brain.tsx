@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { BrainEdge, ChangeReview, api } from "../api";
 import { useAsync } from "../hooks";
-import { C, mono, sans } from "../theme";
+import { C, MEASURE, R, S, T, mono, sans } from "../theme";
 import { Bar, Centered, EmptyState, ErrorState, Label, ScreenHeader } from "../ui";
 
 const RISK: Record<string, { color: string; label: string }> = {
@@ -42,11 +42,11 @@ export function Brain({ onOpenInvestigation, onBack, backLabel, onGoCases }: Pro
         product={data.product}
         subtitle="HOW THIS PRODUCT BREAKS, LEARNED FROM CONFIRMED FIXES"
         back={{ label: backLabel, onClick: onBack }}
-        right={<span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>
+        right={<span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>
           {edges.length} LEARNED PATTERN{edges.length === 1 ? "" : "S"}
         </span>}
       />
-      <div style={{ flex: 1, overflow: "auto", padding: "22px 28px" }}>
+      <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>
         {edges.length === 0 ? (
           <EmptyState
             title={`EchoLens hasn't learned how ${data.product || "this product"} breaks yet`}
@@ -60,11 +60,11 @@ export function Brain({ onOpenInvestigation, onBack, backLabel, onGoCases }: Pro
             <Oracle />
 
             <Label style={{ margin: "28px 0 4px" }}>HOW THIS PRODUCT BREAKS</Label>
-            <p style={{ fontSize: 12.5, color: C.dim, margin: "0 0 14px", lineHeight: 1.55 }}>
+            <p style={{ fontSize: T.sm, color: C.dim, margin: "0 0 14px", lineHeight: "var(--el-lh-normal)" }}>
               Learned from confirmed fixes and graded against every resolved case. A pattern that
               stops predicting decays and retires itself — the map only shows what still holds.
             </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 980 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: S[2], maxWidth: MEASURE }}>
               {edges.map((e) => (
                 <EdgeCard key={`${e.subsystem}-${e.symptom}`} edge={e}
                           onOpen={onOpenInvestigation} />
@@ -81,26 +81,26 @@ function EdgeCard({ edge, onOpen }: { edge: BrainEdge; onOpen: (id: number, s?: 
   const conf = Math.round(edge.confidence * 100);
   const color = edge.confidence >= 0.75 ? C.bad : edge.confidence >= 0.5 ? C.accent : C.dim;
   return (
-    <div className="el-card" style={{ padding: "14px 17px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <span style={{ fontFamily: mono, fontSize: 11.5, color: C.info }}>{edge.subsystem}</span>
+    <div className="el-card" style={{ padding: `${S[3]} ${S[4]}` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: S[3], flexWrap: "wrap" }}>
+        <span style={{ fontFamily: mono, fontSize: T.xs, color: C.info }}>{edge.subsystem}</span>
         <span style={{ color: C.faint }}>→</span>
-        <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>
+        <span style={{ fontSize: T.md, fontWeight: 600, color: C.text }}>
           {edge.symptom.replace(/-/g, " ")}
         </span>
         {edge.trend === "weakening" && (
-          <span style={{ fontFamily: mono, fontSize: 9.5, padding: "2px 7px", borderRadius: 9,
+          <span style={{ fontFamily: mono, fontSize: T.micro, padding: `0 ${S[2]}`, borderRadius: R.control,
                          background: `${C.accent}1a`, color: C.accent }}>WEAKENING</span>
         )}
-        <span style={{ marginLeft: "auto", fontFamily: mono, fontSize: 11, color }}>
+        <span style={{ marginLeft: "auto", fontFamily: mono, fontSize: T.xs, color }}>
           {conf}% · verified {edge.verified_count}×
         </span>
       </div>
-      <div style={{ marginTop: 9, maxWidth: 320 }}>
+      <div style={{ marginTop: S[2], maxWidth: 320 }}>
         <Bar pct={conf} color={color} height={5} />
       </div>
-      <div style={{ display: "flex", gap: 12, marginTop: 9, flexWrap: "wrap",
-                    fontFamily: mono, fontSize: 10.5, color: C.faint }}>
+      <div style={{ display: "flex", gap: S[3], marginTop: S[2], flexWrap: "wrap",
+                    fontFamily: mono, fontSize: T.micro, color: C.faint }}>
         <span>{edge.supports} held · {edge.refutes} missed</span>
         {edge.case_ids.slice(0, 4).map((id) => (
           <span key={id} onClick={() => onOpen(id, "resolved")} className="el-btn" role="button"
@@ -136,10 +136,10 @@ function ReviewBox() {
 
   const risk = review ? RISK[review.risk] : null;
   return (
-    <div style={{ maxWidth: 980, marginBottom: 20, padding: "16px 20px", background: C.card,
-                  border: `1px solid ${C.border2}`, borderRadius: 12 }}>
-      <Label style={{ marginBottom: 4, color: C.accent }}>REVIEW A CHANGE BEFORE IT SHIPS</Label>
-      <p style={{ fontSize: 12.5, color: C.dim, margin: "0 0 11px", lineHeight: 1.55 }}>
+    <div style={{ maxWidth: MEASURE, marginBottom: S[5], padding: `${S[4]} ${S[5]}`, background: C.card,
+                  border: `1px solid ${C.border2}`, borderRadius: R.card }}>
+      <Label style={{ marginBottom: S[1], color: C.accent }}>REVIEW A CHANGE BEFORE IT SHIPS</Label>
+      <p style={{ fontSize: T.sm, color: C.dim, margin: "0 0 11px", lineHeight: "var(--el-lh-normal)" }}>
         Paste a spec or PR description. EchoLens checks it against what has bitten this product before.
       </p>
       <textarea
@@ -148,36 +148,36 @@ function ReviewBox() {
         placeholder="e.g. Rework the background sync scheduler to batch uploads when the device is idle…"
         rows={3}
         style={{ width: "100%", background: C.bgRaised, border: `1px solid ${C.border3}`,
-                 borderRadius: 8, color: C.text, fontFamily: sans, fontSize: 13,
-                 padding: "10px 12px", boxSizing: "border-box", resize: "vertical" }}
+                 borderRadius: R.control, color: C.text, fontFamily: sans, fontSize: T.base,
+                 padding: `${S[2]} ${S[3]}`, boxSizing: "border-box", resize: "vertical" }}
       />
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: S[3], marginTop: S[2] }}>
         <button onClick={run} disabled={!text.trim() || busy} className="el-btn"
-          style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: 7,
-                   padding: "9px 16px", fontWeight: 600, fontSize: 13,
+          style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: R.control,
+                   padding: `${S[2]} ${S[4]}`, fontWeight: 600, fontSize: T.base,
                    cursor: text.trim() && !busy ? "pointer" : "not-allowed",
                    opacity: text.trim() && !busy ? 1 : 0.5 }}>
           {busy ? "Reviewing…" : "Review change"}
         </button>
-        {err && <span style={{ fontSize: 12.5, color: C.bad }}>{err}</span>}
+        {err && <span style={{ fontSize: T.sm, color: C.bad }}>{err}</span>}
       </div>
 
       {review && risk && (
-        <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.border}` }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-            <span style={{ fontFamily: mono, fontSize: 10.5, letterSpacing: ".08em",
-                           padding: "3px 10px", borderRadius: 20, color: risk.color,
+        <div style={{ marginTop: S[3], paddingTop: 14, borderTop: `1px solid ${C.border}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[2] }}>
+            <span style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".08em",
+                           padding: `${S[1]} ${S[2]}`, borderRadius: R.pill, color: risk.color,
                            background: `${risk.color}1a`, border: `1px solid ${risk.color}55` }}>
               {risk.label}
             </span>
-            <span style={{ fontSize: 13.5, color: C.text2 }}>{review.summary}</span>
+            <span style={{ fontSize: T.base, color: C.text2 }}>{review.summary}</span>
           </div>
           {review.flags.map((f) => (
             <div key={`${f.subsystem}-${f.symptom}`}
-                 style={{ padding: "11px 14px", background: C.card2, borderRadius: 9,
-                          border: `1px solid ${C.border2}`, marginBottom: 8 }}>
-              <div style={{ fontSize: 13, color: C.text3, lineHeight: 1.5 }}>{f.why}</div>
-              <div style={{ fontSize: 12.5, color: C.accent, marginTop: 6 }}>
+                 style={{ padding: `${S[3]} ${S[3]}`, background: C.card2, borderRadius: R.control,
+                          border: `1px solid ${C.border2}`, marginBottom: S[2] }}>
+              <div style={{ fontSize: T.base, color: C.text3, lineHeight: "var(--el-lh-normal)" }}>{f.why}</div>
+              <div style={{ fontSize: T.sm, color: C.accent, marginTop: S[1] }}>
                 → {f.recommendation}
               </div>
             </div>
@@ -216,51 +216,51 @@ function Oracle() {
 
   const suggestions = ["What usually goes wrong with releases here?", "Any risk around sync?"];
   return (
-    <div style={{ maxWidth: 980, marginBottom: 20, padding: "16px 20px", background: C.card,
-                  border: `1px solid ${C.border2}`, borderRadius: 12 }}>
-      <Label style={{ marginBottom: 4, color: C.info }}>ASK THE PRODUCT'S HISTORY</Label>
-      <p style={{ fontSize: 12.5, color: C.dim, margin: "0 0 11px", lineHeight: 1.55 }}>
+    <div style={{ maxWidth: MEASURE, marginBottom: S[5], padding: `${S[4]} ${S[5]}`, background: C.card,
+                  border: `1px solid ${C.border2}`, borderRadius: R.card }}>
+      <Label style={{ marginBottom: S[1], color: C.info }}>ASK THE PRODUCT'S HISTORY</Label>
+      <p style={{ fontSize: T.sm, color: C.dim, margin: "0 0 11px", lineHeight: "var(--el-lh-normal)" }}>
         New to this product? Ask what tends to break instead of reading old postmortems.
       </p>
-      <div style={{ display: "flex", gap: 9 }}>
+      <div style={{ display: "flex", gap: S[2] }}>
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && ask(q)}
           placeholder="Ask about the product's failure history…"
           style={{ flex: 1, background: C.bgRaised, border: `1px solid ${C.border3}`,
-                   borderRadius: 8, color: C.text, fontFamily: sans, fontSize: 13,
-                   padding: "9px 12px" }}
+                   borderRadius: R.control, color: C.text, fontFamily: sans, fontSize: T.base,
+                   padding: `${S[2]} ${S[3]}` }}
         />
         <button onClick={() => ask(q)} disabled={!q.trim() || busy} className="el-btn"
           style={{ background: "transparent", color: C.accent, border: `1px solid rgba(240,166,60,.4)`,
-                   borderRadius: 7, padding: "9px 14px", fontSize: 13,
+                   borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base,
                    cursor: q.trim() && !busy ? "pointer" : "not-allowed" }}>
           {busy ? "…" : "Ask"}
         </button>
       </div>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 9 }}>
+      <div style={{ display: "flex", gap: S[2], flexWrap: "wrap", marginTop: S[2] }}>
         {suggestions.map((sug) => (
           <span key={sug} onClick={() => { setQ(sug); ask(sug); }} className="el-btn" role="button"
             tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter") { setQ(sug); ask(sug); } }}
-            style={{ fontSize: 11.5, color: C.muted, cursor: "pointer", padding: "4px 10px",
-                     borderRadius: 20, background: C.hover, border: `1px solid ${C.border3}` }}>
+            style={{ fontSize: T.xs, color: C.muted, cursor: "pointer", padding: `${S[1]} ${S[2]}`,
+                     borderRadius: R.pill, background: C.hover, border: `1px solid ${C.border3}` }}>
             {sug}
           </span>
         ))}
       </div>
       {askError && (
-        <div style={{ marginTop: 13, padding: "11px 14px", background: `${C.bad}12`,
-                      border: `1px solid ${C.bad}55`, borderRadius: 9, fontSize: 12.5,
-                      color: C.text3, display: "flex", alignItems: "center", gap: 9 }}>
+        <div style={{ marginTop: S[3], padding: `${S[3]} ${S[3]}`, background: `${C.bad}12`,
+                      border: `1px solid ${C.bad}55`, borderRadius: R.control, fontSize: T.sm,
+                      color: C.text3, display: "flex", alignItems: "center", gap: S[2] }}>
           <span style={{ color: C.bad }}>⚠</span>
           <span>Couldn't reach the product's history — {askError}</span>
         </div>
       )}
       {answer && (
-        <div style={{ marginTop: 13, padding: "13px 15px", background: C.card2,
-                      border: `1px solid ${C.border2}`, borderRadius: 9, fontSize: 13,
-                      color: C.text3, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+        <div style={{ marginTop: S[3], padding: `${S[3]} ${S[4]}`, background: C.card2,
+                      border: `1px solid ${C.border2}`, borderRadius: R.control, fontSize: T.base,
+                      color: C.text3, lineHeight: "var(--el-lh-normal)", whiteSpace: "pre-wrap" }}>
           {answer}
         </div>
       )}

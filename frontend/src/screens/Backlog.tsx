@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { BacklogItem, QuarterPlan, api, canReview } from "../api";
-import { C, mono, sans } from "../theme";
+import { C, MEASURE, R, S, T, mono, sans } from "../theme";
 import { Bar, Centered, EmptyState, ErrorState, Label, ScreenHeader } from "../ui";
 
 const BAND: Record<string, string> = { high: C.bad, medium: C.accent, low: C.dim };
@@ -87,12 +87,12 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
         subtitle="OPEN PROBLEMS, RANKED BY VALUE PER ENGINEER-DAY"
         back={{ label: backLabel, onClick: onBack }}
         right={
-          <span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>
+          <span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>
             {plan.owned ? "YOUR PLAN" : "PROPOSED"} · {plan.generated}
           </span>
         }
       />
-      <div style={{ flex: 1, overflow: "auto", padding: "22px 28px" }}>
+      <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>
         {empty ? (
           <EmptyState
             title={`Nothing to plan yet for ${plan.product || "this product"}`}
@@ -103,11 +103,11 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
         ) : (
           <>
             {/* capacity + the outcome the plan projects */}
-            <div style={{ maxWidth: 980, display: "flex", gap: 22, flexWrap: "wrap",
-                          alignItems: "flex-end", padding: "16px 20px", background: C.card,
-                          border: `1px solid ${C.border2}`, borderRadius: 12, marginBottom: 22 }}>
+            <div style={{ maxWidth: MEASURE, display: "flex", gap: S[5], flexWrap: "wrap",
+                          alignItems: "flex-end", padding: `${S[4]} ${S[5]}`, background: C.card,
+                          border: `1px solid ${C.border2}`, borderRadius: R.card, marginBottom: S[5] }}>
               <div>
-                <Label style={{ marginBottom: 6 }}>CAPACITY (ENGINEER-DAYS)</Label>
+                <Label style={{ marginBottom: S[1] }}>CAPACITY (ENGINEER-DAYS)</Label>
                 <input
                   type="number" min={1} max={200} value={capacity}
                   disabled={!reviewer}
@@ -124,12 +124,12 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
                     commit(inIds, outIds, safe);
                   }}
                   style={{ width: 90, background: C.bgRaised, border: `1px solid ${C.border3}`,
-                           borderRadius: 7, color: C.text, fontFamily: mono, fontSize: 14,
-                           padding: "8px 10px" }}
+                           borderRadius: R.control, color: C.text, fontFamily: mono, fontSize: T.md,
+                           padding: `${S[2]} ${S[2]}` }}
                 />
               </div>
               <div style={{ flex: 1, minWidth: 220 }}>
-                <Label style={{ marginBottom: 7 }}>
+                <Label style={{ marginBottom: S[2] }}>
                   COMMITTED {plan.committed_days}d OF {plan.capacity_days}d
                 </Label>
                 <Bar pct={(plan.committed_days / Math.max(1, plan.capacity_days)) * 100}
@@ -147,9 +147,9 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
             </div>
 
             {plan.unknown_effort > 0 && (
-              <div style={{ maxWidth: 980, marginBottom: 18, padding: "10px 15px",
+              <div style={{ maxWidth: MEASURE, marginBottom: S[4], padding: `${S[2]} ${S[4]}`,
                             border: `1px solid ${C.border3}`, background: C.card2,
-                            borderRadius: 9, fontSize: 12.5, color: C.muted, lineHeight: 1.5 }}>
+                            borderRadius: R.control, fontSize: T.sm, color: C.muted, lineHeight: "var(--el-lh-normal)" }}>
                 ⓘ {plan.unknown_effort} item{plan.unknown_effort === 1 ? " has" : "s have"} no
                 effort signal yet — no linked issue labels and no fix history to learn from. They're
                 ranked on impact alone rather than on a guessed estimate.
@@ -157,19 +157,19 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
             )}
 
             {error && (
-              <div style={{ maxWidth: 980, marginBottom: 16, padding: "10px 14px",
+              <div style={{ maxWidth: MEASURE, marginBottom: S[4], padding: `${S[2]} ${S[3]}`,
                             border: `1px solid ${C.bad}55`, background: `${C.bad}14`,
-                            borderRadius: 8, fontSize: 12.5, color: C.bad }}>{error}</div>
+                            borderRadius: R.control, fontSize: T.sm, color: C.bad }}>{error}</div>
             )}
 
-            <Label style={{ marginBottom: 4, color: C.accent }}>
+            <Label style={{ marginBottom: S[1], color: C.accent }}>
               THIS QUARTER · {plan.proposed.length}
             </Label>
-            <p style={{ fontSize: 12.5, color: C.dim, margin: "0 0 12px", lineHeight: 1.55 }}>
+            <p style={{ fontSize: T.sm, color: C.dim, margin: "0 0 12px", lineHeight: "var(--el-lh-normal)" }}>
               Ranked by value per engineer-day. EchoLens proposes; you decide — drop anything and
               the plan re-fills around your choice.
             </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 9, maxWidth: 980 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: S[2], maxWidth: MEASURE }}>
               {plan.proposed.map((i) => (
                 <Row key={i.investigation_id} item={i} inPlan busy={saving}
                      canEdit={reviewer} onToggle={() => drop(i.investigation_id)}
@@ -182,7 +182,7 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
                 <Label style={{ margin: "26px 0 12px", color: C.faint }}>
                   DIDN'T FIT · {plan.deferred.length}
                 </Label>
-                <div style={{ display: "flex", flexDirection: "column", gap: 9, maxWidth: 980 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: S[2], maxWidth: MEASURE }}>
                   {plan.deferred.map((i) => (
                     <Row key={i.investigation_id} item={i} inPlan={false} busy={saving}
                          canEdit={reviewer} onToggle={() => add(i.investigation_id)}
@@ -201,8 +201,8 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
 function Stat({ label, value, color }: { label: string; value: string; color: string }) {
   return (
     <div>
-      <div style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".1em", color: C.faint }}>{label}</div>
-      <div style={{ fontSize: 20, fontWeight: 700, fontFamily: mono, color, marginTop: 5 }}>{value}</div>
+      <div style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".1em", color: C.faint }}>{label}</div>
+      <div style={{ fontSize: T.xl, fontWeight: 700, fontFamily: mono, color, marginTop: S[1] }}>{value}</div>
     </div>
   );
 }
@@ -219,59 +219,59 @@ function Row({ item, inPlan, busy, canEdit, onToggle, onOpen, note }: {
   const [open, setOpen] = useState(false);
   const band = BAND[item.severity.band] ?? C.dim;
   return (
-    <div className="el-card" style={{ display: "flex", gap: 13, padding: "14px 17px",
+    <div className="el-card" style={{ display: "flex", gap: S[3], padding: `${S[3]} ${S[4]}`,
                                       opacity: inPlan ? 1 : 0.74 }}>
-      <div style={{ width: 3, borderRadius: 2, background: band, flex: "none" }} />
+      <div style={{ width: 3, borderRadius: R.sm, background: band, flex: "none" }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ fontFamily: mono, fontSize: 11, color: C.faint }}>#{item.rank}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: S[2], flexWrap: "wrap" }}>
+          <span style={{ fontFamily: mono, fontSize: T.xs, color: C.faint }}>#{item.rank}</span>
           <span
             onClick={() => onOpen(item.investigation_id, "resolved")}
             className="el-btn"
             role="button"
             tabIndex={0}
             onKeyDown={(e) => { if (e.key === "Enter") onOpen(item.investigation_id, "resolved"); }}
-            style={{ fontSize: 14, fontWeight: 600, color: C.text, cursor: "pointer",
+            style={{ fontSize: T.md, fontWeight: 600, color: C.text, cursor: "pointer",
                      flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
                      whiteSpace: "nowrap" }}>
             {item.summary}
           </span>
-          <span style={{ fontFamily: mono, fontSize: 10.5, padding: "2px 8px", borderRadius: 10,
+          <span style={{ fontFamily: mono, fontSize: T.micro, padding: `0 ${S[2]}`, borderRadius: R.card,
                          background: `${band}1a`, border: `1px solid ${band}55`, color: band }}>
             {item.effort.days}d
           </span>
         </div>
 
-        <div style={{ fontSize: 12, color: C.muted, marginTop: 6, lineHeight: 1.5 }}>
+        <div style={{ fontSize: T.sm, color: C.muted, marginTop: S[1], lineHeight: "var(--el-lh-normal)" }}>
           {item.defence}
         </div>
 
         {note && (
-          <div style={{ fontSize: 12.5, color: C.text3, marginTop: 6, fontStyle: "italic" }}>
+          <div style={{ fontSize: T.sm, color: C.text3, marginTop: S[1], fontStyle: "italic" }}>
             “{note}”
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 12, marginTop: 8, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: S[3], marginTop: S[2], flexWrap: "wrap" }}>
           <span onClick={() => setOpen((o) => !o)} className="el-btn" role="button" tabIndex={0}
             onKeyDown={(e) => { if (e.key === "Enter") setOpen((o) => !o); }}
-            style={{ fontFamily: mono, fontSize: 10.5, color: C.dim, cursor: "pointer" }}>
+            style={{ fontFamily: mono, fontSize: T.micro, color: C.dim, cursor: "pointer" }}>
             {open ? "▾ hide evidence" : `▸ ${item.evidence_count} evidence`}
           </span>
           {item.projected.confident && (
-            <span style={{ fontFamily: mono, fontSize: 10.5, color: C.good }}>
+            <span style={{ fontFamily: mono, fontSize: T.micro, color: C.good }}>
               +{item.projected.stars.toFixed(2)}★ if fixed
             </span>
           )}
         </div>
 
         {open && (
-          <div style={{ marginTop: 9, paddingLeft: 10, borderLeft: `2px solid ${C.border3}`,
-                        display: "flex", flexDirection: "column", gap: 5 }}>
-            <div style={{ fontSize: 12, color: C.dim, lineHeight: 1.5 }}>
+          <div style={{ marginTop: S[2], paddingLeft: 10, borderLeft: `2px solid ${C.border3}`,
+                        display: "flex", flexDirection: "column", gap: S[1] }}>
+            <div style={{ fontSize: T.sm, color: C.dim, lineHeight: "var(--el-lh-normal)" }}>
               {item.projected.basis}
             </div>
-            <div style={{ fontFamily: mono, fontSize: 10.5, color: C.faint, wordBreak: "break-all" }}>
+            <div style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, wordBreak: "break-all" }}>
               {item.evidence_refs.join(" · ") || "no cited refs"}
             </div>
           </div>
@@ -282,7 +282,7 @@ function Row({ item, inPlan, busy, canEdit, onToggle, onOpen, note }: {
         <button onClick={onToggle} disabled={busy} className="el-btn"
           style={{ background: "transparent", color: inPlan ? C.dim : C.accent,
                    border: `1px solid ${inPlan ? C.border3 : "rgba(240,166,60,.4)"}`,
-                   borderRadius: 6, padding: "7px 12px", fontSize: 12.5, fontFamily: sans,
+                   borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.sm, fontFamily: sans,
                    cursor: busy ? "wait" : "pointer", flex: "none", alignSelf: "center" }}>
           {inPlan ? "Drop" : "Add"}
         </button>

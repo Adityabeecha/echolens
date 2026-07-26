@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, setRole, setToken } from "../api";
-import { C, mono, sans } from "../theme";
+import { C, R, S, T, mono, sans } from "../theme";
 
 // A branded split sign-in: the left panel is a taste of the product (the lens
 // mark + a miniature reasoning trace), the right panel is the form. Collapses
@@ -58,16 +58,16 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
       >
         {narrow && <Wordmark />}
 
-        <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: "-0.01em", marginTop: narrow ? 28 : 0 }}>
+        <div style={{ fontSize: T.xl, fontWeight: 700, letterSpacing: "-0.01em", marginTop: narrow ? 28 : 0 }}>
           {mode === "login" ? "Sign in" : "Create your admin account"}
         </div>
-        <div style={{ fontSize: 13.5, color: C.muted, marginTop: 8, lineHeight: 1.5, maxWidth: 360 }}>
+        <div style={{ fontSize: T.base, color: C.muted, marginTop: S[2], lineHeight: "var(--el-lh-normal)", maxWidth: 360 }}>
           {mode === "login"
             ? "Pick up where the investigations left off."
             : "The first account becomes the workspace admin. You can add reviewers later."}
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 24, maxWidth: 360 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: S[3], marginTop: S[6], maxWidth: 360 }}>
           <Field label="Email">
             <input
               value={email}
@@ -91,7 +91,7 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
           </Field>
 
           {error && (
-            <div style={{ fontSize: 12.5, color: C.bad, background: "rgba(224,88,79,.08)", border: "1px solid rgba(224,88,79,.35)", borderRadius: 7, padding: "8px 11px", lineHeight: 1.4 }}>
+            <div style={{ fontSize: T.sm, color: C.bad, background: "rgba(224,88,79,.08)", border: "1px solid rgba(224,88,79,.35)", borderRadius: R.control, padding: `${S[2]} ${S[3]}`, lineHeight: "var(--el-lh-snug)" }}>
               {error}
             </div>
           )}
@@ -100,13 +100,13 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
             onClick={submit}
             disabled={busy || !email.trim() || !password}
             style={{
-              marginTop: 4,
-              padding: "12px 0",
-              borderRadius: 8,
+              marginTop: S[1],
+              padding: `${S[3]} 0`,
+              borderRadius: R.control,
               border: "none",
               background: C.accent,
               color: C.onAccent,
-              fontSize: 14,
+              fontSize: T.md,
               fontWeight: 600,
               cursor: email.trim() && password ? "pointer" : "not-allowed",
               opacity: email.trim() && password ? 1 : 0.5,
@@ -117,7 +117,7 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
           </button>
         </div>
 
-        <div style={{ marginTop: 22, fontSize: 12.5, color: C.dim, maxWidth: 360 }}>
+        <div style={{ marginTop: S[5], fontSize: T.sm, color: C.dim, maxWidth: 360 }}>
           {mode === "login" ? "First time setting this up? " : "Already have an account? "}
           <span
             onClick={() => {
@@ -150,7 +150,7 @@ function BrandPanel() {
         minWidth: 0,
         position: "relative",
         background: C.bgRaised,
-        padding: "56px 56px",
+        padding: `${S[12]} ${S[12]}`,
         display: "flex",
         flexDirection: "column",
         justifyContent: "center",
@@ -172,26 +172,26 @@ function BrandPanel() {
       />
       <div style={{ position: "relative", maxWidth: 460 }}>
         <Wordmark large />
-        <div style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.2, letterSpacing: "-0.02em", marginTop: 34, textWrap: "balance" as const }}>
+        <div style={{ fontSize: T.display, fontWeight: 700, lineHeight: "var(--el-lh-tight)", letterSpacing: "-0.02em", marginTop: S[8], textWrap: "balance" as const }}>
           Find the root cause<br />before the reviews pile up.
         </div>
-        <div style={{ fontSize: 14, color: C.muted, marginTop: 14, lineHeight: 1.6, maxWidth: 400 }}>
+        <div style={{ fontSize: T.md, color: C.muted, marginTop: S[3], lineHeight: "var(--el-lh-normal)", maxWidth: 400 }}>
           EchoLens watches your feedback, notices what's off, and investigates it
           the way an analyst would — every conclusion backed by evidence you can click.
         </div>
 
         {/* miniature reasoning trace */}
-        <div style={{ marginTop: 34, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ marginTop: S[8], display: "flex", flexDirection: "column", gap: S[2] }}>
           {steps.map((s, i) => (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: "56px 1fr", columnGap: 12, alignItems: "start" }}>
+            <div key={i} style={{ display: "grid", gridTemplateColumns: "56px 1fr", columnGap: S[3], alignItems: "start" }}>
               <div
                 style={{
                   fontFamily: mono,
-                  fontSize: 9,
+                  fontSize: T.micro,
                   letterSpacing: ".05em",
                   textAlign: "center",
-                  padding: "3px 0",
-                  borderRadius: 4,
+                  padding: `${S[1]} 0`,
+                  borderRadius: R.sm,
                   border: `1px solid ${s.color}`,
                   color: s.color,
                   background: C.bg,
@@ -201,8 +201,8 @@ function BrandPanel() {
               </div>
               <div
                 style={{
-                  fontSize: 12.5,
-                  lineHeight: 1.45,
+                  fontSize: T.sm,
+                  lineHeight: "var(--el-lh-snug)",
                   color: s.tag === "TOOL" ? C.info : C.text3,
                   fontFamily: s.mono ? mono : sans,
                   paddingTop: 2,
@@ -212,9 +212,9 @@ function BrandPanel() {
               </div>
             </div>
           ))}
-          <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 4, marginLeft: 68 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: S[2], marginTop: S[1], marginLeft: 68 }}>
             <div style={{ width: 6, height: 6, borderRadius: "50%", background: C.accent, animation: "elPulse 1.4s infinite" }} />
-            <span style={{ fontFamily: mono, fontSize: 9.5, letterSpacing: ".1em", color: C.accent }}>LIVE · EVERY STEP VISIBLE</span>
+            <span style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".1em", color: C.accent }}>LIVE · EVERY STEP VISIBLE</span>
           </div>
         </div>
       </div>
@@ -225,7 +225,7 @@ function BrandPanel() {
 function Wordmark({ large }: { large?: boolean }) {
   const d = large ? 34 : 26;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: S[3] }}>
       <div style={{ width: d, height: d, borderRadius: "50%", border: `2px solid ${C.accent}`, position: "relative", flex: "none" }}>
         <div style={{ position: "absolute", inset: large ? 6 : 5, borderRadius: "50%", background: "radial-gradient(circle at 35% 35%, #f7bd6a, #b06f1a)" }} />
       </div>
@@ -239,8 +239,8 @@ function Wordmark({ large }: { large?: boolean }) {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".1em", color: C.faint }}>{label.toUpperCase()}</span>
+    <label style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
+      <span style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".1em", color: C.faint }}>{label.toUpperCase()}</span>
       {children}
     </label>
   );
@@ -250,9 +250,9 @@ const inputStyle: React.CSSProperties = {
   width: "100%",
   background: C.bgRaised,
   border: `1px solid ${C.border3}`,
-  borderRadius: 8,
+  borderRadius: R.control,
   color: C.text,
   fontFamily: "inherit",
-  fontSize: 14,
-  padding: "11px 13px",
+  fontSize: T.md,
+  padding: `${S[3]} ${S[3]}`,
 };

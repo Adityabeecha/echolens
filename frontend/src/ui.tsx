@@ -148,7 +148,7 @@ export function Chip({
         border: `1px solid ${border}`,
         fontSize: T.sm,
         fontWeight: 500,
-        lineHeight: 1.4,
+        lineHeight: "var(--el-lh-snug)",
         color,
         whiteSpace: "nowrap",
       }}
@@ -429,7 +429,7 @@ export function ErrorState({
         alignItems: "flex-start",
       }}
     >
-      <span style={{ color: C.bad, marginTop: 1 }}>
+      <span style={{ color: C.bad, marginTop: 0 }}>
         <Icon name="warning" size={17} />
       </span>
       <div style={{ minWidth: 0 }}>

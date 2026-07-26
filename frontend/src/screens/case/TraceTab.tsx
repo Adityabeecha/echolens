@@ -3,7 +3,7 @@ import { Evidence, Hypothesis, Investigation, TraceStep, api, canReview } from "
 import { withToast } from "../../components/Toast";
 import { money } from "../../format";
 import { useTrace } from "../../hooks";
-import { C, KIND_COLOR, mono } from "../../theme";
+import { C, R, S, T, KIND_COLOR, mono } from "../../theme";
 import { Bar, Label } from "../../ui";
 
 interface Props {
@@ -66,14 +66,14 @@ export function TraceTab({ inv, onOpenEvidence, onReload }: Props) {
                   overflowX: "auto" }}>
       {/* left: hypotheses */}
       <div style={{ borderRight: `1px solid ${C.border}`, overflow: "auto", padding: 16 }}>
-        <Label style={{ marginBottom: 12 }}>HYPOTHESES · {inv.hypotheses.length}</Label>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <Label style={{ marginBottom: S[3] }}>HYPOTHESES · {inv.hypotheses.length}</Label>
+        <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
           {inv.hypotheses.map((h) => (
             <HypothesisCard key={h.id} h={h} selected={selHyp === h.id}
               onPick={() => setSelHyp((s) => (s === h.id ? null : h.id))} />
           ))}
           {inv.hypotheses.length === 0 && (
-            <div style={{ fontSize: 12.5, color: C.dim, lineHeight: 1.5 }}>
+            <div style={{ fontSize: T.sm, color: C.dim, lineHeight: "var(--el-lh-normal)" }}>
               No hypotheses yet — the first plan step proposes them.
             </div>
           )}
@@ -81,8 +81,8 @@ export function TraceTab({ inv, onOpenEvidence, onReload }: Props) {
       </div>
 
       {/* centre: reasoning trace */}
-      <div ref={traceRef} style={{ overflow: "auto", padding: "18px 26px", background: C.bg }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 14,
+      <div ref={traceRef} style={{ overflow: "auto", padding: `${S[4]} ${S[6]}`, background: C.bg }}>
+        <div style={{ display: "flex", alignItems: "center", gap: S[1], marginBottom: S[3],
                       maxWidth: 640 }}>
           <Label>REASONING TRACE</Label>
           <div style={{ flex: 1 }} />
@@ -107,17 +107,17 @@ export function TraceTab({ inv, onOpenEvidence, onReload }: Props) {
           )}
           {replayIdx === null && (
             <div onClick={() => setFollow((f) => !f)} className="el-btn"
-              style={{ fontFamily: mono, fontSize: 9.5, letterSpacing: ".06em", padding: "3px 8px",
-                       borderRadius: 4, color: follow ? C.accent : C.ghost, cursor: "pointer" }}>
+              style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".06em", padding: `${S[1]} ${S[2]}`,
+                       borderRadius: R.sm, color: follow ? C.accent : C.ghost, cursor: "pointer" }}>
               {follow ? "◉ FOLLOW" : "○ FOLLOW"}
             </div>
           )}
         </div>
 
         {selHyp && (
-          <div style={{ maxWidth: 640, marginBottom: 12, padding: "7px 12px",
+          <div style={{ maxWidth: 640, marginBottom: S[3], padding: `${S[2]} ${S[3]}`,
                         border: "1px solid rgba(240,166,60,.3)", background: "rgba(240,166,60,.05)",
-                        borderRadius: 6, fontFamily: mono, fontSize: 10.5, color: C.accent }}>
+                        borderRadius: R.control, fontFamily: mono, fontSize: T.micro, color: C.accent }}>
             Highlighting steps for {selHyp} — click the hypothesis again to clear
           </div>
         )}
@@ -128,7 +128,7 @@ export function TraceTab({ inv, onOpenEvidence, onReload }: Props) {
                       onOpenEvidence={onOpenEvidence} evidence={inv.evidence} />
           ))}
           {steps.length === 0 && (
-            <div style={{ color: C.dim, fontSize: 13 }}>
+            <div style={{ color: C.dim, fontSize: T.base }}>
               {running ? "Waiting for the first reasoning step…" : "No trace was recorded for this case."}
             </div>
           )}
@@ -137,22 +137,22 @@ export function TraceTab({ inv, onOpenEvidence, onReload }: Props) {
 
       {/* right: budget + controls */}
       <div style={{ borderLeft: `1px solid ${C.border}`, overflow: "auto", padding: 16,
-                    display: "flex", flexDirection: "column", gap: 16 }}>
+                    display: "flex", flexDirection: "column", gap: S[4] }}>
         <div>
-          <Label style={{ marginBottom: 10 }}>BUDGET</Label>
-          <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
+          <Label style={{ marginBottom: S[2] }}>BUDGET</Label>
+          <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
             <Meter label="Iterations" value={`${iter} / ${iterMax}`}
                    pct={iterMax ? (iter / iterMax) * 100 : 0} color={C.accent} />
             <Meter label="Tokens" value={`${(tok / 1000).toFixed(1)}k / ${(tokMax / 1000).toFixed(0)}k`}
                    pct={tokMax ? (tok / tokMax) * 100 : 0} color={C.info} />
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12,
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: T.sm,
                           color: C.muted }}>
               <span>Cost so far</span>
               <span style={{ fontFamily: mono, color: C.text }}>
                 {money(Number(inv.budget?.cost_usd ?? 0))}
               </span>
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12,
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: T.sm,
                           color: C.muted }}>
               <span>Tier</span>
               <span style={{ fontFamily: mono, color: C.text3 }}>{inv.budget_tier}</span>
@@ -163,8 +163,8 @@ export function TraceTab({ inv, onOpenEvidence, onReload }: Props) {
         <div style={{ height: 1, background: C.border }} />
 
         <div>
-          <Label style={{ marginBottom: 10 }}>SOURCES TOUCHED</Label>
-          <div style={{ display: "flex", flexDirection: "column", gap: 7, fontSize: 12.5 }}>
+          <Label style={{ marginBottom: S[2] }}>SOURCES TOUCHED</Label>
+          <div style={{ display: "flex", flexDirection: "column", gap: S[2], fontSize: T.sm }}>
             {["play_store", "github", "release_notes", "reddit"].map((src) => {
               const n = sourcesTouched.get(src) ?? 0;
               return (
@@ -183,7 +183,7 @@ export function TraceTab({ inv, onOpenEvidence, onReload }: Props) {
         {canReview() && running && (
           <>
             <div style={{ height: 1, background: C.border }} />
-            <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ display: "flex", gap: S[2] }}>
               {inv.paused ? (
                 <SecondaryBtn onClick={() =>
                   control("resume", () => api.resume(inv.id), "Investigation resumed.")}>
@@ -211,7 +211,7 @@ export function TraceTab({ inv, onOpenEvidence, onReload }: Props) {
 
 function replayBtn(active: boolean): React.CSSProperties {
   return {
-    fontFamily: mono, fontSize: 9.5, letterSpacing: ".04em", padding: "3px 8px", borderRadius: 4,
+    fontFamily: mono, fontSize: T.micro, letterSpacing: ".04em", padding: `${S[1]} ${S[2]}`, borderRadius: R.sm,
     border: `1px solid ${active ? C.accent : C.border3}`,
     background: active ? "rgba(240,166,60,.12)" : "transparent",
     color: active ? C.accent : C.muted, cursor: "pointer",
@@ -223,10 +223,10 @@ function SecondaryBtn({ children, onClick, active }: {
 }) {
   return (
     <button onClick={onClick} className="el-btn"
-      style={{ flex: 1, padding: "8px 0", borderRadius: 7,
+      style={{ flex: 1, padding: `${S[2]} 0`, borderRadius: R.control,
                border: `1px solid ${active ? "rgba(76,192,119,.4)" : C.border4}`,
                background: active ? "rgba(76,192,119,.08)" : C.hover,
-               color: active ? C.good : C.text, fontSize: 12.5, fontWeight: 500,
+               color: active ? C.good : C.text, fontSize: T.sm, fontWeight: 500,
                cursor: "pointer" }}>
       {children}
     </button>
@@ -238,8 +238,8 @@ function Meter({ label, value, pct, color }: {
 }) {
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12,
-                    color: C.muted, marginBottom: 4 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: T.sm,
+                    color: C.muted, marginBottom: S[1] }}>
         <span>{label}</span>
         <span style={{ fontFamily: mono }}>{value}</span>
       </div>
@@ -258,25 +258,25 @@ function HypothesisCard({ h, selected, onPick }: {
       tabIndex={0}
       aria-pressed={selected}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPick(); } }}
-      style={{ padding: "13px 14px", background: C.card,
+      style={{ padding: `${S[3]} ${S[3]}`, background: C.card,
                border: `1px solid ${selected ? C.accent : h.status === "active" ? "rgba(240,166,60,.45)" : C.border2}`,
-               borderRadius: 9, opacity: selected || h.status !== "rejected" ? 1 : 0.62,
+               borderRadius: R.control, opacity: selected || h.status !== "rejected" ? 1 : 0.62,
                cursor: "pointer" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
-        <span style={{ fontFamily: mono, fontSize: 11, color }}>{h.id}</span>
-        <span style={{ fontFamily: mono, fontSize: 9.5, letterSpacing: ".06em", padding: "2px 6px",
-                       borderRadius: 3, background: `${color}1f`, color }}>
+      <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[2] }}>
+        <span style={{ fontFamily: mono, fontSize: T.xs, color }}>{h.id}</span>
+        <span style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".06em", padding: `0 ${S[1]}`,
+                       borderRadius: R.sm, background: `${color}1f`, color }}>
           {h.status.toUpperCase()}
         </span>
       </div>
-      <div style={{ fontSize: 13, lineHeight: 1.45, color: C.text2 }}>{h.statement}</div>
-      <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 11 }}>
+      <div style={{ fontSize: T.base, lineHeight: "var(--el-lh-snug)", color: C.text2 }}>{h.statement}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: S[2], marginTop: S[3] }}>
         <div style={{ flex: 1 }}><Bar pct={h.confidence * 100} color={color} /></div>
-        <span style={{ fontFamily: mono, fontSize: 11.5, color, width: 32, textAlign: "right" }}>
+        <span style={{ fontFamily: mono, fontSize: T.xs, color, width: 32, textAlign: "right" }}>
           {h.confidence.toFixed(2)}
         </span>
       </div>
-      <div style={{ fontFamily: mono, fontSize: 10.5, color: C.dim, marginTop: 7 }}>
+      <div style={{ fontFamily: mono, fontSize: T.micro, color: C.dim, marginTop: S[2] }}>
         evidence +{h.evidence_for.length} for · −{h.evidence_against.length} against
       </div>
     </div>
@@ -299,11 +299,11 @@ function TraceRow({ step, last, selHyp, onOpenEvidence, evidence }: {
   const dim = !selHyp ? 1 : stepHyp === selHyp ? 1 : stepHyp ? 0.3 : 0.55;
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "52px 1fr", columnGap: 14, opacity: dim,
+    <div style={{ display: "grid", gridTemplateColumns: "52px 1fr", columnGap: S[3], opacity: dim,
                   transition: "opacity .25s" }}>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-        <div style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".05em", padding: "3px 0",
-                      width: 44, textAlign: "center", borderRadius: 4, border: `1px solid ${color}`,
+        <div style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".05em", padding: `${S[1]} 0`,
+                      width: 44, textAlign: "center", borderRadius: R.sm, border: `1px solid ${color}`,
                       color, background: C.bgRaised, flex: "none" }}>
           {step.kind}
         </div>
@@ -311,29 +311,29 @@ function TraceRow({ step, last, selHyp, onOpenEvidence, evidence }: {
                       minHeight: 14 }} />
       </div>
       <div style={{ paddingBottom: 16, minWidth: 0 }}>
-        <div style={{ padding: "11px 14px", background: C.card, border: `1px solid ${C.border2}`,
-                      borderRadius: 8 }}>
+        <div style={{ padding: `${S[3]} ${S[3]}`, background: C.card, border: `1px solid ${C.border2}`,
+                      borderRadius: R.control }}>
           {step.kind === "THINK" && (
-            <div style={{ fontSize: 13, lineHeight: 1.5, color: C.text3 }}>{c.text}</div>
+            <div style={{ fontSize: T.base, lineHeight: "var(--el-lh-normal)", color: C.text3 }}>{c.text}</div>
           )}
           {step.kind === "TOOL" && (
             <>
-              <div style={{ fontFamily: mono, fontSize: 12, color: C.info,
+              <div style={{ fontFamily: mono, fontSize: T.sm, color: C.info,
                             wordBreak: "break-all" }}>{c.code}</div>
-              <div style={{ fontFamily: mono, fontSize: 11, color: C.muted, marginTop: 8 }}>
+              <div style={{ fontFamily: mono, fontSize: T.xs, color: C.muted, marginTop: S[2] }}>
                 → {c.preview}
               </div>
             </>
           )}
           {step.kind === "EVID" && (
             <>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
-                <span style={{ fontFamily: mono, fontSize: 11, color: C.accent }}>{c.id}</span>
-                <span style={{ fontFamily: mono, fontSize: 9.5, padding: "2px 7px",
-                               border: `1px solid ${C.border3}`, borderRadius: 4, color: C.muted }}>
+              <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[2] }}>
+                <span style={{ fontFamily: mono, fontSize: T.xs, color: C.accent }}>{c.id}</span>
+                <span style={{ fontFamily: mono, fontSize: T.micro, padding: `0 ${S[2]}`,
+                               border: `1px solid ${C.border3}`, borderRadius: R.sm, color: C.muted }}>
                   {c.source}
                 </span>
-                <span style={{ fontFamily: mono, fontSize: 10, color: C.good, marginLeft: "auto" }}>
+                <span style={{ fontFamily: mono, fontSize: T.micro, color: C.good, marginLeft: "auto" }}>
                   supports {(c.supports ?? []).join(", ")}
                 </span>
               </div>
@@ -351,7 +351,7 @@ function TraceRow({ step, last, selHyp, onOpenEvidence, evidence }: {
                   const ev = evidence.find((e) => e.id === c.id);
                   if (ev) onOpenEvidence(ev);
                 }}
-                style={{ fontSize: 13, lineHeight: 1.5, color: C.text2,
+                style={{ fontSize: T.base, lineHeight: "var(--el-lh-normal)", color: C.text2,
                          borderLeft: `2px solid ${C.border4}`, paddingLeft: 10, cursor: "pointer" }}>
                 “{c.text}”
               </div>
@@ -359,56 +359,56 @@ function TraceRow({ step, last, selHyp, onOpenEvidence, evidence }: {
           )}
           {step.kind === "UPDT" && (
             <>
-              <div style={{ fontFamily: mono, fontSize: 12.5,
+              <div style={{ fontFamily: mono, fontSize: T.sm,
                             color: c.good === false ? C.bad : C.good }}>{c.code}</div>
-              <div style={{ fontSize: 12.5, color: C.muted, marginTop: 5 }}>{c.text}</div>
+              <div style={{ fontSize: T.sm, color: C.muted, marginTop: S[1] }}>{c.text}</div>
             </>
           )}
           {step.kind === "FAIL" && (
             <>
-              <div style={{ fontFamily: mono, fontSize: 12, color: C.info,
+              <div style={{ fontFamily: mono, fontSize: T.sm, color: C.info,
                             wordBreak: "break-all" }}>{c.code}</div>
-              <div style={{ marginTop: 8, padding: "8px 11px", background: "rgba(224,88,79,.07)",
-                            border: "1px solid rgba(224,88,79,.35)", borderRadius: 6,
-                            fontFamily: mono, fontSize: 11, color: C.bad }}>
+              <div style={{ marginTop: S[2], padding: `${S[2]} ${S[3]}`, background: "rgba(224,88,79,.07)",
+                            border: "1px solid rgba(224,88,79,.35)", borderRadius: R.control,
+                            fontFamily: mono, fontSize: T.xs, color: C.bad }}>
                 ✕ {c.error}
               </div>
-              <div style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>{c.text}</div>
+              <div style={{ fontSize: T.sm, color: C.muted, marginTop: S[1] }}>{c.text}</div>
             </>
           )}
           {step.kind === "SPEC" && (
             <>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                <span style={{ fontFamily: mono, fontSize: 11, color: C.accentHi }}>
+              <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[1] }}>
+                <span style={{ fontFamily: mono, fontSize: T.xs, color: C.accentHi }}>
                   {String(c.specialist ?? "specialist").replace(/_/g, " ")}
                 </span>
                 {c.focus ? (
-                  <span style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>
+                  <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint }}>
                     · {String(c.focus)}
                   </span>
                 ) : null}
               </div>
-              <div style={{ fontSize: 13, lineHeight: 1.5, color: C.text3 }}>{c.text}</div>
+              <div style={{ fontSize: T.base, lineHeight: "var(--el-lh-normal)", color: C.text3 }}>{c.text}</div>
             </>
           )}
           {step.kind === "REFUTE" && (
             <>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                <span style={{ fontFamily: mono, fontSize: 11, color: C.info }}>
+              <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[1] }}>
+                <span style={{ fontFamily: mono, fontSize: T.xs, color: C.info }}>
                   attempted refutation{c.hypothesis ? ` · ${c.hypothesis}` : ""}
                 </span>
-                <span style={{ fontFamily: mono, fontSize: 9.5, padding: "2px 7px", borderRadius: 4,
+                <span style={{ fontFamily: mono, fontSize: T.micro, padding: `0 ${S[2]}`, borderRadius: R.sm,
                                marginLeft: "auto",
                                background: c.contradicted ? `${C.bad}1f` : `${C.good}1f`,
                                color: c.contradicted ? C.bad : C.good }}>
                   {c.contradicted ? "counter-evidence found" : "hypothesis survived"}
                 </span>
               </div>
-              <div style={{ fontSize: 13, lineHeight: 1.5, color: C.text3 }}>{c.text}</div>
+              <div style={{ fontSize: T.base, lineHeight: "var(--el-lh-normal)", color: C.text3 }}>{c.text}</div>
             </>
           )}
           {step.kind === "CHECK" && (
-            <div style={{ fontFamily: mono, fontSize: 11.5, color: C.faint }}>{c.text}</div>
+            <div style={{ fontFamily: mono, fontSize: T.xs, color: C.faint }}>{c.text}</div>
           )}
         </div>
       </div>

@@ -1,6 +1,6 @@
 import { api } from "../api";
 import { useAsync } from "../hooks";
-import { C, mono } from "../theme";
+import { C, MEASURE, R, S, T, mono } from "../theme";
 import { Centered, EmptyState, ErrorState, Label, ScreenHeader } from "../ui";
 
 interface Props {
@@ -30,13 +30,13 @@ export function Patterns({ onGoMemory, onGoCases }: Props) {
         right={
           <span onClick={onGoMemory} className="el-btn" role="button" tabIndex={0}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onGoMemory(); }}
-            style={{ fontSize: 12.5, color: C.dim, cursor: "pointer" }}>
+            style={{ fontSize: T.sm, color: C.dim, cursor: "pointer" }}>
             What else this product has taught EchoLens →
           </span>
         }
       />
-      <div style={{ flex: 1, overflow: "auto", padding: "22px 28px" }}>
-        <p style={{ fontSize: 13.5, color: C.muted, maxWidth: 720, lineHeight: 1.6, marginTop: 0 }}>
+      <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>
+        <p style={{ fontSize: T.base, color: C.muted, maxWidth: 720, lineHeight: "var(--el-lh-normal)", marginTop: 0 }}>
           Every pattern below is built from a fix that was <span style={{ color: C.good }}>verified to work</span>. The
           investigator uses a matching pattern as a proven starting prior, so a recurring problem shortcuts straight to
           the hypothesis that already worked.
@@ -50,21 +50,21 @@ export function Patterns({ onGoMemory, onGoCases }: Props) {
             onAction={onGoCases}
           />
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 820 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: S[3], maxWidth: MEASURE }}>
             {data.patterns.map((p, i) => (
-              <div key={i} style={{ padding: "16px 18px", background: C.card, border: `1px solid ${C.border2}`, borderRadius: 12 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+              <div key={i} style={{ padding: `${S[4]} ${S[4]}`, background: C.card, border: `1px solid ${C.border2}`, borderRadius: R.card }}>
+                <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[3], flexWrap: "wrap" }}>
                   {p.terms.map((t) => (
-                    <span key={t} style={{ fontFamily: mono, fontSize: 11, padding: "3px 9px", borderRadius: 20, background: C.hover, border: `1px solid ${C.border3}`, color: C.text3 }}>
+                    <span key={t} style={{ fontFamily: mono, fontSize: T.xs, padding: `${S[1]} ${S[2]}`, borderRadius: R.pill, background: C.hover, border: `1px solid ${C.border3}`, color: C.text3 }}>
                       {t}
                     </span>
                   ))}
                   {p.cross_product && p.from_product && (
-                    <span style={{ fontFamily: mono, fontSize: 10.5, padding: "3px 9px", borderRadius: 20, background: `${C.info}1f`, border: `1px solid ${C.info}66`, color: C.info }}>
+                    <span style={{ fontFamily: mono, fontSize: T.micro, padding: `${S[1]} ${S[2]}`, borderRadius: R.pill, background: `${C.info}1f`, border: `1px solid ${C.info}66`, color: C.info }}>
                       proven on {p.from_product}
                     </span>
                   )}
-                  <span style={{ fontFamily: mono, fontSize: 10.5, padding: "3px 9px", borderRadius: 20, background: `${C.good}1f`, border: `1px solid ${C.good}66`, color: C.good, marginLeft: "auto" }}>
+                  <span style={{ fontFamily: mono, fontSize: T.micro, padding: `${S[1]} ${S[2]}`, borderRadius: R.pill, background: `${C.good}1f`, border: `1px solid ${C.good}66`, color: C.good, marginLeft: "auto" }}>
                     verified {p.verified_count}×
                   </span>
                 </div>
@@ -85,14 +85,14 @@ function Flow({ trigger, cause, fix }: { trigger: string; cause: string; fix: st
     ["FIX THAT WORKED", fix, C.good],
   ];
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
       {steps.map(([k, v, color], i) => (
-        <div key={k} style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 12, alignItems: "baseline" }}>
-          <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".08em", color }}>
+        <div key={k} style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: S[3], alignItems: "baseline" }}>
+          <div style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".08em", color }}>
             {i > 0 ? "↓ " : ""}
             {k}
           </div>
-          <div style={{ fontSize: 13.5, color: C.text2, lineHeight: 1.45 }}>{v || "—"}</div>
+          <div style={{ fontSize: T.base, color: C.text2, lineHeight: "var(--el-lh-snug)" }}>{v || "—"}</div>
         </div>
       ))}
     </div>

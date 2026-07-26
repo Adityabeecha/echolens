@@ -1,8 +1,8 @@
 import { CaseRow } from "../api";
 import { age, impactLine } from "../format";
 import { SEVERITY, primaryActionFor, statusMeta } from "../status";
-import { C, mono, sans } from "../theme";
-import { Spark } from "../ui";
+import { C, R, S, T, mono } from "../theme";
+import { Button, Spark } from "../ui";
 
 /**
  * The one case card.
@@ -47,52 +47,54 @@ export function CaseCard({
       onKeyDown={(e) => { if (clickable && (e.key === "Enter" || e.key === " ")) open(); }}
       style={{ display: "flex", alignItems: "stretch", overflow: "hidden" }}
     >
-      <div style={{ width: 3, flex: "none", background: stripe }} />
+      <span aria-hidden style={{ width: 3, flex: "none", background: stripe }} />
       <div
         style={{
-          flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 14,
-          padding: compact ? "11px 15px" : "15px 18px",
+          flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: S[4],
+          padding: compact ? `${S[3]} ${S[4]}` : `${S[4]} ${S[5]}`,
         }}
       >
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
+            className={compact ? "el-truncate" : undefined}
             style={{
-              fontSize: compact ? 13.5 : 14.5, fontWeight: 600, color: C.text,
-              lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis",
-              whiteSpace: compact ? "nowrap" : "normal",
+              fontSize: compact ? T.base : T.md, fontWeight: 600, color: C.text,
+              lineHeight: "var(--el-lh-snug)",
             }}
           >
             {row.title}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 7,
+          <div style={{ display: "flex", alignItems: "center", gap: S[2], marginTop: S[2],
                         flexWrap: "wrap" }}>
             <StatusChip status={row.status} />
             {sev && (
-              <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".04em",
-                             padding: "2px 7px", borderRadius: 4, color: sev.color,
+              <span style={{ fontFamily: mono, fontSize: T.micro,
+                             letterSpacing: "var(--el-ls-wide)",
+                             padding: `2px ${S[2]}`, borderRadius: R.sm, color: sev.color,
                              border: `1px solid ${sev.color}55`, textTransform: "uppercase" }}>
                 {sev.label}
               </span>
             )}
             {impact && (
-              <span style={{ fontSize: 12, color: C.muted }}>{impact}</span>
+              <span style={{ fontSize: T.sm, color: C.muted }}>{impact}</span>
             )}
             {row.iterations && (
-              <span style={{ fontFamily: mono, fontSize: 10.5, color: C.accent }}>
+              <span className="el-num" style={{ fontSize: T.xs, color: C.accent }}>
                 iteration {row.iterations.done}/{row.iterations.max}
               </span>
             )}
             {row.position != null && (
-              <span style={{ fontFamily: mono, fontSize: 10.5, color: C.dim }}>
+              <span className="el-num" style={{ fontSize: T.xs, color: C.dim }}>
                 position {row.position}
               </span>
             )}
-            <span style={{ fontFamily: mono, fontSize: 10.5, color: C.faint }}>
+            <span className="el-mono" style={{ fontSize: T.xs, color: C.faint }}>
               {age(row.age_days)}
             </span>
           </div>
           {!compact && row.why && (
-            <div style={{ fontSize: 12.5, color: C.dim, marginTop: 6, lineHeight: 1.5 }}>
+            <div style={{ fontSize: T.sm, color: C.dim, marginTop: S[2],
+                          lineHeight: "var(--el-lh-normal)" }}>
               {row.why}
             </div>
           )}
@@ -103,21 +105,15 @@ export function CaseCard({
                  title={`Weekly complaint volume for this case, last ${row.spark.length} weeks`} />
         )}
 
-        <button
+        <Button
           onClick={(e) => { e.stopPropagation(); (onAction ?? onOpen)?.(row); }}
-          disabled={busy}
-          className="el-btn"
-          style={{
-            flex: "none", background: meta.needsYou ? C.accent : "transparent",
-            color: meta.needsYou ? C.onAccent : C.accent,
-            border: meta.needsYou ? "none" : `1px solid rgba(240,166,60,.4)`,
-            borderRadius: 7, padding: "8px 14px", fontSize: 12.5,
-            fontWeight: meta.needsYou ? 600 : 500, fontFamily: sans,
-            cursor: busy ? "wait" : "pointer",
-          }}
+          loading={busy}
+          size="sm"
+          variant={meta.needsYou ? "primary" : "ghost"}
+          style={{ flex: "none" }}
         >
-          {busy ? "…" : action}
-        </button>
+          {action}
+        </Button>
       </div>
     </div>
   );
@@ -128,14 +124,17 @@ export function StatusChip({ status }: { status: string }) {
   return (
     <span
       style={{
-        display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px",
-        borderRadius: 20, background: meta.bg, border: `1px solid ${meta.border}`,
-        fontSize: 11.5, fontWeight: 500, color: meta.color, whiteSpace: "nowrap",
+        display: "inline-flex", alignItems: "center", gap: S[2],
+        padding: `2px ${S[2]}`,
+        borderRadius: R.pill, background: meta.bg, border: `1px solid ${meta.border}`,
+        fontSize: T.xs, fontWeight: 500, color: meta.color, whiteSpace: "nowrap",
+        lineHeight: "var(--el-lh-normal)",
       }}
     >
       {meta.pulse && (
-        <span style={{ width: 6, height: 6, borderRadius: "50%", background: meta.color,
-                       animation: "elPulse 1.4s infinite", flex: "none" }} />
+        <span aria-hidden style={{ width: 6, height: 6, borderRadius: "50%",
+                       background: meta.color,
+                       animation: "elPulse 1.6s infinite", flex: "none" }} />
       )}
       {meta.label}
     </span>

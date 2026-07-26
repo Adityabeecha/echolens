@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Evidence, ProductRow, api, getToken, onAuthError, setActiveProduct, setToken } from "./api";
 import { CaseTab, GLOBAL_SCREENS, Screen, caseTabFor } from "./nav";
 import { useRouter } from "./router";
-import { C, sans } from "./theme";
+import { C, T, sans } from "./theme";
 import { Sidebar } from "./components/Sidebar";
 import { EvidenceSheet } from "./components/EvidenceSheet";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -146,7 +146,7 @@ export default function App() {
   if (!booted) {
     return (
       <div style={{ height: "100vh", background: C.bg, color: C.dim, fontFamily: sans,
-                    display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>
+                    display: "flex", alignItems: "center", justifyContent: "center", fontSize: T.md }}>
         Loading your workspace…
       </div>
     );
@@ -169,7 +169,7 @@ export default function App() {
         background: C.bg,
         color: C.text,
         fontFamily: sans,
-        fontSize: 14,
+        fontSize: T.md,
         overflow: "hidden",
       }}
     >

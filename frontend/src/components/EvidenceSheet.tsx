@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Evidence } from "../api";
-import { C, mono } from "../theme";
+import { C, R, S, T, mono } from "../theme";
 
 export function EvidenceSheet({ evidence, onClose }: { evidence: Evidence | null; onClose: () => void }) {
   useEffect(() => {
@@ -34,23 +34,23 @@ export function EvidenceSheet({ evidence, onClose }: { evidence: Evidence | null
           padding: 22,
           display: "flex",
           flexDirection: "column",
-          gap: 14,
+          gap: S[3],
           boxShadow: "-20px 0 50px rgba(0,0,0,.45)",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontFamily: mono, fontSize: 13, color: C.accent }}>{evidence.id}</span>
-          <span style={{ fontFamily: mono, fontSize: 10, padding: "2px 8px", border: `1px solid ${C.border3}`, borderRadius: 4, color: C.muted, textTransform: "uppercase" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
+          <span style={{ fontFamily: mono, fontSize: T.base, color: C.accent }}>{evidence.id}</span>
+          <span style={{ fontFamily: mono, fontSize: T.micro, padding: `0 ${S[2]}`, border: `1px solid ${C.border3}`, borderRadius: R.sm, color: C.muted, textTransform: "uppercase" }}>
             {evidence.source}
           </span>
-          <button onClick={onClose} style={{ marginLeft: "auto", background: "none", border: "none", color: C.muted, fontSize: 16, cursor: "pointer" }}>
+          <button onClick={onClose} style={{ marginLeft: "auto", background: "none", border: "none", color: C.muted, fontSize: T.lg, cursor: "pointer" }}>
             ✕
           </button>
         </div>
-        <div style={{ padding: 16, background: C.bgRaised, border: `1px solid ${C.border}`, borderRadius: 9, fontSize: 13.5, lineHeight: 1.65, color: C.text2 }}>
+        <div style={{ padding: 16, background: C.bgRaised, border: `1px solid ${C.border}`, borderRadius: R.control, fontSize: T.base, lineHeight: "var(--el-lh-normal)", color: C.text2 }}>
           “{evidence.snippet}”
         </div>
-        <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.7 }}>
+        <div style={{ fontSize: T.sm, color: C.muted, lineHeight: "var(--el-lh-normal)" }}>
           <div>
             <span style={{ color: C.faint }}>Ref</span> — {evidence.ref}
           </div>
@@ -66,7 +66,7 @@ export function EvidenceSheet({ evidence, onClose }: { evidence: Evidence | null
             </div>
           )}
         </div>
-        <div style={{ fontSize: 11.5, color: C.faint, fontStyle: "italic" }}>
+        <div style={{ fontSize: T.xs, color: C.faint, fontStyle: "italic" }}>
           Raw source preserved verbatim. EchoLens never paraphrases evidence into the record. Press Esc to close.
         </div>
       </div>

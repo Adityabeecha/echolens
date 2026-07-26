@@ -47,7 +47,7 @@ function ProductSwitcher({ products, activeId, onSwitch, onAdd, onDelete }: {
         <span style={{ minWidth: 0, flex: 1 }}>
           <span className="el-truncate" style={{ display: "block", fontSize: T.sm,
                         fontWeight: 600, color: C.text }}>{active.name}</span>
-          <span style={{ display: "block", fontFamily: mono, fontSize: 9, color: C.faint,
+          <span style={{ display: "block", fontFamily: mono, fontSize: T.micro, color: C.faint,
                          letterSpacing: "var(--el-ls-wide)" }}>
             {active.is_demo ? "DEMO PRODUCT" : "ACTIVE PRODUCT"}
           </span>
@@ -176,7 +176,7 @@ export function Sidebar({
         <span>
           <span style={{ display: "block", fontWeight: 700, fontSize: T.md,
                          letterSpacing: "var(--el-ls-tight)", color: C.text }}>EchoLens</span>
-          <span style={{ display: "block", fontFamily: mono, fontSize: 9, color: C.faint,
+          <span style={{ display: "block", fontFamily: mono, fontSize: T.micro, color: C.faint,
                          letterSpacing: "var(--el-ls-wide)" }}>
             FEEDBACK FORENSICS
           </span>
@@ -212,7 +212,7 @@ export function Sidebar({
                          onDelete={onDeleteProduct} />
       )}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 2,
+      <div style={{ display: "flex", flexDirection: "column", gap: 0,
                     padding: `0 ${S[3]}`, overflow: "auto" }}>
         {PRIMARY.map((n) => (
           <NavRow key={n.key} item={n} active={isActive(n.key)} onClick={() => go(n.key)} />
@@ -260,7 +260,7 @@ export function Sidebar({
           SYSTEM
         </button>
         {showSystem && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
             {SYSTEM.map((n) => (
               <NavRow key={n.key} item={n} active={isActive(n.key)} small
                       onClick={() => go(n.key)} />

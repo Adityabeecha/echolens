@@ -2,7 +2,7 @@ import { useState } from "react";
 import { FixStatus, Investigation, api, canReview } from "../../api";
 import { withToast } from "../../components/Toast";
 import { when } from "../../format";
-import { C, mono } from "../../theme";
+import { C, MEASURE, R, S, T, mono } from "../../theme";
 import { EmptyState, Label } from "../../ui";
 
 interface Props {
@@ -50,7 +50,7 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
 
   if (!f) {
     return (
-      <div style={{ flex: 1, overflow: "auto", padding: "24px 28px" }}>
+      <div style={{ flex: 1, overflow: "auto", padding: `${S[6]} ${S[6]}` }}>
         <EmptyState
           title="Nothing to file yet"
           body="A case needs a finding before it can become a ticket. Check the Investigation trace to see where this one stands."
@@ -97,17 +97,17 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
 
   return (
     <div style={{ flex: 1, overflow: "auto" }}>
-      <div style={{ maxWidth: 820, padding: "24px 28px 60px" }}>
-        <Label style={{ marginBottom: 10 }}>THE TICKET</Label>
+      <div style={{ maxWidth: MEASURE, padding: `${S[6]} ${S[6]} ${S[12]}` }}>
+        <Label style={{ marginBottom: S[2] }}>THE TICKET</Label>
         {fix?.issue_url ? (
-          <div style={{ padding: "15px 18px", background: C.card, border: `1px solid ${C.border2}`,
-                        borderRadius: 11, display: "flex", alignItems: "center", gap: 12,
+          <div style={{ padding: `${S[4]} ${S[4]}`, background: C.card, border: `1px solid ${C.border2}`,
+                        borderRadius: R.card, display: "flex", alignItems: "center", gap: S[3],
                         flexWrap: "wrap" }}>
-            <span style={{ fontSize: 13.5, color: C.text2 }}>
+            <span style={{ fontSize: T.base, color: C.text2 }}>
               Filed as issue #{fix.issue_number}
             </span>
             <a href={fix.issue_url} target="_blank" rel="noreferrer"
-              style={{ fontFamily: mono, fontSize: 12, color: C.info, textDecoration: "none" }}>
+              style={{ fontFamily: mono, fontSize: T.sm, color: C.info, textDecoration: "none" }}>
               open on GitHub ↗
             </a>
             <div style={{ flex: 1 }} />
@@ -115,14 +115,14 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
               style={ghost}>{busy === "copy" ? "Copying…" : "Copy as issue"}</button>
           </div>
         ) : (
-          <div style={{ padding: "15px 18px", background: C.card, border: `1px solid ${C.border2}`,
-                        borderRadius: 11 }}>
-            <div style={{ fontSize: 13.5, color: C.text3 }}>Not filed yet.</div>
-            <div style={{ fontSize: 12.5, color: C.dim, marginTop: 5, lineHeight: 1.55 }}>
+          <div style={{ padding: `${S[4]} ${S[4]}`, background: C.card, border: `1px solid ${C.border2}`,
+                        borderRadius: R.card }}>
+            <div style={{ fontSize: T.base, color: C.text3 }}>Not filed yet.</div>
+            <div style={{ fontSize: T.sm, color: C.dim, marginTop: S[1], lineHeight: "var(--el-lh-normal)" }}>
               Filing it links the fix to the complaints it should stop, so EchoLens can tell you
               later whether it actually worked.
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 13,
+            <div style={{ display: "flex", alignItems: "center", gap: S[2], marginTop: S[3],
                           flexWrap: "wrap" }}>
               <button onClick={copyIssue} disabled={!!busy} className="el-btn" style={ghost}>
                 {busy === "copy" ? "Copying…" : "Copy as issue"}
@@ -130,7 +130,7 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
               {canCreate && (
                 <button onClick={createIssue} disabled={!!busy} className="el-btn"
                   style={{ background: C.accent, color: C.onAccent, border: "none",
-                           borderRadius: 7, padding: "8px 14px", fontSize: 13, fontWeight: 600,
+                           borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base, fontWeight: 600,
                            cursor: "pointer" }}>
                   {busy === "create" ? "Creating…" : "Create GitHub issue"}
                 </button>
@@ -152,21 +152,21 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
           />
         ) : (
           <>
-            <div style={{ padding: "16px 18px", background: C.card,
-                          border: `1px solid ${meta.color}55`, borderRadius: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <span style={{ fontFamily: mono, fontSize: 11, padding: "3px 10px",
-                               borderRadius: 20, background: `${meta.color}1f`,
+            <div style={{ padding: `${S[4]} ${S[4]}`, background: C.card,
+                          border: `1px solid ${meta.color}55`, borderRadius: R.card }}>
+              <div style={{ display: "flex", alignItems: "center", gap: S[2], flexWrap: "wrap" }}>
+                <span style={{ fontFamily: mono, fontSize: T.xs, padding: `${S[1]} ${S[2]}`,
+                               borderRadius: R.pill, background: `${meta.color}1f`,
                                border: `1px solid ${meta.color}66`, color: meta.color }}>
                   {meta.label}
                 </span>
                 {fix.chart?.fix_date && (
-                  <span style={{ fontSize: 12.5, color: C.muted }}>
+                  <span style={{ fontSize: T.sm, color: C.muted }}>
                     fix shipped {when(fix.chart.fix_date)}
                   </span>
                 )}
               </div>
-              <div style={{ fontSize: 13, color: C.text3, marginTop: 9, lineHeight: 1.55 }}>
+              <div style={{ fontSize: T.base, color: C.text3, marginTop: S[2], lineHeight: "var(--el-lh-normal)" }}>
                 {meta.body}
               </div>
               {fix.chart && (fix.chart.before.length > 0 || fix.chart.after.length > 0) && (
@@ -176,7 +176,7 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
             {fix.status === "confirmed" && (
               <div onClick={onGoPatterns} className="el-btn" role="button" tabIndex={0}
                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onGoPatterns(); }}
-                style={{ marginTop: 12, fontSize: 12.5, color: C.dim, cursor: "pointer" }}>
+                style={{ marginTop: S[3], fontSize: T.sm, color: C.dim, cursor: "pointer" }}>
                 This confirmed fix taught EchoLens a pattern — see Patterns →
               </div>
             )}
@@ -189,14 +189,14 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
 
 const ghost: React.CSSProperties = {
   background: "transparent", color: C.text2, border: `1px solid ${C.border3}`,
-  borderRadius: 7, padding: "8px 14px", fontSize: 13, cursor: "pointer",
+  borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base, cursor: "pointer",
 };
 
 function BeforeAfterChart({ chart }: { chart: NonNullable<FixStatus["chart"]> }) {
   const max = Math.max(1, ...chart.before.map((p) => p.count), ...chart.after.map((p) => p.count));
   const Bars = ({ points, color }: { points: { date: string; count: number }[]; color: string }) => (
     <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 60 }}>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 0, height: 60 }}>
         {points.map((p) => (
           <div key={p.date} title={`${p.date}: ${p.count}`}
             style={{ flex: 1, height: `${Math.max(2, (p.count / max) * 100)}%`, background: color,
@@ -207,20 +207,20 @@ function BeforeAfterChart({ chart }: { chart: NonNullable<FixStatus["chart"]> })
   );
   const rate = (r: number | null) => (r == null ? "—" : `${r.toFixed(1)}/day`);
   return (
-    <div style={{ marginTop: 14 }}>
-      <div style={{ fontSize: 12.5, color: C.muted, marginBottom: 10 }}>
+    <div style={{ marginTop: S[3] }}>
+      <div style={{ fontSize: T.sm, color: C.muted, marginBottom: S[2] }}>
         Complaint volume for “{chart.terms.join(", ")}” around the fix.
       </div>
-      <div style={{ display: "flex", gap: 16, alignItems: "stretch" }}>
+      <div style={{ display: "flex", gap: S[4], alignItems: "stretch" }}>
         <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginBottom: 6 }}>
+          <div style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, marginBottom: S[1] }}>
             BEFORE · {rate(chart.before_rate)}
           </div>
           <Bars points={chart.before} color={C.bad} />
         </div>
         <div style={{ width: 1, background: C.border3, alignSelf: "stretch" }} />
         <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginBottom: 6 }}>
+          <div style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, marginBottom: S[1] }}>
             AFTER · {rate(chart.after_rate)}
           </div>
           <Bars points={chart.after} color={C.good} />

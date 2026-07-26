@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { DeletionPreview, ProductRow, api } from "../api";
 import { useAsync } from "../hooks";
-import { C, mono, sans } from "../theme";
+import { C, R, S, T, mono, sans } from "../theme";
 
 interface Props {
   product: ProductRow;
@@ -67,37 +67,37 @@ export function DeleteProductModal({ product, onClose, onDeleted }: Props) {
         aria-modal="true"
         aria-label={`Delete ${product.name}`}
         style={{ width: "100%", maxWidth: 460, background: C.card,
-                 border: `1px solid ${C.bad}55`, borderRadius: 14, padding: "22px 24px",
+                 border: `1px solid ${C.bad}55`, borderRadius: R.overlay, padding: `${S[5]} ${S[6]}`,
                  boxShadow: "0 24px 60px rgba(0,0,0,.55)" }}
       >
-        <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".12em", color: C.bad,
-                      marginBottom: 8 }}>
+        <div style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".12em", color: C.bad,
+                      marginBottom: S[2] }}>
           PERMANENT
         </div>
-        <div style={{ fontSize: 17, fontWeight: 600, color: C.text, marginBottom: 8 }}>
+        <div style={{ fontSize: T.lg, fontWeight: 600, color: C.text, marginBottom: S[2] }}>
           Delete {product.name}?
         </div>
 
         {loading ? (
-          <div style={{ fontSize: 13, color: C.dim, margin: "12px 0" }}>
+          <div style={{ fontSize: T.base, color: C.dim, margin: "12px 0" }}>
             Checking what this would remove…
           </div>
         ) : (
           <>
-            <p style={{ fontSize: 13, color: C.muted, lineHeight: 1.6, margin: "0 0 14px" }}>
+            <p style={{ fontSize: T.base, color: C.muted, lineHeight: "var(--el-lh-normal)", margin: "0 0 14px" }}>
               This removes the product and everything EchoLens learned about it. It cannot be
               undone.
             </p>
             {rows.length > 0 ? (
-              <div style={{ border: `1px solid ${C.border2}`, borderRadius: 9, overflow: "hidden",
-                            marginBottom: 16 }}>
+              <div style={{ border: `1px solid ${C.border2}`, borderRadius: R.control, overflow: "hidden",
+                            marginBottom: S[4] }}>
                 {rows.map(([label, n]) => (
                   <div key={label}
                     style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
-                             padding: "9px 13px", borderBottom: `1px solid ${C.border}`,
+                             padding: `${S[2]} ${S[3]}`, borderBottom: `1px solid ${C.border}`,
                              background: C.card2 }}>
-                    <span style={{ fontSize: 12.5, color: C.text3 }}>{label}</span>
-                    <span style={{ fontFamily: mono, fontSize: 12.5, color: C.bad,
+                    <span style={{ fontSize: T.sm, color: C.text3 }}>{label}</span>
+                    <span style={{ fontFamily: mono, fontSize: T.sm, color: C.bad,
                                    fontVariantNumeric: "tabular-nums" }}>
                       {n.toLocaleString()}
                     </span>
@@ -105,14 +105,14 @@ export function DeleteProductModal({ product, onClose, onDeleted }: Props) {
                 ))}
               </div>
             ) : (
-              <div style={{ fontSize: 12.5, color: C.dim, marginBottom: 16 }}>
+              <div style={{ fontSize: T.sm, color: C.dim, marginBottom: S[4] }}>
                 Nothing has been collected for this product yet.
               </div>
             )}
           </>
         )}
 
-        <label style={{ display: "block", fontSize: 12.5, color: C.text3, marginBottom: 7 }}>
+        <label style={{ display: "block", fontSize: T.sm, color: C.text3, marginBottom: S[2] }}>
           Type <span style={{ fontFamily: mono, color: C.text }}>{product.name}</span> to confirm
         </label>
         <input
@@ -122,28 +122,28 @@ export function DeleteProductModal({ product, onClose, onDeleted }: Props) {
           onKeyDown={(e) => e.key === "Enter" && remove()}
           placeholder={product.name}
           style={{ width: "100%", background: C.bgRaised, border: `1px solid ${matches ? C.bad : C.border3}`,
-                   borderRadius: 8, color: C.text, fontFamily: mono, fontSize: 13.5,
-                   padding: "10px 12px", boxSizing: "border-box" }}
+                   borderRadius: R.control, color: C.text, fontFamily: mono, fontSize: T.base,
+                   padding: `${S[2]} ${S[3]}`, boxSizing: "border-box" }}
         />
 
         {error && (
-          <div style={{ marginTop: 12, padding: "9px 12px", border: `1px solid ${C.bad}55`,
-                        background: `${C.bad}14`, borderRadius: 8, fontSize: 12.5, color: C.bad }}>
+          <div style={{ marginTop: S[3], padding: `${S[2]} ${S[3]}`, border: `1px solid ${C.bad}55`,
+                        background: `${C.bad}14`, borderRadius: R.control, fontSize: T.sm, color: C.bad }}>
             {error}
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
+        <div style={{ display: "flex", gap: S[2], justifyContent: "flex-end", marginTop: S[4] }}>
           <button onClick={onClose} disabled={busy} className="el-btn"
             style={{ background: "transparent", color: C.muted, border: `1px solid ${C.border3}`,
-                     borderRadius: 7, padding: "9px 16px", fontSize: 13, fontFamily: sans,
+                     borderRadius: R.control, padding: `${S[2]} ${S[4]}`, fontSize: T.base, fontFamily: sans,
                      cursor: "pointer" }}>
             Keep it
           </button>
           <button onClick={remove} disabled={!matches || busy} className="el-btn"
             style={{ background: matches ? C.bad : C.hover, color: matches ? "#fff" : C.dim,
-                     border: "none", borderRadius: 7, padding: "9px 16px", fontWeight: 600,
-                     fontSize: 13, fontFamily: sans,
+                     border: "none", borderRadius: R.control, padding: `${S[2]} ${S[4]}`, fontWeight: 600,
+                     fontSize: T.base, fontFamily: sans,
                      cursor: matches && !busy ? "pointer" : "not-allowed" }}>
             {busy ? "Deleting…" : "Delete permanently"}
           </button>

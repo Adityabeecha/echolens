@@ -5,7 +5,7 @@ import { withToast } from "../components/Toast";
 import { age, plural } from "../format";
 import { useAsync } from "../hooks";
 import { CASE_TABS, SEVERITY } from "../status";
-import { C, mono, sans } from "../theme";
+import { C, MEASURE, R, S, T, mono, sans } from "../theme";
 import { EmptyState, ErrorState, Label, ScreenHeader, Skeleton } from "../ui";
 
 interface Props {
@@ -168,8 +168,8 @@ export function Cases({
         right={
           reviewer ? (
             <button onClick={onNewCase} className="el-btn"
-              style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: 7,
-                       padding: "9px 16px", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+              style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: R.control,
+                       padding: `${S[2]} ${S[4]}`, fontWeight: 600, fontSize: T.base, cursor: "pointer" }}>
               + New case
             </button>
           ) : undefined
@@ -178,9 +178,9 @@ export function Cases({
 
       {/* filter bar — every value here is in the URL */}
       <div style={{ flex: "none", borderBottom: `1px solid ${C.border}`,
-                    padding: "11px 28px", display: "flex", alignItems: "center",
-                    gap: 10, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                    padding: `${S[3]} ${S[6]}`, display: "flex", alignItems: "center",
+                    gap: S[2], flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" }}>
           {CASE_TABS.map((t) => {
             const active = t.key === tab;
             const n = t.key === "all" ? counts.all : counts[t.key];
@@ -193,13 +193,13 @@ export function Cases({
                   background: active ? C.active : "transparent",
                   color: active ? C.text : C.muted,
                   border: `1px solid ${active ? C.border3 : "transparent"}`,
-                  borderRadius: 7, padding: "6px 12px", fontSize: 12.5, cursor: "pointer",
+                  borderRadius: R.control, padding: `${S[1]} ${S[3]}`, fontSize: T.sm, cursor: "pointer",
                   fontFamily: sans, whiteSpace: "nowrap",
                 }}
               >
                 {t.label}
                 {n != null && (
-                  <span style={{ fontFamily: mono, fontSize: 10.5, color: C.faint, marginLeft: 7 }}>
+                  <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, marginLeft: 7 }}>
                     {n}
                   </span>
                 )}
@@ -222,12 +222,12 @@ export function Cases({
           placeholder="Search cases…"
           aria-label="Search cases"
           style={{ width: 200, background: C.card, border: `1px solid ${C.border3}`,
-                   borderRadius: 7, color: C.text, fontFamily: sans, fontSize: 12.5,
-                   padding: "7px 11px" }}
+                   borderRadius: R.control, color: C.text, fontFamily: sans, fontSize: T.sm,
+                   padding: `${S[2]} ${S[3]}` }}
         />
       </div>
 
-      <div style={{ flex: 1, overflow: "auto", padding: "22px 28px 40px" }}>
+      <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]} ${S[10]}` }}>
         {view.error ? (
           <ErrorState onRetry={view.reload} />
         ) : view.loading && !view.data ? (
@@ -246,7 +246,7 @@ export function Cases({
             }
           />
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 940 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: S[2], maxWidth: MEASURE }}>
             {rows.map((r) => (
               <CaseCard
                 key={r.id != null ? `c-${r.id}` : `q-${r.queue_id}`}
@@ -260,9 +260,9 @@ export function Cases({
         )}
 
         {/* ── signals: noticed, not yet a case ───────────────────────── */}
-        <div style={{ maxWidth: 940, marginTop: 34, borderTop: `1px solid ${C.border}`,
+        <div style={{ maxWidth: MEASURE, marginTop: S[8], borderTop: `1px solid ${C.border}`,
                       paddingTop: 18 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: S[3], flexWrap: "wrap" }}>
             <span
               onClick={() => { setSignalsOpen((o) => !o); setParams({ signals: signalsOpen ? null : "1" }); }}
               className="el-btn"
@@ -306,15 +306,15 @@ export function Cases({
           </div>
 
           {!signalsOpen ? (
-            <p style={{ fontSize: 12.5, color: C.dim, margin: "8px 0 0", lineHeight: 1.55 }}>
+            <p style={{ fontSize: T.sm, color: C.dim, margin: "8px 0 0", lineHeight: "var(--el-lh-normal)" }}>
               Spikes and recurring complaints EchoLens has noticed but hasn't investigated.
               {selectable > 0
                 ? ` Open this to pick which ${plural(selectable, "one")} become cases.`
                 : " Nothing is waiting for triage right now."}
             </p>
           ) : (
-            <div style={{ marginTop: 12 }}>
-              <p style={{ fontSize: 12.5, color: C.dim, margin: "0 0 14px", lineHeight: 1.55 }}>
+            <div style={{ marginTop: S[3] }}>
+              <p style={{ fontSize: T.sm, color: C.dim, margin: "0 0 14px", lineHeight: "var(--el-lh-normal)" }}>
                 Tick anything worth a case and commit once — they run one at a time, inside the
                 daily budget. Nothing here has been investigated yet.
               </p>
@@ -328,9 +328,9 @@ export function Cases({
 
               {liveSignals.length > 0 && (
                 <>
-                  <Label style={{ marginBottom: 9 }}>DETECTED · {liveSignals.length}</Label>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8,
-                                marginBottom: 18 }}>
+                  <Label style={{ marginBottom: S[2] }}>DETECTED · {liveSignals.length}</Label>
+                  <div style={{ display: "flex", flexDirection: "column", gap: S[2],
+                                marginBottom: S[4] }}>
                     {liveSignals.map((s) => (
                       <SignalCard key={s.slug} signal={s} selected={!!selected[s.slug]}
                                   onToggle={() => toggle(s.slug, s.title)} />
@@ -341,11 +341,11 @@ export function Cases({
 
               {themes.length > 0 && (
                 <>
-                  <Label style={{ marginBottom: 9 }}>
+                  <Label style={{ marginBottom: S[2] }}>
                     RECURRING COMPLAINTS · {themes.length}
                   </Label>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8,
-                                marginBottom: 18 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: S[2],
+                                marginBottom: S[4] }}>
                     {themes.map((t) => (
                       <ThemeCard key={t.slug} theme={t} selected={!!selected[t.slug]}
                                  onToggle={() => toggle(t.slug, t.statement)} />
@@ -355,7 +355,7 @@ export function Cases({
               )}
 
               {takenThemes.length > 0 && (
-                <div style={{ fontSize: 12.5, color: C.faint, marginBottom: 14 }}>
+                <div style={{ fontSize: T.sm, color: C.faint, marginBottom: S[3] }}>
                   {takenThemes.length} more{" "}
                   {plural(takenThemes.length, "complaint is", "complaints are")} already queued or
                   investigated — {takenThemes.length === 1 ? "it is" : "they are"} in the list above.
@@ -364,22 +364,22 @@ export function Cases({
 
               {dismissedSignals.length > 0 && (
                 <>
-                  <Label style={{ marginBottom: 9, color: C.faint }}>
+                  <Label style={{ marginBottom: S[2], color: C.faint }}>
                     DISMISSED AS NOISE · {dismissedSignals.length}
                   </Label>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
                     {dismissedSignals.map((s) => (
-                      <div key={s.slug} style={{ display: "flex", alignItems: "center", gap: 10,
-                                                 padding: "9px 14px", background: C.card2,
+                      <div key={s.slug} style={{ display: "flex", alignItems: "center", gap: S[2],
+                                                 padding: `${S[2]} ${S[3]}`, background: C.card2,
                                                  border: `1px solid ${C.border2}`,
-                                                 borderRadius: 9, opacity: 0.72 }}>
-                        <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: C.muted,
+                                                 borderRadius: R.control, opacity: 0.72 }}>
+                        <span style={{ flex: 1, minWidth: 0, fontSize: T.sm, color: C.muted,
                                        overflow: "hidden", textOverflow: "ellipsis",
                                        whiteSpace: "nowrap" }}>
                           {s.title}
                         </span>
                         {s.dismissed_reason && (
-                          <span style={{ fontSize: 12, color: C.dim, fontStyle: "italic",
+                          <span style={{ fontSize: T.sm, color: C.dim, fontStyle: "italic",
                                          maxWidth: 320, overflow: "hidden",
                                          textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                             {s.dismissed_reason}
@@ -398,19 +398,19 @@ export function Cases({
       {/* one commit for any number of selections */}
       {reviewer && selectedCount > 0 && (
         <div style={{ flex: "none", borderTop: `1px solid ${C.border2}`, background: C.bgRaised,
-                      padding: "12px 28px", display: "flex", alignItems: "center", gap: 16,
+                      padding: `${S[3]} ${S[6]}`, display: "flex", alignItems: "center", gap: S[4],
                       flexWrap: "wrap" }}>
-          <span style={{ fontSize: 13.5, color: C.text2 }}>
+          <span style={{ fontSize: T.base, color: C.text2 }}>
             <strong>{selectedCount}</strong> selected
           </span>
-          <span style={{ fontFamily: mono, fontSize: 11.5, color: C.faint }}>
+          <span style={{ fontFamily: mono, fontSize: T.xs, color: C.faint }}>
             runs one at a time, inside today's budget
           </span>
           <div style={{ flex: 1 }} />
           <SmallButton onClick={() => setSelected({})}>Clear</SmallButton>
           <button onClick={investigateSelected} disabled={busy === "queue"} className="el-btn"
-            style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: 7,
-                     padding: "9px 18px", fontWeight: 600, fontSize: 13,
+            style={{ background: C.accent, color: C.onAccent, border: "none", borderRadius: R.control,
+                     padding: `${S[2]} ${S[4]}`, fontWeight: 600, fontSize: T.base,
                      cursor: busy === "queue" ? "wait" : "pointer" }}>
             {busy === "queue" ? "Queueing…" : `Investigate selected (${selectedCount})`}
           </button>
@@ -451,16 +451,16 @@ function SignalCard({ signal, selected, onToggle }: {
   signal: SignalRow; selected: boolean; onToggle: () => void;
 }) {
   return (
-    <label className="el-card" style={{ display: "flex", alignItems: "flex-start", gap: 12,
-                                        padding: "12px 15px", cursor: "pointer" }}>
+    <label className="el-card" style={{ display: "flex", alignItems: "flex-start", gap: S[3],
+                                        padding: `${S[3]} ${S[4]}`, cursor: "pointer" }}>
       <input type="checkbox" checked={selected} onChange={onToggle}
         aria-label={`Select: ${signal.title}`}
-        style={{ width: 15, height: 15, marginTop: 3, flex: "none",
+        style={{ width: 15, height: 15, marginTop: S[1], flex: "none",
                  accentColor: C.accent, cursor: "pointer" }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13.5, color: C.text2, lineHeight: 1.45 }}>{signal.title}</div>
-        <div style={{ display: "flex", gap: 10, marginTop: 5, flexWrap: "wrap",
-                      fontFamily: mono, fontSize: 10.5, color: C.faint }}>
+        <div style={{ fontSize: T.base, color: C.text2, lineHeight: "var(--el-lh-snug)" }}>{signal.title}</div>
+        <div style={{ display: "flex", gap: S[2], marginTop: S[1], flexWrap: "wrap",
+                      fontFamily: mono, fontSize: T.micro, color: C.faint }}>
           <span>{sourceLabel(signal.type)}</span>
           <span>z {signal.z.toFixed(1)}</span>
           <span>{signal.window}</span>
@@ -479,27 +479,27 @@ function ThemeCard({ theme, selected, onToggle }: {
     theme.trend === "up" ? { s: "▲", c: C.bad } :
     theme.trend === "down" ? { s: "▼", c: C.good } : null;
   return (
-    <div className="el-card" style={{ padding: "12px 15px" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+    <div className="el-card" style={{ padding: `${S[3]} ${S[4]}` }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: S[3] }}>
         <input type="checkbox" checked={selected} onChange={onToggle}
           aria-label={`Select: ${theme.statement}`}
-          style={{ width: 15, height: 15, marginTop: 3, flex: "none",
+          style={{ width: 15, height: 15, marginTop: S[1], flex: "none",
                    accentColor: C.accent, cursor: "pointer" }} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, color: C.text2, lineHeight: 1.45 }}>{theme.statement}</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 5,
+          <div style={{ fontSize: T.base, color: C.text2, lineHeight: "var(--el-lh-snug)" }}>{theme.statement}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: S[2], marginTop: S[1],
                         flexWrap: "wrap" }}>
-            <span style={{ fontFamily: mono, fontSize: 10.5, color: C.faint }}>
+            <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint }}>
               {theme.count} {plural(theme.count, "review")}
             </span>
             {trend && (
-              <span style={{ fontFamily: mono, fontSize: 10.5, color: trend.c }}>
+              <span style={{ fontFamily: mono, fontSize: T.micro, color: trend.c }}>
                 {trend.s} {theme.trend}
               </span>
             )}
             {theme.label_source === "verbatim" && (
               <span title="Shown in a customer's own words — the generated label wasn't confident enough."
-                style={{ fontFamily: mono, fontSize: 9.5, padding: "1px 6px", borderRadius: 9,
+                style={{ fontFamily: mono, fontSize: T.micro, padding: `0 ${S[1]}`, borderRadius: R.control,
                          background: C.hover, color: C.faint }}>
                 VERBATIM
               </span>
@@ -507,16 +507,16 @@ function ThemeCard({ theme, selected, onToggle }: {
             {theme.verbatims.length > 1 && (
               <span onClick={() => setOpen((o) => !o)} className="el-btn" role="button" tabIndex={0}
                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setOpen((o) => !o); }}
-                style={{ fontFamily: mono, fontSize: 10.5, color: C.dim, cursor: "pointer" }}>
+                style={{ fontFamily: mono, fontSize: T.micro, color: C.dim, cursor: "pointer" }}>
                 {open ? "▾ hide reviews" : `▸ ${theme.verbatims.length} reviews`}
               </span>
             )}
           </div>
           {open && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 9,
+            <div style={{ display: "flex", flexDirection: "column", gap: S[1], marginTop: S[2],
                           paddingLeft: 10, borderLeft: `2px solid ${C.border3}` }}>
               {theme.verbatims.map((v, i) => (
-                <div key={i} style={{ fontSize: 12.5, color: C.dim, lineHeight: 1.5 }}>“{v}”</div>
+                <div key={i} style={{ fontSize: T.sm, color: C.dim, lineHeight: "var(--el-lh-normal)" }}>“{v}”</div>
               ))}
             </div>
           )}
@@ -533,9 +533,9 @@ function Select({ value, onChange, options }: {
     <select
       value={value}
       onChange={(e) => onChange(e.target.value || "")}
-      style={{ background: C.card, border: `1px solid ${C.border3}`, borderRadius: 7,
-               color: value ? C.text : C.muted, fontFamily: sans, fontSize: 12.5,
-               padding: "7px 9px", cursor: "pointer" }}
+      style={{ background: C.card, border: `1px solid ${C.border3}`, borderRadius: R.control,
+               color: value ? C.text : C.muted, fontFamily: sans, fontSize: T.sm,
+               padding: `${S[2]} ${S[2]}`, cursor: "pointer" }}
     >
       {options.map(([v, label]) => (
         <option key={v} value={v}>{label}</option>
@@ -550,7 +550,7 @@ function SmallButton({ children, onClick, disabled }: {
   return (
     <button onClick={onClick} disabled={disabled} className="el-btn"
       style={{ background: "transparent", color: C.muted, border: `1px solid ${C.border3}`,
-               borderRadius: 7, padding: "7px 13px", fontSize: 12.5, fontFamily: sans,
+               borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.sm, fontFamily: sans,
                cursor: disabled ? "wait" : "pointer" }}>
       {children}
     </button>

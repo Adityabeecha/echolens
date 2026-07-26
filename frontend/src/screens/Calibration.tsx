@@ -1,6 +1,6 @@
 import { Calibration as Cal, api } from "../api";
 import { useAsync } from "../hooks";
-import { C, mono } from "../theme";
+import { C, R, S, T, mono } from "../theme";
 import { Centered, EmptyState, ErrorState, Label, ScreenHeader } from "../ui";
 
 export function Calibration({ onGoCases }: { onGoCases: () => void }) {
@@ -21,7 +21,7 @@ export function Calibration({ onGoCases }: { onGoCases: () => void }) {
       <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
         <ScreenHeader title="Calibration" product={data.product}
                       subtitle="STATED CONFIDENCE VS YOUR VERDICTS" />
-        <div style={{ flex: 1, overflow: "auto", padding: "22px 28px" }}>
+        <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>
           <EmptyState
             title={`No reviewed findings for ${data.product || "this product"} yet`}
             body="This screen checks EchoLens against itself: when it says it is 80% sure, is it right 80% of the time? It needs your verdicts to do that. Approve or challenge a few findings and the curve starts here."
@@ -39,15 +39,15 @@ export function Calibration({ onGoCases }: { onGoCases: () => void }) {
         title="Calibration"
         product={data.product}
         subtitle="STATED CONFIDENCE VS YOUR VERDICTS"
-        right={<span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>{data.n_reviewed} REVIEWED FINDINGS</span>}
+        right={<span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>{data.n_reviewed} REVIEWED FINDINGS</span>}
       />
-      <div style={{ flex: 1, overflow: "auto", padding: "22px 28px" }}>
+      <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>
         {data.headline && (
-          <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-.01em", color: C.text, maxWidth: 720, marginBottom: 6 }}>
+          <div style={{ fontSize: T.lg, fontWeight: 600, letterSpacing: "-.01em", color: C.text, maxWidth: 720, marginBottom: S[1] }}>
             {data.headline}
           </div>
         )}
-        <p style={{ fontSize: 13.5, color: C.muted, maxWidth: 720, lineHeight: 1.6, marginTop: 0 }}>
+        <p style={{ fontSize: T.base, color: C.muted, maxWidth: 720, lineHeight: "var(--el-lh-normal)", marginTop: 0 }}>
           Every reviewed finding compares the confidence EchoLens stated with whether you approved it. A point on the
           diagonal means the stated confidence matched reality.
         </p>
@@ -67,26 +67,26 @@ export function Calibration({ onGoCases }: { onGoCases: () => void }) {
           </Notice>
         )}
 
-        <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginTop: 18, alignItems: "flex-start" }}>
+        <div style={{ display: "flex", gap: S[6], flexWrap: "wrap", marginTop: S[4], alignItems: "flex-start" }}>
           <CalibrationChart data={data} />
           <div style={{ flex: 1, minWidth: 280 }}>
-            <Label style={{ marginBottom: 10 }}>KNOWN WEAK SPOTS</Label>
+            <Label style={{ marginBottom: S[2] }}>KNOWN WEAK SPOTS</Label>
             {data.weak_spots.spots.length === 0 ? (
-              <div style={{ padding: "20px 18px", border: `1px dashed ${C.border4}`, borderRadius: 10, color: C.dim, fontSize: 13 }}>
+              <div style={{ padding: `${S[5]} ${S[4]}`, border: `1px dashed ${C.border4}`, borderRadius: R.card, color: C.dim, fontSize: T.base }}>
                 No challenges recorded for {data.product || "this product"} yet. When you challenge a finding, pick a
                 reason — those roll up here and steer future investigations.
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
                 {data.weak_spots.spots.map((w) => (
-                  <div key={w.reason} style={{ padding: "12px 15px", background: C.card, border: `1px solid ${C.border2}`, borderRadius: 10 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 13.5, fontWeight: 600, color: C.text2 }}>{w.label}</span>
-                      <span style={{ fontFamily: mono, fontSize: 10.5, padding: "2px 7px", borderRadius: 10, background: `${C.bad}1f`, color: C.bad, marginLeft: "auto" }}>
+                  <div key={w.reason} style={{ padding: `${S[3]} ${S[4]}`, background: C.card, border: `1px solid ${C.border2}`, borderRadius: R.card }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
+                      <span style={{ fontSize: T.base, fontWeight: 600, color: C.text2 }}>{w.label}</span>
+                      <span style={{ fontFamily: mono, fontSize: T.micro, padding: `0 ${S[2]}`, borderRadius: R.card, background: `${C.bad}1f`, color: C.bad, marginLeft: "auto" }}>
                         {w.count}× challenged
                       </span>
                     </div>
-                    <div style={{ fontSize: 12.5, color: C.muted, marginTop: 6, lineHeight: 1.5 }}>{w.guidance}</div>
+                    <div style={{ fontSize: T.sm, color: C.muted, marginTop: S[1], lineHeight: "var(--el-lh-normal)" }}>{w.guidance}</div>
                   </div>
                 ))}
               </div>
@@ -100,7 +100,7 @@ export function Calibration({ onGoCases }: { onGoCases: () => void }) {
 
 function Notice({ children, color }: { children: React.ReactNode; color: string }) {
   return (
-    <div style={{ maxWidth: 720, marginTop: 14, padding: "11px 15px", border: `1px solid ${color}55`, background: `${color}12`, borderRadius: 9, fontSize: 13, color: C.text3, lineHeight: 1.55 }}>
+    <div style={{ maxWidth: 720, marginTop: S[3], padding: `${S[3]} ${S[4]}`, border: `1px solid ${color}55`, background: `${color}12`, borderRadius: R.control, fontSize: T.base, color: C.text3, lineHeight: "var(--el-lh-normal)" }}>
       {children}
     </div>
   );
@@ -123,7 +123,7 @@ function CalibrationChart({ data }: { data: Cal }) {
   const maxCount = Math.max(1, ...pts.map((p) => p.count));
 
   return (
-    <svg width={W} height={H} style={{ flex: "none", background: C.card, border: `1px solid ${C.border2}`, borderRadius: 12 }}>
+    <svg width={W} height={H} style={{ flex: "none", background: C.card, border: `1px solid ${C.border2}`, borderRadius: R.card }}>
       {/* gridlines */}
       {[0, 0.25, 0.5, 0.75, 1].map((g) => (
         <g key={g}>

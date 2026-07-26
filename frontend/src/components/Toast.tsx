@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { C, mono, sans } from "../theme";
+import { C, R, S, T } from "../theme";
+import { Button } from "../ui";
+import { Icon } from "./Icon";
 
 // Confirmation and failure, for every async action.
 //
@@ -83,9 +85,9 @@ export async function withToast<T>(
 }
 
 const KIND: Record<ToastItem["kind"], { color: string; icon: string }> = {
-  ok: { color: C.good, icon: "✓" },
-  fail: { color: C.bad, icon: "✕" },
-  info: { color: C.info, icon: "ⓘ" },
+  ok: { color: C.good, icon: "check" },
+  fail: { color: C.bad, icon: "warning" },
+  info: { color: C.info, icon: "info" },
 };
 
 export function Toasts() {
@@ -103,8 +105,9 @@ export function Toasts() {
       role="status"
       aria-live="polite"
       style={{
-        position: "fixed", right: 20, bottom: 20, zIndex: 200,
-        display: "flex", flexDirection: "column", gap: 9, maxWidth: 420,
+        position: "fixed", right: S[5], bottom: S[5], zIndex: 200,
+        display: "flex", flexDirection: "column", gap: S[2],
+        maxWidth: "min(420px, calc(100vw - 2 * var(--el-s5)))",
       }}
     >
       {list.map((t) => {
@@ -113,40 +116,35 @@ export function Toasts() {
           <div
             key={t.id}
             style={{
-              display: "flex", alignItems: "flex-start", gap: 10,
-              padding: "12px 14px", borderRadius: 10, background: C.card2,
-              border: `1px solid ${k.color}66`, boxShadow: "0 16px 40px rgba(0,0,0,.5)",
-              fontFamily: sans, fontSize: 13, color: C.text2, lineHeight: 1.5,
+              display: "flex", alignItems: "flex-start", gap: S[3],
+              padding: `${S[3]} ${S[3]}`, borderRadius: R.card, background: C.card,
+              border: `1px solid ${k.color}66`, boxShadow: "var(--el-e3)",
+              fontSize: T.base, color: C.text2, lineHeight: "var(--el-lh-normal)",
+              animation: "elFadeUp var(--el-dur-slow) var(--el-ease)",
             }}
           >
-            <span style={{ color: k.color, fontFamily: mono, fontSize: 12, marginTop: 1 }}>
-              {k.icon}
+            <span style={{ color: k.color, marginTop: 2, flex: "none" }}>
+              <Icon name={k.icon} size={15} />
             </span>
             <span style={{ flex: 1, minWidth: 0 }}>{t.text}</span>
             {t.retry && (
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => { dismiss(t.id); t.retry?.(); }}
-                className="el-btn"
-                style={{
-                  background: "transparent", color: C.accent, border: `1px solid ${C.accent}66`,
-                  borderRadius: 6, padding: "3px 10px", fontSize: 12, cursor: "pointer",
-                  fontFamily: sans, flex: "none",
-                }}
+                style={{ flex: "none" }}
               >
                 Retry
-              </button>
+              </Button>
             )}
-            <span
+            <button
               onClick={() => dismiss(t.id)}
-              role="button"
-              tabIndex={0}
               aria-label="Dismiss"
-              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") dismiss(t.id); }}
-              className="el-btn"
-              style={{ color: C.faint, cursor: "pointer", fontSize: 12, flex: "none" }}
+              className="el-btn el-btn--sm"
+              style={{ color: C.dim, flex: "none", padding: 2 }}
             >
-              ✕
-            </span>
+              <Icon name="close" size={14} />
+            </button>
           </div>
         );
       })}

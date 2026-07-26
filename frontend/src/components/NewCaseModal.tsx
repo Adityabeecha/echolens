@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api } from "../api";
 import { toast } from "./Toast";
-import { C, mono } from "../theme";
+import { C, R, S, T, mono } from "../theme";
 
 const TIERS: { key: string; name: string; detail: string }[] = [
   { key: "quick", name: "Quick look", detail: "5 iter · $0.25 · shallow — may only skim a few reviews" },
@@ -49,27 +49,27 @@ export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onSt
           maxWidth: "92vw",
           background: C.card2,
           border: `1px solid ${C.border3}`,
-          borderRadius: 14,
+          borderRadius: R.overlay,
           zIndex: 31,
           padding: 24,
           boxShadow: "0 30px 80px rgba(0,0,0,.55)",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-          <div style={{ fontSize: 16, fontWeight: 600 }}>Open a case</div>
-          <button onClick={onClose} style={{ marginLeft: "auto", background: "none", border: "none", color: C.muted, fontSize: 16, cursor: "pointer" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[4] }}>
+          <div style={{ fontSize: T.lg, fontWeight: 600 }}>Open a case</div>
+          <button onClick={onClose} style={{ marginLeft: "auto", background: "none", border: "none", color: C.muted, fontSize: T.lg, cursor: "pointer" }}>
             ✕
           </button>
         </div>
-        <div style={{ fontSize: 12.5, color: C.muted, marginBottom: 6 }}>What should the investigator look into?</div>
+        <div style={{ fontSize: T.sm, color: C.muted, marginBottom: S[1] }}>What should the investigator look into?</div>
         <textarea
           value={desc}
           onChange={(e) => setDesc(e.target.value)}
           placeholder="e.g. Users report the share sheet freezing on Samsung devices since last week"
-          style={{ width: "100%", height: 70, background: C.bgRaised, border: `1px solid ${C.border3}`, borderRadius: 7, color: C.text, fontFamily: "inherit", fontSize: 13, padding: 10, resize: "vertical" }}
+          style={{ width: "100%", height: 70, background: C.bgRaised, border: `1px solid ${C.border3}`, borderRadius: R.control, color: C.text, fontFamily: "inherit", fontSize: T.base, padding: 10, resize: "vertical" }}
         />
-        <div style={{ fontSize: 12.5, color: C.muted, margin: "14px 0 6px" }}>Budget</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ fontSize: T.sm, color: C.muted, margin: "14px 0 6px" }}>Budget</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
           {TIERS.map((t) => (
             // A radio group, and now actually operable as one. With no role,
             // tabIndex or key handler a keyboard-only user could reach the
@@ -84,26 +84,26 @@ export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onSt
                 if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setTier(t.key); }
               }}
               onClick={() => setTier(t.key)}
-              style={{ padding: "7px 10px", border: `1px solid ${tier === t.key ? "rgba(240,166,60,.45)" : C.border3}`, borderRadius: 6, cursor: "pointer", background: tier === t.key ? "rgba(240,166,60,.06)" : "transparent" }}
+              style={{ padding: `${S[2]} ${S[2]}`, border: `1px solid ${tier === t.key ? "rgba(240,166,60,.45)" : C.border3}`, borderRadius: R.control, cursor: "pointer", background: tier === t.key ? "rgba(240,166,60,.06)" : "transparent" }}
             >
-              <div style={{ fontSize: 12.5, fontWeight: 500, color: C.text2 }}>{t.name}</div>
-              <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginTop: 2 }}>{t.detail}</div>
+              <div style={{ fontSize: T.sm, fontWeight: 500, color: C.text2 }}>{t.name}</div>
+              <div style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, marginTop: 0 }}>{t.detail}</div>
             </div>
           ))}
         </div>
         {error && (
-          <div style={{ marginTop: 14, padding: "9px 12px", borderRadius: 7, background: "rgba(224,88,79,.08)", border: "1px solid rgba(224,88,79,.35)", color: C.bad, fontSize: 12.5 }}>
+          <div style={{ marginTop: S[3], padding: `${S[2]} ${S[3]}`, borderRadius: R.control, background: "rgba(224,88,79,.08)", border: "1px solid rgba(224,88,79,.35)", color: C.bad, fontSize: T.sm }}>
             {error}
           </div>
         )}
         <button
           onClick={submit}
           disabled={!desc.trim() || busy}
-          style={{ marginTop: 18, width: "100%", padding: "11px 0", borderRadius: 8, border: "none", background: C.accent, color: C.onAccent, fontSize: 14, fontWeight: 600, cursor: desc.trim() ? "pointer" : "not-allowed", opacity: desc.trim() ? 1 : 0.45 }}
+          style={{ marginTop: S[4], width: "100%", padding: `${S[3]} 0`, borderRadius: R.control, border: "none", background: C.accent, color: C.onAccent, fontSize: T.md, fontWeight: 600, cursor: desc.trim() ? "pointer" : "not-allowed", opacity: desc.trim() ? 1 : 0.45 }}
         >
           {busy ? "Starting…" : "Start investigation"}
         </button>
-        <div style={{ fontSize: 11, color: C.ghost, marginTop: 8, textAlign: "center" }}>
+        <div style={{ fontSize: T.xs, color: C.ghost, marginTop: S[2], textAlign: "center" }}>
           Runs within your daily and per-case limits.
         </div>
       </div>

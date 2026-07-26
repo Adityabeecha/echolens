@@ -3,7 +3,7 @@ import { Decision, Evidence, Impact, Investigation, Severity, api, canReview } f
 import { withToast } from "../../components/Toast";
 import { pct } from "../../format";
 import { SEVERITY } from "../../status";
-import { C, mono } from "../../theme";
+import { C, MEASURE, R, S, T, mono } from "../../theme";
 import { EmptyState, Label } from "../../ui";
 
 interface Props {
@@ -27,8 +27,8 @@ function Prose({ text, evidence, onOpenEvidence }: {
         const ev = evidence.find((e) => e.id === m[1]);
         return (
           <sup key={i} onClick={() => ev && onOpenEvidence(ev)}
-            style={{ fontFamily: mono, fontSize: 10, color: C.accent, cursor: "pointer",
-                     padding: "1px 4px", background: "rgba(240,166,60,.1)", borderRadius: 3,
+            style={{ fontFamily: mono, fontSize: T.micro, color: C.accent, cursor: "pointer",
+                     padding: `0 ${S[1]}`, background: "rgba(240,166,60,.1)", borderRadius: R.sm,
                      marginLeft: 2 }}>
             {m[1]}
           </sup>
@@ -50,7 +50,7 @@ export function FindingTab({
   const f = inv.finding;
   if (!f) {
     return (
-      <div style={{ flex: 1, overflow: "auto", padding: "26px 28px" }}>
+      <div style={{ flex: 1, overflow: "auto", padding: `${S[6]} ${S[6]}` }}>
         <EmptyState
           title={`No answer yet for case #${inv.id}`}
           body={
@@ -98,7 +98,7 @@ export function FindingTab({
 
   return (
     <div style={{ flex: 1, overflow: "auto" }}>
-      <div style={{ maxWidth: 820, padding: "24px 28px 60px" }}>
+      <div style={{ maxWidth: MEASURE, padding: `${S[6]} ${S[6]} ${S[12]}` }}>
         {challenged && (
           <Banner color={C.accent}>
             You challenged this finding. A fresh case is addressing it — see History for the link.
@@ -106,24 +106,24 @@ export function FindingTab({
         )}
 
         {f.grounding_violations && f.grounding_violations.length > 0 && (
-          <div style={{ marginBottom: 18, padding: "14px 16px",
+          <div style={{ marginBottom: S[4], padding: `${S[3]} ${S[4]}`,
                         border: `1px solid ${C.bad}66`, background: `${C.bad}12`,
-                        borderRadius: 8, maxWidth: 720 }}>
-            <Label style={{ color: C.bad, marginBottom: 7 }}>
+                        borderRadius: R.control, maxWidth: 720 }}>
+            <Label style={{ color: C.bad, marginBottom: S[2] }}>
               CLAIM-GROUNDING GUARD BLOCKED THIS DRAFT
             </Label>
-            <div style={{ fontSize: 13, color: C.text3, lineHeight: 1.6 }}>
+            <div style={{ fontSize: T.base, color: C.text3, lineHeight: "var(--el-lh-normal)" }}>
               EchoLens drafted a cause but could not tie{" "}
               {f.grounding_violations.length === 1 ? "one sentence" : "some sentences"} to specific
               evidence, so the draft is not being shown as a conclusion. This is the honesty rule
               working, not a failure — treat the evidence below as what was actually established.
             </div>
             {f.rejected_draft && (
-              <details style={{ marginTop: 10 }}>
-                <summary style={{ fontSize: 12.5, color: C.muted, cursor: "pointer" }}>
+              <details style={{ marginTop: S[2] }}>
+                <summary style={{ fontSize: T.sm, color: C.muted, cursor: "pointer" }}>
                   Show the rejected draft (for audit — not a finding)
                 </summary>
-                <div style={{ fontSize: 12.5, color: C.dim, marginTop: 8, lineHeight: 1.6,
+                <div style={{ fontSize: T.sm, color: C.dim, marginTop: S[2], lineHeight: "var(--el-lh-normal)",
                               fontStyle: "italic", paddingLeft: 10,
                               borderLeft: `2px solid ${C.bad}44` }}>
                   {f.rejected_draft}
@@ -134,11 +134,11 @@ export function FindingTab({
         )}
 
         {inv.data_notes && inv.data_notes.length > 0 && (
-          <div style={{ marginBottom: 18, padding: "12px 16px", border: `1px solid ${C.bad}44`,
-                        background: `${C.bad}12`, borderRadius: 8 }}>
-            <Label style={{ color: C.bad, marginBottom: 6 }}>DATA AVAILABILITY</Label>
+          <div style={{ marginBottom: S[4], padding: `${S[3]} ${S[4]}`, border: `1px solid ${C.bad}44`,
+                        background: `${C.bad}12`, borderRadius: R.control }}>
+            <Label style={{ color: C.bad, marginBottom: S[1] }}>DATA AVAILABILITY</Label>
             {inv.data_notes.map((n, i) => (
-              <div key={i} style={{ fontSize: 12.5, color: C.text3, lineHeight: 1.55 }}>{n}</div>
+              <div key={i} style={{ fontSize: T.sm, color: C.text3, lineHeight: "var(--el-lh-normal)" }}>{n}</div>
             ))}
           </div>
         )}
@@ -147,24 +147,24 @@ export function FindingTab({
           <DecisionCard decision={f.decision} impact={f.impact} severity={f.severity} />
         )}
 
-        <div style={{ padding: "22px 24px", background: C.card, border: `1px solid ${C.border2}`,
-                      borderRadius: 12 }}>
-          <Label style={{ letterSpacing: ".12em", marginBottom: 12 }}>FINDING</Label>
-          <div style={{ fontSize: 20, fontWeight: 700, lineHeight: 1.35,
+        <div style={{ padding: `${S[5]} ${S[6]}`, background: C.card, border: `1px solid ${C.border2}`,
+                      borderRadius: R.card }}>
+          <Label style={{ letterSpacing: ".12em", marginBottom: S[3] }}>FINDING</Label>
+          <div style={{ fontSize: T.xl, fontWeight: 700, lineHeight: "var(--el-lh-snug)",
                         letterSpacing: "-.01em" }}>
             {f.summary}
           </div>
-          <div style={{ fontSize: 14, lineHeight: 1.75, color: C.text3, marginTop: 14 }}>
+          <div style={{ fontSize: T.md, lineHeight: "var(--el-lh-normal)", color: C.text3, marginTop: S[3] }}>
             <Prose text={f.prose} evidence={inv.evidence} onOpenEvidence={onOpenEvidence} />
           </div>
           {inv.status !== "resolved" && f.what_would_settle_it && (
-            <div style={{ marginTop: 14, fontSize: 12.5, color: C.muted, lineHeight: 1.6 }}>
+            <div style={{ marginTop: S[3], fontSize: T.sm, color: C.muted, lineHeight: "var(--el-lh-normal)" }}>
               <span style={{ color: C.text3 }}>What would settle it:</span> {f.what_would_settle_it}
             </div>
           )}
           <div onClick={onOpenTrace} className="el-btn" role="button" tabIndex={0}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onOpenTrace(); }}
-            style={{ marginTop: 16, fontSize: 12.5, color: C.dim, cursor: "pointer" }}>
+            style={{ marginTop: S[4], fontSize: T.sm, color: C.dim, cursor: "pointer" }}>
             See how we got here →
           </div>
         </div>
@@ -172,18 +172,18 @@ export function FindingTab({
         {inv.recommendations.length > 0 && (
           <>
             <Label style={{ margin: "26px 0 10px" }}>RECOMMENDED ACTIONS</Label>
-            <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
               {inv.recommendations.map((ac) => (
-                <div key={ac.rank} style={{ display: "flex", alignItems: "center", gap: 14,
-                                            padding: "14px 16px", background: C.card,
-                                            border: `1px solid ${C.border2}`, borderRadius: 9 }}>
-                  <div style={{ width: 26, height: 26, borderRadius: 6, background: C.hover,
+                <div key={ac.rank} style={{ display: "flex", alignItems: "center", gap: S[3],
+                                            padding: `${S[3]} ${S[4]}`, background: C.card,
+                                            border: `1px solid ${C.border2}`, borderRadius: R.control }}>
+                  <div style={{ width: 26, height: 26, borderRadius: R.control, background: C.hover,
                                 border: `1px solid ${C.border3}`, display: "flex",
                                 alignItems: "center", justifyContent: "center", fontFamily: mono,
-                                fontSize: 12, color: C.accent, flex: "none" }}>
+                                fontSize: T.sm, color: C.accent, flex: "none" }}>
                     {ac.rank}
                   </div>
-                  <div style={{ flex: 1, fontSize: 13.5, fontWeight: 500 }}>{ac.action}</div>
+                  <div style={{ flex: 1, fontSize: T.base, fontWeight: 500 }}>{ac.action}</div>
                   <Tag color={C.good}>{ac.impact} impact</Tag>
                   <Tag color={C.muted}>{ac.effort} effort</Tag>
                 </div>
@@ -197,33 +197,33 @@ export function FindingTab({
         {reviewer && <FollowupCard findingId={f.id} addenda={f.addenda} onAdded={onReload} />}
 
         {approved && (
-          <Banner color={C.good} style={{ marginTop: 26, marginBottom: 0 }}>
+          <Banner color={C.good} style={{ marginTop: S[6], marginBottom: 0 }}>
             ✓ You approved this finding. It stays under Resolved until a fix is verified.
           </Banner>
         )}
 
         {!approved && !challenged && !reviewer && (
-          <div style={{ marginTop: 26, fontSize: 12.5, color: C.faint }}>
+          <div style={{ marginTop: S[6], fontSize: T.sm, color: C.faint }}>
             You have viewer access — approving or challenging findings needs a reviewer role.
           </div>
         )}
 
         {!approved && !challenged && reviewer && (
-          <div style={{ display: "flex", gap: 12, marginTop: 26, alignItems: "flex-start" }}>
+          <div style={{ display: "flex", gap: S[3], marginTop: S[6], alignItems: "flex-start" }}>
             <button onClick={approve} disabled={busy} className="el-btn"
-              style={{ padding: "12px 26px", borderRadius: 8, border: "none", background: C.accent,
-                       color: C.onAccent, fontSize: 14, fontWeight: 600,
+              style={{ padding: `${S[3]} ${S[6]}`, borderRadius: R.control, border: "none", background: C.accent,
+                       color: C.onAccent, fontSize: T.md, fontWeight: 600,
                        cursor: busy ? "wait" : "pointer" }}>
               {busy ? "Saving…" : "Approve finding"}
             </button>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
               <button onClick={() => setChallengeOpen((o) => !o)} className="el-btn"
-                style={{ padding: "12px 26px", borderRadius: 8, border: `1px solid ${C.border4}`,
-                         background: "transparent", color: C.text, fontSize: 14, fontWeight: 500,
+                style={{ padding: `${S[3]} ${S[6]}`, borderRadius: R.control, border: `1px solid ${C.border4}`,
+                         background: "transparent", color: C.text, fontSize: T.md, fontWeight: 500,
                          cursor: "pointer" }}>
                 Challenge
               </button>
-              <span style={{ fontSize: 11, color: C.faint }}>
+              <span style={{ fontSize: T.xs, color: C.faint }}>
                 challenging re-opens the investigation with your note
               </span>
             </div>
@@ -231,13 +231,13 @@ export function FindingTab({
         )}
 
         {challengeOpen && (
-          <div style={{ marginTop: 14, padding: 16, background: C.card,
-                        border: `1px solid ${C.border2}`, borderRadius: 10, maxWidth: 560 }}>
-            <div style={{ fontSize: 12.5, color: C.muted, marginBottom: 8 }}>
+          <div style={{ marginTop: S[3], padding: 16, background: C.card,
+                        border: `1px solid ${C.border2}`, borderRadius: R.card, maxWidth: 560 }}>
+            <div style={{ fontSize: T.sm, color: C.muted, marginBottom: S[2] }}>
               What's wrong with this finding? Your reason rolls up into Calibration and steers
               future investigations.
             </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 10 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: S[2], marginBottom: S[2] }}>
               {[
                 ["wrong_cause", "Wrong root cause"],
                 ["weak_evidence", "Evidence too weak"],
@@ -246,7 +246,7 @@ export function FindingTab({
               ].map(([val, label]) => (
                 <button key={val} onClick={() => setReason((r) => (r === val ? "" : val))}
                   className="el-btn"
-                  style={{ fontSize: 12, padding: "6px 11px", borderRadius: 20, cursor: "pointer",
+                  style={{ fontSize: T.sm, padding: `${S[1]} ${S[3]}`, borderRadius: R.pill, cursor: "pointer",
                            border: `1px solid ${reason === val ? C.accent : C.border3}`,
                            background: reason === val ? "rgba(240,166,60,.12)" : "transparent",
                            color: reason === val ? C.accent : C.muted }}>
@@ -259,13 +259,13 @@ export function FindingTab({
               onChange={(e) => setNote(e.target.value)}
               placeholder="e.g. Battery complaints also mention charging speed — check charger-related reviews before pinning this on sync."
               style={{ width: "100%", height: 76, background: C.bgRaised,
-                       border: `1px solid ${C.border3}`, borderRadius: 7, color: C.text,
-                       fontFamily: "inherit", fontSize: 13, padding: 10, resize: "vertical",
+                       border: `1px solid ${C.border3}`, borderRadius: R.control, color: C.text,
+                       fontFamily: "inherit", fontSize: T.base, padding: 10, resize: "vertical",
                        boxSizing: "border-box" }}
             />
             <button onClick={submitChallenge} disabled={!note.trim() || busy} className="el-btn"
-              style={{ marginTop: 10, padding: "8px 18px", borderRadius: 7, border: "none",
-                       background: C.accent, color: C.onAccent, fontSize: 13, fontWeight: 600,
+              style={{ marginTop: S[2], padding: `${S[2]} ${S[4]}`, borderRadius: R.control, border: "none",
+                       background: C.accent, color: C.onAccent, fontSize: T.base, fontWeight: 600,
                        cursor: note.trim() && !busy ? "pointer" : "not-allowed",
                        opacity: note.trim() ? 1 : 0.45 }}>
               Submit &amp; re-open investigation
@@ -288,30 +288,30 @@ function DecisionCard({ decision, impact, severity }: {
     ["What to do", decision.what_to_do],
   ];
   return (
-    <div style={{ marginBottom: 18, padding: "20px 22px", background: C.card,
-                  border: `1px solid ${C.border3}`, borderRadius: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+    <div style={{ marginBottom: S[4], padding: `${S[5]} ${S[5]}`, background: C.card,
+                  border: `1px solid ${C.border3}`, borderRadius: R.card }}>
+      <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[3] }}>
         <Label style={{ letterSpacing: ".12em", color: C.accent }}>DECISION</Label>
         {severity && (
-          <span style={{ fontFamily: mono, fontSize: 10.5, padding: "3px 9px", borderRadius: 4,
+          <span style={{ fontFamily: mono, fontSize: T.micro, padding: `${S[1]} ${S[2]}`, borderRadius: R.sm,
                          background: `${sevColor}1f`, border: `1px solid ${sevColor}66`,
                          color: sevColor, textTransform: "uppercase" }}>
             {severity.band} severity · {severity.score.toFixed(2)}
           </span>
         )}
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
         {rows.map(([q, a]) => (
-          <div key={q} style={{ display: "grid", gridTemplateColumns: "108px 1fr", gap: 14,
+          <div key={q} style={{ display: "grid", gridTemplateColumns: "108px 1fr", gap: S[3],
                                 alignItems: "baseline" }}>
-            <div style={{ fontFamily: mono, fontSize: 11, color: C.faint,
+            <div style={{ fontFamily: mono, fontSize: T.xs, color: C.faint,
                           textTransform: "uppercase", letterSpacing: ".06em" }}>{q}</div>
-            <div style={{ fontSize: 14, color: C.text2, lineHeight: 1.5 }}>{a || "—"}</div>
+            <div style={{ fontSize: T.md, color: C.text2, lineHeight: "var(--el-lh-normal)" }}>{a || "—"}</div>
           </div>
         ))}
       </div>
       {impact && (impact.affected_volume > 0 || impact.rating_impact > 0) && (
-        <div style={{ display: "flex", gap: 9, flexWrap: "wrap", marginTop: 16 }}>
+        <div style={{ display: "flex", gap: S[2], flexWrap: "wrap", marginTop: S[4] }}>
           <ImpactStat label="AFFECTED" value={pct(impact.affected_pct)}
                       sub={`${impact.affected_volume} reviews / 7d`} />
           <ImpactStat label="RATING IMPACT" value={`${impact.rating_impact.toFixed(2)}★`}
@@ -341,40 +341,40 @@ function WhyNotPanel({ inv, onOpenEvidence }: {
   return (
     <>
       <Label style={{ margin: "26px 0 10px" }}>WHY NOT? · {rejected.length} RULED OUT</Label>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
         {rejected.map((h) => {
           const killers = h.evidence_against.map((id) => byId.get(id))
             .filter((e): e is Evidence => !!e);
           return (
-            <div key={h.id} style={{ padding: "14px 16px", background: C.card,
-                                     border: `1px solid ${C.border2}`, borderRadius: 10 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8,
+            <div key={h.id} style={{ padding: `${S[3]} ${S[4]}`, background: C.card,
+                                     border: `1px solid ${C.border2}`, borderRadius: R.card }}>
+              <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[2],
                             flexWrap: "wrap" }}>
-                <span style={{ fontFamily: mono, fontSize: 11, color: C.bad }}>{h.id}</span>
-                <span style={{ fontFamily: mono, fontSize: 9.5, padding: "2px 7px",
-                               borderRadius: 4, background: `${C.bad}1f`, color: C.bad,
+                <span style={{ fontFamily: mono, fontSize: T.xs, color: C.bad }}>{h.id}</span>
+                <span style={{ fontFamily: mono, fontSize: T.micro, padding: `0 ${S[2]}`,
+                               borderRadius: R.sm, background: `${C.bad}1f`, color: C.bad,
                                textTransform: "uppercase" }}>
                   ruled out
                 </span>
-                <span style={{ fontSize: 13.5, color: C.text3, textDecoration: "line-through",
+                <span style={{ fontSize: T.base, color: C.text3, textDecoration: "line-through",
                                textDecorationColor: C.ghost }}>
                   {h.statement}
                 </span>
               </div>
               {killers.length > 0 ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
                   {killers.map((e) => (
                     <div key={e.id} onClick={() => onOpenEvidence(e)}
-                      style={{ fontSize: 12.5, color: C.text3, lineHeight: 1.45,
+                      style={{ fontSize: T.sm, color: C.text3, lineHeight: "var(--el-lh-snug)",
                                borderLeft: `2px solid ${C.bad}66`, paddingLeft: 10,
                                cursor: "pointer" }}>
-                      <span style={{ fontFamily: mono, fontSize: 10.5, color: C.bad,
+                      <span style={{ fontFamily: mono, fontSize: T.micro, color: C.bad,
                                      marginRight: 6 }}>{e.id}</span>“{e.snippet}”
                     </div>
                   ))}
                 </div>
               ) : (
-                <div style={{ fontSize: 12, color: C.faint }}>
+                <div style={{ fontSize: T.sm, color: C.faint }}>
                   Rejected as the leading cause was corroborated instead.
                 </div>
               )}
@@ -405,31 +405,31 @@ function FollowupCard({ findingId, addenda, onAdded }: {
     if (ok) { setQ(""); await onAdded(); }
   };
   return (
-    <div style={{ marginTop: 26 }}>
-      <Label style={{ marginBottom: 10 }}>FOLLOW-UP</Label>
+    <div style={{ marginTop: S[6] }}>
+      <Label style={{ marginBottom: S[2] }}>FOLLOW-UP</Label>
       {addenda && addenda.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 9, marginBottom: 12 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: S[2], marginBottom: S[3] }}>
           {addenda.map((a, i) => (
-            <div key={i} style={{ padding: "12px 15px", background: C.card,
-                                  border: `1px solid ${C.border2}`, borderRadius: 10 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: C.text2 }}>{a.question}</div>
-              <div style={{ fontSize: 13, color: C.text3, marginTop: 6, lineHeight: 1.5 }}>
+            <div key={i} style={{ padding: `${S[3]} ${S[4]}`, background: C.card,
+                                  border: `1px solid ${C.border2}`, borderRadius: R.card }}>
+              <div style={{ fontSize: T.base, fontWeight: 600, color: C.text2 }}>{a.question}</div>
+              <div style={{ fontSize: T.base, color: C.text3, marginTop: S[1], lineHeight: "var(--el-lh-normal)" }}>
                 {a.answer}
               </div>
             </div>
           ))}
         </div>
       )}
-      <div style={{ display: "flex", gap: 9, maxWidth: 560 }}>
+      <div style={{ display: "flex", gap: S[2], maxWidth: 560 }}>
         <input value={q} onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && ask()}
           placeholder="Does this affect iOS too? Which version?"
           style={{ flex: 1, background: C.bgRaised, border: `1px solid ${C.border3}`,
-                   borderRadius: 8, color: C.text, fontFamily: "inherit", fontSize: 13,
-                   padding: "9px 12px" }} />
+                   borderRadius: R.control, color: C.text, fontFamily: "inherit", fontSize: T.base,
+                   padding: `${S[2]} ${S[3]}` }} />
         <button onClick={ask} disabled={!q.trim() || busy} className="el-btn"
           style={{ background: "transparent", color: C.accent, border: `1px solid ${C.accent}66`,
-                   borderRadius: 8, padding: "0 16px", fontSize: 13,
+                   borderRadius: R.control, padding: `0 ${S[4]}`, fontSize: T.base,
                    cursor: q.trim() && !busy ? "pointer" : "not-allowed",
                    opacity: q.trim() && !busy ? 1 : 0.5 }}>
           {busy ? "…" : "Ask"}
@@ -443,23 +443,23 @@ function ImpactStat({ label, value, sub, color }: {
   label: string; value: string; sub: string; color?: string;
 }) {
   return (
-    <div style={{ flex: 1, minWidth: 150, padding: "11px 14px", background: C.card2,
-                  border: `1px solid ${C.border2}`, borderRadius: 9 }}>
-      <div style={{ fontFamily: mono, fontSize: 9.5, letterSpacing: ".1em", color: C.faint }}>
+    <div style={{ flex: 1, minWidth: 150, padding: `${S[3]} ${S[3]}`, background: C.card2,
+                  border: `1px solid ${C.border2}`, borderRadius: R.control }}>
+      <div style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".1em", color: C.faint }}>
         {label}
       </div>
-      <div style={{ fontFamily: mono, fontSize: 18, fontWeight: 700, color: color ?? C.text,
-                    marginTop: 5 }}>
+      <div style={{ fontFamily: mono, fontSize: T.lg, fontWeight: 700, color: color ?? C.text,
+                    marginTop: S[1] }}>
         {value}
       </div>
-      <div style={{ fontSize: 11, color: C.dim, marginTop: 2 }}>{sub}</div>
+      <div style={{ fontSize: T.xs, color: C.dim, marginTop: 0 }}>{sub}</div>
     </div>
   );
 }
 
 function Tag({ children, color }: { children: React.ReactNode; color: string }) {
   return (
-    <span style={{ fontFamily: mono, fontSize: 10, padding: "3px 8px", borderRadius: 4,
+    <span style={{ fontFamily: mono, fontSize: T.micro, padding: `${S[1]} ${S[2]}`, borderRadius: R.sm,
                    background: `${color}1a`, color, border: `1px solid ${color}4d`,
                    whiteSpace: "nowrap" }}>
       {children}
@@ -471,9 +471,9 @@ function Banner({ children, color, style }: {
   children: React.ReactNode; color: string; style?: React.CSSProperties;
 }) {
   return (
-    <div style={{ marginBottom: 18, padding: "12px 16px", border: `1px solid ${color}66`,
-                  background: `${color}12`, borderRadius: 8, fontSize: 13, color,
-                  lineHeight: 1.55, maxWidth: 620, ...style }}>
+    <div style={{ marginBottom: S[4], padding: `${S[3]} ${S[4]}`, border: `1px solid ${color}66`,
+                  background: `${color}12`, borderRadius: R.control, fontSize: T.base, color,
+                  lineHeight: "var(--el-lh-normal)", maxWidth: 620, ...style }}>
       {children}
     </div>
   );

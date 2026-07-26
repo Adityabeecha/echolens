@@ -5,8 +5,11 @@ import { withToast } from "../components/Toast";
 import { plural } from "../format";
 import { useAsync } from "../hooks";
 import { statusMeta } from "../status";
-import { C, mono } from "../theme";
-import { EmptyState, ErrorState, Label, ScreenHeader, Skeleton, Spark } from "../ui";
+import { C, E, MEASURE, R, S, T, mono } from "../theme";
+import { Icon } from "../components/Icon";
+import {
+  Button, EmptyState, ErrorState, Label, ScreenBody, ScreenHeader, Skeleton, Spark,
+} from "../ui";
 
 interface Props {
   productName: string | null;
@@ -84,7 +87,12 @@ export function Today({
         product={product}
         subtitle="WHAT NEEDS YOU RIGHT NOW"
         right={
-          <span style={{ fontFamily: mono, fontSize: 11.5, color: C.muted }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: S[2],
+                         fontFamily: mono, fontSize: T.xs, color: C.muted }}>
+            {running.length > 0 && (
+              <span aria-hidden style={{ width: 6, height: 6, borderRadius: "50%",
+                            background: C.accent, animation: "elPulse 1.6s infinite" }} />
+            )}
             {running.length > 0
               ? `${running.length} ${plural(running.length, "investigation")} running`
               : "nothing running"}
@@ -92,7 +100,7 @@ export function Today({
         }
       />
 
-      <div style={{ flex: 1, overflow: "auto", padding: "22px 28px 60px" }}>
+      <ScreenBody>
         {cases.error ? (
           <ErrorState onRetry={cases.reload} />
         ) : (
@@ -106,16 +114,17 @@ export function Today({
 
             {/* ── a. what needs you ─────────────────────────────────── */}
             <Section
-              title="NEEDS YOU"
+              title="Needs you"
               count={needsYou.length + staleSources.length}
               color={C.accent}
+              emphasis
             >
               {loading ? (
                 <Skeleton rows={2} height={62} />
               ) : needsYou.length === 0 && staleSources.length === 0 ? (
                 <Reassurance running={running.length} queued={queued.length} product={product} />
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 9, maxWidth: 940 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: S[2], maxWidth: MEASURE }}>
                   {staleSources.map((s, i) => (
                     <ActionRow
                       key={`src-${i}-${s.name}-${s.detail}`}
@@ -142,7 +151,7 @@ export function Today({
             </Section>
 
             {/* ── b. what the machine is doing ──────────────────────── */}
-            <Section title="RUNNING & QUEUED" count={running.length + queued.length}>
+            <Section title="Running & queued" count={running.length + queued.length}>
               {running.length + queued.length === 0 ? (
                 <EmptyState
                   title="Nothing in flight"
@@ -157,7 +166,7 @@ export function Today({
                   onAction={() => onGoCases("all")}
                 />
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 9, maxWidth: 940 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: S[2], maxWidth: MEASURE }}>
                   {running.map((r) => (
                     <CaseCard key={`run-${r.id}`} row={r} compact
                               onOpen={(row) => row.id != null && onOpenCase(row.id, row.status)} />
@@ -177,13 +186,13 @@ export function Today({
 
             {/* ── c. what is biggest ────────────────────────────────── */}
             <Section
-              title="TOP OPEN PROBLEMS"
+              title="Top open problems"
               // The TOTAL, not the truncated list. This read openProblems.length
               // AFTER slice(0,5), so 30 open problems rendered as
               // "TOP OPEN PROBLEMS · 5" — a count the user had no reason to
               // doubt and no way to correct.
               count={allOpenProblems.length}
-              action={{ label: "Plan the quarter →", onClick: onGoPlan }}
+              action={{ label: "Plan the quarter", onClick: onGoPlan }}
             >
               {openProblems.length === 0 ? (
                 <EmptyState
@@ -199,43 +208,36 @@ export function Today({
                   }
                 />
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 9, maxWidth: 940 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: S[2], maxWidth: MEASURE }}>
                   {openProblems.map((r) => (
                     <CaseCard key={`open-${r.id}`} row={r}
                               onOpen={(row) => row.id != null && onOpenCase(row.id, row.status)} />
                   ))}
                   {hiddenOpenProblems > 0 && (
-                    <span
+                    <Button variant="quiet" size="sm"
                       onClick={() => onGoCases("needs-review")}
-                      className="el-btn"
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") onGoCases("needs-review");
-                      }}
-                      style={{ fontSize: 12.5, color: C.accent, cursor: "pointer",
-                               padding: "4px 2px" }}
+                      style={{ alignSelf: "flex-start", color: C.accent }}
                     >
                       {hiddenOpenProblems} more open{" "}
-                      {hiddenOpenProblems === 1 ? "problem" : "problems"} in Cases →
-                    </span>
+                      {hiddenOpenProblems === 1 ? "problem" : "problems"} in Cases
+                      <Icon name="arrowRight" size={13} />
+                    </Button>
                   )}
                 </div>
               )}
             </Section>
 
             {/* ── d. what changed ───────────────────────────────────── */}
-            <Section title="THIS WEEK">
+            <Section title="This week">
               {brief.data && brief.data.lines.length > 0 ? (
-                <div style={{ maxWidth: 940, padding: "16px 20px", background: C.card,
-                              border: `1px solid ${C.border2}`, borderRadius: 12,
-                              display: "flex", flexDirection: "column", gap: 7 }}>
-                  <div style={{ fontFamily: mono, fontSize: 10.5, color: C.faint,
-                                marginBottom: 3 }}>
-                    {brief.data.generated}
-                  </div>
+                <div style={{ maxWidth: MEASURE, padding: `${S[4]} ${S[5]}`,
+                              background: C.card, border: `1px solid ${C.border2}`,
+                              borderRadius: R.card,
+                              display: "flex", flexDirection: "column", gap: S[2] }}>
+                  <Label style={{ marginBottom: S[1] }}>{brief.data.generated}</Label>
                   {brief.data.lines.map((line, i) => (
-                    <div key={i} style={{ fontSize: 13.5, lineHeight: 1.55,
+                    <div key={i} style={{ fontSize: T.base,
+                                          lineHeight: "var(--el-lh-normal)",
                                           color: i === 0 ? C.text2 : C.text3 }}>
                       <Cited text={line} onOpen={(id) => onOpenCase(id, "resolved")} />
                     </div>
@@ -250,7 +252,7 @@ export function Today({
             </Section>
           </>
         )}
-      </div>
+      </ScreenBody>
     </div>
   );
 }
@@ -279,9 +281,9 @@ function ScoreStrip({
   };
 
   if (loading) {
-    return <div style={{ maxWidth: 940, height: 108, borderRadius: 12, background: C.card,
-                         border: `1px solid ${C.border2}`, marginBottom: 26,
-                         animation: "elSkeleton 1.4s infinite" }} />;
+    return <div style={{ maxWidth: MEASURE, height: 120, borderRadius: R.card,
+                         background: C.card, border: `1px solid ${C.border2}`,
+                         marginBottom: S[8], animation: "elSkeleton 1.6s infinite" }} />;
   }
   if (!me) return null;
 
@@ -289,76 +291,79 @@ function ScoreStrip({
   const delta = me.negative_rate_delta_pct;
   const ratings = weekly.map((w) => w.avg_rating).filter((r): r is number => r != null);
 
+  // This is the most important object on the home screen, so it is built to
+  // read that way: raised surface, a real shadow, and a band-coloured wash
+  // behind the number. Previously it was the same flat card as everything
+  // below it and the eye had no reason to land here first.
   return (
-    <div
+    <section
+      aria-label="Product score"
       style={{
-        maxWidth: 940, marginBottom: 26, padding: "18px 22px", background: C.card,
-        border: `1px solid ${band.color}44`, borderRadius: 12,
-        display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap",
+        maxWidth: MEASURE, marginBottom: S[8], padding: `${S[5]} ${S[6]}`,
+        background: `linear-gradient(180deg, ${C.bgRaised}, ${C.card})`,
+        border: `1px solid ${C.border3}`, borderRadius: R.card,
+        boxShadow: E[2], position: "relative", overflow: "hidden",
+        display: "flex", alignItems: "center", gap: S[6], flexWrap: "wrap",
       }}
     >
-      <div style={{ width: 3, alignSelf: "stretch", minHeight: 52, borderRadius: 2,
-                    background: band.color, flex: "none" }} />
+      {/* Band colour as a top rule rather than a barely-visible border tint. */}
+      <span aria-hidden style={{ position: "absolute", inset: "0 0 auto 0", height: 2,
+                    background: band.color }} />
 
       <div style={{ flex: "none" }}>
-        <Label style={{ letterSpacing: ".12em" }}>ECHOLENS SCORE</Label>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 6 }}>
-          <span style={{ fontFamily: mono, fontSize: 38, fontWeight: 700, color: band.color,
-                         lineHeight: 1 }}>
+        <Label>EchoLens score</Label>
+        <div style={{ display: "flex", alignItems: "baseline", gap: S[3], marginTop: S[2] }}>
+          <span className="el-num" style={{ fontSize: T.display, fontWeight: 700,
+                         color: band.color, lineHeight: 1 }}>
             {Math.round(me.score)}
           </span>
           {me.has_data && delta !== 0 && (
             <span
               title="Share of reviews that are negative, last 7 days vs the prior month"
-              style={{ fontFamily: mono, fontSize: 12.5,
+              style={{ display: "inline-flex", alignItems: "center", gap: 0,
+                       fontFamily: mono, fontSize: T.sm,
                        color: delta > 0 ? C.bad : C.good, whiteSpace: "nowrap" }}
             >
-              {delta > 0 ? "▲" : "▼"} {Math.round(Math.abs(delta))} pts
+              <Icon name={delta > 0 ? "arrowUp" : "arrowDown"} size={12} />
+              {Math.round(Math.abs(delta))} pts
             </span>
           )}
         </div>
-        <div style={{ fontSize: 12, color: C.muted, marginTop: 5 }}>{band.label}</div>
+        <div style={{ fontSize: T.sm, color: C.muted, marginTop: S[1] }}>{band.label}</div>
       </div>
 
       {ratings.length > 1 && (
         <div style={{ flex: "none" }}>
           <Spark points={ratings} color={C.accent} width={110} height={34}
                  title="Average star rating by week" />
-          <div style={{ fontFamily: mono, fontSize: 9, color: C.faint, letterSpacing: ".06em",
-                        marginTop: 2 }}>
-            AVG RATING · {ratings.length} WEEKS
-          </div>
+          <Label style={{ marginTop: S[1] }}>
+            Avg rating · {ratings.length} weeks
+          </Label>
         </div>
       )}
 
       <div style={{ flex: 1, minWidth: 260 }}>
-        <div style={{ fontSize: 14.5, color: C.text2, lineHeight: 1.55 }}>
+        <p style={{ margin: 0, fontSize: T.md, color: C.text2,
+                    lineHeight: "var(--el-lh-normal)" }}>
           {sentence(me)}
-        </div>
+        </p>
         {me.top_problem && (
-          <div
+          <Button
+            variant="quiet"
+            size="sm"
             onClick={() => onOpenCase(me.top_problem!.investigation_id, "resolved")}
-            className="el-btn"
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                onOpenCase(me.top_problem!.investigation_id, "resolved");
-              }
-            }}
-            style={{ display: "flex", gap: 8, alignItems: "baseline", marginTop: 8,
-                     fontSize: 12.5, color: C.muted, cursor: "pointer" }}
+            style={{ marginTop: S[2], marginLeft: `calc(-1 * ${S[3]})`, maxWidth: "100%" }}
           >
-            <span style={{ fontFamily: mono, fontSize: 11, color: C.accent }}>
+            <span className="el-mono" style={{ fontSize: T.xs, color: C.accent }}>
               case #{me.top_problem.investigation_id}
             </span>
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <span className="el-truncate" style={{ color: C.muted }}>
               {me.top_problem.summary}
             </span>
-          </div>
+          </Button>
         )}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -387,15 +392,18 @@ function Reassurance({ running, queued, product }: {
           ? `${queued} queued and waiting to run.`
           : "Nothing is running either.";
   return (
-    <div style={{ maxWidth: 940, padding: "20px 22px", borderRadius: 12,
-                  background: C.card, border: `1px solid rgba(76,192,119,.3)`,
-                  display: "flex", alignItems: "center", gap: 13 }}>
-      <span style={{ color: C.good, fontSize: 16 }}>✓</span>
+    <div style={{ maxWidth: MEASURE, padding: `${S[5]} ${S[5]}`, borderRadius: R.card,
+                  background: C.card, border: `1px solid ${C.goodLine}`,
+                  display: "flex", alignItems: "center", gap: S[3] }}>
+      <span style={{ color: C.good, flex: "none", display: "grid", placeItems: "center",
+                     width: 26, height: 26, borderRadius: R.pill, background: C.goodBg }}>
+        <Icon name="check" size={15} />
+      </span>
       <div>
-        <div style={{ fontSize: 14.5, fontWeight: 600, color: C.text2 }}>
+        <div style={{ fontSize: T.md, fontWeight: 600, color: C.text2 }}>
           Nothing needs you{product ? ` on ${product}` : ""} — {tail}
         </div>
-        <div style={{ fontSize: 12.5, color: C.dim, marginTop: 4 }}>
+        <div style={{ fontSize: T.sm, color: C.dim, marginTop: S[1] }}>
           No findings awaiting review, no stalled cases, every source reporting.
         </div>
       </div>
@@ -409,54 +417,71 @@ function ActionRow({ title, detail, action, onAction }: {
 }) {
   return (
     <div className="el-card" style={{ display: "flex", alignItems: "stretch", overflow: "hidden" }}>
-      <div style={{ width: 3, flex: "none", background: C.accent }} />
-      <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 14,
-                    padding: "11px 15px" }}>
+      <span aria-hidden style={{ width: 3, flex: "none", background: C.accent }} />
+      <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: S[4],
+                    padding: `${S[3]} ${S[4]}` }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 600, color: C.text }}>{title}</div>
+          <div style={{ fontSize: T.base, fontWeight: 600, color: C.text }}>{title}</div>
           {detail && (
-            <div style={{ fontSize: 12, color: C.dim, marginTop: 4, overflow: "hidden",
-                          textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <div className="el-truncate" style={{ fontSize: T.sm, color: C.dim,
+                          marginTop: S[1] }}>
               {detail}
             </div>
           )}
         </div>
-        <button onClick={onAction} className="el-btn"
-          style={{ flex: "none", background: C.accent, color: C.onAccent, border: "none",
-                   borderRadius: 7, padding: "8px 14px", fontSize: 12.5, fontWeight: 600,
-                   cursor: "pointer" }}>
+        <Button variant="primary" size="sm" onClick={onAction} style={{ flex: "none" }}>
           {action}
-        </button>
+        </Button>
       </div>
     </div>
   );
 }
 
-function Section({ title, count, color, action, children }: {
+/**
+ * A section heading.
+ *
+ * `emphasis` exists because "Needs you" and "This week" had identical visual
+ * weight — one is a queue of things blocking the reader, the other is a digest.
+ * Flat hierarchy on the home screen is why nothing looked prioritised.
+ */
+function Section({ title, count, color, action, emphasis, children }: {
   title: string;
   count?: number;
   color?: string;
   action?: { label: string; onClick: () => void };
+  emphasis?: boolean;
   children: ReactNode;
 }) {
   return (
-    <div style={{ marginBottom: 30 }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 12,
-                    maxWidth: 940 }}>
-        <Label style={{ color: color ?? C.faint }}>
-          {title}{count != null ? ` · ${count}` : ""}
-        </Label>
+    <section style={{ marginBottom: S[8] }}>
+      <div style={{ display: "flex", alignItems: "center", gap: S[3], marginBottom: S[3],
+                    maxWidth: MEASURE }}>
+        {emphasis ? (
+          <h2 style={{ margin: 0, display: "flex", alignItems: "center", gap: S[2],
+                       fontSize: T.md, fontWeight: 600, color: color ?? C.text2 }}>
+            {title}
+            {count != null && count > 0 && (
+              <span className="el-num" style={{ fontSize: T.xs, fontWeight: 600,
+                            color: C.onAccent, background: color ?? C.accent,
+                            borderRadius: R.pill, padding: `1px ${S[2]}`, lineHeight: "var(--el-lh-normal)" }}>
+                {count}
+              </span>
+            )}
+          </h2>
+        ) : (
+          <Label style={{ color: color ?? C.faint }}>
+            {title}{count != null ? ` · ${count}` : ""}
+          </Label>
+        )}
         <div style={{ flex: 1 }} />
         {action && (
-          <span onClick={action.onClick} className="el-btn" role="button" tabIndex={0}
-            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") action.onClick(); }}
-            style={{ fontSize: 12.5, color: C.dim, cursor: "pointer" }}>
+          <Button variant="quiet" size="sm" onClick={action.onClick}>
             {action.label}
-          </span>
+          </Button>
         )}
       </div>
       {children}
-    </div>
+    </section>
   );
 }
 
@@ -468,12 +493,12 @@ function Cited({ text, onOpen }: { text: string; onOpen: (id: number) => void })
         const m = part.match(/^case #(\d+)$/);
         if (!m) return <span key={i}>{part}</span>;
         return (
-          <span key={i} onClick={() => onOpen(parseInt(m[1], 10))} className="el-btn"
-            role="button" tabIndex={0}
-            onKeyDown={(e) => { if (e.key === "Enter") onOpen(parseInt(m[1], 10)); }}
-            style={{ color: C.accent, cursor: "pointer", fontFamily: mono, fontSize: 12.5 }}>
+          <button key={i} onClick={() => onOpen(parseInt(m[1], 10))}
+            className="el-btn el-btn--sm"
+            style={{ color: C.accent, fontFamily: mono, fontSize: T.sm,
+                     padding: 0, display: "inline", background: "none" }}>
             {part}
-          </span>
+          </button>
         );
       })}
     </>

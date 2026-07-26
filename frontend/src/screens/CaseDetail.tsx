@@ -4,7 +4,7 @@ import { StatusChip } from "../components/CaseCard";
 import { impactLine } from "../format";
 import { CASE_TABS, CaseTab, CASE_TAB_LABEL } from "../nav";
 import { SEVERITY } from "../status";
-import { C, mono } from "../theme";
+import { C, R, S, T, mono } from "../theme";
 import { Centered, ErrorState } from "../ui";
 import { EngineeringTab } from "./case/EngineeringTab";
 import { EvidenceTab } from "./case/EvidenceTab";
@@ -73,7 +73,7 @@ export function CaseDetail({
 
   if (error && !inv) {
     return (
-      <div style={{ padding: "28px" }}>
+      <div style={{ padding: `${S[6]}` }}>
         <ErrorState title={`Couldn't load case #${caseId}`} detail={error} onRetry={load} />
       </div>
     );
@@ -95,35 +95,35 @@ export function CaseDetail({
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       {/* persistent header — the same facts whichever tab you're on */}
-      <div style={{ flex: "none", borderBottom: `1px solid ${C.border}`, padding: "13px 28px 0" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+      <div style={{ flex: "none", borderBottom: `1px solid ${C.border}`, padding: `${S[3]} ${S[6]} 0` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: S[3], flexWrap: "wrap" }}>
           <span onClick={onBack} className="el-btn" role="button" tabIndex={0}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onBack(); }}
-            style={{ color: C.dim, cursor: "pointer", fontSize: 13, whiteSpace: "nowrap" }}>
+            style={{ color: C.dim, cursor: "pointer", fontSize: T.base, whiteSpace: "nowrap" }}>
             ← Back to {backLabel}
           </span>
           <div style={{ width: 1, height: 16, background: C.border2 }} />
-          <span style={{ fontFamily: mono, fontSize: 12, color: C.accent }}>CASE #{caseId}</span>
-          <span style={{ fontFamily: mono, fontSize: 11, color: C.faint }}>
+          <span style={{ fontFamily: mono, fontSize: T.sm, color: C.accent }}>CASE #{caseId}</span>
+          <span style={{ fontFamily: mono, fontSize: T.xs, color: C.faint }}>
             {productName ? `· ${productName}` : ""}
           </span>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 9,
+        <div style={{ display: "flex", alignItems: "center", gap: S[3], marginTop: S[2],
                       flexWrap: "wrap" }}>
-          <div style={{ fontSize: 17, fontWeight: 600, letterSpacing: "-.01em",
-                        maxWidth: 660, lineHeight: 1.35 }}>
+          <div style={{ fontSize: T.lg, fontWeight: 600, letterSpacing: "-.01em",
+                        maxWidth: 660, lineHeight: "var(--el-lh-snug)" }}>
             {inv.title}
           </div>
           <StatusChip status={inv.case_status} />
           {sev && (
-            <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".04em",
-                           padding: "3px 8px", borderRadius: 4, color: sev.color,
+            <span style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".04em",
+                           padding: `${S[1]} ${S[2]}`, borderRadius: R.sm, color: sev.color,
                            border: `1px solid ${sev.color}55`, textTransform: "uppercase" }}>
               {sev.label} severity
             </span>
           )}
-          {impact && <span style={{ fontSize: 12.5, color: C.muted }}>{impact}</span>}
+          {impact && <span style={{ fontSize: T.sm, color: C.muted }}>{impact}</span>}
           {finding?.confidence != null && (
             <span
               onClick={onGoCalibration}
@@ -132,7 +132,7 @@ export function CaseDetail({
               tabIndex={0}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onGoCalibration(); }}
               title="How well EchoLens's stated confidence has matched your verdicts"
-              style={{ fontFamily: mono, fontSize: 11, color: C.dim, cursor: "pointer",
+              style={{ fontFamily: mono, fontSize: T.xs, color: C.dim, cursor: "pointer",
                        textDecoration: "underline dotted", textUnderlineOffset: 3 }}
             >
               confidence {finding.confidence.toFixed(2)}
@@ -141,10 +141,10 @@ export function CaseDetail({
         </div>
 
         {inv.case_why && (
-          <div style={{ fontSize: 12.5, color: C.dim, marginTop: 6 }}>{inv.case_why}</div>
+          <div style={{ fontSize: T.sm, color: C.dim, marginTop: S[1] }}>{inv.case_why}</div>
         )}
 
-        <div style={{ display: "flex", gap: 3, marginTop: 12 }}>
+        <div style={{ display: "flex", gap: S[1], marginTop: S[3] }}>
           {CASE_TABS.map((t) => {
             const active = t === tab;
             return (
@@ -154,14 +154,14 @@ export function CaseDetail({
                 className="el-btn"
                 style={{
                   background: "transparent", border: "none", cursor: "pointer",
-                  padding: "8px 12px", fontSize: 13, fontFamily: "inherit",
+                  padding: `${S[2]} ${S[3]}`, fontSize: T.base, fontFamily: "inherit",
                   color: active ? C.text : C.muted,
                   borderBottom: `2px solid ${active ? C.accent : "transparent"}`,
                 }}
               >
                 {CASE_TAB_LABEL[t]}
                 {counts[t] != null && counts[t]! > 0 && (
-                  <span style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginLeft: 6 }}>
+                  <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, marginLeft: 6 }}>
                     {counts[t]}
                   </span>
                 )}
@@ -180,10 +180,10 @@ export function CaseDetail({
           rendered, so a failed refresh left stale data on screen while a toast
           said the action had succeeded — the UI contradicting itself. */}
       {error && (
-        <div style={{ flex: "none", margin: "10px 28px 0", padding: "9px 13px",
+        <div style={{ flex: "none", margin: "10px 28px 0", padding: `${S[2]} ${S[3]}`,
                       border: `1px solid ${C.bad}55`, background: `${C.bad}12`,
-                      borderRadius: 8, fontSize: 12.5, color: C.text3,
-                      display: "flex", alignItems: "center", gap: 10 }}>
+                      borderRadius: R.control, fontSize: T.sm, color: C.text3,
+                      display: "flex", alignItems: "center", gap: S[2] }}>
           <span style={{ color: C.bad }}>⚠</span>
           <span style={{ flex: 1 }}>Couldn't refresh this case — {error}</span>
           <span onClick={load} className="el-btn" role="button" tabIndex={0}
