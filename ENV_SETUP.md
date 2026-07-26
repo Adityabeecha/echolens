@@ -49,6 +49,74 @@ Paste the output as `JWT_SECRET`. In `dev` mode (the default) auth is off and th
 
 ---
 
+## Optional — showing the app to other people
+
+Two independent switches. **Both are off by default**, so nothing changes until you set them.
+
+### `ALLOW_GUEST` — let people use the app without logging in
+
+Set `ALLOW_GUEST=true` and a visitor with no account is admitted as a **viewer**:
+they see every screen with real data, and the login page leads with
+"Explore the demo" instead of a password box.
+
+What a guest **cannot** do — the server refuses these with a 403, so the UI
+hides or disables the controls:
+
+- start an investigation (this is the one that spends your OpenAI credits)
+- connect, retry or run a collector
+- approve, challenge or queue anything
+- create or delete a product, or change budgets
+
+> This is **not** the same as `ECHOLENS_ENV=dev`. Dev mode admits anonymous
+> callers as a full **admin**, which on a public URL would let any visitor
+> spend your credits and delete your data. Never use `dev` for a link you
+> share; use `ECHOLENS_ENV=production` **plus** `ALLOW_GUEST=true`.
+
+### `GOOGLE_CLIENT_ID` — "Sign in with Google"
+
+The button only appears when this is set, so leaving it blank simply means no
+Google option.
+
+1. Go to <https://console.cloud.google.com/apis/credentials>
+2. Create a project if you have none (any name)
+3. **Configure consent screen** → *External* → fill in app name + your email → Save.
+   While it is in "Testing" only accounts you list under **Test users** can sign
+   in; click **Publish app** to open it to anyone.
+4. **Create credentials** → **OAuth client ID** → *Web application*
+5. Under **Authorised JavaScript origins** add the exact origins you serve from:
+   - `http://localhost:5173` (local dev)
+   - `https://your-app.vercel.app` (your deployed frontend)
+   No trailing slash. This must match the address bar exactly or Google refuses.
+6. Copy the **Client ID** (`...apps.googleusercontent.com`) into `GOOGLE_CLIENT_ID`.
+
+You do **not** need the client *secret* — the browser flow used here only needs
+the id, which is designed to be public.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `GOOGLE_CLIENT_ID` | *(blank)* | Enables the Google button. Blank = no Google option. |
+| `GOOGLE_DEFAULT_ROLE` | `reviewer` | Role a Google user gets. Set to `viewer` to make every Google sign-in read-only too. |
+| `GOOGLE_ADMIN_EMAILS` | *(blank)* | Comma-separated emails that get **admin**. Put your own address here. |
+
+**Note on cost:** with the default `reviewer`, anyone who signs in with Google
+can start investigations, which bills your OpenAI account. If you are sharing
+the link widely, set `GOOGLE_DEFAULT_ROLE=viewer` and keep yourself in
+`GOOGLE_ADMIN_EMAILS`.
+
+### Recommended setup for a public portfolio demo
+
+```bash
+ECHOLENS_ENV=production
+ALLOW_GUEST=true
+GOOGLE_CLIENT_ID=xxxxx.apps.googleusercontent.com
+GOOGLE_ADMIN_EMAILS=b.aditya.741@gmail.com
+GOOGLE_DEFAULT_ROLE=viewer      # nobody but you can spend credits
+JWT_SECRET=<generated, see above>
+CORS_ORIGINS=https://your-app.vercel.app
+```
+
+---
+
 ## Optional — have sensible defaults (leave as-is unless you know you want to change)
 
 | Variable | Default | What it does |
