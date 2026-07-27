@@ -75,19 +75,38 @@ class AppStoreCollector(Collector):
             raw = [e for e in raw if (_at(e) and _at(e) > cutoff)]
         return raw[:limit] if limit else raw
 
-    def ingest_item(self, session: Session, item: dict) -> tuple[bool, str | None]:
+    def _ext_id_for(self, item: dict) -> str:
+        """A stable, PRODUCT-SCOPED id for one review.
+
+        sha1, not builtin hash(): Python salts string hashing per PROCESS
+        (PYTHONHASHSEED), so an id-less review got a different ext_id on every
+        restart — dedupe never matched and the same review was re-inserted on
+        each run, inflating the corpus the detector reasons over.
+
+        Product-qualified because Review.ext_id is globally unique. Apple reuses
+        review ids across storefronts, and boilerplate text ("Doesn't work")
+        hashes identically, so two products collided on one id: the second one's
+        insert either read as a duplicate or failed the constraint outright, and
+        its corpus silently lost the row.
+        """
         review_id = _label(item, "id") or ""
-        # sha1, not builtin hash(): Python salts string hashing per PROCESS
-        # (PYTHONHASHSEED), so an id-less review got a different ext_id on every
-        # restart — dedupe never matched and the same review was re-inserted on
-        # each run, inflating the corpus the detector reasons over.
-        ext_id = (f"as_{review_id}" if review_id else
-                  "as_" + hashlib.sha1(
-                      str(item.get("content", {}).get("label", "")).encode("utf-8")
-                  ).hexdigest()[:20])
+        tag = hashlib.sha1((self.product or "").encode("utf-8")).hexdigest()[:6]
+        if review_id:
+            return f"as_{tag}_{review_id}"
+        digest = hashlib.sha1(
+            str(item.get("content", {}).get("label", "")).encode("utf-8")
+        ).hexdigest()[:20]
+        return f"as_{tag}_{digest}"
+
+    def ingest_item(self, session: Session, item: dict) -> tuple[bool, str | None]:
+        ext_id = self._ext_id_for(item)
         at = _at(item)
         wm = iso(at) if at else None
-        if session.scalars(select(Review).where(Review.ext_id == ext_id)).first():
+        # Scoped by product, like the GitHub collector already does: an ext_id
+        # is only unique WITHIN a product, and Apple reuses review ids across
+        # storefronts.
+        if session.scalars(select(Review).where(
+                Review.ext_id == ext_id, Review.product == self.product)).first():
             return False, wm
         try:
             rating = int(_label(item, "im:rating") or 0)

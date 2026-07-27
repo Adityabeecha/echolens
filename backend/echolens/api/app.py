@@ -504,6 +504,20 @@ def _guest_locked(user: dict | None) -> bool:
     return bool(user and user.get("guest") and settings.guest_demo_only)
 
 
+def _may_spend(user: dict | None) -> bool:
+    """May this caller cause an LLM call?
+
+    A guest may not. Guest mode exists so a public demo URL is browsable, and
+    every route that spends money is behind require_role — except the two GETs
+    that build an LLM client inline (/graph, /feed/candidates). Those served an
+    anonymous visitor a fresh OpenAI call per request, on the deployment's key.
+
+    Reads still work: the caller gets the deterministic result and a flag saying
+    the richer view needs an account.
+    """
+    return not (user and user.get("guest"))
+
+
 def _visible_products(session, user: dict | None = None):
     """The products this caller may see, newest-id-last."""
     from echolens.db.models import Product
@@ -1061,8 +1075,9 @@ def backlog_plan_save(body: PlanBody,
 # ── v10: the unified feedback graph ─────────────────────────────────────
 
 @app.get("/graph")
-def feedback_graph(product_id: int | None = None, days: int = 90, limit: int = 10,
-                   user: dict = Depends(current_user)) -> dict:
+@limiter.limit("20/minute")  # builds an LLM client inline — cap runaway spend
+def feedback_graph(request: Request, product_id: int | None = None, days: int = 90,
+                   limit: int = 10, user: dict = Depends(current_user)) -> dict:
     """Cross-channel problem nodes: one complaint, every voice.
 
     Ranked by how INDEPENDENT the witnesses are, not how many there are — a
@@ -1073,8 +1088,12 @@ def feedback_graph(product_id: int | None = None, days: int = 90, limit: int = 1
         prod = _scope(session, product_id, user)
         if prod is None:
             return {"nodes": [], "product": None, "channels": []}
-        llm = _metered_llm(session, "feedback_graph") if settings.openai_api_key else None
-        return build_graph(session, prod.name, llm=llm, days=days, limit=limit)
+        llm = (_metered_llm(session, "feedback_graph")
+               if settings.openai_api_key and _may_spend(user) else None)
+        out = build_graph(session, prod.name, llm=llm, days=days, limit=limit)
+        if llm is None and settings.openai_api_key:
+            out["llm_skipped"] = "sign in for LLM-grouped nodes"
+        return out
 
 
 @app.get("/graph/channels")
@@ -1124,8 +1143,9 @@ async def import_feedback(file: UploadFile = File(...), channel: str = "support"
 
 
 @app.get("/feed/candidates")
-def feed_candidates(product_id: int | None = None, limit: int = 6, refresh: bool = False,
-                    user: dict = Depends(current_user)) -> dict:
+@limiter.limit("20/minute")  # builds an LLM client inline — cap runaway spend
+def feed_candidates(request: Request, product_id: int | None = None, limit: int = 6,
+                    refresh: bool = False, user: dict = Depends(current_user)) -> dict:
     """Themes worth investigating that are not yet anomalies.
 
     A freshly-connected product often has no spike to detect — the detector needs
@@ -1140,9 +1160,15 @@ def feed_candidates(product_id: int | None = None, limit: int = 6, refresh: bool
         prod = _scope(session, product_id, user)
         if prod is None:
             return {"candidates": [], "product": None, "engine": "none"}
-        llm = _metered_llm(session, "themes") if settings.openai_api_key else None
+        # A guest gets the cache or the deterministic fallback, never a fresh
+        # LLM call. `refresh` deliberately DEFEATS the cache, so it is the one
+        # knob an anonymous caller could use to force unlimited spend — it is
+        # honoured only for someone who could pay for it.
+        may_spend = _may_spend(user)
+        llm = _metered_llm(session, "themes") if settings.openai_api_key and may_spend else None
         result = cached_themes(session, prod.name, llm=llm, limit=limit,
-                               package_name=prod.package_name, force=refresh)
+                               package_name=prod.package_name,
+                               force=refresh and may_spend)
         out = []
         for th in result.get("themes", []):
             slug = f"theme-p{prod.id}-{th['slug']}"

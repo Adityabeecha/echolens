@@ -364,6 +364,19 @@ class Investigator:
         state["last_tool"] = None
         if not last:
             return state
+        # PRE-FLIGHT, as in _plan. This node makes the LARGEST call in the loop —
+        # its prompt carries the full serialized tool result — and it was
+        # unguarded, so a run that passed the _plan check and then spent its
+        # remaining budget on the plan call and the tool would still make this
+        # one. Measured overshoot on tier `quick` (50k cap): 2.4x at 20k/call,
+        # 5.4x at 45k/call. The tool result is already recorded in the trace, so
+        # stopping here loses the assessment, not the evidence.
+        if guards.budget_exceeded(self.budget):
+            state["over_budget"] = True
+            self._trace("CHECK", {"code": "budget", "text":
+                                  "Budget reached before assessing the tool result; "
+                                  "it stays in the trace un-assessed."})
+            return state
         prompt = (
             f"HYPOTHESES:\n{json.dumps(state['hypotheses'], indent=1)}\n\n"
             f"TOOL CALL (testing {last.get('tests_hypothesis')}):\n"

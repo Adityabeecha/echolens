@@ -500,13 +500,19 @@ def discover_themes(session: Session, product: str | None = None, *, llm=None,
                              "first_seen": min(d).date().isoformat() if d else None,
                              "last_seen": max(d).date().isoformat() if d else None,
                              "trend": _trend(d, now)})
-            raw_by_index[len(prepared) - 1] = g
+            # Carried ON the cluster, not in a dict keyed by position. The label
+            # map used to be keyed by PRE-sort index and the sort below reordered
+            # `prepared` without it, so any LLM response not already in
+            # descending-size order attached each label to a different cluster —
+            # the verbatims quoted as evidence belonged to another complaint
+            # entirely.
+            prepared[-1]["_raw"] = g
         prepared.sort(key=lambda c: -c["count"])
         engine = "llm_grouping"
 
     themes = []
     for i, c in enumerate(prepared):
-        raw = raw_by_index.get(i) or {}
+        raw = c.get("_raw") or raw_by_index.get(i) or {}
         statement = " ".join(str(raw.get("statement", "")).split())
         confidence = float(raw.get("label_confidence") or 0.0)
         # Two ways a label is rejected, and both fall back to a REAL sentence a

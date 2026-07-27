@@ -79,6 +79,17 @@ class Collector(ABC):
             raw = self.fetch(since=st.watermark, limit=limit)
             result.fetched = len(raw)
             newest = st.watermark
+            # Once an item fails, the watermark stops advancing for the rest of
+            # the page. A later item would otherwise carry it PAST the failed
+            # one, so the next run starts after it and that item is lost for
+            # good — while the run still reports healthy. Freezing here means a
+            # poison item is retried next time rather than skipped: a
+            # permanently bad item stalls its source, which is visible in
+            # source_health, instead of silently dropping data.
+            #
+            # Items arrive oldest-first from every collector's fetch(), so the
+            # last good watermark before the failure is the correct resume point.
+            stop_advancing = False
             for item in raw:
                 # One malformed item must not discard the whole page. The loop
                 # was unguarded and the watermark assignment sat AFTER it, so an
@@ -90,6 +101,7 @@ class Collector(ABC):
                     inserted, wm = self.ingest_item(session, item)
                 except Exception as err:
                     result.failed_items += 1
+                    stop_advancing = True
                     log.warning("collector_item_failed", source=self.source,
                                 id=self.identifier, error=f"{type(err).__name__}: {err}")
                     continue
@@ -97,12 +109,16 @@ class Collector(ABC):
                     result.inserted += 1
                 else:
                     result.skipped_duplicate += 1
-                if wm and (newest is None or wm > newest):
+                if wm and not stop_advancing and (newest is None or wm > newest):
                     newest = wm
             result.watermark = newest
             st.watermark = newest
             st.items_last_run = result.inserted
-            st.status = "healthy"
+            # A run that dropped items is NOT healthy. source_health computes
+            # `errored = status == "error"`, so marking this healthy meant a
+            # collector failing on every item still read as fine and the
+            # "findings disclose stale sources" guarantee never fired for it.
+            st.status = "error" if result.failed_items else "healthy"
             st.last_error = (None if not result.failed_items else
                              f"{result.failed_items} item(s) could not be ingested")
             log.info("collector_run", source=self.source, id=self.identifier,

@@ -18,16 +18,34 @@ from echolens.investigator.state import Budget
 
 CAUSAL_MARKERS = re.compile(
     r"\b(caus(?:e|es|ed|ing)|driv(?:es|en|ing)|because|due to|led to|leads to|"
-    r"result(?:s|ed)? (?:in|from)|root cause|responsible for|triggered)\b",
+    r"result(?:s|ed)? (?:in|from)|root cause|responsible for|triggered|"
+    # Added after the audit: all of these state a cause in plain English and
+    # every one of them published unblocked.
+    r"stems? from|stemmed from|attributable to|attributed to|the trigger for|"
+    r"the reason(?: (?:that|why))?|owing to|thanks to|brought about by|"
+    r"introduced by|down to|explains?(?: why)?|arises? from|arose from|"
+    r"originates? from|traced? (?:back )?to|blame[ds]? on)\b",
     re.IGNORECASE,
 )
 EVIDENCE_REF = re.compile(r"\bev_\d+\b")
 
-# Sentence boundary for the claim-grounding scan: terminal punctuation OR a line
-# break. Punctuation alone treated a block of newline-separated prose as ONE
-# sentence, so a single inline citation anywhere in it grounded every causal
-# claim in the block.
-SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
+# Clause boundary for the claim-grounding scan.
+#
+# Terminal punctuation, a line break, OR a clause separator — `;` `:` and a
+# comma before a conjunction. Splitting on `.!?` alone let a causal claim ride
+# on a citation that belonged to a DIFFERENT clause of the same sentence:
+#
+#     "Sync is broken [ev_001]; the crash was caused by the v3.2 release."
+#
+# is one sentence to a `.`-only splitter, so the uncited second half inherited
+# ev_001 and published unchallenged. Each clause now has to carry its own
+# citation.
+SENTENCE_SPLIT = re.compile(
+    r"(?<=[.!?])\s+"                       # sentence end
+    r"|\n+"                                # line break
+    r"|\s*[;:]\s*"                         # clause separator
+    r"|,\s+(?=(?:which|and|so|but|because|since|as)\b)"  # comma + conjunction
+)
 
 
 def budget_exceeded(budget: Budget) -> list[str]:

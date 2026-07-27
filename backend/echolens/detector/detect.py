@@ -406,12 +406,32 @@ def detect_issue_velocity(session: Session, as_of: datetime | None = None,
         recent_count = sum(recent)
         if recent_count < 2:
             continue
+        # A SURGE has to be a RISE. This detector had no threshold at all —
+        # unlike every other one here — so a falling issue rate (measured z of
+        # -0.90) was published as an "issue_velocity_surge", and
+        # _severity_priority ranks on abs(z), so it then competed for the daily
+        # investigation budget.
+        #
+        # The bar is deliberately lower than the review detectors': issue
+        # volumes are small (a repo filing 4 issues in a week is busy), and at
+        # that sample size a genuine 4-in-a-week burst against a quiet baseline
+        # scores only z=0.57. Requiring SEV3_Z there would discard every real
+        # signal a small repo can produce. So: a positive z AND more recent
+        # issues than the baseline rate would predict.
+        baseline_rate = (sum(baseline) / len(baseline)) if baseline else 0.0
+        expected = baseline_rate * len(recent)
+        if z <= 0 or recent_count <= expected:
+            continue
         out.append(Candidate(
             slug=f"auto-issues-{term.split()[0]}", type="issue_velocity_surge",
             metric=f"{label} per week", delta=delta, z=z, window=f"{RECENT_DAYS}d",
             description=f"{label}: {recent_count:.0f} new issues this week (z={z}); "
                         f"same window and theme as the review signal.",
-            severity=_severity(max(z, SEV2_Z)),
+            # The measured z, not max(z, SEV2_Z). Forcing SEV2 made every
+            # surviving candidate look at least moderately severe, and scan()'s
+            # noise gate exempts SEV1/SEV2 from the z check — so the floor
+            # laundered a weak signal into one that bypassed the gate.
+            severity=_severity(z),
         ))
     return out
 
@@ -442,10 +462,21 @@ def scan(session: Session, as_of: datetime | None = None, persist: bool = True,
     candidates += detect_theme_surges(session, as_of, win, product)
     candidates += detect_issue_velocity(session, as_of, win, product)
     # Noise gate: a weak SEV3 signal (z below threshold) never becomes a case.
-    # Detectors that assert their own significance (SEV1/SEV2 — e.g. issue
-    # velocity, which counts real new issues) are not z-gated.
+    #
+    # `c.z >= MIN_CASE_Z`, not `abs(c.z)`. Absolute value let a strong DECLINE
+    # through the gate as readily as a strong rise — and every candidate here is
+    # a "something got worse" claim, so a negative z is evidence AGAINST the
+    # case, not for it.
+    #
+    # issue_velocity_surge stays exempt because it counts real new issues
+    # against a small baseline where a z-score cannot reach the threshold (4
+    # issues in a week off a quiet repo scores 0.57). It is exempted BY TYPE
+    # now: it used to buy the exemption by forcing severity=SEV2 on every
+    # candidate, which also misreported how bad the signal was.
     candidates = [c for c in candidates
-                  if c.severity in ("SEV1", "SEV2") or abs(c.z) >= MIN_CASE_Z]
+                  if c.type == "issue_velocity_surge"
+                  or c.severity in ("SEV1", "SEV2")
+                  or c.z >= MIN_CASE_Z]
 
     window_start = as_of - timedelta(days=win.recent)
     events: list[AnomalyEvent] = []
