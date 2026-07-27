@@ -234,7 +234,7 @@ function Oracle() {
                    padding: `${S[2]} ${S[3]}` }}
         />
         <button onClick={() => ask(q)} disabled={!q.trim() || busy} className="el-btn"
-          style={{ background: "transparent", color: C.accent, border: `1px solid rgba(240,166,60,.4)`,
+          style={{ background: "transparent", color: C.accent, border: `1px solid var(--el-accent-line)`,
                    borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base,
                    cursor: q.trim() && !busy ? "pointer" : "not-allowed" }}>
           {busy ? "…" : "Ask"}

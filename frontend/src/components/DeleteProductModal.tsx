@@ -54,7 +54,7 @@ export function DeleteProductModal({ product, onClose, onDeleted }: Props) {
   return (
     <div
       onClick={() => !busy && onClose()}
-      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.62)", zIndex: 60,
+      style={{ position: "fixed", inset: 0, background: "var(--el-scrim)", zIndex: 60,
                display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
     >
       <div
@@ -65,7 +65,7 @@ export function DeleteProductModal({ product, onClose, onDeleted }: Props) {
         aria-label={`Delete ${product.name}`}
         style={{ width: "100%", maxWidth: 460, background: C.card,
                  border: `1px solid ${C.bad}55`, borderRadius: R.overlay, padding: `${S[5]} ${S[6]}`,
-                 boxShadow: "0 24px 60px rgba(0,0,0,.55)" }}
+                 boxShadow: "var(--el-e4)" }}
       >
         <div style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".12em", color: C.bad,
                       marginBottom: S[2] }}>

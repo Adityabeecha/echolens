@@ -29,7 +29,7 @@ function Prose({ text, evidence, onOpenEvidence }: {
         return (
           <sup key={i} onClick={() => ev && onOpenEvidence(ev)}
             style={{ fontFamily: mono, fontSize: T.micro, color: C.accent,
-                     padding: `0 ${S[1]}`, background: "rgba(240,166,60,.1)", borderRadius: R.sm,
+                     padding: `0 ${S[1]}`, background: C.accentBg, borderRadius: R.sm,
                      marginLeft: 2 }}>
             {m[1]}
           </sup>
@@ -247,7 +247,7 @@ export function FindingTab({
                   className="el-btn"
                   style={{ fontSize: T.sm, padding: `${S[1]} ${S[3]}`, borderRadius: R.pill,
                            border: `1px solid ${reason === val ? C.accent : C.border3}`,
-                           background: reason === val ? "rgba(240,166,60,.12)" : "transparent",
+                           background: reason === val ? C.accentBg : "transparent",
                            color: reason === val ? C.accent : C.muted }}>
                   {label}
                 </button>

@@ -13,7 +13,7 @@ export function EvidenceSheet({ evidence, onClose }: { evidence: Evidence | null
   return (
     <>
       <div onClick={onClose} aria-hidden="true"
-           style={{ position: "fixed", inset: 0, background: "rgba(6,7,10,.55)", zIndex: 20 }} />
+           style={{ position: "fixed", inset: 0, background: "var(--el-scrim)", zIndex: 20 }} />
       <div
         // Announced as a dialog. Without a role a screen reader treated this as
         // ordinary page content, so focus stayed on the obscured page behind it
@@ -35,7 +35,7 @@ export function EvidenceSheet({ evidence, onClose }: { evidence: Evidence | null
           display: "flex",
           flexDirection: "column",
           gap: S[3],
-          boxShadow: "-20px 0 50px rgba(0,0,0,.45)"
+          boxShadow: "var(--el-e4)"
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>

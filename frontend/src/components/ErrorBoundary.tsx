@@ -55,7 +55,7 @@ export class ErrorBoundary extends Component<Props, State> {
             )}
             <button onClick={() => window.location.reload()} className="el-btn"
               style={{ background: "transparent", color: C.accent,
-                       border: `1px solid rgba(240,166,60,.4)`, borderRadius: R.control,
+                       border: `1px solid var(--el-accent-line)`, borderRadius: R.control,
                        padding: `${S[2]} ${S[4]}`, fontSize: T.base }}>
               Reload EchoLens
             </button>

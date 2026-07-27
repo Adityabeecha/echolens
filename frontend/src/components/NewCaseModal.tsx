@@ -44,7 +44,7 @@ export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onSt
   return (
     <>
       <div onClick={onClose} aria-hidden="true"
-           style={{ position: "fixed", inset: 0, background: "rgba(6,7,10,.6)", zIndex: 30 }} />
+           style={{ position: "fixed", inset: 0, background: "var(--el-scrim)", zIndex: 30 }} />
       <div
         ref={ref}
         role="dialog"
@@ -96,7 +96,7 @@ export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onSt
                 if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setTier(t.key); }
               }}
               onClick={() => setTier(t.key)}
-              style={{ padding: `${S[2]} ${S[2]}`, border: `1px solid ${tier === t.key ? "rgba(240,166,60,.45)" : C.border3}`, borderRadius: R.control, background: tier === t.key ? "rgba(240,166,60,.06)" : "transparent" }}
+              style={{ padding: `${S[2]} ${S[2]}`, border: `1px solid ${tier === t.key ? "var(--el-accent-line)" : C.border3}`, borderRadius: R.control, background: tier === t.key ? "var(--el-accent-bg)" : "transparent" }}
             >
               <div style={{ fontSize: T.sm, fontWeight: 500, color: C.text2 }}>{t.name}</div>
               <div style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, marginTop: 0 }}>{t.detail}</div>
@@ -104,7 +104,7 @@ export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onSt
           ))}
         </div>
         {error && (
-          <div style={{ marginTop: S[3], padding: `${S[2]} ${S[3]}`, borderRadius: R.control, background: "rgba(224,88,79,.08)", border: "1px solid rgba(224,88,79,.35)", color: C.bad, fontSize: T.sm }}>
+          <div style={{ marginTop: S[3], padding: `${S[2]} ${S[3]}`, borderRadius: R.control, background: "var(--el-bad-bg)", border: "1px solid var(--el-bad-line)", color: C.bad, fontSize: T.sm }}>
             {error}
           </div>
         )}

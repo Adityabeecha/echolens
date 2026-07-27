@@ -214,7 +214,7 @@ function replayBtn(active: boolean): React.CSSProperties {
   return {
     fontFamily: mono, fontSize: T.micro, letterSpacing: ".04em", padding: `${S[1]} ${S[2]}`, borderRadius: R.sm,
     border: `1px solid ${active ? C.accent : C.border3}`,
-    background: active ? "rgba(240,166,60,.12)" : "transparent",
+    background: active ? C.accentBg : "transparent",
     color: active ? C.accent : C.muted
   };
 }
@@ -225,8 +225,8 @@ function SecondaryBtn({ children, onClick, active }: {
   return (
     <button onClick={onClick} className="el-btn"
       style={{ flex: 1, padding: `${S[2]} 0`, borderRadius: R.control,
-               border: `1px solid ${active ? "rgba(76,192,119,.4)" : C.border4}`,
-               background: active ? "rgba(76,192,119,.08)" : C.hover,
+               border: `1px solid ${active ? C.goodLine : C.border4}`,
+               background: active ? C.goodBg : C.hover,
                color: active ? C.good : C.text, fontSize: T.sm, fontWeight: 500 }}>
       {children}
     </button>

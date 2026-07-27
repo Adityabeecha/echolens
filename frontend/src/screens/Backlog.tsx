@@ -279,7 +279,7 @@ function Row({ item, inPlan, busy, canEdit, onToggle, onOpen, note }: {
       {canEdit && (
         <button onClick={onToggle} disabled={busy} className="el-btn"
           style={{ background: "transparent", color: inPlan ? C.dim : C.accent,
-                   border: `1px solid ${inPlan ? C.border3 : "rgba(240,166,60,.4)"}`,
+                   border: `1px solid ${inPlan ? C.border3 : "var(--el-accent-line)"}`,
                    borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.sm, fontFamily: sans,
                    cursor: busy ? "wait" : "pointer", flex: "none", alignSelf: "center" }}>
           {inPlan ? "Drop" : "Add"}

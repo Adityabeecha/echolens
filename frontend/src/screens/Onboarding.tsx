@@ -66,7 +66,7 @@ export function Onboarding({
       <div
         onClick={phase === "form" ? onClose : undefined}
         aria-hidden="true"
-        style={{ position: "fixed", inset: 0, background: "rgba(6,7,10,.72)", zIndex: 40 }}
+        style={{ position: "fixed", inset: 0, background: "var(--el-scrim)", zIndex: 40 }}
       />
       <div
         ref={ref}
@@ -372,7 +372,7 @@ function Backfilling({ product, onDone, onReviewSignals }: {
         {ready && found > 0 && (
           <button onClick={onReviewSignals} className="el-btn"
             style={{ background: "transparent", color: C.accent,
-                     border: `1px solid rgba(240,166,60,.4)`, borderRadius: R.control, padding: `${S[3]} ${S[5]}`,
+                     border: `1px solid var(--el-accent-line)`, borderRadius: R.control, padding: `${S[3]} ${S[5]}`,
                      fontWeight: 500, fontSize: T.md, fontFamily: sans }}>
             Review {found} {plural(found, "signal")} in Cases
           </button>
