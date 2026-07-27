@@ -385,7 +385,8 @@ def _run_investigation_bg(investigation_id: int, tier: str) -> None:
 # ── endpoints ──────────────────────────────────────────────────────────
 
 from echolens.auth import (
-    authenticate, create_token, create_user, current_user, decode_token, require_role)
+    DEV_ADMIN, GUEST, authenticate, create_token, create_user, current_user,
+    decode_token, require_role)
 
 
 class SignupBody(BaseModel):
@@ -1531,18 +1532,32 @@ async def stream_trace(inv_id: int, request: Request, product_id: int | None = N
     "live trace" never worked in production at all. Same JWT; it is in the query
     string because SSE leaves nowhere else to put it.
     """
+    # This route authenticates by hand (EventSource cannot set headers, so the
+    # token may arrive in the query string), which means there is no `user`
+    # dependency to hand to _scope. Build the same principal shape those
+    # dependencies produce, so guest scoping applies here too.
+    user: dict = dict(GUEST)
     if settings.auth_required:
         header = request.headers.get("Authorization", "")
         raw = header.split(" ", 1)[1] if header.startswith("Bearer ") else token
         ok = False
         if raw:
             try:
-                int(decode_token(raw)["sub"])
+                claims = decode_token(raw)
+                int(claims["sub"])
+                user = {"id": int(claims["sub"]), "email": claims.get("email"),
+                        "role": claims.get("role", "viewer")}
                 ok = True
             except Exception:
                 ok = False
+        # A guest may tail a demo product's trace, but only when guests are
+        # allowed at all; otherwise a token is still required.
+        if not ok and settings.allow_guest and not raw:
+            ok = True
         if not ok:
             raise HTTPException(401, "missing or invalid token")
+    else:
+        user = dict(DEV_ADMIN)
 
     with session_scope() as session:
         p = _scope(session, product_id, user)

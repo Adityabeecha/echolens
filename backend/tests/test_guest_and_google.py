@@ -385,3 +385,77 @@ def test_the_flag_can_be_turned_off(monkeypatch, tmp_path):
 
     names = [p["name"] for p in tc.get("/products").json()["products"]]
     assert len(names) == 2
+
+
+# ── the SSE trace stream ───────────────────────────────────────────────
+
+def _stream_fixture(monkeypatch):
+    """A client plus (demo_product_id, demo_inv_id, real_product_id, real_inv_id)."""
+    from fastapi.testclient import TestClient
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    import echolens.db.session as db_session
+    from echolens.db.models import AnomalyEvent, Base, Investigation, Product
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                           poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, expire_on_commit=False)
+    out = {}
+    with Session() as s:
+        for name, demo in (("Lumo (demo)", True), ("Firefox", False)):
+            p = Product(name=name, is_demo=demo); s.add(p); s.flush()
+            a = AnomalyEvent(slug=f"s{p.id}", type="t", metric="m", delta=0.0, z=0.0,
+                             window="90d", description="d", status="pending",
+                             product_id=p.id)
+            s.add(a); s.flush()
+            inv = Investigation(anomaly_id=a.id, status="needs_review",
+                                opened_by="anomaly", budget_tier="quick",
+                                budget_json={}, product_id=p.id)
+            s.add(inv); s.flush()
+            out[name] = (p.id, inv.id)
+        u = auth.create_user(s, "admin@team.com", "pw", "admin")
+        out["token"] = auth.create_token(u)
+        s.commit()
+    monkeypatch.setattr(db_session, "_engine", engine)
+    monkeypatch.setattr(db_session, "_SessionLocal", Session)
+    monkeypatch.setattr(db_session, "get_engine", lambda db_url=None: engine)
+    from echolens.api.app import app
+    return TestClient(app, raise_server_exceptions=False), out
+
+
+def test_trace_stream_does_not_500(monkeypatch):
+    """It referenced an undefined `user`, so every request raised NameError and
+    the live trace was a 500 in both dev and staging."""
+    monkeypatch.setattr(settings, "echolens_env", "dev")
+    tc, ids = _stream_fixture(monkeypatch)
+    pid, iid = ids["Lumo (demo)"]
+    r = tc.get(f"/investigations/{iid}/trace/stream?product_id={pid}")
+    assert r.status_code == 200, r.text[:200]
+
+
+def test_trace_stream_is_product_scoped_for_guests(monkeypatch):
+    """This route builds its own principal (EventSource cannot send headers),
+    so the guest demo-only rule has to be applied here explicitly."""
+    monkeypatch.setattr(settings, "echolens_env", "staging")
+    monkeypatch.setattr(settings, "allow_guest", True)
+    monkeypatch.setattr(settings, "guest_demo_only", True)
+    tc, ids = _stream_fixture(monkeypatch)
+
+    demo_pid, demo_iid = ids["Lumo (demo)"]
+    real_pid, real_iid = ids["Firefox"]
+    assert tc.get(f"/investigations/{demo_iid}/trace/stream?product_id={demo_pid}").status_code == 200
+    assert tc.get(f"/investigations/{real_iid}/trace/stream?product_id={real_pid}").status_code == 404
+
+    # A signed-in admin still reaches both.
+    tok = ids["token"]
+    assert tc.get(f"/investigations/{real_iid}/trace/stream?product_id={real_pid}&token={tok}").status_code == 200
+
+
+def test_trace_stream_still_401s_when_guests_are_off(monkeypatch):
+    monkeypatch.setattr(settings, "echolens_env", "staging")
+    monkeypatch.setattr(settings, "allow_guest", False)
+    tc, ids = _stream_fixture(monkeypatch)
+    pid, iid = ids["Lumo (demo)"]
+    assert tc.get(f"/investigations/{iid}/trace/stream?product_id={pid}").status_code == 401
