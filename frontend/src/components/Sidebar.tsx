@@ -169,7 +169,8 @@ export function Sidebar({
       style={{ width: "var(--el-sidebar-w)", flex: "none", display: "flex",
                flexDirection: "column", borderRight: `1px solid ${C.border}`,
                background: C.bgRaised }}>
-      <div style={{ display: "flex", alignItems: "center", gap: S[3],
+      <div className="el-nav-brand"
+           style={{ display: "flex", alignItems: "center", gap: S[3],
                     padding: `${S[5]} ${S[4]} ${S[4]}` }}>
         <span style={{ width: 26, height: 26, borderRadius: "50%",
                       border: `2px solid ${C.accent}`, position: "relative", flex: "none" }}>
@@ -239,7 +240,7 @@ export function Sidebar({
         ))}
       </div>
 
-      <div style={{ flex: 1 }} />
+      <div className="el-nav-spacer" style={{ flex: 1 }} />
 
       {running.length > 0 && (
         <button
@@ -266,10 +267,10 @@ export function Sidebar({
       )}
 
       {/* System: how EchoLens itself is running. Collapsed, small, findable. */}
-      <div style={{ padding: `${S[2]} ${S[3]} ${S[1]}` }}>
+      <div className="el-nav-system-group" style={{ padding: `${S[2]} ${S[3]} ${S[1]}` }}>
         <button
           onClick={() => setSystemOpen((o) => !o)}
-          className="el-btn el-btn--sm"
+          className="el-btn el-btn--sm el-nav-system-toggle"
           title="Sources, patterns, calibration, costs and settings"
           aria-expanded={showSystem}
           style={{ display: "flex", alignItems: "center", gap: S[2],
@@ -280,14 +281,16 @@ export function Sidebar({
           <Icon name={showSystem ? "chevronDown" : "chevronRight"} size={12} />
           <span className="el-nav-label">SYSTEM</span>
         </button>
-        {showSystem && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-            {SYSTEM.map((n) => (
-              <NavRow key={n.key} item={n} active={isActive(n.key)} small
-                      onClick={() => go(n.key)} />
-            ))}
-          </div>
-        )}
+        {/* Always rendered; the disclosure is CSS. On a phone the nav is a
+            scrolling icon bar where a collapsed group would simply hide five
+            screens, so `.el-nav-system` is shown there and the toggle hidden. */}
+        <div className="el-nav-system"
+             style={{ display: showSystem ? "flex" : "none", flexDirection: "column", gap: 0 }}>
+          {SYSTEM.map((n) => (
+            <NavRow key={n.key} item={n} active={isActive(n.key)} small
+                    onClick={() => go(n.key)} />
+          ))}
+        </div>
       </div>
 
       {onLogout && (

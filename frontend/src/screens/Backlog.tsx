@@ -110,6 +110,7 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
               <div>
                 <Label style={{ marginBottom: S[1] }}>CAPACITY (ENGINEER-DAYS)</Label>
                 <input
+                  aria-label="Capacity in engineer-days"
                   type="number" min={1} max={200} value={capacity}
                   disabled={!reviewer}
                   onChange={(e) => setCapacity(Number(e.target.value))}

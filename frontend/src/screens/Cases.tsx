@@ -529,6 +529,7 @@ function Select({ value, onChange, options }: {
 }) {
   return (
     <select
+      aria-label="Filter cases"
       value={value}
       onChange={(e) => onChange(e.target.value || "")}
       style={{ background: C.card, border: `1px solid ${C.border3}`, borderRadius: R.control,

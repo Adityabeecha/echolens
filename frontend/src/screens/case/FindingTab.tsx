@@ -421,6 +421,7 @@ function FollowupCard({ findingId, addenda, onAdded }: {
       <div style={{ display: "flex", gap: S[2], maxWidth: 560 }}>
         <input value={q} onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && ask()}
+          aria-label="Ask a follow-up question about this finding"
           placeholder="Does this affect iOS too? Which version?"
           style={{ flex: 1, background: C.bgRaised, border: `1px solid ${C.border3}`,
                    borderRadius: R.control, color: C.text, fontFamily: "inherit", fontSize: T.base,

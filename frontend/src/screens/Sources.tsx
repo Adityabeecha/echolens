@@ -207,8 +207,9 @@ function ConnectForm({ onDone }: { onDone: () => void }) {
         </select>
         <input value={identifier} onChange={(e) => setIdentifier(e.target.value)} placeholder={hint}
           aria-label="Source identifier" style={input} />
-        <input value={product} onChange={(e) => setProduct(e.target.value)} placeholder="product name (optional)"
-          aria-label="Product name" style={input} />
+        <input value={product} onChange={(e) => setProduct(e.target.value)}
+          aria-label="Product name (optional)" placeholder="product name (optional)"
+          style={input} />
         <button onClick={submit} disabled={!identifier.trim() || busy} className="el-btn el-btn--primary"
           style={{ borderRadius: R.control, padding: `${S[2]} ${S[4]}`, fontWeight: 600, fontSize: T.base, cursor: identifier.trim() ? "pointer" : "not-allowed", opacity: identifier.trim() ? 1 : 0.5 }}>
           {busy ? "…" : "Connect"}
@@ -258,7 +259,9 @@ function ImportForm({ onDone }: { onDone: (msg: string) => void }) {
         <input type="file" accept=".csv,text/csv" aria-label="CSV file to import"
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           style={{ ...input, padding: `${S[2]} ${S[2]}` }} />
-        <input value={product} onChange={(e) => setProduct(e.target.value)} placeholder="product name (optional)" style={input} />
+        <input value={product} onChange={(e) => setProduct(e.target.value)}
+          aria-label="Product name (optional)"
+          placeholder="product name (optional)" style={input} />
         <input value={sourceLabel} onChange={(e) => setSourceLabel(e.target.value)} placeholder="source label (e.g. app_store)"
           aria-label="Source label" style={input} />
         <button onClick={submit} disabled={!file || busy} className="el-btn el-btn--primary"

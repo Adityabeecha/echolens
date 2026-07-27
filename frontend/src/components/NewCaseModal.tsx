@@ -75,6 +75,7 @@ export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onSt
         </div>
         <div style={{ fontSize: T.sm, color: C.muted, marginBottom: S[1] }}>What should the investigator look into?</div>
         <textarea
+          aria-label="What should the investigator look into?"
           value={desc}
           onChange={(e) => setDesc(e.target.value)}
           placeholder="e.g. Users report the share sheet freezing on Samsung devices since last week"

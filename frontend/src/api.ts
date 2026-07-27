@@ -785,20 +785,33 @@ export const api = {
     fd.append("file", file);
     const qs = new URLSearchParams({ source });
     if (product) qs.set("product", product);
+    // Without a product the importer writes Review(product=None): the rows land
+    // attached to NO product and are invisible to every scoped screen.
+    const pid = getActiveProduct();
+    if (pid != null) qs.set("product_id", String(pid));
     return fetch(`${BASE}/import/reviews?${qs.toString()}`, {
       method: "POST",
       headers: { ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
       body: fd,
     }).then(async (r) => {
-      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.detail || `import → ${r.status}`);
+      if (!r.ok) {
+        // handle() bounces a 401 to the login screen. This raw fetch skipped it,
+        // so an expired session here failed silently instead.
+        handle(r.status);
+        throw new Error((await r.json().catch(() => ({})))?.detail || `import → ${r.status}`);
+      }
       return r.json() as Promise<{ imported: number; skipped: number; total: number }>;
     });
   },
+  // product_id, not just the free-text name. With a blank product the server
+  // falls back to `product or identifier`, so the source attached to a product
+  // named after the raw PACKAGE — not the one whose Sources screen you were on.
   connectSource: (source: string, identifier: string, product?: string) =>
     post<{ connected: { source: string; identifier: string; product: string } }>("/sources/connect", {
       source,
       identifier,
       product,
+      product_id: getActiveProduct(),
     }),
   collectorsRetry: (source: string, identifier: string) =>
     post<{ inserted: number; error: string | null }>("/collectors/retry", { source, identifier }),
@@ -820,8 +833,12 @@ export const api = {
   costsSummary: () => get<CostsSummary>(scoped("/costs/summary")),
   // Goes through put(): the raw fetch() never checked r.ok, so a rejected save
   // (401, 403, 500) resolved as success and Settings reported "Limit saved."
+  // scoped(): the READ comes from costsSummary(), which is product-scoped and
+  // layers this product's override on top. An unscoped write landed in the
+  // workspace row that the read ignores, so the save appeared to succeed and
+  // the number silently reverted.
   setLimits: (limits: { daily_investigations?: number; per_case_budget?: number; per_case_wall_min?: number }) =>
-    put<Record<string, number>>("/settings/limits", limits),
+    put<Record<string, number>>(scoped("/settings/limits"), limits),
   // SSE URL for the live trace. EventSource cannot set an Authorization header,
   // so the token rides in the query string — without it the endpoint 401s in
   // every non-dev environment and the "live" trace silently degrades to polling.

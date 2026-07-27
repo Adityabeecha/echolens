@@ -798,18 +798,36 @@ class ConnectSource(BaseModel):
     source: str            # play_store | github
     identifier: str        # package name / repo
     product: str | None = None
+    product_id: int | None = None
 
 
 @app.post("/sources/connect")
 def connect_source(body: ConnectSource, user: dict = Depends(require_role("admin"))) -> dict:
     """Register a real data source (v1.0). Collection happens on the schedule
-    or via POST /collectors/run."""
+    or via POST /collectors/run.
+
+    product_id wins over the free-text `product`. Sources is a per-product
+    screen, but its form defaulted the name to "" — and add_source falls back to
+    `product or identifier`, so the source attached to a product named after the
+    raw PACKAGE rather than the one being viewed. Nothing errored; the data just
+    filed itself somewhere invisible.
+    """
     from echolens.collectors.registry import add_source
     with session_scope() as session:
+        product = body.product
+        if body.product_id is not None:
+            prod = _scope(session, body.product_id, user)
+            if prod is not None:
+                product = prod.name
         try:
-            st = add_source(session, body.source, body.identifier, body.product)
+            st = add_source(session, body.source, body.identifier, product)
         except ValueError as err:
             raise HTTPException(422, str(err))
+        # Scope the collector row too, so product-filtered health and collection
+        # actually see it.
+        if body.product_id is not None:
+            st.product_id = body.product_id
+            session.flush()
         return {"connected": {"source": st.source, "identifier": st.identifier, "product": st.product}}
 
 
@@ -1261,9 +1279,16 @@ def queue_cancel(queue_id: int, product_id: int | None = None,
 
 @app.post("/import/reviews")
 async def import_reviews(file: UploadFile = File(...), product: str = "", source: str = "csv",
+                        product_id: int | None = None,
                         user: dict = Depends(require_role("admin"))) -> dict:
     """Import a CSV of reviews from any export (App Store, Zendesk, spreadsheet).
-    Widens the evidence base beyond the live scrapers. Idempotent by content hash."""
+    Widens the evidence base beyond the live scrapers. Idempotent by content hash.
+
+    product_id wins over the free-text `product`. Import is offered from a
+    per-product screen, but the form defaulted the name to "" and the importer
+    then wrote Review(product=None) — the rows landed attached to NO product and
+    were invisible to every scoped screen in the app.
+    """
     from echolens.importers.csv_reviews import import_reviews_csv
     # Bounded. `await file.read()` with no cap pulled the entire upload into
     # memory (and csv.DictReader then held a second copy), so one large POST
@@ -1276,7 +1301,12 @@ async def import_reviews(file: UploadFile = File(...), product: str = "", source
     except UnicodeDecodeError:
         text = raw.decode("latin-1", errors="replace")
     with session_scope() as session:
-        result = import_reviews_csv(session, text, product=(product or None), source=(source or "csv"))
+        name = product or None
+        if product_id is not None:
+            prod = _scope(session, product_id, user)
+            if prod is not None:
+                name = prod.name
+        result = import_reviews_csv(session, text, product=name, source=(source or "csv"))
     return result
 
 
@@ -2658,19 +2688,36 @@ class LimitsBody(BaseModel):
 
 
 @app.put("/settings/limits")
-def set_limits(body: LimitsBody, user: dict = Depends(require_role("admin"))) -> dict:
-    """Adjust workspace budget limits (admin). Persisted; the orchestrator's
-    daily cap reads from here."""
+def set_limits(body: LimitsBody, product_id: int | None = None,
+               user: dict = Depends(require_role("admin"))) -> dict:
+    """Adjust budget limits (admin), for ONE product or for the workspace.
+
+    With a product_id this writes that product's override, which is what
+    _limits() reads back first. Without one it writes the workspace default.
+
+    The two must match or the screen lies: Settings READ through
+    /costs/summary, which is product-scoped and layers the per-product override
+    on top, but WROTE here unscoped — so on any product carrying an override the
+    save landed in a row the read ignored. The admin got a green "Limit saved."
+    toast and the number silently reverted to the old value.
+    """
+    from echolens.db.models import Product
     with session_scope() as session:
-        current = _limits(session)
+        prod = _scope(session, product_id, user) if product_id is not None else None
+        # Merge onto the EFFECTIVE limits for this scope, so a partial body
+        # (one field) does not blank the others.
+        current = _limits(session, prod.id if prod else None)
         for k in ("daily_investigations", "per_case_budget", "per_case_wall_min"):
             v = getattr(body, k)
             if v is not None:
                 current[k] = v
-        row = session.get(Setting, "limits")
-        if row is None:
-            row = Setting(key="limits", value={})
-            session.add(row)
-        row.value = current
+        if prod is not None:
+            prod.limits_json = dict(current)
+        else:
+            row = session.get(Setting, "limits")
+            if row is None:
+                row = Setting(key="limits", value={})
+                session.add(row)
+            row.value = current
         session.flush()
         return current

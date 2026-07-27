@@ -144,6 +144,7 @@ function ReviewBox() {
         Paste a spec or PR description. EchoLens checks it against what has bitten this product before.
       </p>
       <textarea
+        aria-label="Paste a spec or PR description to review"
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder="e.g. Rework the background sync scheduler to batch uploads when the device is idle…"
@@ -228,6 +229,7 @@ function Oracle() {
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && ask(q)}
+          aria-label="Ask about the product's failure history"
           placeholder="Ask about the product's failure history…"
           style={{ flex: 1, background: C.bgRaised, border: `1px solid ${C.border3}`,
                    borderRadius: R.control, color: C.text, fontFamily: sans, fontSize: T.base,

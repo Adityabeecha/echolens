@@ -96,6 +96,7 @@ export function Chat({ onOpenInvestigation, productName }: {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
+          aria-label="Ask a question about your feedback"
           placeholder="Ask about a complaint, cause, or what to fix next…"
           style={{ flex: 1, background: C.bgRaised, border: `1px solid ${C.border3}`, borderRadius: R.control, color: C.text, fontFamily: sans, fontSize: T.md, padding: `${S[3]} ${S[3]}` }}
         />

@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from echolens.config import settings
 from echolens.db.models import Base, CollectorState, Review
 
 NOW = datetime(2026, 7, 25, tzinfo=timezone.utc)
@@ -233,3 +234,47 @@ def test_a_failed_item_freezes_the_watermark_and_marks_the_source_errored():
     assert r.failed_items == 1
     assert st.watermark == "2026-01-01", "must not advance past the failed item"
     assert st.status == "error", "a run that dropped items is not healthy"
+
+
+# ── F1: a per-product limit must save to the product, not the workspace ─
+
+def test_limits_save_to_the_product_the_screen_is_showing(monkeypatch):
+    """Settings READ through /costs/summary, which is product-scoped and layers
+    the per-product override on top, but WROTE unscoped — so on any product
+    carrying an override the save landed in a row the read ignores. The admin
+    got a green "Limit saved." toast and the number silently reverted."""
+    from fastapi.testclient import TestClient
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    import echolens.db.session as db_session
+    from echolens.db.models import Product
+    from echolens.auth import create_token, create_user
+
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                        poolclass=StaticPool)
+    Base.metadata.create_all(eng)
+    S = sessionmaker(bind=eng, expire_on_commit=False)
+    with S() as s:
+        p = Product(name="Lumo", limits_json={"daily_investigations": 5})
+        s.add(p); s.flush()
+        pid = p.id
+        tok = create_token(create_user(s, "a@b.c", "pw", "admin"))
+        s.commit()
+    monkeypatch.setattr(db_session, "_engine", eng)
+    monkeypatch.setattr(db_session, "_SessionLocal", S)
+    monkeypatch.setattr(db_session, "get_engine", lambda db_url=None: eng)
+    monkeypatch.setattr(settings, "echolens_env", "staging")
+
+    from echolens.api.app import app, _limits
+    tc = TestClient(app)
+    h = {"Authorization": f"Bearer {tok}"}
+
+    with S() as s:
+        assert _limits(s, pid)["daily_investigations"] == 5
+
+    assert tc.put(f"/settings/limits?product_id={pid}",
+                  json={"daily_investigations": 6}, headers=h).status_code == 200
+
+    with S() as s:
+        assert _limits(s, pid)["daily_investigations"] == 6, "the save must stick"

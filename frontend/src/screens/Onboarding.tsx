@@ -221,14 +221,17 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
 }
 
 function Field({ label, hint, children }: { label: string; hint: string; children: React.ReactNode }) {
+  // A real <label> wrapping the control, as Login.tsx already does. This was a
+  // <div> with no htmlFor and no aria-label, so all three inputs on the first
+  // screen a new admin sees announced as "edit, blank" to a screen reader.
   return (
-    <div>
-      <div style={{ display: "flex", alignItems: "baseline", gap: S[2], marginBottom: S[2] }}>
+    <label style={{ display: "block" }}>
+      <span style={{ display: "flex", alignItems: "baseline", gap: S[2], marginBottom: S[2] }}>
         <span style={{ fontSize: T.base, fontWeight: 600, color: C.text2 }}>{label}</span>
         <span style={{ fontSize: T.sm, color: C.faint }}>{hint}</span>
-      </div>
+      </span>
       {children}
-    </div>
+    </label>
   );
 }
 

@@ -277,6 +277,11 @@ button {
   font-size: var(--el-fs-base);
   font-weight: var(--el-fw-medium);
   line-height: 1;
+  /* WCAG 2.2 SC 2.5.8 requires a 24x24 CSS px target. `line-height: 1` makes a
+     button exactly as tall as its text, so the default landed at 31px and the
+     --sm variant at 22px — under the floor. min-height guarantees the target
+     without changing padding or how the label sits. */
+  min-height: 32px;
   padding: var(--el-s2) var(--el-s4);
   border-radius: var(--el-r-control);
   border: 1px solid transparent;
@@ -354,6 +359,14 @@ button {
 .el-btn--sm {
   font-size: var(--el-fs-sm);
   padding: var(--el-s1) var(--el-s3);
+  min-height: 26px;   /* clears the 24px floor */
+}
+
+/* Inline controls that sit INSIDE a line of prose — a case reference, a
+   "hide evidence" toggle. A min-height would force a gap in the text, so these
+   opt out; they are not primary targets and always sit beside larger ones. */
+.el-btn--inline {
+  min-height: 0;
 }
 
 /* A button whose content is a block of text rather than a label.
@@ -528,15 +541,41 @@ button {
     border-right: none;
     border-bottom: 1px solid var(--el-border);
   }
-  /* Everything that is not primary navigation folds away on a phone. */
-  .el-shell nav[aria-label="Main"] > *:not(.el-nav-primary) {
+  /* Only the genuinely wide furniture folds away — the product switcher and
+     the running-investigations badge, both already tagged .el-nav-wide.
+
+     This used to be `> *:not(.el-nav-primary)`, which hid EVERYTHING else:
+     Sign out, the System group and the All-products link all disappeared, so a
+     phone had exactly three destinations and no way to sign out or reach
+     Settings, Sources, Patterns, Calibration or Costs. Five of twelve screens
+     were unreachable. The System wrapper was simply a <div> nobody had given an
+     opt-out class to. */
+  .el-shell nav[aria-label="Main"] > .el-nav-wide,
+  .el-shell nav[aria-label="Main"] > .el-nav-brand {
     display: none;
   }
-  .el-shell nav[aria-label="Main"] .el-nav-primary {
+  /* The nav scrolls horizontally, so every group lays out in a row. */
+  .el-shell nav[aria-label="Main"] .el-nav-primary,
+  .el-shell nav[aria-label="Main"] .el-nav-system {
     flex-direction: row;
     padding: var(--el-s2);
     gap: var(--el-s1);
   }
+  /* The System group's disclosure is pointless in a row that already scrolls:
+     show its items inline and drop the toggle. !important because the group
+     carries an inline `display` for the desktop disclosure, and an inline
+     style otherwise wins over this rule. */
+  .el-shell nav[aria-label="Main"] .el-nav-system-toggle {
+    display: none;
+  }
+  .el-shell nav[aria-label="Main"] .el-nav-system {
+    display: flex !important;
+  }
+  .el-shell nav[aria-label="Main"] .el-nav-spacer {
+    display: none;
+  }
+  /* Labels stay hidden (the 1024px rule already clipped them), so this is an
+     icon bar — but every destination is still in it. */
 }
 
 /* ── motion preference ────────────────────────────────────────────────────

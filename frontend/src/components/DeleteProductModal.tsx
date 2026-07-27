@@ -113,6 +113,7 @@ export function DeleteProductModal({ product, onClose, onDeleted }: Props) {
           Type <span style={{ fontFamily: mono, color: C.text }}>{product.name}</span> to confirm
         </label>
         <input
+          aria-label="Type the product name to confirm deletion"
           autoFocus
           value={typed}
           onChange={(e) => setTyped(e.target.value)}
