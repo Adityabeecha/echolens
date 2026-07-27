@@ -659,14 +659,22 @@ def activate_product(product_id: int, user: dict = Depends(current_user)) -> dic
     """Persist the caller's active product server-side so a refresh returns here."""
     from echolens.db.models import Product, User
     with session_scope() as session:
-        p = session.get(Product, product_id)
+        # Via _scope so a guest cannot activate — or learn the name of — a
+        # product they are not allowed to see. `session.get` bypassed that.
+        p = _scope(session, product_id, user)
         if p is None:
             raise HTTPException(404, "no such product")
         u = _user_row(session, user)
-        if u is None:  # nothing to remember it on — say so rather than lying
+        if u is None:
+            # A guest has no `users` row to remember anything on, which is
+            # expected, not an error: their active product lives in the URL.
+            # This used to 500, so switching product as a guest always failed.
+            if user.get("guest"):
+                return {"active_product_id": product_id, "name": p.name,
+                        "persisted": False}
             raise HTTPException(500, "could not resolve the current user to persist the switch")
         u.last_active_product_id = product_id
-        return {"active_product_id": product_id, "name": p.name}
+        return {"active_product_id": product_id, "name": p.name, "persisted": True}
 
 
 @app.get("/products/{product_id}/deletion-preview")
@@ -680,7 +688,10 @@ def product_deletion_preview(product_id: int, user: dict = Depends(current_user)
     from echolens.db.models import (
         AnomalyEvent, CollectorState, Finding, Investigation, Product, Review)
     with session_scope() as session:
-        p = session.get(Product, product_id)
+        # _scope, not session.get: this returns a product's NAME and its review,
+        # case and finding counts, so an unscoped lookup let a demo visitor
+        # enumerate every real product in the workspace by id.
+        p = _scope(session, product_id, user)
         if p is None:
             raise HTTPException(404, "no such product")
 
@@ -913,6 +924,14 @@ def onboard_status(product: str, user: dict = Depends(current_user)) -> dict:
     from echolens.db.models import Product
     from echolens.onboarding.snapshot import health_snapshot
     with session_scope() as session:
+        # This route is looked up by NAME, so it cannot use _scope (which takes
+        # an id). Check visibility explicitly: without it a demo visitor could
+        # confirm a real product exists and read its health snapshot by
+        # guessing the name. 404 rather than 403 — the same answer as a name
+        # that does not exist, so the response reveals nothing either way.
+        named = session.scalars(select(Product).where(Product.name == product)).first()
+        if named is not None and _guest_locked(user) and not named.is_demo:
+            raise HTTPException(404, "no such product")
         health = source_health(session, product=product)
         # "backfilling" until every source has at least completed one run
         backfilling = any(h["status"] in ("idle", "running") and h["never_collected"]

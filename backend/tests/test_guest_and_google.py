@@ -459,3 +459,67 @@ def test_trace_stream_still_401s_when_guests_are_off(monkeypatch):
     tc, ids = _stream_fixture(monkeypatch)
     pid, iid = ids["Lumo (demo)"]
     assert tc.get(f"/investigations/{iid}/trace/stream?product_id={pid}").status_code == 401
+
+
+# ── routes that bypassed _scope ────────────────────────────────────────
+
+def _two_product_client(monkeypatch):
+    from fastapi.testclient import TestClient
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    import echolens.db.session as db_session
+    from echolens.db.models import Base, Product
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                           poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, expire_on_commit=False)
+    with Session() as s:
+        s.add_all([Product(name="Lumo (demo)", is_demo=True),
+                   Product(name="AcmeSecret Internal", is_demo=False)])
+        u = auth.create_user(s, "admin@team.com", "pw", "admin")
+        tok = auth.create_token(u)
+        s.commit()
+    monkeypatch.setattr(db_session, "_engine", engine)
+    monkeypatch.setattr(db_session, "_SessionLocal", Session)
+    monkeypatch.setattr(db_session, "get_engine", lambda db_url=None: engine)
+    monkeypatch.setattr(settings, "echolens_env", "staging")
+    monkeypatch.setattr(settings, "allow_guest", True)
+    monkeypatch.setattr(settings, "guest_demo_only", True)
+    from echolens.api.app import app
+    return TestClient(app, raise_server_exceptions=False), tok
+
+
+def test_deletion_preview_does_not_leak_real_products_to_guests(monkeypatch):
+    """It returns a product's NAME and its review/case/finding counts, so an
+    unscoped lookup let a demo visitor enumerate the whole workspace by id."""
+    tc, tok = _two_product_client(monkeypatch)
+    assert tc.get("/products/2/deletion-preview").status_code == 404
+    assert tc.get("/products/1/deletion-preview").status_code == 200          # demo
+    assert tc.get("/products/2/deletion-preview",
+                  headers={"Authorization": f"Bearer {tok}"}).status_code == 200
+
+
+def test_onboard_status_does_not_confirm_a_real_product_by_name(monkeypatch):
+    """Looked up by name, so it cannot use _scope — the check is explicit."""
+    tc, tok = _two_product_client(monkeypatch)
+    assert tc.get("/onboard/status?product=AcmeSecret%20Internal").status_code == 404
+    assert tc.get("/onboard/status?product=Lumo%20(demo)").status_code == 200
+    assert tc.get("/onboard/status?product=AcmeSecret%20Internal",
+                  headers={"Authorization": f"Bearer {tok}"}).status_code == 200
+
+
+def test_a_guest_can_switch_between_demo_products(monkeypatch):
+    """A guest has no users row, so persisting the switch is impossible — that
+    is expected, not an error. It used to raise 500 and every guest product
+    switch failed."""
+    tc, _ = _two_product_client(monkeypatch)
+    r = tc.post("/products/1/activate")
+    assert r.status_code == 200, r.text[:200]
+    assert r.json()["persisted"] is False
+
+
+def test_a_guest_cannot_activate_a_real_product(monkeypatch):
+    tc, _ = _two_product_client(monkeypatch)
+    assert tc.post("/products/2/activate").status_code == 404
