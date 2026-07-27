@@ -523,3 +523,50 @@ def test_a_guest_can_switch_between_demo_products(monkeypatch):
 def test_a_guest_cannot_activate_a_real_product(monkeypatch):
     tc, _ = _two_product_client(monkeypatch)
     assert tc.post("/products/2/activate").status_code == 404
+
+
+def test_queue_cancel_is_product_scoped(monkeypatch):
+    """DELETE /queue/{id} took a bare id and cancelled it, so a reviewer scoped
+    to one product could cancel ANOTHER product's queued work by guessing the
+    number."""
+    from fastapi.testclient import TestClient
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    import echolens.db.session as db_session
+    from echolens.db.models import (
+        AnomalyEvent, Base, Product, QueuedInvestigation)
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                           poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, expire_on_commit=False)
+    with Session() as s:
+        a = Product(name="Aurora"); b = Product(name="Borealis")
+        s.add_all([a, b]); s.flush()
+        an = AnomalyEvent(slug="s-b", type="manual_theme", metric="m", delta=0.0,
+                          z=0.0, window="90d", description="B", status="pending",
+                          product_id=b.id)
+        s.add(an); s.flush()
+        q = QueuedInvestigation(product_id=b.id, anomaly_id=an.id, status="queued",
+                                source="manual_theme", priority=1, selection_order=0,
+                                budget_tier="quick", title="B's item")
+        s.add(q); s.flush()
+        qid, a_id, b_id = q.id, a.id, b.id
+        tok = auth.create_token(auth.create_user(s, "rev@team.com", "pw", "reviewer"))
+        s.commit()
+    monkeypatch.setattr(db_session, "_engine", engine)
+    monkeypatch.setattr(db_session, "_SessionLocal", Session)
+    monkeypatch.setattr(db_session, "get_engine", lambda db_url=None: engine)
+    monkeypatch.setattr(settings, "echolens_env", "staging")
+    from echolens.api.app import app
+    tc = TestClient(app, raise_server_exceptions=False)
+    h = {"Authorization": f"Bearer {tok}"}
+
+    # Scoped to Aurora, cancelling Borealis's item: refused.
+    assert tc.delete(f"/queue/{qid}?product_id={a_id}", headers=h).status_code == 404
+    with Session() as s:
+        assert s.get(QueuedInvestigation, qid).status == "queued", "must not be cancelled"
+
+    # Its own product still works.
+    assert tc.delete(f"/queue/{qid}?product_id={b_id}", headers=h).status_code == 200

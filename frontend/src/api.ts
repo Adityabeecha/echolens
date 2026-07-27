@@ -754,7 +754,7 @@ export const api = {
     post<{ queued: unknown[]; already: unknown[]; queue: QueueView; summary: string }>(
       "/queue/themes", { slugs, statements, tier, product_id: getActiveProduct() }),
   queue: () => get<QueueView>(scoped("/queue")),
-  cancelQueued: (queueId: number) => del<{ cancelled: number }>(`/queue/${queueId}`),
+  cancelQueued: (queueId: number) => del<{ cancelled: number }>(scoped(`/queue/${queueId}`)),
   brain: (includeRetired = false) =>
     get<{ edges: BrainEdge[]; product: string | null }>(
       scoped(`/brain${includeRetired ? "?include_retired=true" : ""}`)),

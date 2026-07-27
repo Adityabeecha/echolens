@@ -1218,9 +1218,16 @@ def queue_list(product_id: int | None = None, user: dict = Depends(current_user)
 
 
 @app.delete("/queue/{queue_id}")
-def queue_cancel(queue_id: int, user: dict = Depends(require_role("reviewer"))) -> dict:
+def queue_cancel(queue_id: int, product_id: int | None = None,
+                 user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.db.models import QueuedInvestigation
     from echolens.orchestrator.queue import cancel
     with session_scope() as session:
+        # Ownership check first. This took a bare id and cancelled it, so a
+        # reviewer scoped to one product could cancel ANOTHER product's queued
+        # work just by knowing the number.
+        p = _scope(session, product_id, user)
+        _owned(session, QueuedInvestigation, queue_id, p.id if p else None)
         if not cancel(session, queue_id):
             raise HTTPException(409, "that item is already running or finished")
     return {"cancelled": queue_id}
