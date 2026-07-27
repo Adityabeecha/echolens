@@ -164,7 +164,7 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
                             borderRadius: R.control, fontSize: T.sm, color: C.bad }}>{error}</div>
             )}
 
-            <Label style={{ marginBottom: S[1], color: C.accent }}>
+            <Label as="h2" style={{ marginBottom: S[1], color: C.accent }}>
               THIS QUARTER · {plan.proposed.length}
             </Label>
             <p style={{ fontSize: T.sm, color: C.dim, margin: "0 0 12px", lineHeight: "var(--el-lh-normal)" }}>

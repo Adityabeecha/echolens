@@ -8,10 +8,25 @@ import { C, MEASURE, R, S, T, mono } from "./theme";
 // below the 4.5:1 floor. Every section heading in the app was simultaneously
 // the smallest and the least readable text on screen. `faint` is now 6.0:1 and
 // the size comes from the scale.
-export function Label({ children, style }: { children: ReactNode; style?: CSSProperties }) {
+export function Label({ children, style, as }: {
+  children: ReactNode;
+  style?: CSSProperties;
+  /**
+   * Render as a real heading when this labels a SECTION.
+   *
+   * Label is used for two different jobs — section headings and inline captions
+   * — and rendered a <div> for both, so most screens presented one <h1> and
+   * then a flat run of headings that are visually obvious and semantically
+   * invisible. A screen reader's heading list was empty below the title.
+   * Opt-in, because a caption promoted to a heading is just as wrong.
+   */
+  as?: "h2" | "h3";
+}) {
+  const Tag = (as ?? "div") as "div" | "h2" | "h3";
   return (
-    <div
+    <Tag
       style={{
+        margin: 0,
         fontFamily: mono,
         fontSize: T.micro,
         fontWeight: 500,
@@ -22,7 +37,7 @@ export function Label({ children, style }: { children: ReactNode; style?: CSSPro
       }}
     >
       {children}
-    </div>
+    </Tag>
   );
 }
 

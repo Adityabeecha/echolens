@@ -75,7 +75,17 @@ export default function App() {
     api
       .me()
       .then((me) => { if (alive && me?.role) setRole(me.role); })
-      .catch(() => { /* offline: fall back to the cached role */ })
+      .catch(() => {
+        // Fail CLOSED. Falling back to the cached role restored exactly what
+        // the comment above says was removed: a browser holding a planted or
+        // stale `echolens_role: "admin"` rendered the full admin UI whenever
+        // /auth/me failed, and a cold backend is enough to trigger that. The
+        // server still refuses the actions, so this was never an escalation —
+        // but it offered controls that could only 403, on the one failure path
+        // the fix was written for. `viewer` is the least privilege, so an
+        // unverifiable session shows the least.
+        if (alive) setRole("viewer");
+      })
       .then(() => api.products())
       .then((r) => {
         if (!alive || !r) return;

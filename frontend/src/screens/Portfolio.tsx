@@ -24,8 +24,12 @@ interface Props {
 // Attention is the scarce resource; this allocates it.
 export function Portfolio({ onOpenProduct, onOpenInvestigation, onAddProduct }: Props) {
   const { data, loading, error, reload } = useAsync(() => api.portfolio(), []);
-  const { data: themes } = useAsync(() => api.portfolioThemes(), []);
-  const { data: brief } = useAsync(() => api.portfolioBrief(), []);
+  // `error` is kept, not discarded. Both sections render only when their data
+  // is non-empty, so a FAILED fetch and a genuinely empty result looked
+  // identical — "no cross-product themes" is a claim, and it was being made
+  // from a request that never succeeded.
+  const { data: themes, error: themesError } = useAsync(() => api.portfolioThemes(), []);
+  const { data: brief, error: briefError } = useAsync(() => api.portfolioBrief(), []);
 
   if (loading && !data) return <Centered>Reading every product…</Centered>;
   if (error || !data) {
@@ -81,7 +85,7 @@ export function Portfolio({ onOpenProduct, onOpenInvestigation, onAddProduct }: 
           <div style={{ width: 3, alignSelf: "stretch", minHeight: 34, borderRadius: R.sm,
                         background: BAND[top.band].color, flex: "none" }} />
           <div style={{ flex: 1, minWidth: 240 }}>
-            <Label style={{ letterSpacing: ".12em", color: BAND[top.band].color, marginBottom: S[1] }}>
+            <Label as="h2" style={{ letterSpacing: ".12em", color: BAND[top.band].color, marginBottom: S[1] }}>
               WHERE TO START
             </Label>
             <div style={{ fontSize: T.lg, fontWeight: 600, color: C.text, letterSpacing: "-.01em", lineHeight: "var(--el-lh-snug)" }}>
@@ -91,7 +95,7 @@ export function Portfolio({ onOpenProduct, onOpenInvestigation, onAddProduct }: 
           <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint }}>{data.generated}</span>
         </div>
 
-        <Label style={{ margin: "26px 0 12px" }}>RANKED BY WHAT NEEDS YOU</Label>
+        <Label as="h2" style={{ margin: "26px 0 12px" }}>RANKED BY WHAT NEEDS YOU</Label>
         <div style={{ display: "flex", flexDirection: "column", gap: S[2], maxWidth: MEASURE }}>
           {data.products.map((p) => (
             <ProductRow key={p.product_id} p={p} onOpen={onOpenProduct}
@@ -101,9 +105,15 @@ export function Portfolio({ onOpenProduct, onOpenInvestigation, onAddProduct }: 
 
         {data.transfer && <TransferCard t={data.transfer} />}
 
+        {themesError && (
+          <div style={{ maxWidth: MEASURE, marginTop: S[6] }}>
+            <ErrorState title="Couldn't load cross-product themes"
+                        detail="This section is missing, not empty." />
+          </div>
+        )}
         {themes && themes.themes.length > 0 && (
           <>
-            <Label style={{ margin: "28px 0 6px" }}>THE SAME COMPLAINT, ACROSS PRODUCTS</Label>
+            <Label as="h2" style={{ margin: "28px 0 6px" }}>THE SAME COMPLAINT, ACROSS PRODUCTS</Label>
             <p style={{ fontSize: T.sm, color: C.dim, maxWidth: 720, marginTop: 0, lineHeight: "var(--el-lh-normal)" }}>
               {themes.note} Comparing shares, not counts, is the only way a big app and a small one line up
               honestly.
@@ -114,9 +124,15 @@ export function Portfolio({ onOpenProduct, onOpenInvestigation, onAddProduct }: 
           </>
         )}
 
+        {briefError && (
+          <div style={{ maxWidth: MEASURE, marginTop: S[6] }}>
+            <ErrorState title="Couldn't load this week's portfolio brief"
+                        detail="This section is missing, not empty." />
+          </div>
+        )}
         {brief && brief.lines.length > 0 && (
           <>
-            <Label style={{ margin: "28px 0 12px" }}>THIS WEEK, EVERYTHING YOU OWN</Label>
+            <Label as="h2" style={{ margin: "28px 0 12px" }}>THIS WEEK, EVERYTHING YOU OWN</Label>
             <div style={{ maxWidth: MEASURE, padding: `${S[4]} ${S[5]}`, background: C.card,
                           border: `1px solid ${C.border2}`, borderRadius: R.card,
                           display: "flex", flexDirection: "column", gap: S[2] }}>

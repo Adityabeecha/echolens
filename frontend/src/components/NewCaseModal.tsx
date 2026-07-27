@@ -56,7 +56,10 @@ export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onSt
           left: "50%",
           transform: "translate(-50%,-50%)",
           width: 520,
-          maxWidth: "92vw",
+          // 520px overflowed a 375px phone by 145px. maxWidth was already set
+          // to 92vw below, but `width` wins over it for the BOX unless the
+          // ceiling is also absolute — keep both.
+          maxWidth: "min(520px, 92vw)",
           background: C.card,
           border: `1px solid ${C.border3}`,
           borderRadius: R.overlay,

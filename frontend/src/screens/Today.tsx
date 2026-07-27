@@ -1,5 +1,5 @@
 import { ReactNode, useState } from "react";
-import { CaseRow, PortfolioProduct, api, isAdmin, isGuest } from "../api";
+import { CaseRow, PortfolioProduct, api, getActiveProduct, isAdmin, isGuest } from "../api";
 import { CaseCard } from "../components/CaseCard";
 import { withToast } from "../components/Toast";
 import { plural } from "../format";
@@ -50,7 +50,15 @@ export function Today({
 
   const rows = cases.data?.cases ?? [];
   const product = productName ?? cases.data?.product ?? null;
-  const me = (portfolio.data?.products ?? []).find((p) => p.product === product) ?? null;
+  // Joined on product_id, falling back to the name. Matching on the name alone
+  // meant any divergence between /products' spelling and /portfolio's dropped
+  // the match — and ScoreStrip returns null when it does, so the score and the
+  // verdict, the most prominent things on the home screen, vanished with no
+  // error and no empty state.
+  const activeId = getActiveProduct();
+  const me = (portfolio.data?.products ?? []).find(
+    (p) => (activeId != null && p.product_id === activeId) || p.product === product,
+  ) ?? null;
 
   const staleSources = (sources.data?.connected ?? []).filter((s) => s.stale || s.error);
   const needsYou = rows.filter((r) => statusMeta(r.status).needsYou);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Evidence, Investigation, api } from "../api";
 import { StatusChip } from "../components/CaseCard";
 import { impactLine } from "../format";
@@ -43,10 +43,17 @@ export function CaseDetail({
   const [inv, setInv] = useState<Investigation | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const load = () =>
-    api.investigation(caseId)
-      .then((d) => { setInv(d); setError(null); })
-      .catch((e) => setError(String(e).replace("Error: ", "")));
+  // Monotonic sequence guard, matching the polling effect below. Retry calls
+  // this, and a slow response used to be able to land AFTER a newer poll tick
+  // and overwrite it — the one path in this file without the guard the rest of
+  // it applies.
+  const loadSeq = useRef(0);
+  const load = () => {
+    const mine = ++loadSeq.current;
+    return api.investigation(caseId)
+      .then((d) => { if (mine === loadSeq.current) { setInv(d); setError(null); } })
+      .catch((e) => { if (mine === loadSeq.current) setError(String(e).replace("Error: ", "")); });
+  };
 
   // Poll while the case is LIVE — which includes queued work that has not
   // started yet. The interval used to be torn down on the first non-running
@@ -58,15 +65,27 @@ export function CaseDetail({
     let timer: ReturnType<typeof setInterval> | null = null;
     const settled = (d: Investigation) =>
       d.status !== "running" && d.case_status !== "queued";
+    // Consecutive failures before giving up. The catch used to set `error` and
+    // keep polling: a deleted case, a case in another product, or a down
+    // backend was hit every 1500ms forever, because the check that stops the
+    // interval only ran on the success path.
+    const MAX_FAILURES = 4;
+    let failures = 0;
+    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
     const tick = () =>
       api.investigation(caseId)
         .then((d) => {
           if (!alive) return;
+          failures = 0;
           setInv(d);
           setError(null);
-          if (settled(d) && timer) { clearInterval(timer); timer = null; }
+          if (settled(d)) stop();
         })
-        .catch((e) => alive && setError(String(e).replace("Error: ", "")));
+        .catch((e) => {
+          if (!alive) return;
+          setError(String(e).replace("Error: ", ""));
+          if (++failures >= MAX_FAILURES) stop();   // Retry restarts it
+        });
     void tick();
     timer = setInterval(tick, 1500);
     return () => { alive = false; if (timer) clearInterval(timer); };

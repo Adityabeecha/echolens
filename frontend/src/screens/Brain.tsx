@@ -60,7 +60,7 @@ export function Brain({ onOpenInvestigation, onBack, backLabel, onGoCases }: Pro
             <ReviewBox />
             <Oracle />
 
-            <Label style={{ margin: "28px 0 4px" }}>HOW THIS PRODUCT BREAKS</Label>
+            <Label as="h2" style={{ margin: "28px 0 4px" }}>HOW THIS PRODUCT BREAKS</Label>
             <p style={{ fontSize: T.sm, color: C.dim, margin: "0 0 14px", lineHeight: "var(--el-lh-normal)" }}>
               Learned from confirmed fixes and graded against every resolved case. A pattern that
               stops predicting decays and retires itself — the map only shows what still holds.
@@ -139,7 +139,7 @@ function ReviewBox() {
   return (
     <div style={{ maxWidth: MEASURE, marginBottom: S[5], padding: `${S[4]} ${S[5]}`, background: C.card,
                   border: `1px solid ${C.border2}`, borderRadius: R.card }}>
-      <Label style={{ marginBottom: S[1], color: C.accent }}>REVIEW A CHANGE BEFORE IT SHIPS</Label>
+      <Label as="h2" style={{ marginBottom: S[1], color: C.accent }}>REVIEW A CHANGE BEFORE IT SHIPS</Label>
       <p style={{ fontSize: T.sm, color: C.dim, margin: "0 0 11px", lineHeight: "var(--el-lh-normal)" }}>
         Paste a spec or PR description. EchoLens checks it against what has bitten this product before.
       </p>

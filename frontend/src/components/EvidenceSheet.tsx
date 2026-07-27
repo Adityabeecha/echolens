@@ -28,6 +28,9 @@ export function EvidenceSheet({ evidence, onClose }: { evidence: Evidence | null
           right: 0,
           bottom: 0,
           width: 400,
+          // A fixed width with no ceiling overflowed a phone: 400px on a 375px
+          // iPhone SE pushed 25px off-screen with no way to scroll it back.
+          maxWidth: "100%",
           background: C.card2,
           borderLeft: `1px solid ${C.border3}`,
           zIndex: 21,
