@@ -30,7 +30,29 @@ def product(session):
     p = Product(name="Lumo")
     session.add(p)
     session.flush()
+    _live_collector(session, "Lumo")
     return p
+
+def _live_collector(session, product_name: str):
+    """A healthy collector that ran just now.
+
+    fixwatch only treats a window as observable when some enabled, non-errored
+    collector for the product ran inside it — otherwise "zero complaints" is
+    indistinguishable from "nobody was looking". A product with reviews but no
+    collector row cannot occur in production (reviews arrive THROUGH a
+    collector), so the fixtures have to model one.
+
+    last_run_at is the suite's frozen NOW, not real wall-clock time: these tests
+    date everything relative to NOW, and a collector that last ran "now" is what
+    a live product looks like.
+    """
+    from echolens.db.models import CollectorState
+    session.add(CollectorState(source="play_store", identifier=f"com.{product_name.lower()}",
+                               product=product_name, status="healthy",
+                               last_run_at=NOW,
+                               enabled=True))
+    session.flush()
+
 
 
 # ── B1.1 ────────────────────────────────────────────────────────────────

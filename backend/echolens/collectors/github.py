@@ -5,6 +5,7 @@ the issue `updated_at`; dedup by issue number. Network call injectable.
 """
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -128,9 +129,23 @@ class GitHubCollector(Collector):
 
 
 def _issue_ext_id(repo: str, number) -> str:
-    """Repo-qualified issue id. Fits String(64): repos are <= 100 chars but the
-    owner/name pair plus a number is comfortably short in practice, and we clamp."""
-    return f"{repo}#{number}"[:64]
+    """Repo-qualified issue id that fits String(64) WITHOUT losing the number.
+
+    The old form was `f"{repo}#{number}"[:64]`, which truncates from the right —
+    so past a ~62-character repo it cut the issue number off and every issue in
+    that repo collapsed onto one ext_id. They were then dropped as duplicates,
+    and the surviving row's state and labels were overwritten by each later
+    issue. Measured: a 74-char repo gave 1 distinct id for 4 issues.
+
+    The number is now always kept whole; only the repo is shortened, and a short
+    digest of the full repo keeps two long repos that share a prefix distinct.
+    """
+    suffix = f"#{number}"
+    if len(repo) + len(suffix) <= 64:
+        return repo + suffix
+    digest = hashlib.sha1(repo.encode()).hexdigest()[:8]
+    keep = 64 - len(suffix) - len(digest) - 1  # 1 for the '~' separator
+    return f"{repo[:keep]}~{digest}{suffix}"
 
 
 def _dt(v) -> datetime | None:

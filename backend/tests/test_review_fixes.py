@@ -20,6 +20,22 @@ from echolens.db.models import (
 NOW = datetime(2026, 7, 20, tzinfo=timezone.utc)
 
 
+def _live_collector(session, product_name, when):
+    """A healthy collector that ran at `when`.
+
+    fixwatch treats a window as observable only when an enabled, non-errored
+    collector for the product ran inside it — otherwise "zero complaints" and
+    "nobody was looking" are indistinguishable. Reviews only ever arrive THROUGH
+    a collector, so a product with reviews and no collector row cannot happen in
+    production; the fixtures have to model one.
+    """
+    from echolens.db.models import CollectorState
+    session.add(CollectorState(source="p", identifier=f"com.{product_name.lower()}",
+                               product=product_name, status="healthy",
+                               last_run_at=when, enabled=True))
+    session.flush()
+
+
 def _session():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
                            poolclass=StaticPool)
@@ -36,6 +52,7 @@ def test_another_products_complaints_cannot_block_my_fix_confirmation():
     from echolens.fixwatch import _rate
     s = _session()
     s.add(Product(name="Lumo")); s.add(Product(name="AppB")); s.flush()
+    _live_collector(s, "Lumo", NOW); _live_collector(s, "AppB", NOW)
     for i in range(5):   # Lumo: pre-fix only, silent after
         s.add(Review(source="p", ext_id=f"lumo{i}", rating=1, text="battery drain awful",
                      product="Lumo", created_at=NOW - timedelta(days=30 + i)))
@@ -56,6 +73,7 @@ def test_regression_check_is_scoped_to_the_watchs_product():
     s = _session()
     lumo = Product(name="Lumo"); appb = Product(name="AppB")
     s.add(lumo); s.add(appb); s.flush()
+    _live_collector(s, "Lumo", NOW); _live_collector(s, "AppB", NOW)
     for i in range(80):  # only AppB is complaining, loudly, right now
         s.add(Review(source="p", ext_id=f"appb{i}", rating=1, text="battery drain awful",
                      product="AppB", created_at=NOW - timedelta(days=i % 5)))

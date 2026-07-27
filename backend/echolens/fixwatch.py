@@ -71,15 +71,43 @@ def complaint_series(session: Session, terms: list[str], start: datetime, end: d
     return [{"date": d.isoformat(), "count": daily[d]} for d in sorted(daily)]
 
 
+def _was_observed(session: Session, start: datetime, end: datetime,
+                  product: str | None = None) -> bool:
+    """Was anything actually WATCHING this product during [start, end]?
+
+    A window is observable only if some enabled collector for the product ran
+    at or after `start` and is not currently errored. Anything else means we
+    were not looking, whatever the review count says.
+    """
+    from echolens.db.models import CollectorState
+    stmt = select(CollectorState).where(CollectorState.enabled == True)  # noqa: E712
+    if product:
+        stmt = stmt.where(CollectorState.product == product)
+    for st in session.scalars(stmt).all():
+        if st.status == "error":
+            continue
+        last = aware_utc(st.last_run_at)
+        if last is not None and last >= start:
+            return True
+    return False
+
+
 def _rate(session: Session, terms: list[str], start: datetime, end: datetime,
           product: str | None = None) -> float | None:
     """Average daily matching-negative-review count, or None when unobservable.
 
-    Returns None rather than 0.0 for an empty window. The two are completely
-    different claims — "we watched and saw no complaints" versus "we have not
-    watched yet" — and collapsing them into 0.0 is what let a stalled collector
-    read as a verified fix.
+    Returns None rather than 0.0 when the window was never watched. The two are
+    completely different claims — "we watched and saw no complaints" versus "we
+    have not watched yet" — and collapsing them into 0.0 is what lets a stalled
+    collector read as a verified fix.
+
+    The emptiness of `series` cannot answer that question: complaint_series
+    pre-fills every calendar day with 0, so it is never empty for a valid range
+    and the old `if not series` check could never fire. Liveness has to be read
+    from the collectors themselves.
     """
+    if not _was_observed(session, start, end, product):
+        return None
     series = complaint_series(session, terms, start, end, product)
     if not series:
         return None

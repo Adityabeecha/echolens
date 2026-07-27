@@ -141,20 +141,27 @@ function ProductRow({ p, onOpen, onOpenInvestigation }: {
   const band = BAND[p.band];
   const trend = p.negative_rate_delta_pct;
   return (
+    // A plain container, NOT role="button". It used to be a clickable row with
+    // a second <button> nested inside it, which is invalid: role="button" has a
+    // presentational-children requirement, so the inner control could be
+    // dropped from the accessibility tree, and the row's accessible name became
+    // every word inside it concatenated. The product name is the link now, so
+    // each control names only itself.
     <div className="el-row"
       style={{ display: "flex", gap: S[3], padding: `${S[4]} ${S[4]}`, background: C.card,
                border: `1px solid ${C.border2}`, borderRadius: R.card }}
-      onClick={() => onOpen(p.product_id)}
-      role="button" tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(p.product_id); }
-      }}
     >
       {/* severity stripe — state as form, not just words */}
       <div style={{ width: 3, borderRadius: R.sm, background: band.color, flex: "none" }} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: S[2], flexWrap: "wrap" }}>
-          <span style={{ fontSize: T.md, fontWeight: 600, color: C.text }}>{p.product}</span>
+          <button
+            onClick={() => onOpen(p.product_id)}
+            className="el-btn"
+            style={{ fontSize: T.md, fontWeight: 600, color: C.text, padding: 0 }}
+          >
+            {p.product}
+          </button>
           {p.is_demo && (
             <span style={{ fontFamily: mono, fontSize: T.micro, padding: `0 ${S[2]}`, borderRadius: R.card,
                            background: C.hover, color: C.faint, letterSpacing: ".06em" }}>DEMO</span>
@@ -190,24 +197,20 @@ function ProductRow({ p, onOpen, onOpenInvestigation }: {
         )}
 
         {p.top_problem && (
+          // No stopPropagation needed any more: the row is not a control, so
+          // there is nothing to stop the click bubbling into.
           <button className="el-btn"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                e.stopPropagation();
-                onOpenInvestigation(p.top_problem!.investigation_id);
-              }
-            }}
-            onClick={(e) => { e.stopPropagation(); onOpenInvestigation(p.top_problem!.investigation_id); }}
+            onClick={() => onOpenInvestigation(p.top_problem!.investigation_id)}
             style={{ marginTop: S[2], fontSize: T.sm, color: C.muted, display: "flex", gap: S[2],
-                     alignItems: "baseline" }}
+                     alignItems: "baseline", maxWidth: "100%", minWidth: 0, padding: 0 }}
           >
-            <span style={{ fontFamily: mono, fontSize: T.xs, color: C.accent }}>
+            <span style={{ fontFamily: mono, fontSize: T.xs, color: C.accent, flex: "none" }}>
               #{p.top_problem.investigation_id}
             </span>
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {p.top_problem.summary}
-            </span>
+            {/* el-truncate carries min-width:0. Without it this flex child keeps
+                its default min-width:auto, refuses to shrink below its content,
+                and the ellipsis never engages — the row just gets wider. */}
+            <span className="el-truncate">{p.top_problem.summary}</span>
           </button>
         )}
       </div>

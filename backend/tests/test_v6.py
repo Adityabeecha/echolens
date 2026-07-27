@@ -21,7 +21,18 @@ TZ = timezone.utc
 def _session():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, expire_on_commit=False)()
+    s = sessionmaker(bind=engine, expire_on_commit=False)()
+    # A live collector. fixwatch only treats a window as observable when an
+    # enabled, non-errored collector ran inside it — otherwise "no complaints"
+    # cannot be told apart from "nobody was looking". These cases are unscoped
+    # (product=None), so the collector is too. Dated far in the future because
+    # every test here works in 2026 and the check is `last_run_at >= start`.
+    from echolens.db.models import CollectorState
+    s.add(CollectorState(source="play_store", identifier="com.test", product=None,
+                         status="healthy", enabled=True,
+                         last_run_at=datetime(2030, 1, 1, tzinfo=TZ)))
+    s.flush()
+    return s
 
 
 def _finding(s, summary, metric=None):

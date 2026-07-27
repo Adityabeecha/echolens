@@ -87,31 +87,40 @@ export function TraceTab({ inv, onOpenEvidence, onReload }: Props) {
                       maxWidth: 640 }}>
           <Label>REASONING TRACE</Label>
           <div style={{ flex: 1 }} />
+          {/* Real <button>s, not <div onClick>. These carried .el-btn for the
+              styling but none of the semantics: no role, no tabIndex, no key
+              handler — so the whole replay transport was unreachable by
+              keyboard and got no focus ring, because the focus rule matches
+              button/a/[role=button]/[tabindex] and a bare div matches none. */}
           {canReplay && replayIdx === null && (
-            <div onClick={() => { setReplayIdx(0); setPlaying(true); setFollow(true); }}
+            <button onClick={() => { setReplayIdx(0); setPlaying(true); setFollow(true); }}
               className="el-btn" style={replayBtn(false)}>
               <Icon name="play" size={11} /> Replay
-            </div>
+            </button>
           )}
           {replayIdx !== null && (
             <>
-              <div onClick={() => setPlaying((p) => !p)} className="el-btn" style={replayBtn(true)}>
+              <button onClick={() => setPlaying((p) => !p)} className="el-btn"
+                aria-label={playing ? "Pause replay" : "Resume replay"}
+                style={replayBtn(true)}>
                 <Icon name={playing ? "pause" : "play"} size={11} /> {replayIdx}/{steps.length}
-              </div>
+              </button>
               {[1, 2, 5].map((sp) => (
-                <div key={sp} onClick={() => setSpeed(sp)} className="el-btn"
-                  style={replayBtn(speed === sp)}>{sp}×</div>
+                <button key={sp} onClick={() => setSpeed(sp)} className="el-btn"
+                  aria-pressed={speed === sp} aria-label={`Replay at ${sp}× speed`}
+                  style={replayBtn(speed === sp)}>{sp}×</button>
               ))}
-              <div onClick={() => { setReplayIdx(null); setPlaying(false); }} className="el-btn"
-                style={replayBtn(false)} aria-label="Exit replay"><Icon name="close" size={11} /></div>
+              <button onClick={() => { setReplayIdx(null); setPlaying(false); }} className="el-btn"
+                style={replayBtn(false)} aria-label="Exit replay"><Icon name="close" size={11} /></button>
             </>
           )}
           {replayIdx === null && (
-            <div onClick={() => setFollow((f) => !f)} className="el-btn"
+            <button onClick={() => setFollow((f) => !f)} className="el-btn"
+              aria-pressed={follow} aria-label="Follow the newest step"
               style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".06em", padding: `${S[1]} ${S[2]}`,
                        borderRadius: R.sm, color: follow ? C.accent : C.ghost }}>
               <Icon name={follow ? "dot" : "circle"} size={10} /> FOLLOW
-            </div>
+            </button>
           )}
         </div>
 
