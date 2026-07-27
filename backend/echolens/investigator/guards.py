@@ -115,10 +115,17 @@ def two_source_rule(hypothesis: dict, evidence: list[dict]) -> bool:
     seen: list[set[str]] = []
     for e in items:
         words = set(_fingerprint(e.get("snippet", "")).split())
-        # Too short to judge. Cross-post detection needs enough words to be a
-        # real signal — two brief snippets that happen to share their few words
-        # are not evidence of the same person posting twice, and treating them
-        # as such would silently weaken the two-source rule rather than sharpen it.
+        # Too short to judge, EVEN IF IDENTICAL.
+        #
+        # The audit flagged this exemption as a hole — two identical four-word
+        # posts satisfying the rule. On reflection the original reasoning holds
+        # and the finding does not: short complaints are SUPPOSED to collide.
+        # "battery dies" on GitHub and on the Play Store is the single most
+        # likely way two genuinely different people describe the same fault, and
+        # collapsing them would discard exactly the corroboration this rule
+        # exists to measure. The real cross-post risk is a distinctive sentence
+        # repeated verbatim, which needs enough words to be distinctive — and
+        # that case is caught by the Jaccard check below.
         if len(words) < MIN_CROSS_POST_WORDS:
             distinct.append(e)
             continue
@@ -133,7 +140,10 @@ def two_source_rule(hypothesis: dict, evidence: list[dict]) -> bool:
 
     if len(distinct) < MIN_INDEPENDENT_EVIDENCE:
         return False
-    return len({e["source"] for e in distinct}) >= MIN_DISTINCT_SOURCES
+    # Case- and whitespace-insensitive: "github" and "GitHub" are one source,
+    # and exact string equality counted them as two independent ones.
+    return len({str(e["source"]).strip().lower()
+                for e in distinct}) >= MIN_DISTINCT_SOURCES
 
 
 def resolvable_hypothesis(hypotheses: list[dict], evidence: list[dict]) -> dict | None:

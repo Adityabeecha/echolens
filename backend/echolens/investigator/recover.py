@@ -18,7 +18,22 @@ log = get_logger("recover")
 
 
 def find_interrupted(session: Session) -> list[Investigation]:
-    return list(session.scalars(select(Investigation).where(Investigation.status == "running")).all())
+    """Investigations a restart left mid-flight.
+
+    A PAUSED case is not one of them. The cooperative pause sets paused=True but
+    leaves status="running" (that is what makes it resumable at all), so
+    selecting on status alone swept up every case a reviewer had deliberately
+    held — the next deploy silently resumed it and carried on burning its
+    budget. A human's hold outranks a restart.
+    """
+    return list(session.scalars(
+        select(Investigation).where(
+            Investigation.status == "running",
+            # `is_not(True)` rather than `== False`: the column is nullable and
+            # older rows carry NULL, which `== False` does not match in SQL.
+            Investigation.paused.is_not(True),
+        )
+    ).all())
 
 
 def resume_running(session: Session, llm: LLMClient | None = None, on_step=None) -> list[int]:

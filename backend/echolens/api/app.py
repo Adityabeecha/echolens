@@ -15,11 +15,11 @@ from typing import Any
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -1059,7 +1059,8 @@ def backlog_view(product_id: int | None = None,
 
 
 @app.get("/backlog/plan")
-def backlog_plan_view(product_id: int | None = None, capacity_days: float | None = None,
+def backlog_plan_view(product_id: int | None = None,
+                      capacity_days: float | None = Query(None, gt=0, le=10000),
                       user: dict = Depends(current_user)) -> dict:
     """The proposed "what to fix next" draft, respecting the PM's own edits."""
     from echolens.backlog import quarter_plan
@@ -1073,7 +1074,9 @@ class PlanBody(BaseModel):
     included: list[int] = []
     excluded: list[int] = []
     notes: dict[str, str] | None = None
-    capacity_days: float | None = None
+    # Bounded: a negative capacity produced a plan the API reported back with a
+    # straight face (capacity_days: -50.0), and an unbounded one is meaningless.
+    capacity_days: float | None = Field(None, gt=0, le=10000)
     product_id: int | None = None
 
 
@@ -1094,8 +1097,10 @@ def backlog_plan_save(body: PlanBody,
 
 @app.get("/graph")
 @limiter.limit("20/minute")  # builds an LLM client inline — cap runaway spend
-def feedback_graph(request: Request, product_id: int | None = None, days: int = 90,
-                   limit: int = 10, user: dict = Depends(current_user)) -> dict:
+def feedback_graph(request: Request, product_id: int | None = None,
+                   days: int = Query(90, ge=1, le=365),
+                   limit: int = Query(10, ge=1, le=100),
+                   user: dict = Depends(current_user)) -> dict:
     """Cross-channel problem nodes: one complaint, every voice.
 
     Ranked by how INDEPENDENT the witnesses are, not how many there are — a
@@ -1162,7 +1167,8 @@ async def import_feedback(file: UploadFile = File(...), channel: str = "support"
 
 @app.get("/feed/candidates")
 @limiter.limit("20/minute")  # builds an LLM client inline — cap runaway spend
-def feed_candidates(request: Request, product_id: int | None = None, limit: int = 6,
+def feed_candidates(request: Request, product_id: int | None = None,
+                    limit: int = Query(6, ge=1, le=50),
                     refresh: bool = False, user: dict = Depends(current_user)) -> dict:
     """Themes worth investigating that are not yet anomalies.
 
@@ -1311,7 +1317,9 @@ async def import_reviews(file: UploadFile = File(...), product: str = "", source
 
 
 @app.get("/snapshot")
-def snapshot(product: str | None = None, product_id: int | None = None, days: int = 90, user: dict = Depends(current_user)) -> dict:
+def snapshot(product: str | None = None, product_id: int | None = None,
+             days: int = Query(90, ge=1, le=365),
+             user: dict = Depends(current_user)) -> dict:
     """Health snapshot for a product (or the whole corpus) — powers the
     'Investigate now on anything' entry point outside onboarding."""
     from echolens.onboarding.snapshot import health_snapshot
@@ -1968,7 +1976,7 @@ def _auto_issue(session, finding) -> dict:
 
 
 @app.post("/alerts/digest")
-def alerts_digest(hours: int = 24, product_id: int | None = None,
+def alerts_digest(hours: int = Query(24, ge=1, le=8760), product_id: int | None = None,
                   user: dict = Depends(require_role("reviewer"))) -> dict:
     """Daily rollup: post one summary of findings drafted in the last `hours` to
     Slack. Used by the scheduled GitHub Action so PMs get a quiet digest.
@@ -2284,7 +2292,9 @@ def portfolio_brief_view(user: dict = Depends(current_user)) -> dict:
 
 
 @app.get("/portfolio/themes")
-def portfolio_themes(days: int = 30, limit: int = 8, user: dict = Depends(current_user)) -> dict:
+def portfolio_themes(days: int = Query(30, ge=1, le=365),
+                     limit: int = Query(8, ge=1, le=50),
+                     user: dict = Depends(current_user)) -> dict:
     """The same complaint theme measured across every product on one axis.
 
     Rates are shares of each product's own negative reviews, so a big app and a

@@ -7,6 +7,7 @@ and the scheduler.
 """
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -72,25 +73,58 @@ def add_source(session: Session, source: str, identifier: str, product: str | No
 COLLECTOR_TIMEOUT_S = 180
 
 
+def _run_one(cfg: SourceConfig, session: Session, limit: int) -> CollectResult:
+    """One collector, bounded by COLLECTOR_TIMEOUT_S.
+
+    The timeout was declared and documented but never applied — `grep` found
+    exactly one reference, the definition — so a hung HTTP call blocked every
+    LATER collector indefinitely and the scheduled job never finished.
+
+    A worker thread is the only portable way to bound a blocking socket call.
+    The thread is a daemon, so a truly stuck one cannot keep the process alive;
+    it is NOT killed, because interrupting a collector mid-write would leave a
+    half-ingested page. It simply stops being waited on, and its source is
+    recorded as errored so source_health surfaces it.
+
+    The session is used only inside the worker, one collector at a time, so no
+    two threads ever touch it concurrently.
+    """
+    box: dict = {}
+
+    def work():
+        try:
+            box["result"] = cfg.build().run(session, limit=limit)
+        except Exception as err:                      # construction or run
+            box["error"] = f"{type(err).__name__}: {err}"
+
+    th = threading.Thread(target=work, daemon=True,
+                          name=f"collect-{cfg.source}-{cfg.identifier}")
+    th.start()
+    th.join(COLLECTOR_TIMEOUT_S)
+    if th.is_alive():
+        log.error("collector_timeout", source=cfg.source, id=cfg.identifier,
+                  seconds=COLLECTOR_TIMEOUT_S)
+        return CollectResult(
+            source=cfg.source, identifier=cfg.identifier,
+            error=f"timed out after {COLLECTOR_TIMEOUT_S}s")
+    if "error" in box:
+        log.error("collector_build_failed", source=cfg.source,
+                  id=cfg.identifier, error=box["error"])
+        return CollectResult(source=cfg.source, identifier=cfg.identifier,
+                             error=box["error"])
+    return box["result"]
+
+
 def run_all(session: Session, limit: int = 200) -> list[CollectResult]:
     """Run every configured collector. One failure never stops the rest.
 
     Collector.run already catches its own exceptions, but a collector that
     raises during CONSTRUCTION (a bad identifier, a missing dependency) used to
     abort the whole scheduled job and leave every later source uncollected with
-    no record of why.
+    no record of why. A collector that HANGS did the same thing more quietly —
+    see _run_one.
     """
-    results = []
-    for cfg in configured_sources(session):
-        try:
-            results.append(cfg.build().run(session, limit=limit))
-        except Exception as err:
-            log.error("collector_build_failed", source=cfg.source,
-                      id=cfg.identifier, error=f"{type(err).__name__}: {err}")
-            results.append(CollectResult(
-                source=cfg.source, identifier=cfg.identifier,
-                error=f"{type(err).__name__}: {err}"))
-    return results
+    return [_run_one(cfg, session, limit) for cfg in configured_sources(session)]
 
 
 def source_health(session: Session, product: str | None = None) -> list[dict]:

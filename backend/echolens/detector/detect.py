@@ -131,6 +131,16 @@ SEV1_Z, SEV2_Z, SEV3_Z = 3.0, 2.0, 1.0
 # can be arbitrarily large — capped here so "the baseline was flat" can never
 # read as stronger proof than a genuine multi-sigma spike.
 ZERO_VAR_Z_CAP = 4.0
+# Floor on the baseline standard deviation used in a z-score.
+#
+# An ALMOST-flat baseline is not evidence of precision, it is a small sample.
+# 27 days at 5 and one at 6 gives stdev 0.19, so a recent mean of 6 — one extra
+# review per day — scored z=5.1 and published as SEV1. The perfectly-flat branch
+# below is already capped at 4.0 for exactly this reason; without a floor the
+# near-flat case was treated as STRONGER evidence than the flat one.
+#
+# Half a review per day is the smallest movement worth calling a deviation.
+MIN_BASELINE_STD = 0.5
 
 
 @dataclass
@@ -168,7 +178,13 @@ def _daily_counts(rows, key, start: datetime, end: datetime) -> list[float]:
         d += timedelta(days=1)
     for r in rows:
         day = key(r)
-        if start.date() <= day <= end.date():
+        # `start.date() <` — start-EXCLUSIVE, matching the pre-fill above, which
+        # begins at start.date()+1. The filter used `<=`, so a row landing
+        # exactly on the boundary day created a 36th bucket and a 29-day
+        # "trailing 28d baseline". Whether that happened depended on whether a
+        # review happened to arrive on that one day, so the baseline length
+        # silently varied between products and between runs.
+        if start.date() < day <= end.date():
             daily[day] += 1
     return [daily[d] for d in sorted(daily)]
 
@@ -194,7 +210,10 @@ def _zscore(recent: list[float], baseline: list[float]) -> tuple[float, float]:
     delta = (mean_r - mean_b) / mean_b if mean_b else 0.0
 
     if std_b > 0:
-        z = (mean_r - mean_b) / std_b
+        # Floored: see MIN_BASELINE_STD. Also capped, so a near-flat baseline
+        # cannot outscore the perfectly-flat branch below.
+        z = (mean_r - mean_b) / max(std_b, MIN_BASELINE_STD)
+        z = max(-ZERO_VAR_Z_CAP, min(ZERO_VAR_Z_CAP, z))
     elif mean_r == mean_b:
         z = 0.0                      # genuinely flat: no signal, correctly
     elif mean_b > 0:
