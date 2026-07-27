@@ -455,3 +455,68 @@ def test_a_hung_collector_times_out_and_the_others_still_run():
     by_source = {r.source: r for r in res}
     assert "timed out" in (by_source["hang"].error or "")
     assert by_source["fast"].error is None and by_source["fast"].inserted == 1
+
+
+# ── P15: one challenge must not steer every future prompt ──────────────
+
+def test_a_single_challenge_does_not_become_agent_guidance(db):
+    """weak_spots has no evidence gate — correctly, the Calibration SCREEN
+    should show every reason given. But guidance_text injects the top one into
+    every future investigator prompt, and n=1 was enough. The same argument this
+    module makes against acting on n=8 applies with more force to n=1."""
+    from echolens.calibration import MIN_WEAK_SPOT_COUNT, SUFFICIENT_N
+    assert MIN_WEAK_SPOT_COUNT > 1
+    assert MIN_WEAK_SPOT_COUNT <= SUFFICIENT_N
+
+
+# ── P16: an unparseable date must not become "now" ─────────────────────
+
+def test_an_undated_review_is_skipped_not_stamped_with_collection_time():
+    """reference_now() reads max(Review.created_at) as "today", so stamping a
+    bad-dated row with collection time moved the agent's notion of the present
+    and every detector window with it."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from echolens.collectors.app_store import AppStoreCollector
+
+    eng = create_engine("sqlite://")
+    Base.metadata.create_all(eng)
+    s = sessionmaker(bind=eng)()
+    item = {"content": {"label": "battery dies"}, "im:rating": {"label": "1"},
+            "updated": {"label": "not-a-date"}}
+    inserted, wm = AppStoreCollector("123", "Lumo").ingest_item(s, item)
+    assert inserted is False and wm is None
+    assert s.query(Review).count() == 0
+
+
+# ── P17: a claimed-but-abandoned queue row must be reclaimable ─────────
+
+def test_an_abandoned_queue_row_is_requeued_but_a_live_one_is_not():
+    """claim_next flips a row to 'running' and only finish() clears it, so a
+    crash between the two left it 'running' forever: excluded from pending() so
+    it never ran again, and shown in queue_view's running list indefinitely."""
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import sessionmaker
+    from echolens.db.models import AnomalyEvent, QueuedInvestigation
+    from echolens.orchestrator.queue import claim_next
+
+    eng = create_engine("sqlite://")
+    Base.metadata.create_all(eng)
+    s = sessionmaker(bind=eng)()
+    now = datetime.now(timezone.utc)
+    a = AnomalyEvent(slug="a", type="manual_theme", metric="m", delta=0, z=0,
+                     window="7d", description="d", status="pending", product_id=1)
+    s.add(a); s.flush()
+    for title, age in (("abandoned", timedelta(hours=3)), ("in flight", timedelta(minutes=1))):
+        s.add(QueuedInvestigation(product_id=1, anomaly_id=a.id, status="running",
+                                  source="manual_theme", priority=60,
+                                  selection_order=0 if title == "abandoned" else 1,
+                                  budget_tier="quick", title=title,
+                                  started_at=now - age))
+    s.flush()
+
+    claimed = claim_next(s, 1, daily_limit=10, as_of=now)
+    assert claimed is not None and claimed.title == "abandoned"
+    live = s.scalars(select(QueuedInvestigation)
+                     .where(QueuedInvestigation.title == "in flight")).first()
+    assert live.status == "running", "a live worker's claim must not be stolen"

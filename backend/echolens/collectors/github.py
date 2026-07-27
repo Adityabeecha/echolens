@@ -100,12 +100,17 @@ class GitHubCollector(Collector):
             existing.reactions = reactions
             existing.labels = labels
             return False, wm
+        created = _dt(item.get("created_at"))
+        # Skipped rather than stamped with collection time: detect_issue_velocity
+        # buckets by created_at, so an invented date lands the issue in the
+        # wrong window and reads as fresh activity that never happened.
+        if created is None:
+            return False, wm
         session.add(Issue(
             ext_id=ext_id, title=item.get("title", ""),
             body_snippet=(item.get("body") or "")[:2000],
             state=item.get("state", "open"), reactions=reactions,
-            created_at=_dt(item.get("created_at")) or datetime.now(timezone.utc),
-            labels=labels, product=self.product,
+            created_at=created, labels=labels, product=self.product,
         ))
         return True, wm
 

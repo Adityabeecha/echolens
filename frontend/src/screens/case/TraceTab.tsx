@@ -126,7 +126,7 @@ export function TraceTab({ inv, onOpenEvidence, onReload }: Props) {
 
         {selHyp && (
           <div style={{ maxWidth: 640, marginBottom: S[3], padding: `${S[2]} ${S[3]}`,
-                        border: "1px solid rgba(240,166,60,.3)", background: "rgba(240,166,60,.05)",
+                        border: `1px solid ${C.accentLine}`, background: C.accentBg,
                         borderRadius: R.control, fontFamily: mono, fontSize: T.micro, color: C.accent }}>
             Highlighting steps for {selHyp} — click the hypothesis again to clear
           </div>

@@ -310,10 +310,20 @@ export function GhostButton({ children, onClick, style }: {
   );
 }
 
-// Full-screen centered state (loading / error / empty).
+/**
+ * Full-screen LOADING state.
+ *
+ * The docstring used to say "loading / error / empty", which made it read as a
+ * second, plainer EmptyState — two unrelated treatments for one situation. Every
+ * one of its eleven call sites is in fact a `loading && !data` branch, so the
+ * comment was the only thing that was wrong. Empty belongs to EmptyState, and
+ * failure to ErrorState; this is the wait.
+ */
 export function Centered({ children }: { children: ReactNode }) {
   return (
     <div
+      role="status"
+      aria-live="polite"
       style={{
         flex: 1,
         display: "flex",
@@ -442,7 +452,7 @@ export function EmptyState({
   return (
     <div
       style={{
-        maxWidth: 640,
+        maxWidth: "min(640px, 100%)",
         padding: `${S[8]} ${S[6]}`,
         border: `1px dashed ${C.border3}`,
         borderRadius: R.card,
@@ -469,7 +479,7 @@ export function EmptyState({
         <Icon name={icon} size={17} />
       </span>
       <div style={{ fontSize: T.md, fontWeight: 600, color: C.text2 }}>{title}</div>
-      <div style={{ fontSize: T.base, color: C.dim, lineHeight: "var(--el-lh-normal)", maxWidth: 460 }}>
+      <div style={{ fontSize: T.base, color: C.dim, lineHeight: "var(--el-lh-normal)", maxWidth: "min(460px, 100%)" }}>
         {body}
       </div>
       {action && onAction && (
@@ -495,7 +505,7 @@ export function ErrorState({
     <div
       role="alert"
       style={{
-        maxWidth: 640,
+        maxWidth: "min(640px, 100%)",
         padding: `${S[5]} ${S[5]}`,
         border: `1px solid ${C.badLine}`,
         borderRadius: R.card,

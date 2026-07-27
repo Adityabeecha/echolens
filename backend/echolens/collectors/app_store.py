@@ -102,6 +102,17 @@ class AppStoreCollector(Collector):
         ext_id = self._ext_id_for(item)
         at = _at(item)
         wm = iso(at) if at else None
+        # A row with no usable date is SKIPPED, not stamped with collection
+        # time. reference_now() reads max(Review.created_at) as "today", so a
+        # backfill of bad-dated rows moved the agent's notion of the present and
+        # every detector window with it — and the row would be presented as a
+        # measured observation from a date nobody observed.
+        #
+        # Returned as a skip rather than raised: raising would freeze the
+        # watermark (see base.run) and stall the whole source on one malformed
+        # row, which is a worse failure than dropping it.
+        if at is None:
+            return False, None
         # Scoped by product, like the GitHub collector already does: an ext_id
         # is only unique WITHIN a product, and Apple reuses review ids across
         # storefronts.
@@ -116,6 +127,6 @@ class AppStoreCollector(Collector):
         session.add(Review(
             source="app_store", ext_id=ext_id, rating=rating, text=text,
             version=_label(item, "im:version"), os_version=None,
-            created_at=at or datetime.now(timezone.utc), product=self.product,
+            created_at=at, product=self.product,
         ))
         return True, wm

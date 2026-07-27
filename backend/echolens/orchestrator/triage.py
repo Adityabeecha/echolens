@@ -11,7 +11,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from echolens.config import ORCHESTRATOR_DAILY_INVESTIGATIONS
@@ -147,7 +147,17 @@ class Orchestrator:
             AnomalyEvent.status == "pending", AnomalyEvent.merged_into_id.is_(None))
         if self.product_id is not None:
             stmt = stmt.where(AnomalyEvent.product_id == self.product_id)
-        linked = {i.anomaly_id for i in self.session.scalars(select(Investigation)).all()}
+        # One column, scoped to this product — not every Investigation row ever
+        # created, hydrated into full ORM objects, on every triage call. Only
+        # anomaly_id is read, and an anomaly can only be linked to a case in its
+        # own product, so the rest was pure waste that grew forever.
+        linked_stmt = select(Investigation.anomaly_id).where(
+            Investigation.anomaly_id.is_not(None))
+        if self.product_id is not None:
+            linked_stmt = linked_stmt.where(
+                or_(Investigation.product_id == self.product_id,
+                    Investigation.product_id.is_(None)))
+        linked = set(self.session.scalars(linked_stmt).all())
         pending = [a for a in self.session.scalars(stmt).all() if a.id not in linked]
         if not pending:
             return []

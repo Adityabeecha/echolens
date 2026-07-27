@@ -168,8 +168,18 @@ def enqueue_anomaly(session: Session, anomaly: AnomalyEvent, tier: str = "standa
 
 def investigations_today(session: Session, product_id: int | None, as_of: datetime) -> int:
     """Cases created today. Bounded scan, then an exact date match in Python so
-    it behaves the same on SQLite (naive) and Postgres (aware)."""
-    cutoff = as_of.replace(tzinfo=None) - timedelta(days=2)
+    it behaves the same on SQLite (naive) and Postgres (aware).
+
+    The cutoff matches the DIALECT rather than always being naive. Comparing a
+    naive literal against a Postgres TIMESTAMPTZ column is ambiguous — the
+    server applies its own timezone — and this deployment runs on Supabase, so
+    the daily cap could behave differently in production than in the tests. The
+    two-day margin means the SQL filter only has to be approximately right; the
+    exact date match below is what decides. Getting it wrong would still have
+    dropped rows near the boundary.
+    """
+    naive_column = session.bind is not None and session.bind.dialect.name == "sqlite"
+    cutoff = (as_of.replace(tzinfo=None) if naive_column else as_of) - timedelta(days=2)
     stmt = select(Investigation).where(Investigation.created_at >= cutoff)
     if product_id is not None:
         stmt = stmt.where(Investigation.product_id == product_id)
@@ -235,6 +245,40 @@ def cancel(session: Session, queue_id: int) -> bool:
     return True
 
 
+# How long a claimed item may sit in 'running' before it is treated as
+# abandoned. Longer than any tier's wall-clock budget, so a slow-but-alive
+# investigation is never reclaimed out from under itself.
+STALE_RUNNING_AFTER = timedelta(hours=2)
+
+
+def requeue_abandoned(session: Session, product_id: int | None = None,
+                      as_of: datetime | None = None) -> list[int]:
+    """Return rows that were claimed but never finished to the queue.
+
+    claim_next flips a row to 'running' and only finish() clears it, so a crash
+    or a redeploy between the two left the row 'running' forever: excluded from
+    pending() so it never ran again, and shown in queue_view's running list
+    indefinitely. Investigation rows already had recover.resume_running for
+    this; the queue had nothing.
+    """
+    now = as_of or datetime.now(timezone.utc)
+    stmt = select(QueuedInvestigation).where(QueuedInvestigation.status == "running")
+    if product_id is not None:
+        stmt = stmt.where(QueuedInvestigation.product_id == product_id)
+    freed: list[int] = []
+    for row in session.scalars(stmt).all():
+        started = aware_utc(row.started_at)
+        if started is not None and (now - started) < STALE_RUNNING_AFTER:
+            continue                      # still plausibly alive
+        row.status = "queued"
+        row.started_at = None
+        freed.append(row.id)
+        log.warning("requeued_abandoned", queue_id=row.id, product_id=row.product_id)
+    if freed:
+        session.flush()
+    return freed
+
+
 def claim_next(session: Session, product_id: int | None, daily_limit: int,
                as_of: datetime | None = None) -> QueuedInvestigation | None:
     """Take the next item to run, or None when the budget is spent.
@@ -243,6 +287,9 @@ def claim_next(session: Session, product_id: int | None, daily_limit: int,
     workers cannot pick up the same item.
     """
     now = as_of or datetime.now(timezone.utc)
+    # Reclaim anything a previous worker died holding, before deciding there is
+    # nothing to run.
+    requeue_abandoned(session, product_id, now)
     if investigations_today(session, product_id, now) >= daily_limit:
         return None
     queue = pending(session, product_id)

@@ -38,6 +38,14 @@ _REASON_GUIDANCE = {
 # threshold `sufficient` reports, so the system cannot claim a measurement
 # is untrustworthy and steer on it at the same time.
 SUFFICIENT_N = 20
+# Minimum times one reason must have been cited before it steers the agent.
+#
+# weak_spots itself has no gate — correctly, since the Calibration SCREEN should
+# show every reason a reviewer has given. But guidance_text injects the top one
+# into every future investigator prompt for that product, and a single challenge
+# was enough to do that. The same argument this module makes against acting on
+# n=8 applies with much more force to n=1.
+MIN_WEAK_SPOT_COUNT = 3
 
 def _verdict(session: Session, finding: Finding) -> str | None:
     """'approve' / 'challenge' from the finding's latest review, or None."""
@@ -144,7 +152,9 @@ def guidance_text(session: Session, product_id: int | None = None) -> str:
             f"({int(cal['mean_stated_confidence'] * 100)}% stated vs {int(cal['overall_approval_rate'] * 100)}% "
             "approved). Be more conservative: demand stronger corroboration before high confidence.")
     ws = weak_spots(session, product_id)
-    if ws["spots"]:
+    # Gated: see MIN_WEAK_SPOT_COUNT. The list is complete for display; only
+    # what STEERS the agent has to clear an evidence bar.
+    if ws["spots"] and ws["spots"][0]["count"] >= MIN_WEAK_SPOT_COUNT:
         top = ws["spots"][0]
         lines.append(f"KNOWN WEAK SPOT: reviewers most often reject findings for '{top['label']}' "
                      f"({top['count']}×). {top['guidance']}")

@@ -30,7 +30,16 @@ export function Chat({ onOpenInvestigation, productName }: {
   // The reply belonged to the OLD product's scope, so applying it after the
   // switch would attribute one product's answer to another.
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  useEffect(() => {
+    // Set on MOUNT as well as cleared on unmount. Only the cleanup existed, so
+    // under StrictMode's dev-only mount → unmount → remount the simulated
+    // unmount set this false and nothing ever set it back — every chat reply
+    // was silently discarded in `npm run dev`. Production was unaffected (a
+    // real remount gets a fresh useRef), which is exactly why it would survive
+    // review: it only breaks where you develop.
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
 
   const send = async (msg?: string) => {
     const message = (msg ?? input).trim();

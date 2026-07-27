@@ -60,7 +60,15 @@ class PlayStoreCollector(Collector):
             return False, None      # unrated: cannot tell praise from complaint
         at = _at(item)
         wm = iso(at) if at else None
-        if session.scalars(select(Review).where(Review.ext_id == ext_id)).first():
+        # No usable date -> skip. reference_now() takes max(Review.created_at)
+        # as "today", so stamping collection time on a bad-dated row moves the
+        # agent's notion of the present and every detector window with it.
+        if at is None:
+            return False, None
+        # Scoped by product: ext_id is only unique WITHIN a product, and an
+        # unscoped lookup let one product's row hide another's.
+        if session.scalars(select(Review).where(
+                Review.ext_id == ext_id, Review.product == self.product)).first():
             return False, wm
         session.add(Review(
             source="play_store", ext_id=ext_id,
@@ -71,7 +79,7 @@ class PlayStoreCollector(Collector):
             text=(item.get("content") or "").strip(),
             version=item.get("reviewCreatedVersion"),
             os_version=None,
-            created_at=at or datetime.now(timezone.utc),
+            created_at=at,
             product=self.product,
         ))
         return True, wm

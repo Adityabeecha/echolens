@@ -48,24 +48,33 @@ export function useRouter(initial: Route) {
   }, []);
 
   const navigate = useCallback((next: Route, opts?: { replace?: boolean }) => {
-    setRoute((prev) => {
-      // Tab and filter state are part of the entry: changing a filter must
-      // change the URL (that is the point of putting it there), but it should
-      // not push a history entry you have to press Back through five times.
-      const sameEntry =
-        prev.screen === next.screen &&
-        prev.id === next.id &&
-        prev.tab === next.tab &&
-        prev.productId === next.productId &&
-        formatRoute(prev) === formatRoute(next);
-      if (sameEntry) return prev;
-      if (opts?.replace) {
-        stack.current[Math.max(0, stack.current.length - 1)] = prev;
-      } else {
-        stack.current.push(prev);
-      }
-      return next;
-    });
+    // Decided BEFORE setRoute, against routeRef rather than the updater's
+    // `prev`. React may invoke a state updater more than once (StrictMode
+    // double-invoke, render replays), and the back-stack push and the
+    // history.pushState below are side effects — running them inside the
+    // updater double-pushed the stack and mislabelled the Back control.
+    const prev = routeRef.current;
+    // Tab and filter state are part of the entry: changing a filter must change
+    // the URL (that is the point of putting it there), but it should not push a
+    // history entry you have to press Back through five times.
+    const sameEntry =
+      prev.screen === next.screen &&
+      prev.id === next.id &&
+      prev.tab === next.tab &&
+      prev.productId === next.productId &&
+      formatRoute(prev) === formatRoute(next);
+    // A no-op navigate must not touch history either. The early return used to
+    // skip only the stack push, so pushState still ran below and every no-op
+    // added a browser entry you then had to press Back through.
+    if (sameEntry) return;
+
+    if (opts?.replace) {
+      stack.current[Math.max(0, stack.current.length - 1)] = prev;
+    } else {
+      stack.current.push(prev);
+    }
+    setRoute(next);
+
     const url = formatRoute(next);
     selfNav.current = true;
     if (opts?.replace) window.history.replaceState(null, "", url);
@@ -103,19 +112,20 @@ export function useRouter(initial: Route) {
    */
   const setParams = useCallback(
     (next: Record<string, string | null>) => {
-      setRoute((prev) => {
-        const params = { ...(prev.params ?? {}) };
-        for (const [k, v] of Object.entries(next)) {
-          if (v == null || v === "") delete params[k];
-          else params[k] = v;
-        }
-        const updated: Route = { ...prev, params: Object.keys(params).length ? params : undefined };
-        if (formatRoute(prev) === formatRoute(updated)) return prev;
-        selfNav.current = true;
-        window.history.replaceState(null, "", formatRoute(updated));
-        selfNav.current = false;
-        return updated;
-      });
+      // Same reasoning as navigate: history.replaceState is a side effect and
+      // must not live inside a state updater React is free to run twice.
+      const prev = routeRef.current;
+      const params = { ...(prev.params ?? {}) };
+      for (const [k, v] of Object.entries(next)) {
+        if (v == null || v === "") delete params[k];
+        else params[k] = v;
+      }
+      const updated: Route = { ...prev, params: Object.keys(params).length ? params : undefined };
+      if (formatRoute(prev) === formatRoute(updated)) return;
+      setRoute(updated);
+      selfNav.current = true;
+      window.history.replaceState(null, "", formatRoute(updated));
+      selfNav.current = false;
     },
     [],
   );
