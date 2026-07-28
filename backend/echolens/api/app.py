@@ -2269,6 +2269,7 @@ def fixwatch_evaluate(user: dict = Depends(require_role("reviewer"))) -> dict:
 @app.get("/fixwatch")
 def fixwatch_list(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     from echolens.db.models import FixWatch
+    from echolens.fixwatch import TERMINAL_FIX_STATUSES
     with session_scope() as session:
         p = _scope(session, product_id, user)
         stmt = select(FixWatch).order_by(FixWatch.id.desc())
@@ -2280,6 +2281,12 @@ def fixwatch_list(product_id: int | None = None, user: dict = Depends(current_us
              "repo": w.repo, "issue_number": w.issue_number, "issue_url": w.issue_url,
              "status": w.status, "metric": w.metric, "baseline_rate": w.baseline_rate,
              "post_rate": w.post_rate,
+             # before_after() computes this and _confirm/_inconclusive/_reopen
+             # persist it, but nothing served it — so the chart existed in the
+             # DB and no caller could reach it. Only sent for terminal statuses,
+             # which is the only time it is non-null, so a long watch list does
+             # not carry a day-by-day series per row for nothing.
+             "chart": w.chart_json if w.status in TERMINAL_FIX_STATUSES else None,
              "fix_date": w.fix_date.isoformat() if w.fix_date else None} for w in rows]}
 
 

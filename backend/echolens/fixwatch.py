@@ -26,6 +26,11 @@ PERSIST_KEEP = 0.6    # post-fix rate ≥ 60% of baseline at window end → it d
 REGRESS_BACK = 0.8    # a confirmed theme back to ≥80% of baseline → regression
 REGRESS_WINDOW = 7    # a regression is a RECENT re-spike, measured tight so it isn't diluted
 
+# The statuses a watch stops at, and the only ones that have a chart: _confirm,
+# _inconclusive and _reopen each write chart_json, and nothing else does.
+TERMINAL_FIX_STATUSES = frozenset({"confirmed", "inconclusive",
+                                   "persists_reopened", "regressed"})
+
 
 def _terms_for(session: Session, finding: Finding) -> list[str]:
     inv = session.get(Investigation, finding.investigation_id)
