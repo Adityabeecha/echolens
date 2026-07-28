@@ -294,7 +294,13 @@ function Backfilling({ product, onDone, onReviewSignals }: {
   const snap = status.snapshot;
   const anomalies = status.anomalies.filter((a) => a.status === "pending");
   const ready = snap.reviews > 0;
-  const found = anomalies.length + snap.top_themes.length;
+  // What Cases will actually offer to triage: pending anomalies become Signals
+  // rows there. `top_themes` are NOT signals — they are the most frequent
+  // phrases in the corpus, capped at k=6 and computed by word frequency, so
+  // they double-count paraphrases ("broken again" and "broken today" are one
+  // complaint). Adding them here promised "6 signals in Cases" and handed over
+  // to a screen offering none of them.
+  const found = anomalies.length;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[5] }}>
@@ -338,20 +344,44 @@ function Backfilling({ product, onDone, onReviewSignals }: {
           This list used to be its own format, so the same themes appeared here,
           on the feed, and nowhere else the same way. Triage happens in one
           place: Cases → Signals. */}
-      {ready && found > 0 && (
+      {ready && (found > 0 || snap.top_themes.length > 0) && (
         <div style={{ padding: `${S[4]} ${S[5]}`, background: C.card, border: `1px solid ${C.border2}`,
                       borderRadius: R.card }}>
           <Label style={{ marginBottom: S[1], color: C.info }}>WHAT WE FOUND</Label>
-          <div style={{ fontSize: T.md, color: C.text2, lineHeight: "var(--el-lh-normal)" }}>
-            {found} {plural(found, "signal")} worth a look in {product}'s feedback
-            {anomalies.length > 0 && snap.top_themes.length > 0
-              ? ` — ${anomalies.length} detected ${plural(anomalies.length, "spike")} and ${snap.top_themes.length} recurring ${plural(snap.top_themes.length, "complaint")}.`
-              : "."}
-          </div>
-          <div style={{ fontSize: T.sm, color: C.dim, marginTop: S[2], lineHeight: "var(--el-lh-normal)" }}>
-            They're waiting under Signals at the bottom of Cases. Tick the ones worth
-            investigating and they queue together — nothing is lost by not choosing now.
-          </div>
+          {found > 0 ? (
+            <>
+              <div style={{ fontSize: T.md, color: C.text2, lineHeight: "var(--el-lh-normal)" }}>
+                {found} detected {plural(found, "spike")} worth a look in {product}'s feedback.
+              </div>
+              <div style={{ fontSize: T.sm, color: C.dim, marginTop: S[2],
+                            lineHeight: "var(--el-lh-normal)" }}>
+                {found === 1 ? "It's" : "They're"} waiting under Signals at the bottom of
+                Cases. Tick what's worth investigating and it queues — nothing is lost by
+                not choosing now.
+              </div>
+            </>
+          ) : (
+            // No spike yet is the NORMAL first-run state: the detector needs a
+            // baseline before it can call anything anomalous. Saying so beats
+            // implying the backfill found nothing.
+            <div style={{ fontSize: T.md, color: C.text2, lineHeight: "var(--el-lh-normal)" }}>
+              No spike yet — EchoLens needs a few days of history before it can tell a
+              surge from normal noise. What people complain about most so far:
+            </div>
+          )}
+          {snap.top_themes.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: S[2], marginTop: S[3] }}>
+              {snap.top_themes.slice(0, 6).map((t) => (
+                <span key={t.label}
+                  style={{ fontSize: T.sm, color: C.text3, background: C.bgRaised,
+                           border: `1px solid ${C.border3}`, borderRadius: R.pill,
+                           padding: `${S[1]} ${S[3]}` }}>
+                  {t.label} <span style={{ color: C.faint, fontFamily: mono,
+                                           fontSize: T.micro }}>{t.count}</span>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -378,6 +408,17 @@ function Backfilling({ product, onDone, onReviewSignals }: {
                      border: `1px solid var(--el-accent-line)`, borderRadius: R.control, padding: `${S[3]} ${S[5]}`,
                      fontWeight: 500, fontSize: T.md, fontFamily: sans }}>
             Review {found} {plural(found, "signal")} in Cases
+          </button>
+        )}
+        {/* No spike to review, but the corpus is worth exploring. Cases can
+            still cluster it into candidate themes on demand. */}
+        {ready && found === 0 && snap.top_themes.length > 0 && (
+          <button onClick={onReviewSignals} className="el-btn"
+            style={{ background: "transparent", color: C.text3,
+                     border: `1px solid ${C.border3}`, borderRadius: R.control,
+                     padding: `${S[3]} ${S[5]}`, fontWeight: 500, fontSize: T.md,
+                     fontFamily: sans }}>
+            Explore the feedback in Cases
           </button>
         )}
         {status.backfilling && (
