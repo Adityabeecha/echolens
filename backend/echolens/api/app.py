@@ -729,9 +729,10 @@ def delete_product(product_id: int, confirm: str = "",
                    user: dict = Depends(require_role("admin"))) -> dict:
     """Delete a product and cascade its data. Requires ?confirm=<exact name>."""
     from echolens.db.models import (
-        AnomalyEvent, CollectorState, EvidenceRow, Finding, FixWatch, HypothesisRow,
-        Investigation, Issue, LLMCall, Post, Product, Recommendation, Release,
-        Review, ReviewFeedback, TraceStep, TriageDecision, User)
+        AnomalyEvent, CollectorState, Comment, EvidenceRow, FeedbackEntry, Finding,
+        FixWatch, HypothesisRow, Investigation, Issue, KnowledgeEdge, LLMCall, Mention,
+        Post, Product, QueuedInvestigation, Recommendation, Release, Review,
+        ReviewFeedback, ReviewRequest, TraceStep, TriageDecision, User)
     with session_scope() as session:
         p = session.get(Product, product_id)
         if p is None:
@@ -751,6 +752,12 @@ def delete_product(product_id: int, confirm: str = "",
                 for row in session.scalars(select(model).where(col.in_(ids))).all():
                     session.delete(row)
 
+        # Mentions hang off comments, so they go first — deleting the comment
+        # out from under them is the same FK violation one level down.
+        comment_ids = [c.id for c in session.scalars(select(Comment).where(
+            Comment.product_id == product_id)).all()]
+        _purge(Mention, Mention.comment_id, comment_ids)
+
         _purge(ReviewFeedback, ReviewFeedback.finding_id, find_ids)
         _purge(Recommendation, Recommendation.finding_id, find_ids)
         _purge(TraceStep, TraceStep.investigation_id, inv_ids)
@@ -758,10 +765,22 @@ def delete_product(product_id: int, confirm: str = "",
         _purge(EvidenceRow, EvidenceRow.investigation_id, inv_ids)
         _purge(LLMCall, LLMCall.investigation_id, inv_ids)
         _purge(TriageDecision, TriageDecision.anomaly_id, anom_ids)
-        for model in (FixWatch, Finding, Investigation, AnomalyEvent, CollectorState):
+        # Anything that references an investigation must be gone before the
+        # investigations themselves, hence two ordered passes rather than one
+        # loop over every product-scoped model.
+        _purge(Comment, Comment.investigation_id, inv_ids)
+        _purge(ReviewRequest, ReviewRequest.investigation_id, inv_ids)
+        _purge(QueuedInvestigation, QueuedInvestigation.investigation_id, inv_ids)
+        for model in (FixWatch, Finding, Investigation, AnomalyEvent, CollectorState,
+                      QueuedInvestigation, KnowledgeEdge, Comment, Mention, ReviewRequest):
             for row in session.scalars(select(model).where(model.product_id == product_id)).all():
                 session.delete(row)
-        for model in (Review, Issue, Post, Release):
+        # Corpus rows are keyed by product NAME, not id. FeedbackEntry was
+        # missing: every v2 source (Hacker News, Stack Overflow, GitHub
+        # Discussions, PRs/commits) lands there, so deleting a product left its
+        # entire non-store corpus behind, and a product recreated with the same
+        # name silently inherited it.
+        for model in (Review, Issue, Post, Release, FeedbackEntry):
             for row in session.scalars(select(model).where(model.product == name)).all():
                 session.delete(row)
         for u in session.scalars(select(User).where(User.last_active_product_id == product_id)).all():

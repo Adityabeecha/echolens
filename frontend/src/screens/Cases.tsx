@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CaseRow, SignalRow, ThemeCandidate, api, canReview } from "../api";
 import { CaseCard } from "../components/CaseCard";
 import { withToast } from "../components/Toast";
@@ -75,6 +75,21 @@ export function Cases({
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
+
+  // Arriving from onboarding's "Review N signals in Cases". Those signals are
+  // not cases yet, so the case list above is empty and the Signals section sits
+  // below a full-height empty state — off screen, which reads as "nothing is
+  // here". Bring it into view once, after the data lands.
+  const signalsRef = useRef<HTMLDivElement | null>(null);
+  const scrolledToSignals = useRef(false);
+  useEffect(() => {
+    if (scrolledToSignals.current || params.signals !== "1" || !view.data) return;
+    if ((view.data.signals ?? []).length === 0) return;
+    scrolledToSignals.current = true;
+    requestAnimationFrame(() =>
+      signalsRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }));
+  }, [params.signals, view.data]);
+
   const reviewer = canReview();
 
   const tab = params.tab ?? "all";
@@ -235,7 +250,7 @@ export function Cases({
           <Skeleton rows={4} />
         ) : rows.length === 0 ? (
           <EmptyState
-            title={emptyTitle(tab, filtered, product)}
+            title={emptyTitle(tab, filtered, product, selectable)}
             body={emptyBody(tab, filtered, product, selectable)}
             action={filtered ? "Clear filters" : selectable > 0 ? "Show signals" : undefined}
             onAction={
@@ -261,8 +276,9 @@ export function Cases({
         )}
 
         {/* ── signals: noticed, not yet a case ───────────────────────── */}
-        <div style={{ maxWidth: MEASURE, marginTop: S[8], borderTop: `1px solid ${C.border}`,
-                      paddingTop: 18 }}>
+        <div ref={signalsRef}
+             style={{ maxWidth: MEASURE, marginTop: S[8], borderTop: `1px solid ${C.border}`,
+                      paddingTop: 18, scrollMarginTop: S[4] }}>
           <div style={{ display: "flex", alignItems: "center", gap: S[3], flexWrap: "wrap" }}>
             {/* A real <button> so click and keyboard run the SAME handler.
                 They used to be two handlers, and the keyboard one only flipped
@@ -417,10 +433,19 @@ export function Cases({
   );
 }
 
-function emptyTitle(tab: string, filtered: boolean, product: string | null): string {
+function emptyTitle(tab: string, filtered: boolean, product: string | null,
+                    signals = 0): string {
   if (filtered) return "No cases match those filters";
   const label = CASE_TABS.find((t) => t.key === tab)?.label ?? "Cases";
-  if (tab === "all") return `No cases yet for ${product ?? "this product"}`;
+  if (tab === "all") {
+    // Onboarding hands off here saying "review N signals in Cases". A signal is
+    // not yet a case, so `cases` is legitimately empty — but the title said "No
+    // cases yet", which reads as "nothing was found" and contradicts the
+    // sentence the user just clicked. Name what IS here.
+    return signals > 0
+      ? `${signals} ${plural(signals, "signal")} waiting for you in ${product ?? "this product"}`
+      : `No cases yet for ${product ?? "this product"}`;
+  }
   return `Nothing under ${label} for ${product ?? "this product"}`;
 }
 
