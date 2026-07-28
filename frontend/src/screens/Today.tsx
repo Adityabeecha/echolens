@@ -8,7 +8,8 @@ import { statusMeta } from "../status";
 import { C, E, MEASURE, R, S, T, mono } from "../theme";
 import { Icon } from "../components/Icon";
 import {
-  Button, EmptyState, ErrorState, Label, ScreenBody, ScreenHeader, Skeleton, Spark
+  BeforeAfterChart, Button, EmptyState, ErrorState, Label, ScreenBody, ScreenHeader,
+  Skeleton, Spark
 } from "../ui";
 
 interface Props {
@@ -46,6 +47,7 @@ export function Today({
   const snapshot = useAsync(() => api.snapshot(), [reloadKey]);
   const sources = useAsync(() => api.sources(), [reloadKey]);
   const brief = useAsync(() => api.brief(), [reloadKey]);
+  const fixwatch = useAsync(() => api.fixwatch(), [reloadKey]);
   const [cancelling, setCancelling] = useState<number | null>(null);
 
   const rows = cases.data?.cases ?? [];
@@ -65,11 +67,27 @@ export function Today({
   const running = rows.filter((r) => r.status === "running");
   const queued = rows.filter((r) => r.status === "queued");
 
+  // Fixes proven to have worked: the answer to "did any of this matter?".
+  // Only terminal-confirmed watches carry a chart, and only those are shown —
+  // a watch still in its observation window has nothing to report yet.
+  const VERIFIED_LIMIT = 3;
+  const verifiedFixes = (fixwatch.data?.watches ?? [])
+    .filter((w) => w.status === "confirmed" && w.chart)
+    .slice(0, VERIFIED_LIMIT);
+
   // "Open" = a real problem with no verified fix. Ranked by how bad it is, and
   // deduped against the action queue so Today never shows one case twice.
   // `id` is null for queued rows, so a null must never make it into the dedupe
   // set — one null would hide every other null-id row.
   const surfaced = new Set(needsYou.map((r) => r.id).filter((id): id is number => id != null));
+  // Belt-and-braces against showing one case twice, once as an open problem and
+  // once as a verified fix — claims that contradict each other.
+  //
+  // derive_status() already prevents it: a confirmed watch resolves to
+  // `verified_fixed`, which is not in the filter below. But that lives in the
+  // backend and this list is a hardcoded literal, so the two can drift. Added
+  // BEFORE allOpenProblems is computed, since that reads the set.
+  for (const w of verifiedFixes) surfaced.add(w.investigation_id);
   const allOpenProblems = rows
     .filter((r) => ["resolved", "needs_review", "needs_human", "regressed"].includes(r.status))
     .filter((r) => r.id == null || !surfaced.has(r.id))
@@ -251,7 +269,41 @@ export function Today({
               )}
             </Section>
 
-            {/* ── d. what changed ───────────────────────────────────── */}
+            {/* ── d. what actually worked ───────────────────────────── */}
+            {/* Rendered only when there is something proven. An empty state
+                here would be a permanent "nothing worked yet" on the home
+                screen of a product that simply has not shipped a fix. */}
+            {verifiedFixes.length > 0 && (
+              <Section title="Fixes verified" count={verifiedFixes.length} color={C.good}>
+                <div style={{ display: "flex", flexDirection: "column", gap: S[3],
+                              maxWidth: MEASURE }}>
+                  {verifiedFixes.map((w) => (
+                    <button
+                      key={`fix-${w.id}`}
+                      onClick={() => onOpenCase(w.investigation_id, "resolved")}
+                      className="el-card el-card--click"
+                      aria-label={`Case ${w.investigation_id}: ${w.metric} — fix verified`}
+                      style={{ textAlign: "left", padding: `${S[3]} ${S[4]}`,
+                               display: "block", width: "100%" }}
+                    >
+                      <div style={{ display: "flex", alignItems: "baseline", gap: S[2],
+                                    flexWrap: "wrap" }}>
+                        <span style={{ fontFamily: mono, fontSize: T.sm, color: C.good }}>
+                          VERIFIED
+                        </span>
+                        <span style={{ fontSize: T.md, color: C.text2 }}>{w.metric}</span>
+                        <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint }}>
+                          case #{w.investigation_id}
+                        </span>
+                      </div>
+                      {w.chart && <BeforeAfterChart chart={w.chart} compact />}
+                    </button>
+                  ))}
+                </div>
+              </Section>
+            )}
+
+            {/* ── e. what changed ───────────────────────────────────── */}
             <Section title="This week">
               {brief.data && brief.data.lines.length > 0 ? (
                 <div style={{ maxWidth: MEASURE, padding: `${S[4]} ${S[5]}`,

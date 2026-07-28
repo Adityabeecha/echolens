@@ -397,6 +397,24 @@ export interface OnboardStatus {
   snapshot: Snapshot;
   anomalies: Anomaly[];
 }
+export interface FixWatchRow {
+  id: number;
+  finding_id: number;
+  investigation_id: number;
+  repo: string;
+  issue_number: number;
+  issue_url: string;
+  status: string;
+  metric: string;
+  baseline_rate: number | null;
+  post_rate: number | null;
+  // Only present on a terminal status — the server sends null while watching.
+  chart: FixStatus["chart"];
+  fix_date: string | null;
+}
+export interface FixWatchResp {
+  watches: FixWatchRow[];
+}
 export interface CommentNode {
   id: number;
   author: string;
@@ -817,6 +835,7 @@ export const api = {
   sources: () => get<SourcesResp>(scoped("/sources")),
   // Not scoped: which source types exist is global, not per-product.
   availableSources: () => get<AvailableSourcesResp>("/sources/available"),
+  fixwatch: () => get<FixWatchResp>(scoped("/fixwatch")),
   comments: (invId: number) =>
     get<CommentsResp>(scoped(`/investigations/${invId}/comments`)),
   postComment: (invId: number, body: string, parentId?: number) =>
