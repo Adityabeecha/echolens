@@ -126,9 +126,14 @@ def route(session: Session, message: str, product_id: int | None = None,
         cites = [_cite(f, inv) for f, inv in hits]
         lead = hits[0]
         d = decision_doc(lead[0].json or {}, [], (lead[0].json or {}).get("impact", {}), "resolved")
+        # decision_doc reads json["summary"], which is schema-required but absent
+        # on a finding whose JSON was never written or arrived malformed. That
+        # produced the subject-less answer " — case #1.", so fall back to the
+        # Finding.summary COLUMN, which is populated from the same value.
+        headline = (d["whats_broken"] or "").strip() or (lead[0].summary or "").strip()
+        stem = f"{headline} — case #{lead[1].id}." if headline else f"See case #{lead[1].id}."
         return {"type": "answer",
-                "text": f"{d['whats_broken']} — case #{lead[1].id}."
-                        + (f" (+{len(cites)-1} related)" if len(cites) > 1 else ""),
+                "text": stem + (f" (+{len(cites)-1} related)" if len(cites) > 1 else ""),
                 "citations": cites}
 
     # 4) nothing on record — honest, and offer to investigate
