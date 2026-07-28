@@ -27,8 +27,8 @@ export type Screen =
   | "portfolio"
   | "onboarding";
 
-/** The tabs of a single case. One route, one page, five views. */
-export const CASE_TABS = ["finding", "trace", "evidence", "engineering", "history"] as const;
+/** The tabs of a single case. One route, one page, six views. */
+export const CASE_TABS = ["finding", "trace", "evidence", "engineering", "discussion", "history"] as const;
 export type CaseTab = (typeof CASE_TABS)[number];
 
 export const CASE_TAB_LABEL: Record<CaseTab, string> = {
@@ -36,6 +36,7 @@ export const CASE_TAB_LABEL: Record<CaseTab, string> = {
   trace: "Investigation trace",
   evidence: "Evidence",
   engineering: "Engineering",
+  discussion: "Discussion",
   history: "History",
 };
 

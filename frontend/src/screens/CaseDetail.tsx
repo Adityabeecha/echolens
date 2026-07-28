@@ -9,6 +9,7 @@ import { Centered, ErrorState } from "../ui";
 import { EngineeringTab } from "./case/EngineeringTab";
 import { EvidenceTab } from "./case/EvidenceTab";
 import { FindingTab } from "./case/FindingTab";
+import { DiscussionTab } from "./case/DiscussionTab";
 import { HistoryTab } from "./case/HistoryTab";
 import { TraceTab } from "./case/TraceTab";
 import { Icon } from "../components/Icon";
@@ -220,6 +221,7 @@ export function CaseDetail({
         {tab === "engineering" && (
           <EngineeringTab inv={inv} onReload={load} onGoPatterns={onGoPatterns} />
         )}
+        {tab === "discussion" && <DiscussionTab caseId={caseId} />}
         {tab === "history" && <HistoryTab inv={inv} onOpenCase={onOpenCase} />}
       </div>
     </div>

@@ -399,6 +399,80 @@ class ReviewFeedback(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class Comment(Base):
+    """v5.0: a threaded discussion on a case.
+
+    Anchored to the INVESTIGATION, not the finding. A challenged case re-opens
+    as a new investigation with a new finding, and the discussion that led to
+    the challenge is exactly the context the next reviewer needs — anchoring to
+    the finding would strand it on the superseded row.
+
+    `product_id` is denormalised from the investigation so comments can be
+    scoped and filtered without a join, the same way findings are.
+    """
+    __tablename__ = "comments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    investigation_id: Mapped[int] = mapped_column(ForeignKey("investigations.id"), index=True)
+    # Threading is one level deep on purpose: a reply-to-a-reply chain buries
+    # the decision a PM is looking for. Replies hang off a top-level comment.
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("comments.id"),
+                                                  nullable=True, index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"),
+                                                nullable=True, index=True)
+    body: Mapped[str] = mapped_column(Text)
+    # Soft delete: removing the row would orphan its replies and silently
+    # rewrite the audit trail a challenge decision was based on.
+    deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"),
+                                                   nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    edited_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class Mention(Base):
+    """v5.0: one @mention, resolved to a real user at write time.
+
+    Stored rather than re-parsed on read: the body is editable, and an inbox
+    that recomputed mentions would silently un-notify someone when a typo was
+    fixed. Resolution happens once, against the users table, so a mention of a
+    non-existent handle is dropped instead of becoming a dangling notification.
+    """
+    __tablename__ = "mentions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    comment_id: Mapped[int] = mapped_column(ForeignKey("comments.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    read_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"),
+                                                   nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+
+
+class ReviewRequest(Base):
+    """v5.0: an explicit ask for a named person to sign off a case.
+
+    The existing approve/challenge is a single reviewer acting alone. This adds
+    the step before it — "who is meant to look at this, and are they done?" —
+    without changing what approve/challenge mean, so the honesty guarantees
+    around a finding's status are untouched.
+    """
+    __tablename__ = "review_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    investigation_id: Mapped[int] = mapped_column(ForeignKey("investigations.id"), index=True)
+    requested_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    requested_of_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"),
+                                                        nullable=True, index=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+    # pending | approved | changes_requested | cancelled
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"),
+                                                   nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+
+
 class LLMCall(Base):
     __tablename__ = "llm_calls"
 

@@ -1556,6 +1556,163 @@ def get_investigation(inv_id: int, product_id: int | None = None,
         return _investigation_dict(session, inv)
 
 
+# ── v5.0 collaboration ──────────────────────────────────────────────────
+
+class CommentBody(BaseModel):
+    body: str
+    parent_id: int | None = None
+
+
+class ReviewRequestBody(BaseModel):
+    requested_of_id: int | None = None
+    note: str = ""
+
+
+class ResolveRequestBody(BaseModel):
+    status: str          # approved | changes_requested | cancelled
+
+
+@app.get("/investigations/{inv_id}/comments")
+def list_comments(inv_id: int, product_id: int | None = None,
+                  user: dict = Depends(current_user)) -> dict:
+    """The discussion on a case. Readable by anyone who can read the case,
+    guests included — reading a thread leaks nothing the case itself doesn't."""
+    from echolens.collab import comment_thread
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        inv = _owned(session, Investigation, inv_id, p.id if p else None)
+        return {"investigation_id": inv.id, "comments": comment_thread(session, inv.id)}
+
+
+@app.post("/investigations/{inv_id}/comments")
+def post_comment(inv_id: int, body: CommentBody, product_id: int | None = None,
+                 user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Post a comment. Reviewer or above: the GUEST principal has id None by
+    design, and an unattributed comment on a review thread is worse than none."""
+    from echolens.collab import add_comment, comment_thread
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        inv = _owned(session, Investigation, inv_id, p.id if p else None)
+        try:
+            comment = add_comment(session, inv.id, body.body, user.get("id"),
+                                  parent_id=body.parent_id)
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        return {"posted": comment.id,
+                "comments": comment_thread(session, inv.id)}
+
+
+@app.patch("/comments/{comment_id}")
+def patch_comment(comment_id: int, body: CommentBody, product_id: int | None = None,
+                  user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.collab import edit_comment
+    from echolens.db.models import Comment
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        comment = _owned(session, Comment, comment_id, p.id if p else None)
+        try:
+            edit_comment(session, comment, body.body, user.get("id"))
+        except PermissionError as err:
+            raise HTTPException(403, str(err))
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        return {"edited": comment.id}
+
+
+@app.delete("/comments/{comment_id}")
+def remove_comment(comment_id: int, product_id: int | None = None,
+                   user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.collab import delete_comment
+    from echolens.db.models import Comment
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        comment = _owned(session, Comment, comment_id, p.id if p else None)
+        try:
+            delete_comment(session, comment, user.get("id"),
+                           is_admin=(user.get("role") == "admin"))
+        except PermissionError as err:
+            raise HTTPException(403, str(err))
+        return {"deleted": comment.id}
+
+
+@app.get("/mentions")
+def list_mentions(product_id: int | None = None, unread_only: bool = True,
+                  limit: int = Query(50, ge=1, le=200),
+                  user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Your mention inbox. Always the CALLER's — a user id is never taken from
+    the query string, so one user cannot read another's inbox."""
+    from echolens.collab import inbox
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        uid = user.get("id")
+        if uid is None:
+            return {"mentions": [], "unread": 0}
+        rows = inbox(session, uid, product_id=(p.id if p else None),
+                     unread_only=unread_only, limit=limit)
+        return {"mentions": rows, "unread": sum(1 for r in rows if not r["read"])}
+
+
+@app.post("/mentions/read")
+def read_mentions(mention_ids: list[int] | None = None, product_id: int | None = None,
+                  user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.collab import mark_read
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        uid = user.get("id")
+        if uid is None:
+            return {"marked": 0}
+        return {"marked": mark_read(session, uid, mention_ids,
+                                    product_id=(p.id if p else None))}
+
+
+@app.post("/investigations/{inv_id}/review-request")
+def create_review_request(inv_id: int, body: ReviewRequestBody,
+                          product_id: int | None = None,
+                          user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.collab import request_review
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        inv = _owned(session, Investigation, inv_id, p.id if p else None)
+        try:
+            req = request_review(session, inv.id, user.get("id"),
+                                 requested_of_id=body.requested_of_id, note=body.note)
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        return {"request_id": req.id, "status": req.status}
+
+
+@app.post("/review-requests/{req_id}/resolve")
+def resolve_review_request(req_id: int, body: ResolveRequestBody,
+                           product_id: int | None = None,
+                           user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Close a review request. Deliberately does NOT move the finding's status —
+    approve/challenge remain the only paths to that, so a sign-off cannot
+    smuggle a conclusion past the evidence checks."""
+    from echolens.collab import resolve_request
+    from echolens.db.models import ReviewRequest
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        req = _owned(session, ReviewRequest, req_id, p.id if p else None)
+        try:
+            resolve_request(session, req, body.status)
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        return {"request_id": req.id, "status": req.status}
+
+
+@app.get("/team")
+def team_view(product_id: int | None = None,
+              user: dict = Depends(current_user)) -> dict:
+    """Team dashboard: what is awaiting review and who is discussing what."""
+    from echolens.collab import team_activity
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        if p is None:
+            return {"awaiting_review": [], "recent_comments": [],
+                    "contributors": [], "open_request_count": 0, "product": None}
+        return {**team_activity(session, p.id), "product": p.name}
+
+
 def _run_challenge_bg(inv_id: int, note: str) -> None:
     """Run a challenge re-investigation (created synchronously by the review
     endpoint) off the request path so the HTTP call returns immediately."""

@@ -397,6 +397,33 @@ export interface OnboardStatus {
   snapshot: Snapshot;
   anomalies: Anomaly[];
 }
+export interface CommentNode {
+  id: number;
+  author: string;
+  author_id: number | null;
+  body: string | null;
+  deleted: boolean;
+  created_at: string | null;
+  edited: boolean;
+  replies: CommentNode[];
+}
+export interface CommentsResp {
+  investigation_id: number;
+  comments: CommentNode[];
+}
+export interface TeamView {
+  awaiting_review: {
+    id: number; investigation_id: number; requested_by: string;
+    requested_of: string; note: string; created_at: string | null;
+  }[];
+  recent_comments: {
+    id: number; investigation_id: number; author: string;
+    excerpt: string; created_at: string | null;
+  }[];
+  contributors: { user: string; comments: number }[];
+  open_request_count: number;
+  product: string | null;
+}
 export interface AvailableSource {
   source: string;
   label: string;
@@ -790,6 +817,18 @@ export const api = {
   sources: () => get<SourcesResp>(scoped("/sources")),
   // Not scoped: which source types exist is global, not per-product.
   availableSources: () => get<AvailableSourcesResp>("/sources/available"),
+  comments: (invId: number) =>
+    get<CommentsResp>(scoped(`/investigations/${invId}/comments`)),
+  postComment: (invId: number, body: string, parentId?: number) =>
+    post<CommentsResp & { posted: number }>(
+      scoped(`/investigations/${invId}/comments`),
+      { body, parent_id: parentId ?? null }),
+  deleteComment: (commentId: number) =>
+    del<{ deleted: number }>(scoped(`/comments/${commentId}`)),
+  team: () => get<TeamView>(scoped("/team")),
+  requestReview: (invId: number, note: string) =>
+    post<{ request_id: number; status: string }>(
+      scoped(`/investigations/${invId}/review-request`), { note }),
   importReviews: (file: File, product?: string, source = "csv") => {
     const fd = new FormData();
     fd.append("file", file);
