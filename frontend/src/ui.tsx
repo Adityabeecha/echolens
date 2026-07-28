@@ -119,6 +119,94 @@ export function Spark({
   );
 }
 
+/** One day's complaint count, as the fix-verification chart reports it. */
+export interface FixChartPoint {
+  date: string;
+  count: number;
+}
+
+/** The before/after series a FixWatch stores once its window closes. */
+export interface FixChartData {
+  before: FixChartPoint[];
+  after: FixChartPoint[];
+  before_rate: number | null;
+  after_rate: number | null;
+  terms: string[];
+  fix_date?: string;
+  window_days?: number;
+  metric?: string;
+}
+
+// Did the fix work? Complaint volume either side of the ship date.
+//
+// The shape is declared here rather than imported from api.ts so a UI primitive
+// does not depend on the API client; the server's chart object is structurally
+// compatible.
+export function BeforeAfterChart({
+  chart,
+  compact
+}: {
+  chart: FixChartData;
+  compact?: boolean;
+}) {
+  if (!chart || (chart.before.length === 0 && chart.after.length === 0)) return null;
+  const height = compact ? 34 : 60;
+  const max = Math.max(1, ...chart.before.map((p) => p.count), ...chart.after.map((p) => p.count));
+  const rate = (r: number | null) => (r == null ? "—" : `${r.toFixed(1)}/day`);
+
+  // One sentence carrying what the bars mean, for anyone who cannot see them.
+  // The div-based bars are decorative on their own — a screen reader met a run
+  // of empty divs and learned nothing.
+  const summary =
+    `Complaints for ${chart.terms.join(", ") || "this problem"}: ` +
+    `${rate(chart.before_rate)} before the fix, ${rate(chart.after_rate)} after.`;
+
+  const Bars = ({ points, color }: { points: FixChartPoint[]; color: string }) => (
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 1, height }} aria-hidden>
+        {points.map((p) => (
+          <div
+            key={p.date}
+            title={`${p.date}: ${p.count}`}
+            style={{
+              flex: 1,
+              height: `${Math.max(2, (p.count / max) * 100)}%`,
+              background: color,
+              borderRadius: "2px 2px 0 0",
+              opacity: 0.85
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <figure style={{ margin: `${S[3]} 0 0` }} role="img" aria-label={summary}>
+      {!compact && (
+        <figcaption style={{ fontSize: T.sm, color: C.muted, marginBottom: S[2] }}>
+          Complaint volume for “{chart.terms.join(", ")}” around the fix.
+        </figcaption>
+      )}
+      <div style={{ display: "flex", gap: S[4], alignItems: "stretch" }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, marginBottom: S[1] }}>
+            BEFORE · {rate(chart.before_rate)}
+          </div>
+          <Bars points={chart.before} color={C.bad} />
+        </div>
+        <div style={{ width: 1, background: C.border3, alignSelf: "stretch" }} />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, marginBottom: S[1] }}>
+            AFTER · {rate(chart.after_rate)}
+          </div>
+          <Bars points={chart.after} color={C.good} />
+        </div>
+      </div>
+    </figure>
+  );
+}
+
 // A pulsing/solid status dot.
 export function Dot({ color, pulse }: { color: string; pulse?: boolean }) {
   return (

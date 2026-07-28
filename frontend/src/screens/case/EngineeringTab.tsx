@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { FixStatus, Investigation, api, canReview } from "../../api";
+import { Investigation, api, canReview } from "../../api";
 import { withToast } from "../../components/Toast";
 import { when } from "../../format";
 import { C, MEASURE, R, S, T, mono } from "../../theme";
-import { EmptyState, Label } from "../../ui";
+import { BeforeAfterChart, EmptyState, Label } from "../../ui";
 
 interface Props {
   inv: Investigation;
@@ -168,9 +168,7 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
               <div style={{ fontSize: T.base, color: C.text3, marginTop: S[2], lineHeight: "var(--el-lh-normal)" }}>
                 {meta.body}
               </div>
-              {fix.chart && (fix.chart.before.length > 0 || fix.chart.after.length > 0) && (
-                <BeforeAfterChart chart={fix.chart} />
-              )}
+              {fix.chart && <BeforeAfterChart chart={fix.chart} />}
             </div>
             {fix.status === "confirmed" && (
               <button onClick={onGoPatterns} className="el-btn"
@@ -190,40 +188,3 @@ const ghost: React.CSSProperties = {
   borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base
 };
 
-function BeforeAfterChart({ chart }: { chart: NonNullable<FixStatus["chart"]> }) {
-  const max = Math.max(1, ...chart.before.map((p) => p.count), ...chart.after.map((p) => p.count));
-  const Bars = ({ points, color }: { points: { date: string; count: number }[]; color: string }) => (
-    <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 1, height: 60 }}>
-        {points.map((p) => (
-          <div key={p.date} title={`${p.date}: ${p.count}`}
-            style={{ flex: 1, height: `${Math.max(2, (p.count / max) * 100)}%`, background: color,
-                     borderRadius: "2px 2px 0 0", opacity: 0.85 }} />
-        ))}
-      </div>
-    </div>
-  );
-  const rate = (r: number | null) => (r == null ? "—" : `${r.toFixed(1)}/day`);
-  return (
-    <div style={{ marginTop: S[3] }}>
-      <div style={{ fontSize: T.sm, color: C.muted, marginBottom: S[2] }}>
-        Complaint volume for “{chart.terms.join(", ")}” around the fix.
-      </div>
-      <div style={{ display: "flex", gap: S[4], alignItems: "stretch" }}>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, marginBottom: S[1] }}>
-            BEFORE · {rate(chart.before_rate)}
-          </div>
-          <Bars points={chart.before} color={C.bad} />
-        </div>
-        <div style={{ width: 1, background: C.border3, alignSelf: "stretch" }} />
-        <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, marginBottom: S[1] }}>
-            AFTER · {rate(chart.after_rate)}
-          </div>
-          <Bars points={chart.after} color={C.good} />
-        </div>
-      </div>
-    </div>
-  );
-}
