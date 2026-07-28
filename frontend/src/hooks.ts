@@ -133,9 +133,9 @@ export function useWorkWatcher(
 ) {
   const settle = useRef(onSettle);
   settle.current = onSettle;
-  // Survives re-renders so a count change is measured against the last poll,
-  // not against a value reset by the render the poll itself triggered.
-  const inFlight = useRef<number | null>(null);
+  // Survives re-renders so a change is measured against the last poll, not
+  // against a value reset by the render the poll itself triggered.
+  const inFlight = useRef<{ busy: number; running: number } | null>(null);
 
   useEffect(() => {
     let stopped = false;
@@ -147,14 +147,21 @@ export function useWorkWatcher(
       let busy = 0;
       try {
         const r = await api.investigations();
-        busy = (r.investigations ?? []).filter(
+        const live = (r.investigations ?? []).filter(
           (i) => i.status === "running" || i.status === "queued",
-        ).length;
+        );
+        busy = live.length;
+        const running = live.filter((i) => i.status === "running").length;
         const before = inFlight.current;
-        inFlight.current = busy;
-        // Refresh when something FINISHED — the count fell — so the lists show
-        // the new status without the user reloading the page.
-        if (before != null && busy < before) settle.current();
+        inFlight.current = { busy, running };
+        // Refresh when something FINISHED (the count fell) OR when a queued
+        // item STARTED. Watching the total alone missed the second case: the
+        // count is unchanged when queued becomes running, so the row's status
+        // changed on the server while every list kept showing "Queued" until
+        // the user reloaded.
+        if (before != null && (busy < before.busy || running > before.running)) {
+          settle.current();
+        }
       } catch {
         // A failed poll is not worth surfacing: the screens have their own
         // error states, and this is a background refresh.

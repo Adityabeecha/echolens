@@ -776,8 +776,11 @@ export const api = {
   cases: () => get<CaseView>(scoped("/cases")),
   triage: (run = false) =>
     post<{ summary?: string; skipped_already_triaged?: number }>(scoped(`/anomalies/triage?run=${run}`)),
+  // `id` is null for rows still in the queue — they have no Investigation yet.
+  // They are included so the work-watcher can see queued work at all.
   investigations: () =>
-    get<{ investigations: { id: number; status: string; opened_by: string; anomaly_id: number | null }[] }>(
+    get<{ investigations: { id: number | null; queue_id?: number; status: string;
+                            opened_by: string; anomaly_id: number | null }[] }>(
       scoped("/investigations")
     ),
   // scoped(): without the active product the server falls back to the FIRST

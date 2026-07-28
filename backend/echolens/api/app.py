@@ -1555,15 +1555,37 @@ def start_investigation(request: Request, body: NewCase,
 
 @app.get("/investigations")
 def list_investigations(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    """Every investigation, plus anything still waiting to become one.
+
+    The frontend's work-watcher polls this and refreshes the screens when the
+    busy count falls. Queued items live in `queued_investigations` and have no
+    Investigation row until they are claimed, so returning only Investigation
+    rows made the watcher blind to them: it saw zero busy work, stopped polling,
+    and the queue only appeared to advance when the user reloaded the page.
+    """
+    from echolens.db.models import QueuedInvestigation
     with session_scope() as session:
         p = _scope(session, product_id, user)
         stmt = select(Investigation).order_by(Investigation.id.desc())
         if p is not None:
             stmt = stmt.where(Investigation.product_id == p.id)
         rows = session.scalars(stmt).all()
-        return {"investigations": [
-            {"id": i.id, "status": i.status, "opened_by": i.opened_by,
-             "budget_tier": i.budget_tier, "anomaly_id": i.anomaly_id} for i in rows]}
+        out = [{"id": i.id, "status": i.status, "opened_by": i.opened_by,
+                "budget_tier": i.budget_tier, "anomaly_id": i.anomaly_id} for i in rows]
+
+        # Pending queue entries, as work the watcher can count. `investigation_id`
+        # is null until one is claimed, so an entry that already has one is
+        # skipped — it is the Investigation row above and must not count twice.
+        q_stmt = select(QueuedInvestigation).where(
+            QueuedInvestigation.status.in_(("queued", "running")),
+            QueuedInvestigation.investigation_id.is_(None))
+        if p is not None:
+            q_stmt = q_stmt.where(QueuedInvestigation.product_id == p.id)
+        for q in session.scalars(q_stmt.order_by(QueuedInvestigation.id.desc())).all():
+            out.append({"id": None, "queue_id": q.id, "status": q.status,
+                        "opened_by": q.source, "budget_tier": q.budget_tier,
+                        "anomaly_id": q.anomaly_id})
+        return {"investigations": out}
 
 
 @app.get("/investigations/{inv_id}")
