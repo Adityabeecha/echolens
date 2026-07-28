@@ -35,13 +35,27 @@ from echolens.timeutil import aware_utc
 CHANNELS: dict[str, dict] = {
     "play_store":  {"label": "Play Store",    "audience": "users",     "kind": "store"},
     "app_store":   {"label": "App Store",     "audience": "users",     "kind": "store"},
+    "chrome_web_store": {"label": "Chrome Web Store", "audience": "users", "kind": "store"},
     "github":      {"label": "GitHub",        "audience": "engineers", "kind": "tracker"},
+    # Its own channel, not part of "github": issues are filed by people who know
+    # how to file issues, discussions are where everyone else asks "is it just
+    # me?" — so breadth scoring should treat them as independent witnesses.
+    "github_discussion": {"label": "GitHub Discussions", "audience": "community",
+                          "kind": "tracker"},
+    "hacker_news": {"label": "Hacker News",   "audience": "community", "kind": "social"},
+    "stack_overflow": {"label": "Stack Overflow", "audience": "engineers",
+                       "kind": "qa"},
     "reddit":      {"label": "Reddit",        "audience": "community", "kind": "social"},
     "forum":       {"label": "Community forum", "audience": "community", "kind": "social"},
     "support":     {"label": "Support tickets", "audience": "support",  "kind": "helpdesk"},
     "in_app":      {"label": "In-app feedback", "audience": "users",   "kind": "direct"},
     "csv":         {"label": "Imported",      "audience": "users",     "kind": "import"},
 }
+
+# The product team talking, not users reporting. Ingested for timeline context
+# but excluded from complaint collection: a maintainer's own PR describing a bug
+# is not an independent witness that users hit it.
+TEAM_CHANNELS: frozenset[str] = frozenset({"github_pr", "github_commit"})
 
 # Per-channel evidence ceiling. No single channel can prove a problem on its own,
 # however loud it gets — that ceiling is what makes breadth beat volume.
@@ -157,6 +171,10 @@ def collect_items(session: Session, product: str | None = None, *,
         f_stmt = f_stmt.where(FeedbackEntry.product == product)
     for f in session.scalars(f_stmt).all():
         if not in_window(f.created_at) or not (f.text or "").strip():
+            continue
+        # Filtered at the single point every consumer reads through, so no
+        # caller can count the team's own commits as user corroboration.
+        if f.channel in TEAM_CHANNELS:
             continue
         items.append(FeedbackItem(
             ref=f"{f.channel} {f.ext_id}", channel=f.channel, text=f.text,

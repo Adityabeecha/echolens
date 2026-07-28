@@ -397,6 +397,14 @@ export interface OnboardStatus {
   snapshot: Snapshot;
   anomalies: Anomaly[];
 }
+export interface AvailableSource {
+  source: string;
+  label: string;
+  hint: string;
+}
+export interface AvailableSourcesResp {
+  sources: AvailableSource[];
+}
 export interface CostsSummary {
   stats: {
     spent_today: number;
@@ -780,6 +788,8 @@ export const api = {
   resume: (id: number) => post(scoped(`/investigations/${id}/resume`)),
   escalate: (id: number) => post(scoped(`/investigations/${id}/escalate`)),
   sources: () => get<SourcesResp>(scoped("/sources")),
+  // Not scoped: which source types exist is global, not per-product.
+  availableSources: () => get<AvailableSourcesResp>("/sources/available"),
   importReviews: (file: File, product?: string, source = "csv") => {
     const fd = new FormData();
     fd.append("file", file);

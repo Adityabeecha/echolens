@@ -173,11 +173,12 @@ function ConnectForm({ onDone }: { onDone: () => void }) {
   const [product, setProduct] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Served from the collector registry so the form can never offer a source
+  // that has no collector behind it.
+  const { data: available } = useAsync(() => api.availableSources(), []);
 
-  const hint =
-    source === "play_store" ? "package name, e.g. com.spotify.music"
-      : source === "app_store" ? "numeric App Store id, e.g. 324684580"
-        : "owner/repo, e.g. signalapp/Signal-Android";
+  const options = available?.sources ?? [];
+  const hint = options.find((o) => o.source === source)?.hint ?? "";
 
   const submit = async () => {
     if (!identifier.trim()) return;
@@ -201,9 +202,11 @@ function ConnectForm({ onDone }: { onDone: () => void }) {
       <div style={{ display: "grid", gridTemplateColumns: "150px 1fr 1fr auto", gap: S[2], alignItems: "center" }}>
         <select value={source} onChange={(e) => setSource(e.target.value)} style={input}
           aria-label="Source type">
-          <option value="play_store">Play Store</option>
-          <option value="app_store">App Store</option>
-          <option value="github">GitHub</option>
+          {options.length === 0
+            ? <option value="play_store">Play Store</option>
+            : options.map((o) => (
+              <option key={o.source} value={o.source}>{o.label}</option>
+            ))}
         </select>
         <input value={identifier} onChange={(e) => setIdentifier(e.target.value)} placeholder={hint}
           aria-label="Source identifier" style={input} />

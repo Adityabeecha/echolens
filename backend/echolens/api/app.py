@@ -795,10 +795,28 @@ def collect_run(user: dict = Depends(require_role("admin"))) -> dict:
 
 
 class ConnectSource(BaseModel):
-    source: str            # play_store | github
-    identifier: str        # package name / repo
+    source: str            # any key of collectors.registry._BUILDERS
+    identifier: str        # package name / repo / search term
     product: str | None = None
     product_id: int | None = None
+
+
+@app.get("/sources/available")
+def sources_available() -> dict:
+    """The connectable sources, from the registry.
+
+    Served rather than hardcoded in the frontend so a source can never appear in
+    the form without a collector behind it — the connect form and _BUILDERS
+    cannot drift apart.
+    """
+    from echolens.collectors.registry import SOURCE_INFO, _BUILDERS
+
+    return {"sources": [
+        {"source": s,
+         "label": SOURCE_INFO.get(s, {}).get("label", s.replace("_", " ").title()),
+         "hint": SOURCE_INFO.get(s, {}).get("hint", "")}
+        for s in sorted(_BUILDERS)
+    ]}
 
 
 @app.post("/sources/connect")

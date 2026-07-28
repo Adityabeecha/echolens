@@ -19,8 +19,13 @@ from echolens.collectors.base import Collector, CollectResult
 from echolens.config import settings
 from echolens.db.models import CollectorState
 from echolens.collectors.app_store import AppStoreCollector
+from echolens.collectors.chrome_web_store import ChromeWebStoreCollector
 from echolens.collectors.github import GitHubCollector
+from echolens.collectors.github_extra import (
+    GitHubActivityCollector, GitHubDiscussionsCollector)
+from echolens.collectors.hacker_news import HackerNewsCollector
 from echolens.collectors.play_store import PlayStoreCollector
+from echolens.collectors.stack_overflow import StackOverflowCollector
 from echolens.timeutil import aware_utc
 
 # Reddit was dropped as a live source: Reddit ended free API access in 2026.
@@ -28,7 +33,32 @@ from echolens.timeutil import aware_utc
 _BUILDERS = {
     "play_store": lambda ident, product: PlayStoreCollector(ident, product),
     "app_store": lambda ident, product: AppStoreCollector(ident, product),
+    "chrome_web_store": lambda ident, product: ChromeWebStoreCollector(ident, product),
     "github": lambda ident, product: GitHubCollector(ident, product),
+    "github_discussions": lambda ident, product: GitHubDiscussionsCollector(ident, product),
+    "github_activity": lambda ident, product: GitHubActivityCollector(ident, product),
+    "hacker_news": lambda ident, product: HackerNewsCollector(ident, product),
+    "stack_overflow": lambda ident, product: StackOverflowCollector(ident, product),
+}
+
+# Display name + what the identifier means, per source. Used by the connect
+# form so it cannot drift from _BUILDERS.
+SOURCE_INFO: dict[str, dict[str, str]] = {
+    "play_store": {"label": "Play Store",
+                   "hint": "package name, e.g. com.spotify.music"},
+    "app_store": {"label": "App Store",
+                  "hint": "numeric App Store id, e.g. 324684580"},
+    "chrome_web_store": {"label": "Chrome Web Store",
+                         "hint": "32-character extension id from the store URL"},
+    "github": {"label": "GitHub Issues", "hint": "owner/repo"},
+    "github_discussions": {"label": "GitHub Discussions",
+                           "hint": "owner/repo — needs GITHUB_TOKEN"},
+    "github_activity": {"label": "GitHub PRs & commits",
+                        "hint": "owner/repo — timeline context, not counted as feedback"},
+    "hacker_news": {"label": "Hacker News",
+                    "hint": "search term, usually the product name"},
+    "stack_overflow": {"label": "Stack Overflow",
+                       "hint": "a tag like react-native, or a search phrase"},
 }
 
 

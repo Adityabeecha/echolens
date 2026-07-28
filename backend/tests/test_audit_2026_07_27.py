@@ -412,7 +412,7 @@ def test_short_identical_snippets_from_two_real_sources_still_count():
 
 # ── P13: a hung collector must not block the rest ──────────────────────
 
-def test_a_hung_collector_times_out_and_the_others_still_run():
+def test_a_hung_collector_times_out_and_the_others_still_run(monkeypatch):
     """COLLECTOR_TIMEOUT_S was declared and documented but never applied — grep
     found exactly one reference, the definition."""
     import time
@@ -436,9 +436,12 @@ def test_a_hung_collector_times_out_and_the_others_still_run():
         def ingest_item(self, session, item):
             return True, "2026-01-01"
 
-    registry.COLLECTOR_TIMEOUT_S = 2
-    registry._BUILDERS["hang"] = lambda i, p: Hang(i, p)
-    registry._BUILDERS["fast"] = lambda i, p: Fast(i, p)
+    # monkeypatch, not direct assignment: both of these are module-level state,
+    # and leaving the fakes in _BUILDERS made them visible to every later test
+    # in the session as if they were real sources.
+    monkeypatch.setattr(registry, "COLLECTOR_TIMEOUT_S", 2)
+    monkeypatch.setitem(registry._BUILDERS, "hang", lambda i, p: Hang(i, p))
+    monkeypatch.setitem(registry._BUILDERS, "fast", lambda i, p: Fast(i, p))
 
     eng = create_engine("sqlite://", connect_args={"check_same_thread": False})
     Base.metadata.create_all(eng)
