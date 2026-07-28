@@ -24,6 +24,8 @@ dependencies = [
     "bcrypt>=4.0",
     # v4.0: Slack interactivity posts form-encoded payloads (request.form())
     "python-multipart>=0.0.9",
+    # v2.0: .xlsx uploads, converted to CSV and fed to the existing importers
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]

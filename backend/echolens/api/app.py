@@ -1159,11 +1159,36 @@ def graph_channels(product_id: int | None = None,
         }
 
 
+def _upload_text(raw: bytes, filename: str | None) -> str:
+    """An upload as CSV text, converting Excel first.
+
+    Both import routes take CSV text, so .xlsx is converted here rather than
+    given its own importer — the column-alias tolerance and dedup rules are
+    inherited, and the same data imports identically either way.
+
+    Detection is by content, not extension: latin-1 never raises, so an .xlsx
+    that reached the decode path below would silently become a page of binary
+    garbage that parses as a single junk row instead of erroring.
+    """
+    from echolens.importers.spreadsheet import looks_like_xlsx, xlsx_to_csv
+
+    if looks_like_xlsx(raw, filename):
+        try:
+            return xlsx_to_csv(raw)
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return raw.decode("latin-1", errors="replace")
+
+
 @app.post("/import/feedback")
 async def import_feedback(file: UploadFile = File(...), channel: str = "support",
                           product: str = "",
                           user: dict = Depends(require_role("admin"))) -> dict:
-    """Import support tickets / in-app feedback / forum threads from a CSV."""
+    """Import support tickets / in-app feedback / forum threads from a CSV or
+    Excel workbook."""
     from echolens.importers.feedback_csv import import_feedback_csv
     # Bounded. `await file.read()` with no cap pulled the entire upload into
     # memory (and csv.DictReader then held a second copy), so one large POST
@@ -1171,10 +1196,7 @@ async def import_feedback(file: UploadFile = File(...), channel: str = "support"
     raw = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(raw) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, f"file too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)")
-    try:
-        text = raw.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        text = raw.decode("latin-1", errors="replace")
+    text = _upload_text(raw, file.filename)
     try:
         with session_scope() as session:
             return import_feedback_csv(session, text, channel=channel,
@@ -1305,8 +1327,9 @@ def queue_cancel(queue_id: int, product_id: int | None = None,
 async def import_reviews(file: UploadFile = File(...), product: str = "", source: str = "csv",
                         product_id: int | None = None,
                         user: dict = Depends(require_role("admin"))) -> dict:
-    """Import a CSV of reviews from any export (App Store, Zendesk, spreadsheet).
-    Widens the evidence base beyond the live scrapers. Idempotent by content hash.
+    """Import reviews from any export (App Store, Zendesk, spreadsheet) as CSV
+    or Excel. Widens the evidence base beyond the live scrapers. Idempotent by
+    content hash.
 
     product_id wins over the free-text `product`. Import is offered from a
     per-product screen, but the form defaulted the name to "" and the importer
@@ -1320,10 +1343,7 @@ async def import_reviews(file: UploadFile = File(...), product: str = "", source
     raw = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(raw) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, f"file too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)")
-    try:
-        text = raw.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        text = raw.decode("latin-1", errors="replace")
+    text = _upload_text(raw, file.filename)
     with session_scope() as session:
         name = product or None
         if product_id is not None:

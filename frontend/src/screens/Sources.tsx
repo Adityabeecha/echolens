@@ -251,7 +251,7 @@ function ImportForm({ onDone }: { onDone: (msg: string) => void }) {
 
   return (
     <div style={{ maxWidth: MEASURE, marginBottom: S[4], padding: 18, background: C.card, border: `1px solid ${C.border2}`, borderRadius: R.card }}>
-      <div style={{ fontSize: T.md, fontWeight: 600, marginBottom: S[1] }}>Import reviews from a CSV</div>
+      <div style={{ fontSize: T.md, fontWeight: 600, marginBottom: S[1] }}>Import reviews from a CSV or Excel file</div>
       <div style={{ fontSize: T.sm, color: C.muted, marginBottom: S[3], lineHeight: "var(--el-lh-normal)" }}>
         Any export works — App Store, Zendesk, in-app feedback, a spreadsheet. Columns are matched loosely:
         a <span style={{ fontFamily: mono, color: C.text3 }}>text</span> column (or content/review/body),
@@ -259,7 +259,9 @@ function ImportForm({ onDone }: { onDone: (msg: string) => void }) {
         <span style={{ fontFamily: mono, color: C.text3 }}>date</span>, <span style={{ fontFamily: mono, color: C.text3 }}>version</span>.
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: S[2], alignItems: "center" }}>
-        <input type="file" accept=".csv,text/csv" aria-label="CSV file to import"
+        <input type="file"
+          accept=".csv,.xlsx,.xlsm,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          aria-label="CSV or Excel file to import"
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           style={{ ...input, padding: `${S[2]} ${S[2]}` }} />
         <input value={product} onChange={(e) => setProduct(e.target.value)}
