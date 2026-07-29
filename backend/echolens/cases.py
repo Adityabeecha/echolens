@@ -308,7 +308,13 @@ def case_rows(session: Session, product_id: int | None,
             "queue_id": row.id,
             "title": case_title(None, anomaly, row.title),
             "status": QUEUED,
-            "why": row.note or f"Queued — position {position}.",
+            # A queued row has no investigation yet, so its card cannot be
+            # opened. Say when it will be, rather than leaving a card that
+            # silently does nothing when clicked.
+            "why": row.note or (
+                f"Queued — position {position}. Opens for live viewing once it starts."
+                if position > 1 else
+                "Queued — next to run. Opens for live viewing once it starts."),
             "severity": None, "severity_score": None, "confidence": None, "impact": None,
             "opened_at": aware_utc(row.created_at).isoformat() if row.created_at else None,
             "age_days": _age_days(row.created_at, now),

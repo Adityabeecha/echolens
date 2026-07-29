@@ -178,7 +178,19 @@ export default function App() {
   // nothing on screen said so. Keyed on reloadKey so queueing something (which
   // bumps it) also wakes the watcher; it stops polling once nothing is in
   // flight, so an idle workspace issues no requests.
-  useWorkWatcher(activeId, reloadKey, bumpReload);
+  // A queued case has no investigation id, so its card is not clickable and
+  // there is no way to open it and watch it think. By the time it becomes
+  // clickable it is usually finished — which is why the reasoning only ever
+  // appeared after the fact. Offer the live view the instant the id exists.
+  const announceStarted = useCallback((id: number) => {
+    // Already watching it: no toast, and no navigation that would reset the
+    // trace scroll under someone who is reading it.
+    if (route.screen === "case" && route.id === id) return;
+    toast.action(`Case #${id} is running now.`, "Watch live",
+                 () => openCase(id, "running"));
+  }, [route.screen, route.id, openCase]);
+
+  useWorkWatcher(activeId, reloadKey, bumpReload, 4000, announceStarted);
 
   const logout = () => {
     setToken(null);

@@ -130,12 +130,16 @@ export function useWorkWatcher(
   wakeKey: number,
   onSettle: () => void,
   intervalMs = 4000,
+  /** Called with the id of an investigation that JUST started running. */
+  onStarted?: (investigationId: number) => void,
 ) {
   const settle = useRef(onSettle);
   settle.current = onSettle;
+  const started = useRef(onStarted);
+  started.current = onStarted;
   // Survives re-renders so a change is measured against the last poll, not
   // against a value reset by the render the poll itself triggered.
-  const inFlight = useRef<{ busy: number; running: number } | null>(null);
+  const inFlight = useRef<{ busy: number; running: Set<number> } | null>(null);
 
   useEffect(() => {
     let stopped = false;
@@ -151,16 +155,26 @@ export function useWorkWatcher(
           (i) => i.status === "running" || i.status === "queued",
         );
         busy = live.length;
-        const running = live.filter((i) => i.status === "running").length;
+        // Ids, not a count: a queue that finishes one case and starts another
+        // between two polls leaves the count identical, and the case that just
+        // began is the one worth watching stream.
+        const running = new Set(
+          live.filter((i) => i.status === "running" && i.id != null)
+              .map((i) => i.id as number),
+        );
         const before = inFlight.current;
         inFlight.current = { busy, running };
-        // Refresh when something FINISHED (the count fell) OR when a queued
-        // item STARTED. Watching the total alone missed the second case: the
-        // count is unchanged when queued becomes running, so the row's status
-        // changed on the server while every list kept showing "Queued" until
-        // the user reloaded.
-        if (before != null && (busy < before.busy || running > before.running)) {
-          settle.current();
+        if (before != null) {
+          const fresh = [...running].filter((id) => !before.running.has(id));
+          // Refresh when something FINISHED (the count fell) OR when a queued
+          // item STARTED. Watching the total alone missed the second case: the
+          // count is unchanged when queued becomes running, so the row's status
+          // changed on the server while every list kept showing "Queued" until
+          // the user reloaded.
+          if (busy < before.busy || fresh.length > 0) settle.current();
+          // A queued case has id null, so its card is not clickable and there
+          // is no way to watch it. Announce the id the moment it exists.
+          if (fresh.length > 0) started.current?.(fresh[0]);
         }
       } catch {
         // A failed poll is not worth surfacing: the screens have their own

@@ -15,6 +15,8 @@ export interface ToastItem {
   text: string;
   kind: "ok" | "fail" | "info";
   retry?: () => void;
+  /** Label for the action button. Defaults to "Retry" (the original use). */
+  actionLabel?: string;
 }
 
 type Listener = (items: ToastItem[]) => void;
@@ -32,11 +34,12 @@ function emit() {
  *  column that covered the app and pushed its own dismiss buttons off-screen. */
 const MAX_TOASTS = 4;
 
-function push(text: string, kind: ToastItem["kind"], retry?: () => void): number {
+function push(text: string, kind: ToastItem["kind"], retry?: () => void,
+              actionLabel?: string): number {
   const id = nextId++;
   // Drop the OLDEST once full: the newest failure is the one describing what
   // the user just tried to do.
-  items = [...items, { id, text, kind, retry }].slice(-MAX_TOASTS);
+  items = [...items, { id, text, kind, retry, actionLabel }].slice(-MAX_TOASTS);
   emit();
   // Failures stay until dismissed — an error you can miss is an error you will.
   if (kind !== "fail") setTimeout(() => dismiss(id), 4200);
@@ -59,7 +62,10 @@ export const toast = {
   ok: (text: string) => push(text, "ok"),
   info: (text: string) => push(text, "info"),
   fail: (text: string, retry?: () => void) =>
-    push(text.replace(/^Error:\s*/, ""), "fail", retry)
+    push(text.replace(/^Error:\s*/, ""), "fail", retry),
+  /** An informational toast that offers one action, e.g. "Watch live". */
+  action: (text: string, label: string, onAction: () => void) =>
+    push(text, "info", onAction, label)
 };
 
 /**
@@ -134,7 +140,7 @@ export function Toasts() {
                 onClick={() => { dismiss(t.id); t.retry?.(); }}
                 style={{ flex: "none" }}
               >
-                Retry
+                {t.actionLabel ?? "Retry"}
               </Button>
             )}
             <button
