@@ -147,7 +147,12 @@ class Investigator:
             investigation_id=self.inv.id, seq=self._seq, kind=kind,
             content_json=content, tokens=tokens, ms=ms,
         ))
-        self.session.flush()
+        try:
+            self.session.commit()
+        except Exception as err:
+            self.session.rollback()
+            log.warning("trace_commit_failed", investigation=self.inv.id,
+                        seq=self._seq, error=f"{type(err).__name__}: {err}")
         summary = content.get("text") or content.get("code") or json.dumps(content)[:120]
         self._recent.append(f"[{kind}] {summary[:160]}")
         self.on_step(kind, content)

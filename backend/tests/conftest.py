@@ -28,9 +28,9 @@ def _hermetic_auth(monkeypatch):
     monkeypatch.setattr(settings, "google_default_role", "reviewer", raising=False)
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture()
 def engine():
-    eng = create_engine("sqlite://")  # in-memory, hermetic
+    eng = create_engine("sqlite://")
     Base.metadata.create_all(eng)
     Session = sessionmaker(bind=eng, expire_on_commit=False)
     with Session() as s:
