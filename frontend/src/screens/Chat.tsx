@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ChatCitation, api } from "../api";
+import { ChatCitation, ChatToolCall, api } from "../api";
 import { C, MEASURE, R, S, T, mono, sans } from "../theme";
 import { Label, ScreenHeader } from "../ui";
 import { Icon } from "../components/Icon";
@@ -9,6 +9,10 @@ interface Turn {
   text: string;
   citations?: ChatCitation[];
   investigationId?: number;
+  toolCalls?: ChatToolCall[];
+  confident?: boolean;
+  canInvestigate?: boolean;
+  question?: string;
 }
 
 const SUGGESTIONS = [
@@ -41,18 +45,22 @@ export function Chat({ onOpenInvestigation, productName }: {
     return () => { alive.current = false; };
   }, []);
 
-  const send = async (msg?: string) => {
+  const send = async (msg?: string, force = false) => {
     const message = (msg ?? input).trim();
     if (!message || busy) return;
-    setInput("");
-    setTurns((t) => [...t, { role: "you", text: message }]);
+    if (!force) {
+      setInput("");
+      setTurns((t) => [...t, { role: "you", text: message }]);
+    }
     setBusy(true);
     try {
-      const r = await api.chat(message);
+      const r = await api.chat(message, force);
       if (!alive.current) return;
       setTurns((t) => [...t, {
         role: "echolens", text: r.text, citations: r.citations,
-        investigationId: r.type === "investigation" ? r.investigation_id : undefined
+        investigationId: r.type === "investigation" ? r.investigation_id : undefined,
+        toolCalls: r.tool_calls, confident: r.confident,
+        canInvestigate: r.can_investigate, question: message
       }]);
     } catch (e) {
       const raw = String(e).replace("Error: ", "");
@@ -94,7 +102,8 @@ export function Chat({ onOpenInvestigation, productName }: {
 
         <div style={{ display: "flex", flexDirection: "column", gap: S[4], maxWidth: 720 }}>
           {turns.map((t, i) => (
-            <Bubble key={i} turn={t} onOpenInvestigation={onOpenInvestigation} />
+            <Bubble key={i} turn={t} onOpenInvestigation={onOpenInvestigation}
+              onInvestigate={(q) => send(q, true)} />
           ))}
           {busy && <div style={{ fontSize: T.base, color: C.dim, fontFamily: mono }}>EchoLens is thinking…</div>}
         </div>
@@ -118,7 +127,11 @@ export function Chat({ onOpenInvestigation, productName }: {
   );
 }
 
-function Bubble({ turn, onOpenInvestigation }: { turn: Turn; onOpenInvestigation: (id: number) => void }) {
+function Bubble({ turn, onOpenInvestigation, onInvestigate }: {
+  turn: Turn;
+  onOpenInvestigation: (id: number) => void;
+  onInvestigate?: (question: string) => void;
+}) {
   const you = turn.role === "you";
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: you ? "flex-end" : "flex-start" }}>
@@ -128,11 +141,33 @@ function Bubble({ turn, onOpenInvestigation }: { turn: Turn; onOpenInvestigation
       <div style={{ maxWidth: 560, padding: `${S[3]} ${S[4]}`, borderRadius: R.card, background: you ? C.accent : C.card, color: you ? C.onAccent : C.text2, border: you ? "none" : `1px solid ${C.border2}`, fontSize: T.md, lineHeight: "var(--el-lh-normal)" }}>
         {turn.text}
       </div>
+      {turn.toolCalls && turn.toolCalls.length > 0 && (
+        <div style={{ marginTop: S[2], fontSize: T.sm, color: C.faint,
+                      display: "flex", flexWrap: "wrap", gap: S[2], alignItems: "center" }}>
+          <span style={{ fontFamily: mono, fontSize: T.micro }}>CHECKED</span>
+          {turn.toolCalls.map((tc, i) => (
+            <span key={i} title={tc.why || undefined}
+              style={{ fontFamily: mono, fontSize: T.micro, color: C.dim,
+                       background: C.bgRaised, border: `1px solid ${C.border3}`,
+                       borderRadius: R.pill, padding: `2px ${S[2]}` }}>
+              {tc.name}
+            </span>
+          ))}
+        </div>
+      )}
       {turn.investigationId != null && (
         <button onClick={() => onOpenInvestigation(turn.investigationId!)}
           className="el-btn el-btn--ghost"
           style={{ marginTop: S[2] }}>
           <Icon name="play" size={12} /> Watch case #{turn.investigationId} stream
+        </button>
+      )}
+      {!you && turn.canInvestigate && turn.question && onInvestigate && (
+        <button onClick={() => onInvestigate(turn.question!)}
+          className="el-btn el-btn--ghost"
+          style={{ marginTop: S[2], fontSize: T.sm }}>
+          <Icon name="search" size={12} />
+          {turn.confident === false ? "Investigate this properly" : "Investigate again anyway"}
         </button>
       )}
       {turn.citations && turn.citations.length > 0 && (

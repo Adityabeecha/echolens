@@ -688,11 +688,19 @@ export interface ChatCitation {
   summary: string;
   affected_pct?: number | null;
 }
+export interface ChatToolCall {
+  name: string;
+  args: Record<string, unknown>;
+  why?: string;
+}
 export interface ChatResponse {
   type: "answer" | "investigation";
   text: string;
   citations?: ChatCitation[];
   investigation_id?: number;
+  tool_calls?: ChatToolCall[];
+  confident?: boolean;
+  can_investigate?: boolean;
 }
 export interface WeeklyBrief {
   generated: string;
@@ -827,7 +835,10 @@ export const api = {
   portfolioBrief: () => get<PortfolioBrief>("/portfolio/brief"),
   portfolioThemes: () =>
     get<{ themes: PortfolioTheme[]; products: string[]; days: number; note: string }>("/portfolio/themes"),
-  chat: (message: string) => post<ChatResponse>("/chat", { message, product_id: getActiveProduct() }),
+  chat: (message: string, forceInvestigate = false) =>
+    post<ChatResponse>("/chat", {
+      message, product_id: getActiveProduct(), force_investigate: forceInvestigate
+    }),
   brief: () => get<WeeklyBrief>(scoped("/brief")),
   findingFollowup: (findingId: number, question: string) =>
     post<{ question: string; answer: string; investigation_id: number }>(

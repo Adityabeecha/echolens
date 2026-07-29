@@ -2412,21 +2412,44 @@ def _quarter_start(now: datetime) -> datetime:
 class ChatBody(BaseModel):
     message: str
     product_id: int | None = None
+    force_investigate: bool = False
 
 
 @app.post("/chat")
-@limiter.limit("20/minute")  # every message hits the LLM
+@limiter.limit("20/minute")
 def chat_endpoint(body: ChatBody, request: Request,
                   user: dict = Depends(current_user)) -> dict:
     """Ask the verified knowledge anything. Returns a finding-cited answer, or —
     for an investigate-intent question — launches a case that streams in-thread."""
+    from echolens import ask as ask_mod
     from echolens import chat as chat_mod
     with session_scope() as session:
         prod = _scope(session, body.product_id, user)
         pid = prod.id if prod else None
-        decision = chat_mod.route(session, body.message, product_id=pid,
-                                  product_name=(prod.name if prod else None))
+        pname = prod.name if prod else None
+        decision = chat_mod.route(session, body.message, product_id=pid, product_name=pname)
+
+        if decision.get("type") == "launch" and not body.force_investigate:
+            existing = ask_mod.best_existing_answer(session, body.message, product_id=pid)
+            if existing is not None:
+                decision = {"type": "answer", "citations": [], "text": ""}
+
         if decision.get("type") != "launch":
+            if (_may_spend(user) and settings.openai_api_key
+                    and ask_mod.has_anything_to_say(session, pid)):
+                try:
+                    llm = _metered_llm(session, "ask")
+                    result = ask_mod.answer(session, body.message, llm,
+                                            product_id=pid, product_name=pname)
+                    if result.text and (result.citations or result.tool_calls
+                                        or result.confident):
+                        return {"type": "answer", "text": result.text,
+                                "citations": result.citations,
+                                "tool_calls": result.tool_calls,
+                                "confident": result.confident,
+                                "can_investigate": True}
+                except Exception as err:
+                    log.warning("ask_agent_failed", error=f"{type(err).__name__}: {err}")
             return decision
         if user.get("role") not in ("reviewer", "admin"):
             return {"type": "answer", "citations": [],
