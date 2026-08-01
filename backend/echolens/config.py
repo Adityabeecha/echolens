@@ -41,6 +41,12 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
     "gpt-4.1": (2.00, 8.00),
 }
 
+# Used when a model is not in the table above. Deliberately a FRONTIER-tier rate
+# rather than zero: an unpriced model used to cost 0.00 per call, so max_cost_usd
+# could never trip and budget_exceeded never fired. Over-estimating stops a run
+# early and is recoverable; under-estimating spends without a ceiling.
+FALLBACK_PRICING: tuple[float, float] = (2.50, 10.00)
+
 # Hypothesis / evidence rules (PRD §5.2, §5.6)
 MAX_ACTIVE_HYPOTHESES = 4
 SUPPORT_CONFIDENCE = 0.80          # resolved requires >= this AND two-source rule

@@ -6,7 +6,7 @@ import time
 
 from openai import OpenAI
 
-from echolens.config import MODEL_PRICING, settings
+from echolens.config import FALLBACK_PRICING, MODEL_PRICING, settings
 from echolens.llm.client import LLMFormatError, LLMResult
 from echolens.logging import get_logger
 
@@ -20,9 +20,33 @@ try:  # keep import-safe across openai SDK versions
 except Exception:  # pragma: no cover
     _TRANSIENT = ()
 
+try:
+    from openai import BadRequestError
+except Exception:  # pragma: no cover
+    class BadRequestError(Exception):
+        ...
+
+LOW_TEMPERATURE = 0.2
+
+
+def _is_temperature_refusal(err: Exception) -> bool:
+    text = str(err).lower()
+    return "temperature" in text and ("unsupported" in text or "does not support" in text)
+
+
+_warned_pricing: set[str] = set()
+
 
 def compute_cost(model: str, tokens_in: int, tokens_out: int) -> float:
-    price_in, price_out = MODEL_PRICING.get(model, (0.0, 0.0))
+    price = MODEL_PRICING.get(model)
+    if price is None:
+        if model not in _warned_pricing:
+            _warned_pricing.add(model)
+            log.warning("llm_pricing_unknown", model=model,
+                        note="cost recorded with a fallback rate; add it to "
+                             "MODEL_PRICING for accurate spend and budget caps")
+        price = FALLBACK_PRICING
+    price_in, price_out = price
     return (tokens_in * price_in + tokens_out * price_out) / 1_000_000
 
 
@@ -30,6 +54,8 @@ class OpenAIClient:
     """OpenAI structured-output client with exponential backoff on transient
     errors (v1.0) and one retry on malformed JSON. A rate limit pauses and
     retries with jittered backoff instead of failing the investigation."""
+
+    _supports_temperature = True
 
     def __init__(self, model: str | None = None, on_call=None,
                  max_retries: int = 5, base_delay: float = 1.0, sleep=time.sleep):
@@ -39,23 +65,33 @@ class OpenAIClient:
         self._max_retries = max_retries
         self._base_delay = base_delay
         self._sleep = sleep  # injectable so tests don't actually wait
+        self._supports_temperature = True
 
     def _create_with_backoff(self, system: str, user: str, json_schema: dict):
         attempt = 0
         while True:
             try:
-                return self._client.chat.completions.create(
-                    model=self.model,
-                    messages=[
+                kwargs: dict = {
+                    "model": self.model,
+                    "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
                     ],
-                    response_format={
+                    "response_format": {
                         "type": "json_schema",
-                        "json_schema": {"name": "response", "schema": json_schema, "strict": False},
+                        "json_schema": {"name": "response", "schema": json_schema,
+                                        "strict": False},
                     },
-                    temperature=0.2,
-                )
+                }
+                if self._supports_temperature:
+                    kwargs["temperature"] = LOW_TEMPERATURE
+                return self._client.chat.completions.create(**kwargs)
+            except BadRequestError as err:
+                if self._supports_temperature and _is_temperature_refusal(err):
+                    log.warning("llm_temperature_unsupported", model=self.model)
+                    self._supports_temperature = False
+                    continue
+                raise
             except _TRANSIENT as err:
                 attempt += 1
                 if attempt > self._max_retries:
