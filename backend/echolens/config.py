@@ -39,6 +39,11 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
     "gpt-4o": (2.50, 10.00),
     "gpt-4.1-mini": (0.40, 1.60),
     "gpt-4.1": (2.00, 8.00),
+    # Long-context rates (0.40 / 1.80), not the short-context ones. A single
+    # prompt here carries the findings block plus accumulated tool results, and
+    # billing tier is decided per request by its own size — so the cheaper tier
+    # would under-report exactly the calls that cost the most.
+    "gpt-5.6-luna": (0.40, 1.80),
 }
 
 # Used when a model is not in the table above. Deliberately a FRONTIER-tier rate
