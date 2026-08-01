@@ -39,10 +39,17 @@ class _FakeCompletions:
         return _Resp()
 
 
+def _fake_openai(fake, **kw):
+    return type("X", (), {
+        "chat": type("Y", (), {"completions": fake})(),
+        "timeout": kw.get("timeout"),
+        "max_retries": kw.get("max_retries"),
+    })()
+
+
 def _client(monkeypatch, reject_temperature: bool):
     fake = _FakeCompletions(reject_temperature)
-    monkeypatch.setattr(oc, "OpenAI", lambda api_key=None: type(
-        "X", (), {"chat": type("Y", (), {"completions": fake})()})())
+    monkeypatch.setattr(oc, "OpenAI", lambda **kw: _fake_openai(fake, **kw))
     c = oc.OpenAIClient(model="test-model")
     return c, fake
 
@@ -77,8 +84,7 @@ def test_an_unrelated_bad_request_is_not_swallowed(monkeypatch):
         raise _bad_request("Error code: 400 - context_length_exceeded")
 
     fake.create = boom
-    monkeypatch.setattr(oc, "OpenAI", lambda api_key=None: type(
-        "X", (), {"chat": type("Y", (), {"completions": fake})()})())
+    monkeypatch.setattr(oc, "OpenAI", lambda **kw: _fake_openai(fake, **kw))
     with pytest.raises(oc.BadRequestError):
         oc.OpenAIClient(model="m").complete_json("s", "u", {"type": "object"}, "a")
 
@@ -101,3 +107,44 @@ def test_the_temperature_refusal_detector_is_specific():
         "Unsupported value: 'temperature' does not support 0.2 with this model"))
     assert not oc._is_temperature_refusal(Exception("context_length_exceeded"))
     assert not oc._is_temperature_refusal(Exception("invalid api key"))
+
+
+def test_the_sdk_cannot_hang_for_ten_minutes(monkeypatch):
+    c, _ = _client(monkeypatch, reject_temperature=False)
+    assert oc.REQUEST_TIMEOUT_S <= 120
+    assert c._client.timeout == oc.REQUEST_TIMEOUT_S
+    assert c._client.max_retries == 0
+
+
+def test_backoff_stops_at_the_total_deadline(monkeypatch):
+    if not oc._TRANSIENT:
+        pytest.skip("openai SDK error classes unavailable")
+    import httpx
+    from openai import APITimeoutError
+
+    slept: list[float] = []
+    clock = {"t": 0.0}
+    fake = _FakeCompletions(False)
+
+    def always_transient(**kwargs):
+        raise APITimeoutError(request=httpx.Request("POST", "https://x"))
+
+    fake.create = always_transient
+    monkeypatch.setattr(oc, "OpenAI", lambda **kw: _fake_openai(fake, **kw))
+    monkeypatch.setattr(oc.time, "monotonic", lambda: clock["t"])
+
+    def advance(seconds: float):
+        slept.append(seconds)
+        clock["t"] += seconds
+
+    c = oc.OpenAIClient(model="m", max_retries=99, base_delay=10.0,
+                        sleep=advance, max_total_s=25.0)
+    with pytest.raises(APITimeoutError):
+        c.complete_json("s", "u", {"type": "object"}, "a")
+    assert sum(slept) <= 25.0
+    assert len(slept) < 99, "it gave up on the deadline, not on max_retries"
+
+
+def test_one_stuck_call_cannot_outlast_the_quick_tier(monkeypatch):
+    from echolens.config import BUDGET_TIERS
+    assert oc.MAX_TOTAL_CALL_S < BUDGET_TIERS["quick"].max_wall_clock_s
