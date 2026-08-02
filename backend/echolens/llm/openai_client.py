@@ -7,7 +7,7 @@ import time
 from openai import OpenAI
 
 from echolens.config import FALLBACK_PRICING, MODEL_PRICING, settings
-from echolens.llm.client import LLMFormatError, LLMResult
+from echolens.llm.client import LLMFormatError, LLMResult, coerce_to_schema
 from echolens.logging import get_logger
 
 log = get_logger("llm")
@@ -137,6 +137,7 @@ class OpenAIClient:
                               compute_cost(self.model, tokens_in, tokens_out), ms)
             try:
                 parsed = json.loads(resp.choices[0].message.content or "")
+                parsed = coerce_to_schema(parsed, json_schema)
                 return LLMResult(parsed=parsed, tokens_in=tokens_in, tokens_out=tokens_out, ms=ms, model=self.model)
             except (json.JSONDecodeError, IndexError) as err:
                 last_err = err
