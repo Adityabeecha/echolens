@@ -168,15 +168,7 @@ def _anomaly_headline(session, a: AnomalyEvent) -> str:
     return metric or "Signal detected"
 
 
-def _anomaly_dict(session, a: AnomalyEvent) -> dict:
-    td = session.scalars(
-        select(TriageDecision).where(TriageDecision.anomaly_id == a.id)
-        .order_by(TriageDecision.id.desc())
-    ).first()
-    inv = session.scalars(
-        select(Investigation).where(Investigation.anomaly_id == a.id)
-        .order_by(Investigation.id.desc())
-    ).first()
+def _anomaly_dict(session, a: AnomalyEvent, td=None, inv=None) -> dict:
     return {
         "slug": a.slug, "type": a.type, "metric": a.metric, "delta": a.delta,
         "z": a.z, "window": a.window, "description": a.description, "status": a.status,
@@ -187,6 +179,23 @@ def _anomaly_dict(session, a: AnomalyEvent) -> dict:
         },
         "investigation_id": inv.id if inv else None,
     }
+
+
+def _anomaly_dicts(session, anomalies: list[AnomalyEvent]) -> list[dict]:
+    """Serialize an anomaly list with two bounded relation queries."""
+    ids = [a.id for a in anomalies]
+    if not ids:
+        return []
+    decisions: dict[int, TriageDecision] = {}
+    for row in session.scalars(select(TriageDecision).where(
+            TriageDecision.anomaly_id.in_(ids)).order_by(TriageDecision.id)).all():
+        decisions[row.anomaly_id] = row
+    investigations: dict[int, Investigation] = {}
+    for row in session.scalars(select(Investigation).where(
+            Investigation.anomaly_id.in_(ids)).order_by(Investigation.id)).all():
+        investigations[row.anomaly_id] = row
+    return [_anomaly_dict(session, a, decisions.get(a.id), investigations.get(a.id))
+            for a in anomalies]
 
 
 def _investigation_dict(session, inv: Investigation) -> dict:
@@ -321,7 +330,7 @@ def _drain_queue_bg(product_id: int | None) -> None:
                 anomaly = session.get(AnomalyEvent, anomaly_id)
                 inv = Investigation(anomaly_id=anomaly_id, status="running",
                                     opened_by="anomaly", budget_tier=tier, budget_json={},
-                                    data_notes=_data_notes(session),
+                                    data_notes=_data_notes(session, product_id),
                                     product_id=(anomaly.product_id if anomaly else product_id))
                 session.add(inv)
                 if anomaly is not None:
@@ -580,6 +589,12 @@ def _scope(session, product_id: int | None, user: dict | None = None):
             raise HTTPException(404, f"no product with id {product_id}")
         return p
     rows = _visible_products(session, user)
+    # For a demo-only guest, no visible product must never mean "all products".
+    # Most callers use ``None`` as the intentional workspace-wide scope for a
+    # brand-new authenticated workspace, so returning it here leaked every real
+    # product whenever a public deployment had not seeded a demo row.
+    if _guest_locked(user) and not rows:
+        raise HTTPException(404, "no demo product is available")
     return rows[0] if rows else None
 
 
@@ -597,7 +612,13 @@ def _owned(session, model, resource_id: int, product_id: int | None):
     row = session.get(model, resource_id)
     if row is None:
         raise HTTPException(404, f"no such {model.__tablename__.rstrip('s')}")
-    if product_id is not None and getattr(row, "product_id", None) not in (None, product_id):
+    owner = getattr(row, "product_id", None)
+    # Legacy investigations may predate their direct product_id. Resolve their
+    # anomaly instead of treating NULL as a wildcard across every product.
+    if product_id is not None and owner is None and isinstance(row, Investigation):
+        anomaly = session.get(AnomalyEvent, row.anomaly_id)
+        owner = anomaly.product_id if anomaly else None
+    if product_id is not None and owner != product_id:
         raise HTTPException(404, f"no such {model.__tablename__.rstrip('s')}")
     return row
 
@@ -615,7 +636,7 @@ def _owned_finding(session, finding_id: int, product_id: int | None):
     if owner is None:
         inv = session.get(Investigation, finding.investigation_id)
         owner = inv.product_id if inv else None
-    if product_id is not None and owner not in (None, product_id):
+    if product_id is not None and owner != product_id:
         raise HTTPException(404, "no such finding")
     return finding
 
@@ -805,6 +826,12 @@ def delete_product(product_id: int, confirm: str = "",
                       QueuedInvestigation, KnowledgeEdge, Comment, Mention, ReviewRequest):
             for row in session.scalars(select(model).where(model.product_id == product_id)).all():
                 session.delete(row)
+        # Older collector rows were created before product_id was populated.
+        # They are still owned by their product name and must not survive a
+        # delete only to be inherited by a later product with the same name.
+        for row in session.scalars(select(CollectorState).where(
+                CollectorState.product == name, CollectorState.product_id.is_(None))).all():
+            session.delete(row)
         # Corpus rows are keyed by product NAME, not id. FeedbackEntry was
         # missing: every v2 source (Hacker News, Stack Overflow, GitHub
         # Discussions, PRs/commits) lands there, so deleting a product left its
@@ -887,7 +914,8 @@ def connect_source(body: ConnectSource, user: dict = Depends(require_role("admin
             if prod is not None:
                 product = prod.name
         try:
-            st = add_source(session, body.source, body.identifier, product)
+            st = add_source(session, body.source, body.identifier, product,
+                            body.product_id)
         except ValueError as err:
             raise HTTPException(422, str(err))
         # Scope the collector row too, so product-filtered health and collection
@@ -899,11 +927,13 @@ def connect_source(body: ConnectSource, user: dict = Depends(require_role("admin
 
 
 @app.post("/collectors/run")
-def collectors_run(user: dict = Depends(require_role("reviewer"))) -> dict:
+def collectors_run(product_id: int | None = None,
+                   user: dict = Depends(require_role("reviewer"))) -> dict:
     """Run every configured collector once (deterministic, no LLM)."""
     from echolens.collectors.registry import run_all
     with session_scope() as session:
-        results = run_all(session)
+        prod = _scope(session, product_id, user)
+        results = run_all(session, product_id=(prod.id if prod else None))
         return {"results": [
             {"source": r.source, "identifier": r.identifier, "fetched": r.fetched,
              "inserted": r.inserted, "error": r.error} for r in results]}
@@ -912,6 +942,7 @@ def collectors_run(user: dict = Depends(require_role("reviewer"))) -> dict:
 class RetryBody(BaseModel):
     source: str
     identifier: str
+    product_id: int | None = None
 
 
 @app.post("/collectors/retry")
@@ -920,21 +951,28 @@ def collectors_retry(body: RetryBody, user: dict = Depends(require_role("reviewe
     from echolens.collectors.registry import SourceConfig
     with session_scope() as session:
         from echolens.db.models import CollectorState
+        prod = _scope(session, body.product_id, user)
         st = session.scalars(select(CollectorState).where(
             CollectorState.source == body.source,
-            CollectorState.identifier == body.identifier)).first()
+            CollectorState.identifier == body.identifier,
+            CollectorState.product_id == (prod.id if prod else None))).first()
         if st is None:
             raise HTTPException(404, "no such source")
-        res = SourceConfig(st.source, st.identifier, st.product).build().run(session)
+        res = SourceConfig(st.source, st.identifier, st.product, st.product_id).build().run(session)
         return {"source": res.source, "identifier": res.identifier,
                 "inserted": res.inserted, "error": res.error}
 
 
 @app.get("/collectors")
-def collectors_health(user: dict = Depends(current_user)) -> dict:
+def collectors_health(product_id: int | None = None,
+                      user: dict = Depends(current_user)) -> dict:
     from echolens.db.models import CollectorState
     with session_scope() as session:
-        rows = session.scalars(select(CollectorState)).all()
+        prod = _scope(session, product_id, user)
+        stmt = select(CollectorState)
+        if prod is not None:
+            stmt = stmt.where(CollectorState.product_id == prod.id)
+        rows = session.scalars(stmt).all()
         return {"collectors": [
             {"source": c.source, "identifier": c.identifier, "product": c.product,
              "status": c.status, "watermark": c.watermark, "items_last_run": c.items_last_run,
@@ -943,12 +981,14 @@ def collectors_health(user: dict = Depends(current_user)) -> dict:
              "enabled": c.enabled} for c in rows]}
 
 
-def _data_notes(session) -> list[str]:
+def _data_notes(session, product_id: int | None = None) -> list[str]:
     """Disclosure strings for any source that is stale RIGHT NOW, captured when an
     investigation starts so its finding can say what was unavailable."""
     from echolens.collectors.registry import source_health
+    from echolens.db.models import Product
+    product = session.get(Product, product_id) if product_id is not None else None
     notes = []
-    for h in source_health(session):
+    for h in source_health(session, product=(product.name if product else None)):
         if h["stale"]:
             label = _SOURCE_META.get(h["source"], {}).get("label", h["source"])
             when = f" since {h['stale_since']}" if h.get("stale_since") else ""
@@ -1043,8 +1083,8 @@ def onboard_status(product: str, user: dict = Depends(current_user)) -> dict:
         a_stmt = select(AnomalyEvent).where(AnomalyEvent.status == "pending")
         if prod is not None:
             a_stmt = a_stmt.where(AnomalyEvent.product_id == prod.id)
-        anomalies = [_anomaly_dict(session, a)
-                     for a in session.scalars(a_stmt.order_by(AnomalyEvent.id)).all()]
+        anomalies = _anomaly_dicts(
+            session, session.scalars(a_stmt.order_by(AnomalyEvent.id)).all())
         return {"product": product, "product_id": prod.id if prod else None,
                 "backfilling": backfilling, "sources": health,
                 "snapshot": snap, "anomalies": anomalies}
@@ -1307,8 +1347,8 @@ def feed_candidates(request: Request, product_id: int | None = None,
 # ── v10: the investigation queue ────────────────────────────────────────
 
 class QueueThemes(BaseModel):
-    slugs: list[str] = []
-    statements: dict[str, str] = {}       # slug -> problem statement
+    slugs: list[str] = Field(default_factory=list, max_length=100)
+    statements: dict[str, str] = Field(default_factory=dict, max_length=100)
     tier: str = "quick"
     product_id: int | None = None
 
@@ -1399,7 +1439,10 @@ async def import_reviews(file: UploadFile = File(...), product: str = "", source
             prod = _scope(session, product_id, user)
             if prod is not None:
                 name = prod.name
-        result = import_reviews_csv(session, text, product=name, source=(source or "csv"))
+        try:
+            result = import_reviews_csv(session, text, product=name, source=(source or "csv"))
+        except ValueError as err:
+            raise HTTPException(422, str(err))
     return result
 
 
@@ -1418,11 +1461,13 @@ def snapshot(product: str | None = None, product_id: int | None = None,
 
 
 @app.post("/search/embed")
-def search_embed(user: dict = Depends(require_role("admin"))) -> dict:
+def search_embed(product_id: int | None = None,
+                 user: dict = Depends(require_role("admin"))) -> dict:
     """Backfill embeddings over the corpus so semantic search activates (v1.0)."""
     from echolens.search.semantic import embed_corpus
     with session_scope() as session:
-        return {"embedded": embed_corpus(session)}
+        prod = _scope(session, product_id, user)
+        return {"embedded": embed_corpus(session, product=(prod.name if prod else None))}
 
 
 @app.post("/anomalies/scan")
@@ -1443,7 +1488,7 @@ def list_anomalies(product_id: int | None = None, user: dict = Depends(current_u
         if p is not None:
             stmt = stmt.where(AnomalyEvent.product_id == p.id)
         rows = session.scalars(stmt.order_by(AnomalyEvent.id)).all()
-        return {"anomalies": [_anomaly_dict(session, a) for a in rows]}
+        return {"anomalies": _anomaly_dicts(session, rows)}
 
 
 @app.get("/cases")
@@ -1541,8 +1586,11 @@ def start_investigation(request: Request, body: NewCase,
         pid = prod.id if prod else None
         opened_by = "anomaly"
         if body.anomaly_slug:
-            anomaly = session.scalars(select(AnomalyEvent).where(
-                AnomalyEvent.slug == body.anomaly_slug)).first()
+            anomaly_stmt = select(AnomalyEvent).where(
+                AnomalyEvent.slug == body.anomaly_slug)
+            if pid is not None:
+                anomaly_stmt = anomaly_stmt.where(AnomalyEvent.product_id == pid)
+            anomaly = session.scalars(anomaly_stmt).first()
             if anomaly is None:
                 raise HTTPException(404, f"no anomaly '{body.anomaly_slug}'")
             # Concurrency guard: don't spawn a second investigation for an anomaly
@@ -1553,11 +1601,10 @@ def start_investigation(request: Request, body: NewCase,
             if running is not None:
                 return {"status": "already_running", "investigation_id": running.id,
                         "anomaly_id": anomaly.id}
-            # The anomaly's product wins over whatever the caller claimed. A
-            # mismatch means the client's scope is stale, and filing the case
-            # under the wrong product corrupts every downstream view.
-            if anomaly.product_id is not None:
-                pid = anomaly.product_id
+            # Never adopt scope from a row found workspace-wide. With a scoped
+            # request, the query above proves the anomaly belongs to this
+            # product before either the duplicate guard or creation can expose
+            # another product's case id.
         elif body.description:
             opened_by = "manual"
             anomaly = AnomalyEvent(
@@ -1572,7 +1619,7 @@ def start_investigation(request: Request, body: NewCase,
         # jump straight to the live trace; the loop itself runs in the background.
         inv = Investigation(anomaly_id=anomaly.id, status="running",
                             opened_by=opened_by, budget_tier=body.tier, budget_json={},
-                            data_notes=_data_notes(session), product_id=pid)
+                            data_notes=_data_notes(session, pid), product_id=pid)
         session.add(inv)
         anomaly.status = "investigating"
         session.flush()
@@ -1727,6 +1774,8 @@ def list_mentions(product_id: int | None = None, unread_only: bool = True,
 def read_mentions(mention_ids: list[int] | None = None, product_id: int | None = None,
                   user: dict = Depends(require_role("reviewer"))) -> dict:
     from echolens.collab import mark_read
+    if mention_ids is not None and len(mention_ids) > 200:
+        raise HTTPException(422, "at most 200 mentions can be marked at once")
     with session_scope() as session:
         p = _scope(session, product_id, user)
         uid = user.get("id")
@@ -1853,7 +1902,8 @@ def escalate_investigation(inv_id: int, product_id: int | None = None,
 
 
 @app.get("/investigations/{inv_id}/trace")
-def get_trace(inv_id: int, after: int = 0, product_id: int | None = None,
+def get_trace(inv_id: int, after: int = Query(0, ge=0, le=2_147_483_647),
+              product_id: int | None = None,
               user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
         p = _scope(session, product_id, user)
@@ -2329,12 +2379,16 @@ async def github_webhook(request: Request) -> dict:
 
 
 @app.post("/fixwatch/evaluate")
-def fixwatch_evaluate(user: dict = Depends(require_role("reviewer"))) -> dict:
+def fixwatch_evaluate(product_id: int | None = None,
+                      user: dict = Depends(require_role("reviewer"))) -> dict:
     """Advance every fix-watch: confirm fixes that worked, re-open the ones that
     didn't, and catch regressions. Called by the scheduled job (unprompted)."""
     from echolens.fixwatch import check_regressions, evaluate
     with session_scope() as session:
-        return {"evaluated": evaluate(session), "regressions": check_regressions(session)}
+        prod = _scope(session, product_id, user)
+        pid = prod.id if prod else None
+        return {"evaluated": evaluate(session, product_id=pid),
+                "regressions": check_regressions(session, product_id=pid)}
 
 
 @app.get("/fixwatch")
@@ -2392,8 +2446,11 @@ def overview(product_id: int | None = None, user: dict = Depends(current_user)) 
         confirmed_q = [w for w in confirmed if w.confirmed_at and aware_utc(w.confirmed_at) >= q_start]
 
         mttrs = []
+        watch_inv_ids = {w.investigation_id for w in confirmed}
+        watch_invs = ({inv.id: inv for inv in session.scalars(select(Investigation).where(
+            Investigation.id.in_(watch_inv_ids))).all()} if watch_inv_ids else {})
         for w in confirmed:
-            inv = session.get(Investigation, w.investigation_id)
+            inv = watch_invs.get(w.investigation_id)
             if inv and inv.created_at and w.confirmed_at:
                 mttrs.append((aware_utc(w.confirmed_at) - aware_utc(inv.created_at)).days)
         mttr = round(_stats.mean(mttrs), 1) if mttrs else None
@@ -2403,11 +2460,12 @@ def overview(product_id: int | None = None, user: dict = Depends(current_user)) 
         op_stmt = select(Investigation).where(Investigation.status == "resolved")
         if pid is not None:
             op_stmt = op_stmt.where(Investigation.product_id == pid)
-        for inv in session.scalars(op_stmt).all():
+        open_invs = session.scalars(op_stmt).all()
+        open_findings = _latest_findings(session, [inv.id for inv in open_invs])
+        for inv in open_invs:
             if inv.id in confirmed_inv:
                 continue
-            finding = session.scalars(select(Finding).where(
-                Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
+            finding = open_findings.get(inv.id)
             if finding is None:
                 continue
             impact = (finding.json or {}).get("impact", {})
@@ -2490,7 +2548,7 @@ def chat_endpoint(body: ChatBody, request: Request,
         session.add(anomaly)
         session.flush()
         inv = Investigation(anomaly_id=anomaly.id, status="running", opened_by="manual",
-                            budget_tier="standard", budget_json={}, data_notes=_data_notes(session),
+                            budget_tier="standard", budget_json={}, data_notes=_data_notes(session, pid),
                             product_id=pid)
         session.add(inv)
         anomaly.status = "investigating"
@@ -2607,11 +2665,12 @@ def portfolio_themes(days: int = Query(30, ge=1, le=365),
         # themes actually seen on this portfolio's findings, then the shared
         # families they map onto — emergent first, vocabulary second
         seen: dict[str, dict] = {}
-        for f in session.scalars(select(Finding)).all():
-            inv = session.get(Investigation, f.investigation_id)
-            anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv else None
-            if anomaly is None:
-                continue
+        product_ids = [p.id for p in products]
+        rows = session.execute(select(Finding, AnomalyEvent).join(
+            Investigation, Investigation.id == Finding.investigation_id).join(
+            AnomalyEvent, AnomalyEvent.id == Investigation.anomaly_id).where(
+            Investigation.product_id.in_(product_ids))).all()
+        for f, anomaly in rows:
             from echolens.vocab import theme_of
             t = theme_of(anomaly, f.json or {})
             if t["id"] != "other":
@@ -2795,11 +2854,21 @@ def _product_investigations(session, product_id: int | None):
 
 def _product_llm_calls(session, product_id: int | None):
     """LLM calls scoped through their investigation's product."""
-    calls = session.scalars(select(LLMCall)).all()
-    if product_id is None:
-        return calls
-    ids = {i.id for i in _product_investigations(session, product_id)}
-    return [c for c in calls if c.investigation_id in ids]
+    stmt = select(LLMCall)
+    if product_id is not None:
+        stmt = stmt.join(Investigation, Investigation.id == LLMCall.investigation_id).where(
+            Investigation.product_id == product_id)
+    return session.scalars(stmt).all()
+
+
+def _latest_findings(session, investigation_ids: list[int]) -> dict[int, Finding]:
+    out: dict[int, Finding] = {}
+    if not investigation_ids:
+        return out
+    for row in session.scalars(select(Finding).where(
+            Finding.investigation_id.in_(investigation_ids)).order_by(Finding.id)).all():
+        out[row.investigation_id] = row
+    return out
 
 
 @app.get("/feed/summary")
@@ -2829,14 +2898,19 @@ def archive(product_id: int | None = None, user: dict = Depends(current_user)) -
         stmt = select(Investigation).order_by(Investigation.id.desc())
         if pid is not None:
             stmt = stmt.where(Investigation.product_id == pid)
-        for inv in session.scalars(stmt).all():
-            if inv.status == "running":
-                continue
-            finding = session.scalars(select(Finding).where(
-                Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
-            fb = session.scalars(select(ReviewFeedback).join(
-                Finding, Finding.id == ReviewFeedback.finding_id).where(
-                Finding.investigation_id == inv.id).order_by(ReviewFeedback.id.desc())).first()
+        inv_rows = [inv for inv in session.scalars(stmt).all() if inv.status != "running"]
+        findings = _latest_findings(session, [inv.id for inv in inv_rows])
+        feedback: dict[int, ReviewFeedback] = {}
+        if inv_rows:
+            for fb, inv_id in session.execute(select(
+                    ReviewFeedback, Finding.investigation_id).join(
+                    Finding, Finding.id == ReviewFeedback.finding_id).where(
+                    Finding.investigation_id.in_([inv.id for inv in inv_rows])).order_by(
+                    ReviewFeedback.id)).all():
+                feedback[inv_id] = fb
+        for inv in inv_rows:
+            finding = findings.get(inv.id)
+            fb = feedback.get(inv.id)
             human = "—"
             if fb:
                 human = "Approved" if fb.action == "approve" else "Challenged"
@@ -2878,7 +2952,8 @@ def sources(product_id: int | None = None, user: dict = Depends(current_user)) -
         if prod is not None:
             s_stmt = s_stmt.where(CollectorState.product_id == prod.id)
         states = session.scalars(s_stmt).all()
-        health = {(h["source"], h["identifier"]): h for h in source_health(session)}
+        health = {(h["source"], h["identifier"]): h for h in source_health(
+            session, product=(prod.name if prod else None))}
         connected = []
         for st in states:
             if not st.enabled:
@@ -2915,7 +2990,10 @@ def sources(product_id: int | None = None, user: dict = Depends(current_user)) -
         # Imported (CSV) reviews aren't a pull collector, so surface them from the
         # corpus directly whenever any exist (identified by the import ext_id prefix,
         # regardless of the source label the user chose).
-        n_csv = session.scalar(select(func.count(Review.id)).where(Review.ext_id.like("csv_%"))) or 0
+        csv_stmt = select(func.count(Review.id)).where(Review.ext_id.like("csv_%"))
+        if prod is not None:
+            csv_stmt = csv_stmt.where(Review.product == prod.name)
+        n_csv = session.scalar(csv_stmt) or 0
         if n_csv:
             connected.append({
                 "icon": _SOURCE_META["csv"]["icon"], "name": _SOURCE_META["csv"]["label"],
@@ -2924,9 +3002,16 @@ def sources(product_id: int | None = None, user: dict = Depends(current_user)) -
         # If nothing is configured, show the built-in demo corpus so the page
         # is never blank (it's still real counts).
         if not connected:
-            n_reviews = session.scalar(select(func.count(Review.id))) or 0
-            n_issues = session.scalar(select(func.count(Issue.id))) or 0
-            n_releases = session.scalar(select(func.count(Release.id))) or 0
+            review_stmt = select(func.count(Review.id))
+            issue_stmt = select(func.count(Issue.id))
+            release_stmt = select(func.count(Release.id))
+            if prod is not None:
+                review_stmt = review_stmt.where(Review.product == prod.name)
+                issue_stmt = issue_stmt.where(Issue.product == prod.name)
+                release_stmt = release_stmt.where(Release.product == prod.name)
+            n_reviews = session.scalar(review_stmt) or 0
+            n_issues = session.scalar(issue_stmt) or 0
+            n_releases = session.scalar(release_stmt) or 0
             if n_reviews or n_issues:
                 connected = [
                     {"icon": "▶", "name": "Google Play reviews (demo)", "detail": "synthetic Lumo dataset",
@@ -2957,9 +3042,10 @@ def costs_summary(product_id: int | None = None, user: dict = Depends(current_us
         row_stmt = select(Investigation).order_by(Investigation.id.desc())
         if pid is not None:
             row_stmt = row_stmt.where(Investigation.product_id == pid)
-        for inv in session.scalars(row_stmt).all():
-            finding = session.scalars(select(Finding).where(
-                Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
+        row_invs = session.scalars(row_stmt).all()
+        row_findings = _latest_findings(session, [inv.id for inv in row_invs])
+        for inv in row_invs:
+            finding = row_findings.get(inv.id)
             c = costs.get(inv.id, {})
             rows.append({
                 "id": f"#{inv.id}",
@@ -2988,9 +3074,9 @@ def costs_summary(product_id: int | None = None, user: dict = Depends(current_us
 
 
 class LimitsBody(BaseModel):
-    daily_investigations: int | None = None
-    per_case_budget: float | None = None
-    per_case_wall_min: int | None = None
+    daily_investigations: int | None = Field(None, ge=1, le=100)
+    per_case_budget: float | None = Field(None, ge=0.01, le=1000)
+    per_case_wall_min: int | None = Field(None, ge=1, le=1440)
 
 
 @app.put("/settings/limits")

@@ -69,6 +69,7 @@ def init_db(db_url: str | None = None) -> None:
             cols = {c["name"] for c in inspector.get_columns(table)}
             if column not in cols:
                 conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {column} {ddl_type}'))
+    _migrate_product_scoped_external_ids(engine)
     # v8.0: create Products from existing bindings and scope legacy rows (idempotent).
     try:
         from echolens.db.migrate import backfill_products
@@ -81,6 +82,78 @@ def init_db(db_url: str | None = None) -> None:
         # direct id. Silently invisible data is worse than a loud failure.
         from echolens.logging import get_logger
         get_logger("db").error("product_backfill_failed", error=str(err))
+
+
+_SCOPED_EXT_ID_TABLES = {
+    "reviews": "uq_reviews_ext_product",
+    "posts": "uq_posts_ext_product",
+    "feedback_entries": "uq_feedback_entries_ext_product",
+}
+
+
+def _migrate_product_scoped_external_ids(engine) -> None:
+    """Replace legacy global ext_id uniqueness with (ext_id, product).
+
+    Fresh databases get the composite constraints from the ORM metadata. This
+    migration preserves populated SQLite/Postgres installations created before
+    that correction; create_all() cannot alter an existing constraint.
+    """
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    for table_name, constraint_name in _SCOPED_EXT_ID_TABLES.items():
+        if table_name not in tables:
+            continue
+        uniques = inspector.get_unique_constraints(table_name)
+        legacy = [u for u in uniques if u.get("column_names") == ["ext_id"]]
+        composite = any(u.get("column_names") == ["ext_id", "product"] for u in uniques)
+        if not legacy and composite:
+            continue
+        if engine.dialect.name == "sqlite":
+            _rebuild_sqlite_scoped_ext_id_table(engine, table_name)
+            inspector = inspect(engine)
+            continue
+        with engine.begin() as conn:
+            for unique in legacy:
+                name = unique.get("name")
+                if name:
+                    conn.execute(text(
+                        f'ALTER TABLE "{table_name}" DROP CONSTRAINT "{name}"'))
+            if not composite:
+                conn.execute(text(
+                    f'ALTER TABLE "{table_name}" ADD CONSTRAINT "{constraint_name}" '
+                    'UNIQUE (ext_id, product)'))
+
+
+def _rebuild_sqlite_scoped_ext_id_table(engine, table_name: str) -> None:
+    """SQLite cannot drop a UNIQUE constraint, so rebuild one corpus table."""
+    table = Base.metadata.tables[table_name]
+    legacy_name = f"{table_name}__global_ext_id"
+    with engine.connect() as conn:
+        conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        conn.commit()
+        transaction = conn.begin()
+        try:
+            # Named indexes retain their names after ALTER TABLE RENAME and
+            # would collide with the indexes SQLAlchemy creates on the new row.
+            for row in conn.exec_driver_sql(f'PRAGMA index_list("{table_name}")'):
+                index_name = row[1]
+                if not index_name.startswith("sqlite_autoindex"):
+                    conn.exec_driver_sql(f'DROP INDEX "{index_name}"')
+            conn.exec_driver_sql(
+                f'ALTER TABLE "{table_name}" RENAME TO "{legacy_name}"')
+            table.create(conn)
+            columns = ", ".join(f'"{c.name}"' for c in table.columns)
+            conn.exec_driver_sql(
+                f'INSERT INTO "{table_name}" ({columns}) '
+                f'SELECT {columns} FROM "{legacy_name}"')
+            conn.exec_driver_sql(f'DROP TABLE "{legacy_name}"')
+            transaction.commit()
+        except Exception:
+            transaction.rollback()
+            raise
+        finally:
+            conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+            conn.commit()
 
 
 @contextmanager

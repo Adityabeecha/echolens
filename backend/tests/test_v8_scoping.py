@@ -276,10 +276,9 @@ def test_case_duration_flags_impossible_wall_clock():
     assert flagged is True and txt.startswith(">")
 
 
-def test_a_case_follows_its_anomalys_product_not_the_clients_claim(client):
-    """Real bug: starting an investigation from the onboarding wizard sent the
-    PREVIOUS product's id, so the case was filed under the wrong product (and
-    'back' then landed on the wrong feed). The anomaly's product must win."""
+def test_a_case_rejects_a_stale_cross_product_claim(client):
+    """A stale UI scope must not become permission to discover or launch an
+    anomaly from another product. The caller retries in the correct scope."""
     tc, ids, Session = client
     a, b = ids["Alpha"], ids["Beta"]
     with Session() as s:
@@ -290,6 +289,11 @@ def test_a_case_follows_its_anomalys_product_not_the_clients_claim(client):
     # client wrongly claims product A while opening B's anomaly
     r = tc.post("/investigations", json={"anomaly_slug": "beta-2", "tier": "quick",
                                          "product_id": a})
+    assert r.status_code == 404
+
+    # Once the client uses the anomaly's actual product, creation is normal.
+    r = tc.post("/investigations", json={"anomaly_slug": "beta-2", "tier": "quick",
+                                         "product_id": b})
     assert r.status_code == 200
     with Session() as s:
         inv = s.get(Investigation, r.json()["investigation_id"])

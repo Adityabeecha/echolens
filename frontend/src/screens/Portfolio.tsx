@@ -65,6 +65,7 @@ export function Portfolio({ onOpenProduct, onOpenInvestigation, onAddProduct }: 
   }
 
   const top = data.products[0];
+  const topBand = BAND[top.band] ?? BAND.healthy;
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <ScreenHeader
@@ -80,12 +81,12 @@ export function Portfolio({ onOpenProduct, onOpenInvestigation, onAddProduct }: 
       <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>
         {/* The one line to read first. */}
         <div style={{ maxWidth: MEASURE, padding: `${S[4]} ${S[5]}`, borderRadius: R.card,
-                      background: C.card, border: `1px solid ${BAND[top.band].color}44`,
+                      background: C.card, border: `1px solid ${topBand.color}44`,
                       display: "flex", alignItems: "center", gap: S[3], flexWrap: "wrap" }}>
           <div style={{ width: 3, alignSelf: "stretch", minHeight: 34, borderRadius: R.sm,
-                        background: BAND[top.band].color, flex: "none" }} />
+                        background: topBand.color, flex: "none" }} />
           <div style={{ flex: 1, minWidth: 240 }}>
-            <Label as="h2" style={{ letterSpacing: ".12em", color: BAND[top.band].color, marginBottom: S[1] }}>
+            <Label as="h2" style={{ letterSpacing: ".12em", color: topBand.color, marginBottom: S[1] }}>
               WHERE TO START
             </Label>
             <div style={{ fontSize: T.lg, fontWeight: 600, color: C.text, letterSpacing: "-.01em", lineHeight: "var(--el-lh-snug)" }}>
@@ -154,7 +155,7 @@ function ProductRow({ p, onOpen, onOpenInvestigation }: {
   onOpen: (id: number) => void;
   onOpenInvestigation: (id: number) => void;
 }) {
-  const band = BAND[p.band];
+  const band = BAND[p.band] ?? BAND.healthy;
   const trend = p.negative_rate_delta_pct;
   return (
     // A plain container, NOT role="button". It used to be a clickable row with

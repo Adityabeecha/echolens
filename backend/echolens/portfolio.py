@@ -89,13 +89,19 @@ def product_snapshot(session: Session, product: Product, now: datetime) -> dict:
     confirmed_inv = {w.investigation_id for w in watches if w.status == "confirmed"}
     high = medium = 0
     top_problem = None
-    for inv in session.scalars(select(Investigation).where(
+    resolved = session.scalars(select(Investigation).where(
             Investigation.product_id == pid,
-            Investigation.status == "resolved")).all():
+            Investigation.status == "resolved")).all()
+    latest: dict[int, Finding] = {}
+    resolved_ids = [inv.id for inv in resolved]
+    if resolved_ids:
+        for finding in session.scalars(select(Finding).where(
+                Finding.investigation_id.in_(resolved_ids)).order_by(Finding.id)).all():
+            latest[finding.investigation_id] = finding
+    for inv in resolved:
         if inv.id in confirmed_inv:
             continue
-        f = session.scalars(select(Finding).where(
-            Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
+        f = latest.get(inv.id)
         if f is None:
             continue
         impact = (f.json or {}).get("impact", {})
@@ -282,14 +288,18 @@ def portfolio_brief(session: Session, as_of: datetime | None = None,
 def recent_transfers(session: Session, since: datetime | None = None) -> list[dict]:
     """Cases that started from another product's verified pattern."""
     out = []
-    for inv in session.scalars(select(Investigation).where(
-            Investigation.seeded_from_pattern.is_not(None))).all():
+    invs = session.scalars(select(Investigation).where(
+            Investigation.seeded_from_pattern.is_not(None))).all()
+    product_ids = {inv.product_id for inv in invs if inv.product_id is not None}
+    products = {p.id: p for p in session.scalars(select(Product).where(
+        Product.id.in_(product_ids))).all()} if product_ids else {}
+    for inv in invs:
         seed = inv.seeded_from_pattern or {}
         if not seed.get("cross_product"):
             continue
         if since is not None and (aware_utc(inv.created_at) or since) < since:
             continue
-        product = session.get(Product, inv.product_id) if inv.product_id else None
+        product = products.get(inv.product_id)
         out.append({
             "investigation_id": inv.id,
             "product": product.name if product else None,

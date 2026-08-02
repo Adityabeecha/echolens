@@ -30,12 +30,16 @@ _TEXT_OF = {
 SEMANTIC_THRESHOLD = 0.35
 
 
-def embed_corpus(session: Session, batch: int = 256) -> dict[str, int]:
+def embed_corpus(session: Session, batch: int = 256,
+                 product: str | None = None) -> dict[str, int]:
     """Embed every corpus row missing an embedding. Idempotent."""
     embedder = get_embedder()
     counts = {}
     for model, text_of in _TEXT_OF.items():
-        rows = session.scalars(select(model).where(model.embedding.is_(None))).all()
+        stmt = select(model).where(model.embedding.is_(None))
+        if product is not None:
+            stmt = stmt.where(model.product == product)
+        rows = session.scalars(stmt).all()
         n = 0
         for i in range(0, len(rows), batch):
             chunk = rows[i : i + batch]

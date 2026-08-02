@@ -44,7 +44,12 @@ export function CaseCard({
       onClick={open}
       role={clickable ? "button" : undefined}
       tabIndex={clickable ? 0 : undefined}
-      onKeyDown={(e) => { if (clickable && (e.key === "Enter" || e.key === " ")) open(); }}
+      onKeyDown={(e) => {
+        if (clickable && (e.key === "Enter" || e.key === " ")) {
+          e.preventDefault();
+          open();
+        }
+      }}
       style={{ display: "flex", alignItems: "stretch", overflow: "hidden" }}
     >
       <span aria-hidden style={{ width: 3, flex: "none", background: stripe }} />

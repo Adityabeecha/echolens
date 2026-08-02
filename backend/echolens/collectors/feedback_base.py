@@ -65,7 +65,9 @@ class FeedbackCollector(Collector):
         ext_id = ext_id_for(self.channel, parsed["native_id"])
         wm = iso(created)
         existing = session.scalars(
-            select(FeedbackEntry).where(FeedbackEntry.ext_id == ext_id)).first()
+            select(FeedbackEntry).where(
+                FeedbackEntry.ext_id == ext_id,
+                FeedbackEntry.product == self.product)).first()
         if existing:
             # Refresh what a re-fetch legitimately changes (replies, answered
             # state) without counting it as a new insert.

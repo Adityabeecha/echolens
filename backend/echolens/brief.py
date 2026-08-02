@@ -50,11 +50,17 @@ def _fix_next(session: Session, resolution_rate: float, now, product_id: int | N
     """Rank open problems by severity × volume × persistence × (1 − resolution)."""
     confirmed = {w.investigation_id for w in _watches(session, product_id) if w.status == "confirmed"}
     best, best_score = None, -1.0
-    for inv in _resolved_invs(session, product_id):
+    invs = _resolved_invs(session, product_id)
+    latest: dict[int, Finding] = {}
+    ids = [inv.id for inv in invs]
+    if ids:
+        for finding in session.scalars(select(Finding).where(
+                Finding.investigation_id.in_(ids)).order_by(Finding.id)).all():
+            latest[finding.investigation_id] = finding
+    for inv in invs:
         if inv.id in confirmed:
             continue
-        f = session.scalars(select(Finding).where(
-            Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
+        f = latest.get(inv.id)
         if f is None:
             continue
         impact = (f.json or {}).get("impact", {})
@@ -76,11 +82,17 @@ def weekly_brief(session: Session, as_of: datetime | None = None,
     since = now - timedelta(days=7)
 
     new_problems = []
-    for inv in _resolved_invs(session, product_id):
+    resolved_invs = _resolved_invs(session, product_id)
+    latest: dict[int, Finding] = {}
+    resolved_ids = [inv.id for inv in resolved_invs]
+    if resolved_ids:
+        for finding in session.scalars(select(Finding).where(
+                Finding.investigation_id.in_(resolved_ids)).order_by(Finding.id)).all():
+            latest[finding.investigation_id] = finding
+    for inv in resolved_invs:
         if not _recent(inv.created_at, since):
             continue
-        f = session.scalars(select(Finding).where(
-            Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
+        f = latest.get(inv.id)
         if f is not None:
             impact = (f.json or {}).get("impact", {})
             new_problems.append({"investigation_id": inv.id, "summary": f.summary,

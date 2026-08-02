@@ -75,7 +75,7 @@ class GitHubCollector(Collector):
             items.append({"kind": "issue", **iss})
         for rel in data.get("releases", []):
             items.append({"kind": "release", **rel})
-        return items
+        return items[:limit]
 
     def ingest_item(self, session: Session, item: dict) -> tuple[bool, str | None]:
         if item.get("kind") == "release":
@@ -119,6 +119,10 @@ class GitHubCollector(Collector):
         if not version:
             return False, None
         published = _dt(item.get("published_at"))
+        # Release velocity and investigation context both use released_at.
+        # Collection time is not evidence of a release date.
+        if published is None:
+            return False, None
         # Scope the dedupe by product. The version string itself is left alone:
         # get_release_notes matches it with a PREFIX LIKE ("3.2%"), so prefixing
         # the repo would break every version lookup the agent makes. Uniqueness
@@ -128,7 +132,7 @@ class GitHubCollector(Collector):
             return False, iso(published) if published else None
         session.add(Release(
             version=version, notes=(item.get("body") or item.get("name") or "")[:4000],
-            released_at=published or datetime.now(timezone.utc), product=self.product,
+            released_at=published, product=self.product,
         ))
         return True, iso(published) if published else None
 

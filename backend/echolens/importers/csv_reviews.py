@@ -22,6 +22,8 @@ _RATING_KEYS = ("rating", "score", "stars", "star")
 _DATE_KEYS = ("date", "created_at", "at", "time", "timestamp", "created")
 _VERSION_KEYS = ("version", "app_version", "reviewcreatedversion")
 _OS_KEYS = ("os", "os_version", "device", "platform")
+MAX_IMPORT_ROWS = 10_000
+UNDATED_SENTINEL = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 def _pick(row: dict, keys) -> str | None:
@@ -69,10 +71,13 @@ def import_reviews_csv(session: Session, text: str, product: str | None = None,
     problem the user needs told, not a silent no-op.
     """
     reader = csv.DictReader(io.StringIO(text))
-    imported = skipped = total = unrated = 0
-    now = datetime.now(timezone.utc)
+    imported = skipped = total = unrated = undated = 0
+    candidates: list[dict] = []
+    seen: set[str] = set()
     for raw_row in reader:
         total += 1
+        if total > MAX_IMPORT_ROWS:
+            raise ValueError(f"CSV has more than {MAX_IMPORT_ROWS:,} data rows")
         row = {(k or "").lower().strip(): (v or "") for k, v in raw_row.items()}
         body = _pick(row, _TEXT_KEYS)
         if not body or not body.strip():
@@ -86,18 +91,40 @@ def import_reviews_csv(session: Session, text: str, product: str | None = None,
             skipped += 1
             unrated += 1
             continue
-        created = _parse_date(_pick(row, _DATE_KEYS)) or now
+        created = _parse_date(_pick(row, _DATE_KEYS))
+        if created is None:
+            # The column is non-nullable and date-less exports are still useful
+            # for qualitative search. Put them deliberately outside every live
+            # detector window instead of inventing today's date, which turned an
+            # old export into a fresh spike and moved product reference_now.
+            created = UNDATED_SENTINEL
+            undated += 1
         ext_id = "csv_" + hashlib.sha1(
             f"{source}|{product}|{body}|{created.date()}".encode("utf-8")).hexdigest()[:20]
-        if session.scalars(select(Review).where(Review.ext_id == ext_id)).first():
+        if ext_id in seen:
             skipped += 1
             continue
-        session.add(Review(
-            source=source, ext_id=ext_id, rating=rating,
-            text=body[:4000], version=_pick(row, _VERSION_KEYS),
-            os_version=_pick(row, _OS_KEYS), created_at=created, product=product,
-        ))
+        seen.add(ext_id)
+        candidates.append({
+            "source": source, "ext_id": ext_id, "rating": rating,
+            "text": body[:4000], "version": _pick(row, _VERSION_KEYS),
+            "os_version": _pick(row, _OS_KEYS), "created_at": created,
+            "product": product,
+        })
+
+    existing: set[str] = set()
+    ids = [row["ext_id"] for row in candidates]
+    # Chunk below SQLite's bind-variable ceiling while keeping query count
+    # bounded by file size, not one SELECT per CSV row.
+    for start in range(0, len(ids), 500):
+        existing.update(session.scalars(select(Review.ext_id).where(
+            Review.product == product, Review.ext_id.in_(ids[start:start + 500]))).all())
+    for row in candidates:
+        if row["ext_id"] in existing:
+            skipped += 1
+            continue
+        session.add(Review(**row))
         imported += 1
     session.flush()
     return {"imported": imported, "skipped": skipped,
-            "unrated": unrated, "total": total}
+            "unrated": unrated, "undated": undated, "total": total}

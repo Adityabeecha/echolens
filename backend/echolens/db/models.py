@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Float, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -25,10 +25,11 @@ class Base(DeclarativeBase):
 
 class Review(Base):
     __tablename__ = "reviews"
+    __table_args__ = (UniqueConstraint("ext_id", "product", name="uq_reviews_ext_product"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     source: Mapped[str] = mapped_column(String(32), default="play_store", index=True)
-    ext_id: Mapped[str] = mapped_column(String(64), unique=True)
+    ext_id: Mapped[str] = mapped_column(String(64), index=True)
     rating: Mapped[int] = mapped_column(Integer, index=True)
     text: Mapped[str] = mapped_column(Text)
     version: Mapped[str | None] = mapped_column(String(32), index=True)
@@ -59,10 +60,11 @@ class Issue(Base):
 
 class Post(Base):
     __tablename__ = "posts"
+    __table_args__ = (UniqueConstraint("ext_id", "product", name="uq_posts_ext_product"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     source: Mapped[str] = mapped_column(String(32), default="reddit")
-    ext_id: Mapped[str] = mapped_column(String(64), unique=True)
+    ext_id: Mapped[str] = mapped_column(String(64), index=True)
     subreddit: Mapped[str | None] = mapped_column(String(64))
     text_snippet: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(index=True)
@@ -79,10 +81,13 @@ class FeedbackEntry(Base):
     feedback.collect_items normalises it alongside the older three.
     """
     __tablename__ = "feedback_entries"
+    __table_args__ = (
+        UniqueConstraint("ext_id", "product", name="uq_feedback_entries_ext_product"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     channel: Mapped[str] = mapped_column(String(32), index=True)  # support|in_app|forum
-    ext_id: Mapped[str] = mapped_column(String(96), unique=True)
+    ext_id: Mapped[str] = mapped_column(String(96), index=True)
     text: Mapped[str] = mapped_column(Text)
     product: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     author_kind: Mapped[str] = mapped_column(String(16), default="user")

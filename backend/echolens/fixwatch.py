@@ -129,7 +129,8 @@ def link_issue(session: Session, finding: Finding, repo: str, issue_number: int,
     """Record the finding↔issue link at issue-creation time so the webhook can
     match a later 'closed' event back to this finding (idempotent)."""
     existing = session.scalars(select(FixWatch).where(
-        FixWatch.repo == repo, FixWatch.issue_number == issue_number)).first()
+        FixWatch.repo == repo, FixWatch.issue_number == issue_number,
+        FixWatch.investigation_id == finding.investigation_id)).first()
     if existing:
         return existing
     inv = session.get(Investigation, finding.investigation_id)
@@ -181,11 +182,15 @@ def before_after(session: Session, watch: FixWatch) -> dict:
     }
 
 
-def evaluate(session: Session, as_of: datetime | None = None) -> list[dict]:
+def evaluate(session: Session, as_of: datetime | None = None,
+             product_id: int | None = None) -> list[dict]:
     """Advance every watching fix. Confirms fixes that worked and re-opens the
     ones that didn't — unprompted (this is what the scheduled job calls)."""
     out = []
-    for watch in session.scalars(select(FixWatch).where(FixWatch.status == "watching")).all():
+    stmt = select(FixWatch).where(FixWatch.status == "watching")
+    if product_id is not None:
+        stmt = stmt.where(FixWatch.product_id == product_id)
+    for watch in session.scalars(stmt).all():
         product = product_name_of(session, watch.product_id)
         now = aware_utc(as_of) or reference_now(session, product)
         fix = aware_utc(watch.fix_date)
@@ -269,11 +274,15 @@ def _reopen(session: Session, watch: FixWatch) -> str:
     return "persists_reopened"
 
 
-def check_regressions(session: Session, as_of: datetime | None = None) -> list[dict]:
+def check_regressions(session: Session, as_of: datetime | None = None,
+                      product_id: int | None = None) -> list[dict]:
     """A previously-confirmed theme that re-spikes fires a regression anomaly
     linked to the original case (the investigator will start from prior context)."""
     out = []
-    for watch in session.scalars(select(FixWatch).where(FixWatch.status == "confirmed")).all():
+    stmt = select(FixWatch).where(FixWatch.status == "confirmed")
+    if product_id is not None:
+        stmt = stmt.where(FixWatch.product_id == product_id)
+    for watch in session.scalars(stmt).all():
         product = product_name_of(session, watch.product_id)
         now = aware_utc(as_of) or reference_now(session, product)
         recent = _rate(session, watch.terms, now - timedelta(days=REGRESS_WINDOW), now, product)

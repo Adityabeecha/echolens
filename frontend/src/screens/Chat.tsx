@@ -13,6 +13,7 @@ interface Turn {
   confident?: boolean;
   canInvestigate?: boolean;
   question?: string;
+  error?: boolean;
 }
 
 const SUGGESTIONS = [
@@ -63,11 +64,13 @@ export function Chat({ onOpenInvestigation, productName }: {
         canInvestigate: r.can_investigate, question: message
       }]);
     } catch (e) {
+      if (!alive.current) return;
       const raw = String(e).replace("Error: ", "");
       const text = /404/.test(raw)
         ? "Chat isn't available on this server yet — the backend is still deploying the latest version. Try again in a minute."
-        : raw;
-      setTurns((t) => [...t, { role: "echolens", text }]);
+        : "I couldn't reach EchoLens just now. Please try your question again.";
+      setTurns((t) => [...t, { role: "echolens", text, error: true,
+                              question: message }]);
     } finally {
       if (!alive.current) return;
       setBusy(false);
@@ -103,7 +106,7 @@ export function Chat({ onOpenInvestigation, productName }: {
         <div style={{ display: "flex", flexDirection: "column", gap: S[4], maxWidth: 720 }}>
           {turns.map((t, i) => (
             <Bubble key={i} turn={t} onOpenInvestigation={onOpenInvestigation}
-              onInvestigate={(q) => send(q, true)} />
+              onInvestigate={(q) => send(q, true)} onRetry={(q) => send(q)} busy={busy} />
           ))}
           {busy && <div style={{ fontSize: T.base, color: C.dim, fontFamily: mono }}>EchoLens is thinking…</div>}
         </div>
@@ -127,10 +130,12 @@ export function Chat({ onOpenInvestigation, productName }: {
   );
 }
 
-function Bubble({ turn, onOpenInvestigation, onInvestigate }: {
+function Bubble({ turn, onOpenInvestigation, onInvestigate, onRetry, busy }: {
   turn: Turn;
   onOpenInvestigation: (id: number) => void;
   onInvestigate?: (question: string) => void;
+  onRetry: (question: string) => void;
+  busy: boolean;
 }) {
   const you = turn.role === "you";
   return (
@@ -163,11 +168,18 @@ function Bubble({ turn, onOpenInvestigation, onInvestigate }: {
         </button>
       )}
       {!you && turn.canInvestigate && turn.question && onInvestigate && (
-        <button onClick={() => onInvestigate(turn.question!)}
+        <button onClick={() => onInvestigate(turn.question!)} disabled={busy}
           className="el-btn el-btn--ghost"
           style={{ marginTop: S[2], fontSize: T.sm }}>
           <Icon name="search" size={12} />
           {turn.confident === false ? "Investigate this properly" : "Investigate again anyway"}
+        </button>
+      )}
+      {!you && turn.error && turn.question && (
+        <button onClick={() => onRetry(turn.question!)} disabled={busy}
+          className="el-btn el-btn--ghost"
+          style={{ marginTop: S[2], fontSize: T.sm }}>
+          <Icon name="refresh" size={12} /> {busy ? "Retryingâ€¦" : "Try again"}
         </button>
       )}
       {turn.citations && turn.citations.length > 0 && (

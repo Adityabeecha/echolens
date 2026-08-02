@@ -24,7 +24,9 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []): {
     setLoading(true);
     fn()
       .then((d) => current() && (setData(d), setError(null)))
-      .catch((e) => current() && setError(String(e)))
+      .catch((e) => current() && setError(
+        e instanceof Error ? e.message : String(e),
+      ))
       .finally(() => current() && setLoading(false));
     return () => {
       alive = false;

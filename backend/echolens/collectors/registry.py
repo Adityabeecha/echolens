@@ -67,31 +67,40 @@ class SourceConfig:
     source: str
     identifier: str
     product: str | None = None
+    product_id: int | None = None
 
     def build(self) -> Collector:
-        return _BUILDERS[self.source](self.identifier, self.product)
+        collector = _BUILDERS[self.source](self.identifier, self.product)
+        collector.product_id = self.product_id
+        return collector
 
 
 log = get_logger("collector.registry")
 
-def configured_sources(session: Session) -> list[SourceConfig]:
+def configured_sources(session: Session, product_id: int | None = None) -> list[SourceConfig]:
     """Every enabled collector known to the DB (created via `add_source`)."""
-    rows = session.scalars(select(CollectorState).where(CollectorState.enabled == True)).all()  # noqa: E712
-    return [SourceConfig(r.source, r.identifier, r.product) for r in rows]
+    stmt = select(CollectorState).where(CollectorState.enabled == True)  # noqa: E712
+    if product_id is not None:
+        stmt = stmt.where(CollectorState.product_id == product_id)
+    rows = session.scalars(stmt).all()
+    return [SourceConfig(r.source, r.identifier, r.product, r.product_id) for r in rows]
 
 
-def add_source(session: Session, source: str, identifier: str, product: str | None = None) -> CollectorState:
+def add_source(session: Session, source: str, identifier: str, product: str | None = None,
+               product_id: int | None = None) -> CollectorState:
     if source not in _BUILDERS:
         raise ValueError(f"unknown source '{source}' (have {list(_BUILDERS)})")
     existing = session.scalars(select(CollectorState).where(
-        CollectorState.source == source, CollectorState.identifier == identifier)).first()
+        CollectorState.source == source, CollectorState.identifier == identifier,
+        CollectorState.product == (product or identifier))).first()
     if existing:
         existing.enabled = True
         existing.product = product or existing.product
+        existing.product_id = product_id or existing.product_id
         session.flush()
         return existing
     st = CollectorState(source=source, identifier=identifier, product=product or identifier,
-                        status="idle", enabled=True)
+                        product_id=product_id, status="idle", enabled=True)
     session.add(st)
     session.flush()
     return st
@@ -145,7 +154,8 @@ def _run_one(cfg: SourceConfig, session: Session, limit: int) -> CollectResult:
     return box["result"]
 
 
-def run_all(session: Session, limit: int = 200) -> list[CollectResult]:
+def run_all(session: Session, limit: int = 200,
+            product_id: int | None = None) -> list[CollectResult]:
     """Run every configured collector. One failure never stops the rest.
 
     Collector.run already catches its own exceptions, but a collector that
@@ -154,7 +164,8 @@ def run_all(session: Session, limit: int = 200) -> list[CollectResult]:
     no record of why. A collector that HANGS did the same thing more quietly —
     see _run_one.
     """
-    return [_run_one(cfg, session, limit) for cfg in configured_sources(session)]
+    return [_run_one(cfg, session, limit)
+            for cfg in configured_sources(session, product_id=product_id)]
 
 
 def source_health(session: Session, product: str | None = None) -> list[dict]:

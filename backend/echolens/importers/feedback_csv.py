@@ -34,6 +34,7 @@ ALIASES = {
 }
 
 CHANNELS = ("support", "in_app", "forum")
+MAX_IMPORT_ROWS = 10_000
 
 
 def _norm_key(key: str | None) -> str:
@@ -74,8 +75,12 @@ def import_feedback_csv(session: Session, raw: str, *, channel: str = "support",
     reader = csv.DictReader(io.StringIO(raw))
     inserted = skipped = undated = 0
     problems: list[str] = []
+    candidates: list[dict] = []
+    seen: set[str] = set()
 
     for n, row in enumerate(reader, start=2):
+        if n - 1 > MAX_IMPORT_ROWS:
+            raise ValueError(f"CSV has more than {MAX_IMPORT_ROWS:,} data rows")
         text = _pick(row, "text")
         if not text:
             skipped += 1
@@ -94,16 +99,29 @@ def import_feedback_csv(session: Session, raw: str, *, channel: str = "support",
         digest = hashlib.sha1(f"{channel}:{product}:{text}".encode()).hexdigest()[:16]
         ext_id = f"{channel}-{raw_id}" if raw_id else f"{channel}-{digest}"
 
-        if session.scalars(select(FeedbackEntry).where(
-                FeedbackEntry.ext_id == ext_id)).first():
+        if ext_id in seen:
             skipped += 1
             continue
+        seen.add(ext_id)
+        candidates.append({
+            "channel": channel, "ext_id": ext_id, "text": text,
+            "product": product,
+            "author_kind": _pick(row, "author_kind") or "user",
+            "priority": _pick(row, "priority"), "status": _pick(row, "status"),
+            "created_at": created, "meta_json": {"row": n},
+        })
 
-        session.add(FeedbackEntry(
-            channel=channel, ext_id=ext_id, text=text, product=product,
-            author_kind=_pick(row, "author_kind") or "user",
-            priority=_pick(row, "priority"), status=_pick(row, "status"),
-            created_at=created, meta_json={"row": n}))
+    existing: set[str] = set()
+    ids = [row["ext_id"] for row in candidates]
+    for start in range(0, len(ids), 500):
+        existing.update(session.scalars(select(FeedbackEntry.ext_id).where(
+            FeedbackEntry.product == product,
+            FeedbackEntry.ext_id.in_(ids[start:start + 500]))).all())
+    for row in candidates:
+        if row["ext_id"] in existing:
+            skipped += 1
+            continue
+        session.add(FeedbackEntry(**row))
         inserted += 1
 
     session.flush()

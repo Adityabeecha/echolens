@@ -46,9 +46,11 @@ class Collector(ABC):
 
     source: str = "base"
 
-    def __init__(self, identifier: str, product: str | None = None, fetch_fn=None):
+    def __init__(self, identifier: str, product: str | None = None, fetch_fn=None,
+                 product_id: int | None = None):
         self.identifier = identifier          # package name / repo
         self.product = product or identifier
+        self.product_id = product_id
         self._fetch_fn = fetch_fn             # injectable for tests
 
     # ── watermark / health persistence ─────────────────────────────────
@@ -58,11 +60,13 @@ class Collector(ABC):
             select(CollectorState).where(
                 CollectorState.source == self.source,
                 CollectorState.identifier == self.identifier,
+                CollectorState.product == self.product,
             )
         ).first()
         if st is None:
             st = CollectorState(source=self.source, identifier=self.identifier,
-                                product=self.product, status="idle")
+                                product=self.product, product_id=self.product_id,
+                                status="idle")
             session.add(st)
             session.flush()
         return st
@@ -76,9 +80,13 @@ class Collector(ABC):
         session.flush()
         result = CollectResult(source=self.source, identifier=self.identifier)
         try:
-            raw = self.fetch(since=st.watermark, limit=limit)
-            result.fetched = len(raw)
-            newest = st.watermark
+            # Keep all corpus writes behind a savepoint. A constraint failure
+            # during the final flush used to escape this try block and leave the
+            # caller's shared session unusable for every later collector.
+            with session.begin_nested():
+                raw = self.fetch(since=st.watermark, limit=limit)
+                result.fetched = len(raw)
+                newest = st.watermark
             # Once an item fails, the watermark stops advancing for the rest of
             # the page. A later item would otherwise carry it PAST the failed
             # one, so the next run starts after it and that item is lost for
@@ -89,45 +97,52 @@ class Collector(ABC):
             #
             # Items arrive oldest-first from every collector's fetch(), so the
             # last good watermark before the failure is the correct resume point.
-            stop_advancing = False
-            for item in raw:
+                stop_advancing = False
+                for item in raw:
                 # One malformed item must not discard the whole page. The loop
                 # was unguarded and the watermark assignment sat AFTER it, so an
                 # exception on item 150 of 200 kept the 149 rows already added
                 # while leaving the watermark unadvanced — and if the poison item
                 # was deterministic (a malformed timestamp, say) every later run
                 # re-fetched the same window forever and never got past it.
-                try:
-                    inserted, wm = self.ingest_item(session, item)
-                except Exception as err:
-                    result.failed_items += 1
-                    stop_advancing = True
-                    log.warning("collector_item_failed", source=self.source,
-                                id=self.identifier, error=f"{type(err).__name__}: {err}")
-                    continue
-                if inserted:
-                    result.inserted += 1
-                else:
-                    result.skipped_duplicate += 1
-                if wm and not stop_advancing and (newest is None or wm > newest):
-                    newest = wm
-            result.watermark = newest
-            st.watermark = newest
-            st.items_last_run = result.inserted
+                    try:
+                        # Flush each item while its own savepoint can discard a
+                        # malformed/duplicate row without poisoning the page.
+                        with session.begin_nested():
+                            inserted, wm = self.ingest_item(session, item)
+                            session.flush()
+                    except Exception as err:
+                        result.failed_items += 1
+                        stop_advancing = True
+                        log.warning("collector_item_failed", source=self.source,
+                                    id=self.identifier, error=f"{type(err).__name__}: {err}")
+                        continue
+                    if inserted:
+                        result.inserted += 1
+                    else:
+                        result.skipped_duplicate += 1
+                    if wm and not stop_advancing and (newest is None or wm > newest):
+                        newest = wm
+                result.watermark = newest
+                st.watermark = newest
+                st.items_last_run = result.inserted
             # A run that dropped items is NOT healthy. source_health computes
             # `errored = status == "error"`, so marking this healthy meant a
             # collector failing on every item still read as fine and the
             # "findings disclose stale sources" guarantee never fired for it.
-            st.status = "error" if result.failed_items else "healthy"
-            st.last_error = (None if not result.failed_items else
-                             f"{result.failed_items} item(s) could not be ingested")
-            log.info("collector_run", source=self.source, id=self.identifier,
-                     fetched=result.fetched, inserted=result.inserted)
+                st.status = "error" if result.failed_items else "healthy"
+                st.last_error = (None if not result.failed_items else
+                                 f"{result.failed_items} item(s) could not be ingested")
+                session.flush()
+                log.info("collector_run", source=self.source, id=self.identifier,
+                         fetched=result.fetched, inserted=result.inserted)
         except Exception as err:  # a broken source must not crash the app
             result.error = f"{type(err).__name__}: {err}"
             st.status = "error"
             st.last_error = result.error
             log.error("collector_failed", source=self.source, id=self.identifier, error=result.error)
+        # The failure status is outside the failed savepoint and is safe to
+        # persist; if even this flush fails, let session_scope own the rollback.
         session.flush()
         return result
 

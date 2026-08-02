@@ -71,8 +71,14 @@ export function Today({
   // Only terminal-confirmed watches carry a chart, and only those are shown —
   // a watch still in its observation window has nothing to report yet.
   const VERIFIED_LIMIT = 3;
+  const verifiedCases = new Set<number>();
   const verifiedFixes = (fixwatch.data?.watches ?? [])
     .filter((w) => w.status === "confirmed" && w.chart)
+    .filter((w) => {
+      if (verifiedCases.has(w.investigation_id)) return false;
+      verifiedCases.add(w.investigation_id);
+      return true;
+    })
     .slice(0, VERIFIED_LIMIT);
 
   // "Open" = a real problem with no verified fix. Ranked by how bad it is, and

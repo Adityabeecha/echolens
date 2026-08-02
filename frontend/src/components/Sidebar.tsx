@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ProductRow, api, isAdmin } from "../api";
 import { plural } from "../format";
 import { useAsync } from "../hooks";
@@ -26,11 +26,38 @@ function ProductSwitcher({ products, activeId, onSwitch, onAdd, onDelete }: {
   const admin = isAdmin();
   const [open, setOpen] = useState(false);
   const active = products.find((p) => p.id === activeId) ?? products[0];
+  const activeIndex = Math.max(0, products.findIndex((p) => p.id === activeId));
+  const [focusIndex, setFocusIndex] = useState(activeIndex);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const optionRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const openFocus = useRef(activeIndex);
+
+  useEffect(() => {
+    if (!open) return;
+    const index = openFocus.current;
+    setFocusIndex(index);
+    const frame = requestAnimationFrame(() => optionRefs.current[index]?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [open, activeIndex]);
+
+  const focusOption = (index: number) => {
+    const next = Math.max(0, Math.min(products.length - 1, index));
+    setFocusIndex(next);
+    optionRefs.current[next]?.focus();
+  };
   if (!active) return null;
   return (
     <div className="el-nav-wide" style={{ position: "relative", margin: `0 ${S[3]} ${S[3]}` }}>
       <button
-        onClick={() => setOpen((o) => !o)}
+        ref={triggerRef}
+        onClick={() => { openFocus.current = activeIndex; setOpen((o) => !o); }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            openFocus.current = e.key === "ArrowDown" ? activeIndex : products.length - 1;
+            setOpen(true);
+          }
+        }}
         className="el-btn"
         aria-expanded={open}
         aria-haspopup="listbox"
@@ -55,15 +82,31 @@ function ProductSwitcher({ products, activeId, onSwitch, onAdd, onDelete }: {
         <Icon name={open ? "chevronUp" : "chevronDown"} size={14} style={{ color: C.dim }} />
       </button>
       {open && (
-        <div role="listbox" style={{ position: "absolute", top: "100%", left: 0, right: 0,
+        <div role="listbox" aria-label="Products"
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault(); setOpen(false); triggerRef.current?.focus();
+            } else if (e.key === "ArrowDown") {
+              e.preventDefault(); focusOption((focusIndex + 1) % products.length);
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault(); focusOption((focusIndex - 1 + products.length) % products.length);
+            } else if (e.key === "Home") {
+              e.preventDefault(); focusOption(0);
+            } else if (e.key === "End") {
+              e.preventDefault(); focusOption(products.length - 1);
+            }
+          }}
+          style={{ position: "absolute", top: "100%", left: 0, right: 0,
                       marginTop: S[1], zIndex: 20, background: C.card,
                       border: `1px solid ${C.border3}`, borderRadius: R.control,
                       boxShadow: "var(--el-e3)", overflow: "hidden" }}>
-          {products.map((p) => (
+          {products.map((p, index) => (
             <div key={p.id} className="el-row el-row--click"
+              ref={(node) => { optionRefs.current[index] = node; }}
               role="option"
               aria-selected={p.id === activeId}
-              tabIndex={0}
+              tabIndex={index === focusIndex ? 0 : -1}
+              onFocus={() => setFocusIndex(index)}
               onClick={() => { setOpen(false); if (p.id !== activeId) onSwitch(p.id); }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {

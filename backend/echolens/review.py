@@ -57,7 +57,8 @@ def record_challenge(session: Session, finding: Finding, note: str,
     anomaly.status = "investigating"
     new_inv = Investigation(anomaly_id=anomaly.id, status="running", opened_by="challenge",
                             budget_tier=tier or old_inv.budget_tier, budget_json={},
-                            reopens_investigation_id=old_inv.id)
+                            reopens_investigation_id=old_inv.id,
+                            product_id=old_inv.product_id or anomaly.product_id)
     session.add(new_inv)
     session.flush()
     return new_inv
