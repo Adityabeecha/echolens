@@ -177,6 +177,23 @@ def test_breadth_is_honest_when_everything_came_from_one_place():
     assert breadth["band"] == "single-source"
 
 
+def test_breadth_pushes_evidence_refs_into_the_corpus_query(monkeypatch):
+    """Opening one old case must not normalize the product's whole corpus."""
+    from echolens import feedback_graph as fg
+
+    seen = {}
+
+    def targeted(_session, _product, **kwargs):
+        seen.update(kwargs)
+        return []
+
+    monkeypatch.setattr(fg, "collect_items", targeted)
+    breadth = fg.evidence_breadth(_session(), ["r1", "issue #412"], "Lumo", as_of=NOW)
+
+    assert seen["refs"] == {"r1", "issue #412"}
+    assert breadth["witnesses"] == 0
+
+
 # ── channel of origin ───────────────────────────────────────────────────
 
 def test_channel_of_origin_names_who_reports_it_and_who_never_sees_it():

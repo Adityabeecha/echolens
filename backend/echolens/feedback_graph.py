@@ -173,7 +173,10 @@ def evidence_breadth(session: Session, refs: list[str], product: str | None = No
     if not wanted:
         return {"score": 0.0, "distinct_channels": 0, "channels": [],
                 "witnesses": 0, "collapsed_duplicates": 0, "band": "single-source"}
-    items = [i for i in collect_items(session, product, since=now - timedelta(days=days),
-                                      until=now, negatives_only=False)
-             if i.ref in wanted]
+    # This runs on every completed-case open. Loading and normalising the entire
+    # 90-day corpus merely to keep a handful of cited refs made old cases take
+    # seconds on real products. Push the ref filter into each corpus query so
+    # work is proportional to the finding's evidence, not product size.
+    items = collect_items(session, product, since=now - timedelta(days=days),
+                          until=now, negatives_only=False, refs=wanted)
     return corroboration(items)

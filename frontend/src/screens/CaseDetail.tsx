@@ -72,7 +72,7 @@ export function CaseDetail({
   // and pause/resume left the detail stale until a manual reload.
   useEffect(() => {
     let alive = true;
-    let timer: ReturnType<typeof setInterval> | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const settled = (d: Investigation) =>
       d.status !== "running" && d.case_status !== "queued";
     // Consecutive failures before giving up. The catch used to set `error` and
@@ -81,26 +81,37 @@ export function CaseDetail({
     // interval only ran on the success path.
     const MAX_FAILURES = 4;
     let failures = 0;
-    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
-    const tick = () => {
+    let finished = false;
+    const stop = () => {
+      finished = true;
+      if (timer) { clearTimeout(timer); timer = null; }
+    };
+    const schedule = () => {
+      if (alive && !finished) timer = setTimeout(() => { void tick(); }, 1500);
+    };
+    const tick = async () => {
       const mine = ++loadSeq.current;
-      return api.investigation(caseId)
-        .then((d) => {
-          if (!alive || mine !== loadSeq.current) return;
-          failures = 0;
-          setInv(d);
-          setError(null);
-          if (settled(d)) stop();
-        })
-        .catch((e) => {
-          if (!alive || mine !== loadSeq.current) return;
-          setError(errorMessage(e));
-          if (++failures >= MAX_FAILURES) stop();   // Retry restarts it
-        });
+      try {
+        const d = await api.investigation(caseId);
+        if (!alive || mine !== loadSeq.current) return;
+        failures = 0;
+        setInv(d);
+        setError(null);
+        if (settled(d)) stop();
+      } catch (e) {
+        if (!alive || mine !== loadSeq.current) return;
+        setError(errorMessage(e));
+        if (++failures >= MAX_FAILURES) stop();   // Retry restarts it
+      } finally {
+        // Schedule only AFTER this request finishes. setInterval allowed slow
+        // case responses to overlap; every new request advanced loadSeq before
+        // the previous one landed, so no response was ever accepted and the UI
+        // stayed on "Loading case" while hammering the backend toward a 503.
+        if (alive && !finished) schedule();
+      }
     };
     void tick();
-    timer = setInterval(tick, 1500);
-    return () => { alive = false; if (timer) clearInterval(timer); };
+    return () => { alive = false; stop(); };
   }, [caseId, pollGeneration]);
 
   if (error && !inv) {

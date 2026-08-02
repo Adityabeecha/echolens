@@ -104,7 +104,8 @@ def _reaction_weight(n: int | None) -> float:
 
 def collect_items(session: Session, product: str | None = None, *,
                   since: datetime | None = None, until: datetime | None = None,
-                  negatives_only: bool = True) -> list[FeedbackItem]:
+                  negatives_only: bool = True,
+                  refs: set[str] | None = None) -> list[FeedbackItem]:
     """Every channel, one list, one shape.
 
     `negatives_only` keeps the complaint surface: a 5-star review and a closed
@@ -128,6 +129,8 @@ def collect_items(session: Session, product: str | None = None, *,
         r_stmt = r_stmt.where(Review.product == product)
     if negatives_only:
         r_stmt = r_stmt.where(Review.rating <= 2)
+    if refs is not None:
+        r_stmt = r_stmt.where(Review.ext_id.in_(refs))
     for r in session.scalars(r_stmt).all():
         if not in_window(r.created_at) or not (r.text or "").strip():
             continue
@@ -143,6 +146,10 @@ def collect_items(session: Session, product: str | None = None, *,
     i_stmt = select(Issue)
     if product:
         i_stmt = i_stmt.where(Issue.product == product)
+    if refs is not None:
+        issue_ids = [ref.removeprefix("issue ") for ref in refs
+                     if ref.startswith("issue ")]
+        i_stmt = i_stmt.where(Issue.ext_id.in_(issue_ids))
     for i in session.scalars(i_stmt).all():
         if not in_window(i.created_at):
             continue
@@ -157,6 +164,8 @@ def collect_items(session: Session, product: str | None = None, *,
     p_stmt = select(Post)
     if product:
         p_stmt = p_stmt.where(Post.product == product)
+    if refs is not None:
+        p_stmt = p_stmt.where(Post.ext_id.in_(refs))
     for p in session.scalars(p_stmt).all():
         if not in_window(p.created_at):
             continue
@@ -169,12 +178,17 @@ def collect_items(session: Session, product: str | None = None, *,
     f_stmt = select(FeedbackEntry)
     if product:
         f_stmt = f_stmt.where(FeedbackEntry.product == product)
+    if refs is not None:
+        feedback_ids = [ref.split(" ", 1)[1] for ref in refs if " " in ref]
+        f_stmt = f_stmt.where(FeedbackEntry.ext_id.in_(feedback_ids))
     for f in session.scalars(f_stmt).all():
         if not in_window(f.created_at) or not (f.text or "").strip():
             continue
         # Filtered at the single point every consumer reads through, so no
         # caller can count the team's own commits as user corroboration.
         if f.channel in TEAM_CHANNELS:
+            continue
+        if refs is not None and f"{f.channel} {f.ext_id}" not in refs:
             continue
         items.append(FeedbackItem(
             ref=f"{f.channel} {f.ext_id}", channel=f.channel, text=f.text,
