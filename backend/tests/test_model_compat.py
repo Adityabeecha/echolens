@@ -4,6 +4,7 @@ import pytest
 
 from echolens.config import FALLBACK_PRICING, MODEL_PRICING
 from echolens.llm import openai_client as oc
+from echolens.llm.client import LLMServiceError
 
 
 def _bad_request(message: str) -> Exception:
@@ -139,8 +140,9 @@ def test_backoff_stops_at_the_total_deadline(monkeypatch):
 
     c = oc.OpenAIClient(model="m", max_retries=99, base_delay=10.0,
                         sleep=advance, max_total_s=25.0)
-    with pytest.raises(APITimeoutError):
+    with pytest.raises(LLMServiceError) as caught:
         c.complete_json("s", "u", {"type": "object"}, "a")
+    assert isinstance(caught.value.__cause__, APITimeoutError)
     assert sum(slept) <= 25.0
     assert len(slept) < 99, "it gave up on the deadline, not on max_retries"
 

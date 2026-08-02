@@ -11,7 +11,7 @@ import json
 from sqlalchemy.orm import Session
 
 from echolens.db.models import EvidenceRow, Finding, HypothesisRow, Recommendation
-from echolens.llm.client import LLMClient, LLMFormatError
+from echolens.llm.client import LLMClient, LLMError
 
 RECOMMEND_SYSTEM = """You turn a confirmed product-feedback root cause into an action plan. \
 Produce 2–4 concrete, ranked engineering/product actions. Each action:
@@ -83,7 +83,7 @@ def recommend(session: Session, finding: Finding, llm: LLMClient | None = None) 
     try:
         res = llm.complete_json(RECOMMEND_SYSTEM, prompt, RECOMMEND_SCHEMA, "recommender")
         actions = res.parsed.get("actions", [])
-    except LLMFormatError:
+    except LLMError:
         return []
 
     out: list[Recommendation] = []

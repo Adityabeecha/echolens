@@ -7,7 +7,12 @@ import time
 from openai import OpenAI
 
 from echolens.config import FALLBACK_PRICING, MODEL_PRICING, settings
-from echolens.llm.client import LLMFormatError, LLMResult, coerce_to_schema
+from echolens.llm.client import (
+    LLMFormatError,
+    LLMResult,
+    LLMServiceError,
+    coerce_to_schema,
+)
 from echolens.logging import get_logger
 
 log = get_logger("llm")
@@ -127,7 +132,16 @@ class OpenAIClient:
         prompt = user
         for _attempt in range(2):  # one retry specifically for malformed JSON
             start = time.monotonic()
-            resp = self._create_with_backoff(system, prompt, json_schema)
+            try:
+                resp = self._create_with_backoff(system, prompt, json_schema)
+            except _TRANSIENT as err:
+                # Do not leak provider-specific 429/timeout/5xx exceptions into
+                # the investigator. Agent nodes can turn this stable exception
+                # into a FAIL trace or an honest deterministic fallback.
+                raise LLMServiceError(
+                    f"{agent}: model service unavailable after bounded retries "
+                    f"({type(err).__name__})"
+                ) from err
             ms = int((time.monotonic() - start) * 1000)
             usage = resp.usage
             tokens_in = usage.prompt_tokens if usage else 0

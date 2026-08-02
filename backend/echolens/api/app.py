@@ -61,16 +61,34 @@ async def lifespan(_app: FastAPI):
         raise RuntimeError("refusing to start in production: " + "; ".join(problems))
     init_db()
     _bootstrap()  # free-tier: seed + first admin from env, no shell needed
-    # v1.0: resume any investigation interrupted by the last shutdown.
+    # Resume interrupted work AFTER the app starts accepting requests. Recovery
+    # used to run synchronously here, before ``yield``; a single 45-minute case
+    # therefore kept the whole deployment unready and its proxy returned 503 to
+    # every case refresh for the duration of the resumed LLM loop.
+    _start_recovery_bg()
+    yield
+
+
+def _recover_running_bg() -> None:
+    """Resume interrupted investigations without blocking API availability."""
     try:
         from echolens.investigator.recover import resume_running
         with session_scope() as s:
             recovered = resume_running(s)
         if recovered:
             log.info("startup_recovery", investigations=recovered)
-    except Exception as err:  # never block startup on recovery
+    except Exception as err:
         log.error("startup_recovery_failed", error=str(err))
-    yield
+
+
+def _start_recovery_bg() -> threading.Thread:
+    thread = threading.Thread(
+        target=_recover_running_bg,
+        name="echolens-startup-recovery",
+        daemon=True,
+    )
+    thread.start()
+    return thread
 
 
 def _bootstrap() -> None:
@@ -373,7 +391,19 @@ def _run_investigation_bg(investigation_id: int, tier: str) -> None:
             finding = session.scalars(select(Finding).where(
                 Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
             if finding is not None:
-                recommend(session, finding)
+                # The investigation and its finding are the core result. Make
+                # them durable before optional action drafting/delivery: a bad
+                # recommendation payload or provider outage must not roll back a
+                # completed case and make recovery run the whole loop again.
+                finding_id = finding.id
+                session.commit()
+                try:
+                    recommend(session, finding)
+                except Exception as err:
+                    session.rollback()
+                    log.error("recommend_failed", finding_id=finding_id,
+                              error=f"{type(err).__name__}: {err}")
+                    finding = session.get(Finding, finding_id)
                 _try_notify(session, finding)
     except Exception as err:
         # A dead background thread must not strand the case. Without this the row

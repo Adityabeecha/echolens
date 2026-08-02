@@ -144,6 +144,7 @@ export function useWorkWatcher(
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let failures = 0;
     inFlight.current = null;
 
     const tick = async () => {
@@ -151,6 +152,7 @@ export function useWorkWatcher(
       let busy = 0;
       try {
         const r = await api.investigations();
+        failures = 0;
         const live = (r.investigations ?? []).filter(
           (i) => i.status === "running" || i.status === "queued",
         );
@@ -178,8 +180,13 @@ export function useWorkWatcher(
         }
       } catch {
         // A failed poll is not worth surfacing: the screens have their own
-        // error states, and this is a background refresh.
-        return; // stop rather than hammer a backend that is down
+        // error states, and this is a background refresh. It is also not proof
+        // that the work stopped: deploy restarts and free-tier wakeups are
+        // transient. Retry a bounded number of times so one 503 does not kill
+        // the watcher permanently.
+        failures += 1;
+        if (!stopped && failures < 8) timer = setTimeout(tick, intervalMs);
+        return;
       }
       // Idle workspace makes no further requests. `wakeKey` restarts this
       // effect when the user queues something new.

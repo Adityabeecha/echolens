@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.orm import Session
 
 from echolens.db.models import Finding, Investigation
-from echolens.llm.client import LLMClient, LLMFormatError
+from echolens.llm.client import LLMClient, LLMError
 from echolens.tools.registry import TOOLS, run_tool
 
 MAX_STEPS = 4
@@ -133,7 +133,7 @@ def answer(session: Session, message: str, llm: LLMClient,
         try:
             res = llm.complete_json(ASK_SYSTEM, prompt, ASK_SCHEMA, "ask")
             parsed = res.parsed
-        except LLMFormatError:
+        except LLMError:
             break
 
         if parsed.get("action") == "tool" and len(tool_calls) < MAX_TOOL_CALLS:

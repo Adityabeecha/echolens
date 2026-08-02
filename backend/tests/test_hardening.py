@@ -1,12 +1,17 @@
 """Hardening: LLM backoff on transient errors, and investigation recovery."""
 from __future__ import annotations
 
+from contextlib import contextmanager
+import threading
+import time
+
 import pytest
 
 from echolens.db.models import AnomalyEvent, Finding, Investigation, TraceStep
 from echolens.eval.harness import ScriptedLLM
 from echolens.investigator.graph import Investigator
 from echolens.investigator.recover import resume_running
+from echolens.llm.client import LLMResult, LLMServiceError
 from echolens.tools.search_github_issues import search_github_issues
 from echolens.tools.search_reviews import search_reviews
 
@@ -46,6 +51,33 @@ def test_llm_backoff_retries_transient_then_succeeds(monkeypatch):
     res = client.complete_json("s", "u", {"type": "object"}, "agent")
     assert res.parsed == {"ok": True}
     assert calls["n"] == 3  # failed twice, succeeded on the third
+
+
+def test_llm_translates_a_persistent_provider_503(monkeypatch):
+    from echolens.llm import openai_client as oc
+
+    class FakeUnavailable(Exception):
+        pass
+
+    monkeypatch.setattr(oc, "_TRANSIENT", (FakeUnavailable,))
+    client = oc.OpenAIClient.__new__(oc.OpenAIClient)
+    client.model = "gpt-4o-mini"
+    client._on_call = None
+    client._max_retries = 0
+    client._base_delay = 0.0
+    client._sleep = lambda _d: None
+    client._max_total_s = 1.0
+    client._supports_temperature = False
+
+    def unavailable(**_kw):
+        raise FakeUnavailable("503 Service Unavailable")
+
+    completions = type("Completions", (), {"create": staticmethod(unavailable)})()
+    client._client = type(
+        "Client", (), {"chat": type("Chat", (), {"completions": completions})()})()
+
+    with pytest.raises(LLMServiceError, match="service unavailable"):
+        client.complete_json("system", "user", {"type": "object"}, "investigator.finding")
 
 
 def _run_partial_then_orphan(session):
@@ -107,3 +139,55 @@ def test_orphan_without_checkpoint_closed_honestly(session):
     resume_running(session, llm=ScriptedLLM([]))
     session.refresh(inv)
     assert inv.status == "needs_human"  # no checkpoint → closed, not left orphaned
+
+
+def test_provider_503_during_final_draft_keeps_an_honest_finding(session):
+    class FinalDraftUnavailable:
+        def complete_json(self, _system, _user, _schema, agent):
+            if agent == "investigator.plan":
+                return LLMResult(
+                    parsed={"thought": "Nothing defensible remains.", "action": "conclude",
+                            "conclusion": {"status": "insufficient_evidence",
+                                           "reason": "No corroborated cause."}},
+                    tokens_in=10, tokens_out=5, ms=1, model="unavailable-test",
+                )
+            raise LLMServiceError("upstream returned 503")
+
+    anomaly = session.query(AnomalyEvent).filter_by(slug="demo2").one()
+    inv = Investigator(session, anomaly, llm=FinalDraftUnavailable()).run()
+    finding = session.query(Finding).filter_by(investigation_id=inv.id).one()
+
+    assert inv.status == "insufficient_evidence"
+    assert finding.summary == "Investigation ended: insufficient_evidence"
+    assert "upstream returned 503" not in finding.json["prose"]
+
+
+def test_startup_recovery_returns_immediately_while_resume_runs(monkeypatch):
+    from echolens.api import app as app_mod
+    from echolens.investigator import recover
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_resume(_session):
+        started.set()
+        release.wait(timeout=2)
+        return []
+
+    @contextmanager
+    def fake_scope():
+        yield object()
+
+    monkeypatch.setattr(recover, "resume_running", slow_resume)
+    monkeypatch.setattr(app_mod, "session_scope", fake_scope)
+
+    before = time.monotonic()
+    thread = app_mod._start_recovery_bg()
+    elapsed = time.monotonic() - before
+    try:
+        assert elapsed < 0.2
+        assert started.wait(timeout=1)
+        assert thread.is_alive()
+    finally:
+        release.set()
+        thread.join(timeout=1)

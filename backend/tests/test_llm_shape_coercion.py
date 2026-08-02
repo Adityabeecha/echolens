@@ -69,6 +69,30 @@ def test_the_update_node_survives_a_dict_shaped_evidence_field():
     out["evidence"][:5]
 
 
+def test_object_arrays_drop_bare_items_instead_of_crashing_consumers():
+    from echolens.investigator.prompts import UPDATE_SCHEMA
+
+    out = coerce_to_schema(
+        {"evidence": ["not an evidence object", {"ref": "review 1"}],
+         "hypothesis_updates": [7, {"id": "H1"}]},
+        UPDATE_SCHEMA,
+    )
+    assert out["evidence"] == [{"ref": "review 1"}]
+    assert out["hypothesis_updates"] == [{"id": "H1"}]
+
+
+def test_nested_array_fields_coerce_a_single_string_to_one_item():
+    from echolens.investigator.prompts import UPDATE_SCHEMA
+
+    out = coerce_to_schema(
+        {"evidence": [{"ref": "review 1", "supports": "H1",
+                       "contradicts": None}]},
+        UPDATE_SCHEMA,
+    )
+    assert out["evidence"][0]["supports"] == ["H1"]
+    assert out["evidence"][0]["contradicts"] == []
+
+
 def test_the_client_coerces_before_returning(monkeypatch):
     from echolens.llm import openai_client as oc
 

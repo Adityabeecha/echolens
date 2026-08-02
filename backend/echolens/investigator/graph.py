@@ -42,7 +42,7 @@ from echolens.investigator.prompts import (
     render_state,
 )
 from echolens.investigator.state import Budget, InvState
-from echolens.llm.client import LLMClient, LLMFormatError
+from echolens.llm.client import LLMClient, LLMError
 from echolens.logging import get_logger
 from echolens.tools.registry import TOOLS, run_tool
 
@@ -178,7 +178,7 @@ class Investigator:
         )
         try:
             res = self.llm.complete_json(plan_system(self._guidance), prompt, PLAN_SCHEMA, "investigator.plan")
-        except LLMFormatError as err:
+        except LLMError as err:
             self._trace("FAIL", {"code": "plan", "error": str(err),
                                  "text": "Plan step produced malformed output; iteration burned."})
             return state
@@ -390,7 +390,7 @@ class Investigator:
         )
         try:
             res = self.llm.complete_json(UPDATE_SYSTEM, prompt, UPDATE_SCHEMA, "investigator.update")
-        except LLMFormatError as err:
+        except LLMError as err:
             self._trace("FAIL", {"code": "update", "error": str(err),
                                  "text": "Evidence assessment failed; result kept in trace only."})
             return state
@@ -695,7 +695,7 @@ class Investigator:
                 break
             try:
                 res = self.llm.complete_json(FINDING_SYSTEM, context, FINDING_SCHEMA, "investigator.finding")
-            except LLMFormatError:
+            except LLMError:
                 break
             candidate = res.parsed
             violations = guards.unsupported_claims(candidate.get("prose", ""), evidence_ids)

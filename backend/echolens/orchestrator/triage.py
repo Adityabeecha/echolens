@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from echolens.config import ORCHESTRATOR_DAILY_INVESTIGATIONS
 from echolens.db.models import AnomalyEvent, Investigation, LLMCall, TriageDecision
-from echolens.llm.client import LLMClient, LLMFormatError
+from echolens.llm.client import LLMClient, LLMError
 
 TRIAGE_SYSTEM = """You are the EchoLens orchestrator. Detected anomalies arrive in batches; \
 your job is triage — decide what NOT to do as much as what to do. For each anomaly choose:
@@ -181,7 +181,7 @@ class Orchestrator:
         try:
             res = self.llm.complete_json(TRIAGE_SYSTEM, prompt, TRIAGE_SCHEMA, "orchestrator")
             raw = res.parsed.get("decisions", [])
-        except LLMFormatError:
+        except LLMError:
             raw = []
 
         # Parse LLM proposals; anything unmentioned/invalid defaults to ignore.

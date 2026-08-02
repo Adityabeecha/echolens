@@ -9,7 +9,7 @@ is to sharpen the investigator's thinking about evidence it already has.
 """
 from __future__ import annotations
 
-from echolens.llm.client import LLMClient, LLMFormatError
+from echolens.llm.client import LLMClient, LLMError
 
 SENTIMENT_SYSTEM = """You are the Sentiment Analyst specialist on a product-feedback investigation. \
 Given a set of negative reviews, break down the emotional tone and WHAT users are actually angry \
@@ -75,6 +75,6 @@ def run_specialist(llm: LLMClient, name: str, context: str) -> dict | None:
     system, schema = spec
     try:
         res = llm.complete_json(system, context, schema, f"specialist.{name}")
-    except LLMFormatError:
+    except LLMError:
         return None
     return res.parsed

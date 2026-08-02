@@ -84,6 +84,15 @@ function handle(status: number): void {
   }
 }
 
+/** A stable, human-readable message for fetch and API failures. */
+export function errorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/failed to fetch/i.test(message) || /networkerror/i.test(message)) {
+    return "The backend is unavailable. It may be restarting — wait a moment and retry.";
+  }
+  return message.replace(/^Error:\s*/i, "");
+}
+
 async function get<T>(path: string): Promise<T> {
   const r = await fetch(BASE + path, { headers: authHeaders() });
   if (!r.ok) {

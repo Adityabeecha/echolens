@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Evidence, Investigation, api } from "../api";
+import { Evidence, Investigation, api, errorMessage } from "../api";
 import { StatusChip } from "../components/CaseCard";
 import { impactLine } from "../format";
 import { CASE_TABS, CaseTab, CASE_TAB_LABEL } from "../nav";
@@ -43,6 +43,7 @@ export function CaseDetail({
 }: Props) {
   const [inv, setInv] = useState<Investigation | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pollGeneration, setPollGeneration] = useState(0);
 
   // Monotonic sequence guard, matching the polling effect below. Retry calls
   // this, and a slow response used to be able to land AFTER a newer poll tick
@@ -53,7 +54,15 @@ export function CaseDetail({
     const mine = ++loadSeq.current;
     return api.investigation(caseId)
       .then((d) => { if (mine === loadSeq.current) { setInv(d); setError(null); } })
-      .catch((e) => { if (mine === loadSeq.current) setError(String(e).replace("Error: ", "")); });
+      .catch((e) => { if (mine === loadSeq.current) setError(errorMessage(e)); });
+  };
+
+  // Restart the polling effect, not just one request. The old Retry called
+  // load() once after the poller had stopped at MAX_FAILURES, so a backend that
+  // was still waking on that exact request left the button permanently stuck.
+  const retry = () => {
+    setError(null);
+    setPollGeneration((n) => n + 1);
   };
 
   // Poll while the case is LIVE — which includes queued work that has not
@@ -73,29 +82,31 @@ export function CaseDetail({
     const MAX_FAILURES = 4;
     let failures = 0;
     const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
-    const tick = () =>
-      api.investigation(caseId)
+    const tick = () => {
+      const mine = ++loadSeq.current;
+      return api.investigation(caseId)
         .then((d) => {
-          if (!alive) return;
+          if (!alive || mine !== loadSeq.current) return;
           failures = 0;
           setInv(d);
           setError(null);
           if (settled(d)) stop();
         })
         .catch((e) => {
-          if (!alive) return;
-          setError(String(e).replace("Error: ", ""));
+          if (!alive || mine !== loadSeq.current) return;
+          setError(errorMessage(e));
           if (++failures >= MAX_FAILURES) stop();   // Retry restarts it
         });
+    };
     void tick();
     timer = setInterval(tick, 1500);
     return () => { alive = false; if (timer) clearInterval(timer); };
-  }, [caseId]);
+  }, [caseId, pollGeneration]);
 
   if (error && !inv) {
     return (
       <div style={{ padding: `${S[6]}` }}>
-        <ErrorState title={`Couldn't load case #${caseId}`} detail={error} onRetry={load} />
+        <ErrorState title={`Couldn't load case #${caseId}`} detail={error} onRetry={retry} />
       </div>
     );
   }
@@ -203,7 +214,7 @@ export function CaseDetail({
                       display: "flex", alignItems: "center", gap: S[2] }}>
           <Icon name="warning" size={14} style={{ color: C.bad }} />
           <span style={{ flex: 1 }}>Couldn't refresh this case — {error}</span>
-          <button onClick={load} className="el-btn"
+          <button onClick={retry} className="el-btn"
             style={{ color: C.accent }}>Retry</button>
         </div>
       )}
