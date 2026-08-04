@@ -21,6 +21,10 @@ from echolens.collectors.base import Collector, iso
 from echolens.db.models import Review
 
 CWS_ENDPOINT = ("https://chrome.google.com/reviews/components")
+# This is an undocumented, best-effort endpoint and has been observed holding
+# a failed 502 response open for 20+ seconds. Optional Chrome reviews must not
+# become the critical path for an otherwise healthy multi-source onboarding.
+CWS_TIMEOUT_S = 5
 
 
 def _default_fetch(extension_id: str, limit: int) -> list[dict]:
@@ -33,7 +37,7 @@ def _default_fetch(extension_id: str, limit: int) -> list[dict]:
              None, "generic"],
         ]]),
     }
-    with httpx.Client(timeout=20) as c:
+    with httpx.Client(timeout=CWS_TIMEOUT_S) as c:
         resp = c.post(CWS_ENDPOINT, data=payload,
                       headers={"Content-Type": "application/x-www-form-urlencoded"})
     if resp.status_code >= 300:

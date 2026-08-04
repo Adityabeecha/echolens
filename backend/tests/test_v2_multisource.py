@@ -10,7 +10,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import select
 
-from echolens.collectors.chrome_web_store import ChromeWebStoreCollector, _parse_batch
+from echolens.collectors.chrome_web_store import (
+    CWS_TIMEOUT_S, ChromeWebStoreCollector, _default_fetch as fetch_chrome,
+    _parse_batch,
+)
 from echolens.collectors.feedback_base import ext_id_for
 from echolens.collectors.github_extra import (
     GitHubActivityCollector, GitHubDiscussionsCollector, _split_repo)
@@ -268,6 +271,34 @@ def test_chrome_web_store_unrecognised_shape_raises_loudly():
     'no complaints'."""
     with pytest.raises(RuntimeError, match="unrecognised response shape"):
         _parse_batch("totally not the envelope we expect")
+
+
+def test_chrome_web_store_uses_short_best_effort_timeout(monkeypatch):
+    import httpx
+
+    observed = {}
+
+    class FakeResponse:
+        status_code = 502
+        text = "bad gateway"
+
+    class FakeClient:
+        def __init__(self, *, timeout):
+            observed["timeout"] = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    with pytest.raises(RuntimeError, match="Chrome Web Store HTTP 502"):
+        fetch_chrome("nngceckbapebfimnlniiiahkandclblb", 300)
+    assert observed["timeout"] == CWS_TIMEOUT_S
 
 
 def test_chrome_web_store_row_missing_a_rating_is_skipped(session):
