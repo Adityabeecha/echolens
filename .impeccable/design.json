@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-05T00:00:00+05:30",
+  "title": "Design System: EchoLens Evidence Docket",
+  "extensions": {
+    "colorMeta": {
+      "vermilion": {
+        "role": "primary",
+        "displayName": "Docket Vermilion",
+        "canonical": "#c53e33",
+        "tonalRamp": ["#461410", "#692019", "#85251f", "#a62f27", "#c53e33", "#dc766e", "#efaaa5", "#fbe2df"]
+      },
+      "cobalt-reference": {
+        "role": "secondary",
+        "displayName": "Reference Cobalt",
+        "canonical": "#245da8",
+        "tonalRamp": ["#0b213f", "#12335e", "#19467e", "#245da8", "#4a7bc0", "#7ba1d2", "#b5cae7", "#e7eff8"]
+      },
+      "mineral-paper": {
+        "role": "neutral",
+        "displayName": "Mineral Paper",
+        "canonical": "#f3f0e9",
+        "tonalRamp": ["#282621", "#4b4841", "#706c63", "#969187", "#bbb6ac", "#d8d3ca", "#ebe7df", "#f8f6f1"]
+      },
+      "graphite": {
+        "role": "neutral",
+        "displayName": "Graphite",
+        "canonical": "#202528",
+        "tonalRamp": ["#111416", "#202528", "#343a3d", "#50575a", "#73797b", "#9da1a2", "#cbd0cf", "#f1f3f2"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Editorial Display", "purpose": "Rare scores and opening statements." },
+      "headline": { "displayName": "Docket Heading", "purpose": "Screen and section titles." },
+      "body": { "displayName": "Operational Body", "purpose": "Evidence, explanations, and controls." },
+      "label": { "displayName": "Filed Metadata", "purpose": "Stages, counters, timestamps, and IDs." }
+    },
+    "shadows": [
+      { "name": "paper-low", "value": "0 1px 2px rgba(35, 31, 25, 0.08)", "purpose": "Subtle separation for interactive paper." },
+      { "name": "overlay", "value": "0 14px 34px rgba(35, 31, 25, 0.14)", "purpose": "Dialogs and temporary overlays only." }
+    ],
+    "motion": [
+      { "name": "state-fast", "value": "120ms cubic-bezier(0.2, 0.8, 0.2, 1)", "purpose": "Hover and focus feedback." },
+      { "name": "state-standard", "value": "180ms cubic-bezier(0.2, 0.8, 0.2, 1)", "purpose": "Small state changes and progress." }
+    ],
+    "breakpoints": [
+      { "name": "compact", "value": "900px" },
+      { "name": "phone", "value": "640px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single decisive action in a region.",
+      "html": "<button class=\"ds-btn-primary\">Review finding</button>",
+      "css": ".ds-btn-primary{background:var(--el-accent,#c53e33);color:var(--el-on-accent,#fffaf5);border:1px solid var(--el-accent,#c53e33);border-radius:5px;padding:10px 16px;font:600 13px \"IBM Plex Sans\",sans-serif;transition:background 120ms,transform 120ms}.ds-btn-primary:hover{background:var(--el-accent-hover,#a62f27)}.ds-btn-primary:focus-visible{outline:2px solid var(--el-accent,#c53e33);outline-offset:2px}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "A bounded supporting action.",
+      "html": "<button class=\"ds-btn-secondary\">See the proof</button>",
+      "css": ".ds-btn-secondary{background:var(--el-bg-card,#fbfaf7);color:var(--el-text,#202528);border:1px solid var(--el-border-3,#aaa296);border-radius:5px;padding:9px 14px;font:500 13px \"IBM Plex Sans\",sans-serif}.ds-btn-secondary:hover{border-color:var(--el-accent,#c53e33);color:var(--el-accent,#c53e33)}.ds-btn-secondary:focus-visible{outline:2px solid var(--el-accent,#c53e33);outline-offset:2px}"
+    },
+    {
+      "name": "Docket Input",
+      "kind": "input",
+      "description": "Search and structured product metadata.",
+      "html": "<input class=\"ds-input\" value=\"Search cases…\" aria-label=\"Search cases\">",
+      "css": ".ds-input{background:var(--el-bg-card,#fbfaf7);color:var(--el-text,#202528);border:1px solid var(--el-border-3,#aaa296);border-radius:5px;padding:10px 12px;font:400 13px \"IBM Plex Sans\",sans-serif}.ds-input:focus-visible{outline:2px solid var(--el-accent,#c53e33);outline-offset:2px}"
+    },
+    {
+      "name": "Status Chip",
+      "kind": "chip",
+      "description": "Compact lifecycle evidence with text and color.",
+      "html": "<span class=\"ds-chip\">Needs review</span>",
+      "css": ".ds-chip{display:inline-flex;align-items:center;background:rgba(197,62,51,.08);color:var(--el-accent-deep,#85251f);border:1px solid rgba(197,62,51,.34);border-radius:999px;padding:3px 8px;font:500 11px \"IBM Plex Sans\",sans-serif}"
+    },
+    {
+      "name": "Case Register",
+      "kind": "card",
+      "refersTo": "case-card",
+      "description": "A numbered case row with status, evidence summary, and next action.",
+      "html": "<article class=\"ds-case\"><span class=\"ds-case-mark\"></span><b class=\"ds-case-number\">002</b><div><strong>Recovery sessions retain an expired challenge</strong><p>Finding drafted and waiting for review.</p></div></article>",
+      "css": ".ds-case{position:relative;display:grid;grid-template-columns:56px 1fr;gap:16px;background:var(--el-bg-card,#fbfaf7);color:var(--el-text,#202528);border:1px solid var(--el-border-2,#cdc6ba);border-radius:8px;padding:12px;font:400 15px \"IBM Plex Sans\",sans-serif}.ds-case-mark{position:absolute;inset:0 auto 0 -1px;width:1px;background:var(--el-accent,#c53e33)}.ds-case-number{font:600 11px \"IBM Plex Mono\",monospace;color:var(--el-accent,#c53e33);letter-spacing:.08em}.ds-case p{margin:6px 0 0;color:var(--el-text-muted,#555a5b);font-size:13px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Evidence Docket",
+    "overview": "EchoLens feels like a precise working file on an investigator's desk: calm, tactile, and dense with proof without becoming crowded. The interface rejects the generic analytics-dashboard look; hierarchy comes from typography, rules, numbering, and evidence state.",
+    "keyCharacteristics": [
+      "Paper-and-ink materiality with a dark graphite shell.",
+      "Vermilion marks decisive actions and live evidence; cobalt marks references.",
+      "Compact, explicit workflow states from signal through verified fix.",
+      "Editorial headings paired with highly legible operational copy."
+    ],
+    "rules": [
+      { "name": "The Red-Pencil Rule", "body": "Vermilion is a scarce annotation color, not a general decoration.", "section": "colors" },
+      { "name": "The Two-Voice Rule", "body": "Fraunces names the evidence; Plex operates on it.", "section": "typography" },
+      { "name": "The Filed-Flat Rule", "body": "A resting register is outlined, not floating.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep the signal-to-fix chain visible and use provenance beside claims.",
+      "Do use vermilion for decisive action, focus, and evidence marks.",
+      "Do place row actions at the trailing edge and label them with outcomes.",
+      "Do preserve keyboard focus, contrast, and readable workflow labels at every breakpoint."
+    ],
+    "donts": [
+      "Don't turn the interface into a generic grid of disconnected metric cards.",
+      "Don't add gradients, glass effects, oversized radii, or ornamental shadows.",
+      "Don't use color as the only carrier of state.",
+      "Don't hide operational navigation or lifecycle context on mobile."
+    ]
+  }
+}

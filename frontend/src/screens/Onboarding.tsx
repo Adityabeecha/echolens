@@ -79,7 +79,7 @@ export function Onboarding({
           padding: S[6],
         }}
       >
-        <div style={{
+        <div className="el-onboarding-dossier" style={{
           position: "relative", width: "100%", maxWidth: 760, margin: "auto",
           background: C.bg, border: `1px solid ${C.border3}`,
           borderRadius: R.overlay, boxShadow: "var(--el-e4)",
@@ -153,9 +153,7 @@ function NoAccess({ guest }: { guest: boolean }) {
 
 function Logo() {
   return (
-    <div style={{ width: 24, height: 24, borderRadius: "50%", border: `2px solid ${C.accent}`, position: "relative", flex: "none" }}>
-      <div style={{ position: "absolute", inset: 4, borderRadius: "50%", background: `radial-gradient(circle at 35% 35%, ${C.accentHi}, ${C.accentDeep})` }} />
-    </div>
+    <div className="el-brand-mark el-brand-mark--light" style={{ width: 24, height: 24 }}><span /></div>
   );
 }
 
@@ -587,7 +585,7 @@ function SnapshotView({ snap }: { snap: Snapshot }) {
         <div style={{ display: "flex", alignItems: "flex-end", gap: S[1], height: 56 }}>
           {snap.weekly.map((w) => (
             <div key={w.week_start} title={`${w.week_start}: ${w.count}`}
-              style={{ flex: 1, height: `${Math.max(4, (w.count / max) * 100)}%`, borderRadius: "3px 3px 0 0", background: `linear-gradient(180deg,${C.accent},${C.accentDeep})`, opacity: 0.9 }} />
+              style={{ flex: 1, height: `${Math.max(4, (w.count / max) * 100)}%`, borderRadius: "3px 3px 0 0", background: C.accent, opacity: 0.9 }} />
           ))}
         </div>
       </div>

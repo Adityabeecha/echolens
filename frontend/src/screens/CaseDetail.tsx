@@ -5,7 +5,7 @@ import { impactLine } from "../format";
 import { CASE_TABS, CaseTab, CASE_TAB_LABEL } from "../nav";
 import { SEVERITY } from "../status";
 import { C, R, S, T, mono } from "../theme";
-import { Centered, ErrorState } from "../ui";
+import { Centered, ErrorState, WorkflowRail } from "../ui";
 import { EngineeringTab } from "./case/EngineeringTab";
 import { EvidenceTab } from "./case/EvidenceTab";
 import { FindingTab } from "./case/FindingTab";
@@ -136,13 +136,13 @@ export function CaseDetail({
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+    <div className="el-case-detail" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       {/* persistent header — the same facts whichever tab you're on */}
-      <div style={{ flex: "none", borderBottom: `1px solid ${C.border}`, padding: `${S[3]} ${S[6]} 0` }}>
+      <div className="el-case-dossier-header" style={{ flex: "none", borderBottom: `1px solid ${C.border}`, padding: `${S[3]} ${S[6]} 0` }}>
         <div style={{ display: "flex", alignItems: "center", gap: S[3], flexWrap: "wrap" }}>
           <button onClick={onBack} className="el-btn"
             style={{ color: C.dim, fontSize: T.base, whiteSpace: "nowrap" }}>
-            ← Back to {backLabel}
+            <Icon name="chevronLeft" size={15} /> Back to {backLabel}
           </button>
           <div style={{ width: 1, height: 16, background: C.border2 }} />
           <span style={{ fontFamily: mono, fontSize: T.sm, color: C.accent }}>CASE #{caseId}</span>
@@ -218,6 +218,8 @@ export function CaseDetail({
       {/* An error AFTER the first successful load used to be stored and never
           rendered, so a failed refresh left stale data on screen while a toast
           said the action had succeeded — the UI contradicting itself. */}
+      <WorkflowRail active={running ? "investigation" : finding ? "finding" : "signal"} />
+
       {error && (
         <div style={{ flex: "none", margin: "10px 28px 0", padding: `${S[2]} ${S[3]}`,
                       border: `1px solid ${C.bad}55`, background: `${C.bad}12`,

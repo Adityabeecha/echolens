@@ -47,7 +47,7 @@ function ProductSwitcher({ products, activeId, onSwitch, onAdd, onDelete }: {
   };
   if (!active) return null;
   return (
-    <div className="el-nav-wide" style={{ position: "relative", margin: `0 ${S[3]} ${S[3]}` }}>
+    <div className="el-nav-wide el-product-switcher" style={{ position: "relative", margin: `0 ${S[3]} ${S[3]}` }}>
       <button
         ref={triggerRef}
         onClick={() => { openFocus.current = activeIndex; setOpen((o) => !o); }}
@@ -208,20 +208,18 @@ export function Sidebar({
   };
 
   return (
-    <nav aria-label="Main"
+    <nav aria-label="Main" className="el-sidebar"
       style={{ width: "var(--el-sidebar-w)", flex: "none", display: "flex",
                flexDirection: "column", borderRight: `1px solid ${C.border}`,
                background: C.bgRaised }}>
       <div className="el-nav-brand"
            style={{ display: "flex", alignItems: "center", gap: S[3],
                     padding: `${S[5]} ${S[4]} ${S[4]}` }}>
-        <span style={{ width: 26, height: 26, borderRadius: "50%",
-                      border: `2px solid ${C.accent}`, position: "relative", flex: "none" }}>
-          <span style={{ position: "absolute", inset: 5, borderRadius: "50%",
-                        background: `radial-gradient(circle at 35% 35%, ${C.accentHi}, ${C.accentDeep})` }} />
+        <span className="el-brand-mark" aria-hidden>
+          <span />
         </span>
         <span>
-          <span style={{ display: "block", fontWeight: 700, fontSize: T.md,
+          <span className="el-brand-name" style={{ display: "block", fontWeight: 700, fontSize: T.md,
                          letterSpacing: "var(--el-ls-tight)", color: C.text }}>EchoLens</span>
           <span style={{ display: "block", fontFamily: mono, fontSize: T.micro, color: C.faint,
                          letterSpacing: "var(--el-ls-wide)" }}>
@@ -359,7 +357,7 @@ function NavRow({ item, active, onClick, small }: {
   return (
     <button
       onClick={onClick}
-      className="el-btn"
+      className={`el-btn el-nav-item${small ? " el-nav-item--small" : ""}${active ? " el-nav-item--active" : ""}`}
       title={item.hint}
       aria-current={active ? "page" : undefined}
       style={{

@@ -5,11 +5,11 @@ import { withToast } from "../components/Toast";
 import { plural } from "../format";
 import { useAsync } from "../hooks";
 import { statusMeta } from "../status";
-import { C, E, MEASURE, R, S, T, mono } from "../theme";
+import { C, MEASURE, R, S, T, mono } from "../theme";
 import { Icon } from "../components/Icon";
 import {
   BeforeAfterChart, Button, EmptyState, ErrorState, Label, ScreenBody, ScreenHeader,
-  Skeleton, Spark
+  Skeleton, Spark, WorkflowRail
 } from "../ui";
 
 interface Props {
@@ -118,13 +118,13 @@ export function Today({
   const loading = cases.loading && !cases.data;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+    <div className="el-today" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <ScreenHeader
         title="Today"
         product={product}
         subtitle="What needs you right now"
         right={
-          <span style={{ display: "inline-flex", alignItems: "center", gap: S[4] }}>
+          <span className="el-today-header-actions" style={{ display: "inline-flex", alignItems: "center", gap: S[4] }}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: S[2],
                            fontFamily: mono, fontSize: T.xs, color: C.muted }}>
               {running.length > 0 && (
@@ -146,6 +146,8 @@ export function Today({
           </span>
         }
       />
+
+      <WorkflowRail active={running.length > 0 ? "investigation" : needsYou.length > 0 ? "finding" : "signal"} />
 
       <ScreenBody>
         <AccessNote onSignIn={onSignIn} />
@@ -353,7 +355,7 @@ function AccessNote({ onSignIn }: { onSignIn?: () => void }) {
   if (isAdmin()) return null;
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: S[3], flexWrap: "wrap",
+    <div className="el-access-note" style={{ display: "flex", alignItems: "center", gap: S[3], flexWrap: "wrap",
                   maxWidth: MEASURE, marginBottom: S[5], padding: `${S[3]} ${S[4]}`,
                   background: C.bgRaised, border: `1px solid ${C.border2}`,
                   borderRadius: R.card, fontSize: T.sm, color: C.muted }}>
@@ -409,13 +411,13 @@ function ScoreStrip({
   // behind the number. Previously it was the same flat card as everything
   // below it and the eye had no reason to land here first.
   return (
-    <section
+    <section className="el-score-docket"
       aria-label="Product score"
       style={{
         maxWidth: MEASURE, marginBottom: S[8], padding: `${S[5]} ${S[6]}`,
-        background: `linear-gradient(180deg, ${C.bgRaised}, ${C.card})`,
+        background: C.card,
         border: `1px solid ${C.border3}`, borderRadius: R.card,
-        boxShadow: E[2], position: "relative", overflow: "hidden",
+        position: "relative", overflow: "hidden",
         display: "flex", alignItems: "center", gap: S[6], flexWrap: "wrap"
       }}
     >
@@ -426,7 +428,7 @@ function ScoreStrip({
       <div style={{ flex: "none" }}>
         <Label>EchoLens score</Label>
         <div style={{ display: "flex", alignItems: "baseline", gap: S[3], marginTop: S[2] }}>
-          <span className="el-num" style={{ fontSize: T.display, fontWeight: 700,
+          <span className="el-num" style={{ fontSize: T.xl, fontWeight: 700,
                          color: band.color, lineHeight: 1 }}>
             {Math.round(me.score)}
           </span>
@@ -566,7 +568,7 @@ function Section({ title, count, color, action, emphasis, children }: {
   children: ReactNode;
 }) {
   return (
-    <section style={{ marginBottom: S[8] }}>
+    <section className={`el-today-section el-today-section--${title.toLowerCase().replace(/[^a-z]+/g, "-").replace(/(^-|-$)/g, "")}${emphasis ? " is-emphasis" : ""}`} style={{ marginBottom: S[8] }}>
       <div style={{ display: "flex", alignItems: "center", gap: S[3], marginBottom: S[3],
                     maxWidth: MEASURE }}>
         {emphasis ? (

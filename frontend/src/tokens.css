@@ -140,6 +140,66 @@
   --el-sidebar-w: 216px;
 }
 
+/* Evidence Docket visual world. Kept as one override block so the historical
+   token rationale above remains readable while every existing screen inherits
+   the new system without duplicating colors in components. */
+:root {
+  --el-bg: #f3f0e9;
+  --el-bg-raised: #e9e5dc;
+  --el-bg-card: #fbfaf7;
+  --el-bg-hover: #eeeae2;
+  --el-bg-active: #e3ded4;
+  --el-border: #ded8cd;
+  --el-border-2: #cdc6ba;
+  --el-border-3: #aaa296;
+  --el-border-4: #746d63;
+  --el-text: #202528;
+  --el-text-2: #303638;
+  --el-text-3: #42484a;
+  --el-text-muted: #555a5b;
+  --el-text-dim: #606463;
+  --el-text-faint: #696b68;
+  --el-text-ghost: #73736e;
+  --el-accent: #c53e33;
+  --el-accent-hover: #a62f27;
+  --el-accent-deep: #85251f;
+  --el-on-accent: #fffaf5;
+  --el-accent-bg: rgba(197, 62, 51, 0.08);
+  --el-accent-bg-hover: rgba(197, 62, 51, 0.13);
+  --el-accent-line: rgba(197, 62, 51, 0.34);
+  --el-accent-line-strong: rgba(197, 62, 51, 0.62);
+  --el-good: #287343;
+  --el-good-bg: rgba(40, 115, 67, 0.09);
+  --el-good-line: rgba(40, 115, 67, 0.32);
+  --el-bad: #b52f2f;
+  --el-bad-bg: rgba(181, 47, 47, 0.08);
+  --el-bad-line: rgba(181, 47, 47, 0.32);
+  --el-info: #245da8;
+  --el-info-bg: rgba(36, 93, 168, 0.08);
+  --el-info-line: rgba(36, 93, 168, 0.3);
+  --el-scrim: rgba(20, 24, 26, 0.66);
+  --el-track: #ddd7cc;
+  --el-scrollbar: #aaa296;
+  --el-display: "Fraunces", Georgia, serif;
+  --el-fs-micro: 11px;
+  --el-fs-xs: 12px;
+  --el-fs-sm: 13px;
+  --el-fs-base: 15px;
+  --el-fs-md: 17px;
+  --el-fs-lg: 24px;
+  --el-fs-xl: 30px;
+  --el-fs-display: 44px;
+  --el-r-control: 5px;
+  --el-r-card: 8px;
+  --el-r-overlay: 12px;
+  --el-e1: 0 1px 2px rgba(35, 31, 25, 0.08);
+  --el-e2: 0 5px 16px rgba(35, 31, 25, 0.1);
+  --el-e3: 0 14px 34px rgba(35, 31, 25, 0.14);
+  --el-e4: 0 28px 70px rgba(35, 31, 25, 0.2);
+  --el-measure: 1180px;
+  --el-sidebar-w: 248px;
+}
+
 /* Narrower gutters once the viewport can't afford them. */
 @media (max-width: 900px) {
   :root {
@@ -160,6 +220,10 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+}
+body {
+  background-image: url("./assets/mineral-paper.jpg");
+  background-size: 720px 720px;
 }
 * {
   box-sizing: border-box;
@@ -487,6 +551,455 @@ button {
   border: 0;
 }
 
+/* ── Evidence Docket application language ──────────────────────────────────
+   A disciplined paper-and-ink workspace: the shell carries the identity while
+   existing data-heavy screens inherit a quieter, more readable foundation. */
+.el-workspace {
+  background: var(--el-bg);
+  background-image: url("./assets/mineral-paper.jpg");
+  background-size: 720px 720px;
+  position: relative;
+}
+
+.el-sidebar {
+  background: #1d2325 !important;
+  border-right-color: #30383a !important;
+  color: #f6f2e9;
+}
+.el-nav-brand {
+  min-height: 82px;
+  border-bottom: 1px solid #343c3e;
+  margin-bottom: var(--el-s4);
+}
+.el-brand-mark {
+  width: 30px;
+  height: 30px;
+  border: 1px solid #f6f2e9;
+  border-radius: var(--el-r-control);
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+.el-brand-mark::before,
+.el-brand-mark::after {
+  content: "";
+  position: absolute;
+  background: #f6f2e9;
+}
+.el-brand-mark::before { width: 14px; height: 1px; }
+.el-brand-mark::after { width: 1px; height: 14px; }
+.el-brand-mark > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #d1493f;
+  z-index: 1;
+}
+.el-brand-name {
+  color: #fffaf3 !important;
+  font-family: var(--el-display);
+  font-size: 20px !important;
+  letter-spacing: -0.02em !important;
+}
+.el-sidebar .el-nav-brand .el-mono,
+.el-sidebar .el-nav-brand span span:last-child {
+  color: #b9beb9 !important;
+}
+.el-sidebar .el-btn {
+  color: #c9ceca !important;
+}
+.el-sidebar .el-btn:hover {
+  background: #293133 !important;
+  color: #fffaf3 !important;
+}
+.el-sidebar .el-nav-item {
+  min-height: 42px;
+  border-radius: var(--el-r-control) !important;
+}
+.el-sidebar .el-nav-item--active,
+.el-sidebar [aria-current="page"] {
+  background: #343c3e !important;
+  color: #fffaf3 !important;
+}
+.el-sidebar .el-nav-item--active::after,
+.el-sidebar [aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  left: -12px;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  background: #e05549;
+}
+.el-sidebar .el-product-switcher > button {
+  background: #242b2d !important;
+  border-color: #465052 !important;
+  color: #fffaf3 !important;
+}
+.el-sidebar .el-product-switcher > button span span:first-child {
+  color: #fffaf3 !important;
+}
+.el-sidebar .el-product-switcher > button span span:last-child {
+  color: #aeb5b1 !important;
+}
+
+.el-screen-header {
+  min-height: 92px;
+  background: var(--el-bg-card) !important;
+  border-bottom-color: var(--el-border-2) !important;
+  padding-block: var(--el-s5) !important;
+}
+.el-screen-header h1 {
+  font-family: var(--el-display);
+  font-size: clamp(25px, 2.2vw, 34px) !important;
+  letter-spacing: -0.025em !important;
+}
+.el-screen-header h1 > span {
+  display: inline-block;
+  margin-left: var(--el-s2);
+  padding-left: var(--el-s3);
+  border-left: 1px solid var(--el-border-3);
+  font-family: var(--el-font);
+  font-size: var(--el-fs-base);
+  letter-spacing: 0;
+  vertical-align: middle;
+}
+.el-docket-stamp {
+  border: 1px solid var(--el-accent-line-strong);
+  border-radius: var(--el-r-sm);
+  padding: var(--el-s2) var(--el-s3);
+  color: var(--el-accent);
+  font: 600 var(--el-fs-micro)/1 var(--el-mono);
+  letter-spacing: var(--el-ls-wide);
+  text-transform: uppercase;
+  transform: rotate(-1deg);
+}
+.el-screen-body {
+  scrollbar-gutter: stable;
+}
+.el-screen-measure {
+  width: 100%;
+}
+
+.el-card {
+  border-color: var(--el-border-2);
+  box-shadow: none;
+}
+.el-card--click:hover {
+  border-color: var(--el-border-4);
+  box-shadow: var(--el-e2);
+}
+.el-empty-state,
+.el-error-state {
+  background: var(--el-bg-card);
+}
+.el-empty-state {
+  border-style: solid !important;
+}
+.el-skeleton-row {
+  background: var(--el-bg-raised) !important;
+  border-color: var(--el-border) !important;
+}
+
+.el-btn {
+  min-height: 38px;
+}
+.el-btn--sm {
+  min-height: 30px;
+}
+.el-btn--primary {
+  box-shadow: 0 2px 6px rgba(115, 28, 23, 0.18);
+}
+.el-btn--primary:hover {
+  box-shadow: 0 5px 14px rgba(115, 28, 23, 0.2);
+}
+input:not([type="checkbox"]):not([type="radio"]),
+textarea,
+select {
+  min-height: 40px;
+  background: var(--el-bg-card) !important;
+  border-color: var(--el-border-3) !important;
+  color: var(--el-text) !important;
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--el-text-dim) !important;
+}
+
+/* The workflow rail repeats the product's mental model wherever work begins. */
+.el-workflow-rail {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  background: var(--el-bg-card);
+  border-bottom: 1px solid var(--el-border-2);
+  padding: 0 var(--el-gutter);
+}
+.el-workflow-step {
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  gap: var(--el-s3);
+  color: var(--el-text-muted);
+  border-right: 1px solid var(--el-border);
+  padding: var(--el-s2) var(--el-s4);
+  font-size: var(--el-fs-sm);
+}
+.el-workflow-step:first-child { padding-left: 0; }
+.el-workflow-step:last-child { border-right: 0; }
+.el-workflow-step strong {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--el-border-3);
+  border-radius: var(--el-r-sm);
+  color: var(--el-text-2);
+  font: 600 var(--el-fs-xs)/1 var(--el-mono);
+}
+.el-workflow-step:first-child strong {
+  border-color: var(--el-accent);
+  color: var(--el-accent);
+}
+.el-workflow-step span { min-width: 0; }
+.el-workflow-step b {
+  display: block;
+  color: var(--el-text-2);
+  font-size: var(--el-fs-sm);
+  font-weight: var(--el-fw-semi);
+}
+.el-workflow-step small {
+  display: block;
+  color: var(--el-text-ghost);
+  margin-top: 1px;
+}
+.el-workflow-step.is-active {
+  background: var(--el-accent-bg);
+}
+.el-workflow-step.is-active strong {
+  background: var(--el-accent);
+  border-color: var(--el-accent);
+  color: var(--el-on-accent);
+}
+.el-workflow-step.is-done strong {
+  border-color: var(--el-good);
+  color: var(--el-good);
+}
+.el-case-filters {
+  background: var(--el-bg-card);
+  border-bottom-color: var(--el-border-2) !important;
+}
+.el-score-docket {
+  border-radius: var(--el-r-sm) !important;
+}
+.el-today-section > div:first-child h2 {
+  font-family: var(--el-display);
+  letter-spacing: -0.02em;
+}
+.el-today .el-screen-measure {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(310px, 0.8fr);
+  gap: var(--el-s6);
+  align-items: start;
+}
+.el-today .el-screen-measure > * {
+  min-width: 0;
+}
+.el-access-note {
+  grid-column: 1 / -1;
+  margin-bottom: 0 !important;
+}
+.el-today-section {
+  margin-bottom: 0 !important;
+}
+.el-today-section--needs-you {
+  grid-column: 1;
+  grid-row: 1;
+}
+.el-today-section--running-queued {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  border: 1px solid var(--el-border-2);
+  background: var(--el-bg-card);
+  padding: var(--el-s4);
+}
+.el-today-section--top-open-problems {
+  grid-column: 1;
+  grid-row: 2;
+}
+.el-today-section--fixes-verified {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  border-top: 1px solid var(--el-border-2);
+  padding-top: var(--el-s5);
+}
+.el-score-docket {
+  grid-column: 1 / -1;
+  grid-row: 4;
+  margin-bottom: 0 !important;
+}
+.el-today-section--this-week {
+  grid-column: 1 / -1;
+  grid-row: 5;
+}
+.el-case-card {
+  position: relative;
+  border-radius: var(--el-r-sm);
+  background: var(--el-bg-card);
+}
+.el-case-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 1px;
+  background: var(--el-accent);
+}
+.el-case-number {
+  display: grid;
+  place-items: center;
+  flex: 0 0 58px;
+  margin: var(--el-s3) 0 var(--el-s3) var(--el-s3);
+  border: 1px solid var(--el-border-3);
+  border-radius: var(--el-r-sm);
+  color: var(--el-accent);
+  background: var(--el-bg);
+  font: 600 var(--el-fs-xs)/1 var(--el-mono);
+  letter-spacing: 0.04em;
+}
+.el-case-title {
+  display: block;
+  max-width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--el-text);
+  font: 600 var(--el-fs-md)/var(--el-lh-snug) var(--el-font);
+  text-align: left;
+  cursor: pointer;
+}
+.el-case-title:hover {
+  color: var(--el-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.el-case-dossier-header {
+  background: var(--el-bg-card);
+  padding-top: var(--el-s4) !important;
+}
+.el-case-dossier-header > div:nth-child(2) > div:first-child {
+  font-family: var(--el-display);
+  font-size: clamp(23px, 2vw, 31px) !important;
+  letter-spacing: -0.025em !important;
+}
+.el-case-dossier-header > div:last-child {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.el-case-dossier-header > div:last-child::-webkit-scrollbar { display: none; }
+
+.el-login-brand {
+  background: #1d2325 !important;
+  color: #fffaf3;
+}
+.el-login-brand .el-login-promise {
+  font-family: var(--el-display);
+  font-size: clamp(42px, 4.5vw, 66px) !important;
+  max-width: 12ch;
+}
+.el-login-brand .el-brand-mark {
+  border-color: #f6f2e9;
+}
+.el-login-brand .el-brand-mark::before,
+.el-login-brand .el-brand-mark::after { background: #f6f2e9; }
+.el-login-brand .el-brand-mark > span { background: #e05549; }
+.el-login-description {
+  border-left: 1px solid #4b5557;
+  padding-left: var(--el-s5);
+  color: #c7ceca !important;
+}
+.el-login-trace > div > div:last-child {
+  color: #c2cac6 !important;
+}
+.el-login-trace > div:nth-child(2) > div:last-child {
+  color: #82b7ff !important;
+}
+.el-login-title,
+.el-onboarding-dossier h1 {
+  font-family: var(--el-display);
+  letter-spacing: -0.025em !important;
+}
+.el-login-form {
+  background: var(--el-bg-card);
+}
+.el-login-form .el-brand-mark,
+.el-brand-mark--light {
+  border-color: var(--el-text);
+}
+.el-login-form .el-brand-mark::before,
+.el-login-form .el-brand-mark::after,
+.el-brand-mark--light::before,
+.el-brand-mark--light::after { background: var(--el-text); }
+.el-onboarding-dossier {
+  background: var(--el-bg-card) !important;
+  border-radius: var(--el-r-overlay) !important;
+}
+
+@media (max-width: 900px) {
+  .el-workflow-step small { display: none; }
+  .el-workflow-step { min-height: 46px; padding-inline: var(--el-s2); }
+  .el-docket-stamp { display: none; }
+  .el-screen-header { min-height: 72px; }
+}
+
+@media (max-width: 720px) {
+  .el-workflow-rail {
+    overflow-x: auto;
+    grid-template-columns: repeat(4, minmax(132px, 1fr));
+    padding-inline: var(--el-s3);
+  }
+  .el-workflow-step:first-child { padding-left: var(--el-s2); }
+  .el-case-filters {
+    align-items: stretch !important;
+    padding: var(--el-s3) var(--el-s4) !important;
+  }
+  .el-case-filters > div:first-child {
+    width: 100%;
+    overflow-x: auto;
+    flex-wrap: nowrap !important;
+  }
+  .el-case-filters input,
+  .el-case-filters select {
+    flex: 1 1 145px;
+    width: auto !important;
+  }
+  .el-case-dossier-header {
+    padding-inline: var(--el-s4) !important;
+  }
+  .el-screen-header h1 > span {
+    display: block;
+    border-left: 0;
+    padding-left: 0;
+    margin-left: 0;
+    margin-top: var(--el-s1);
+  }
+  .el-onboarding-dossier {
+    padding: var(--el-s6) var(--el-s4) var(--el-s8) !important;
+  }
+  .el-today .el-screen-measure {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .el-today-section--needs-you { grid-column: 1; grid-row: 1; }
+  .el-today-section--running-queued { grid-column: 1; grid-row: 2; }
+  .el-today-section--top-open-problems { grid-column: 1; grid-row: 3; }
+  .el-today-section--fixes-verified { grid-column: 1; grid-row: 4; }
+  .el-score-docket { grid-column: 1; grid-row: 5; }
+  .el-today-section--this-week { grid-column: 1; grid-row: 6; }
+  .el-case-number {
+    flex-basis: 42px;
+    margin-inline-start: var(--el-s2);
+  }
+}
+
 /* ── responsive ───────────────────────────────────────────────────────────
    The app had exactly one breakpoint (in Login, written in JavaScript with a
    resize listener) and a 216px fixed sidebar, so below roughly 1100px it
@@ -588,5 +1101,89 @@ button {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* Inline layout declarations are intentional throughout the legacy screens;
+   the phone shell is the one place the composition must decisively override
+   them so navigation stays a compact, reachable strip. */
+@media (max-width: 720px) {
+  .el-workspace,
+  .el-screen-body,
+  .el-screen-measure,
+  .el-today-section,
+  .el-today-section--running-queued {
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+  .el-screen-body {
+    overflow-x: hidden !important;
+  }
+  .el-empty-state,
+  .el-error-state {
+    width: 100%;
+    max-width: 100% !important;
+    padding-inline: var(--el-s4) !important;
+  }
+  .el-today-section--running-queued {
+    overflow: hidden;
+  }
+  .el-today-section {
+    width: calc(100vw - (2 * var(--el-gutter))) !important;
+  }
+  .el-today-section :where(p, div, span, strong) {
+    overflow-wrap: anywhere;
+  }
+  .el-shell nav.el-sidebar {
+    width: 100% !important;
+    height: 64px !important;
+    min-height: 64px;
+    flex: none !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    border-right: 0 !important;
+    border-bottom: 1px solid #343c3e !important;
+  }
+  .el-shell nav.el-sidebar > .el-nav-brand,
+  .el-shell nav.el-sidebar > .el-nav-wide,
+  .el-shell nav.el-sidebar > .el-nav-spacer {
+    display: none !important;
+  }
+  .el-shell nav.el-sidebar .el-nav-primary,
+  .el-shell nav.el-sidebar .el-nav-system {
+    display: flex !important;
+    flex: none !important;
+    flex-direction: row !important;
+    padding: var(--el-s2) !important;
+  }
+  .el-shell nav.el-sidebar .el-nav-system-group {
+    display: flex;
+    flex: none;
+    padding: 0 !important;
+  }
+  .el-shell nav.el-sidebar .el-btn {
+    flex: 0 0 40px;
+    width: 40px;
+    min-height: 40px;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  .el-shell nav.el-sidebar .el-nav-item--active::after,
+  .el-shell nav.el-sidebar [aria-current="page"]::after {
+    left: 6px;
+    right: 6px;
+    top: auto;
+    bottom: -8px;
+    width: auto;
+    height: 2px;
+  }
+  .el-screen-header {
+    align-items: flex-start !important;
+  }
+  .el-today-header-actions {
+    width: 100%;
+    justify-content: space-between;
   }
 }

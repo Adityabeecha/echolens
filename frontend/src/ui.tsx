@@ -55,10 +55,12 @@ export function Bar({ pct, color, height = 5 }: { pct: number; color: string; he
       <div
         style={{
           height: "100%",
-          width: `${v}%`,
+          width: "100%",
           borderRadius: R.pill,
           background: color,
-          transition: "width var(--el-dur-slow) var(--el-ease)"
+          transform: `scaleX(${v / 100})`,
+          transformOrigin: "left center",
+          transition: "transform var(--el-dur-slow) var(--el-ease)"
         }}
       />
     </div>
@@ -450,7 +452,7 @@ export function ScreenHeader({
   back?: { label: string; onClick: () => void };
 }) {
   return (
-    <header
+    <header className="el-screen-header"
       style={{
         display: "flex",
         alignItems: "center",
@@ -467,7 +469,7 @@ export function ScreenHeader({
           {back.label}
         </Button>
       )}
-      <div style={{ minWidth: 0 }}>
+      <div className="el-screen-heading" style={{ minWidth: 0 }}>
         <h1
           style={{
             margin: 0,
@@ -497,15 +499,44 @@ export function ScreenHeader({
         )}
       </div>
       <div style={{ flex: 1, minWidth: S[4] }} />
+      <span className="el-docket-stamp" aria-hidden>Evidence docket</span>
       {right}
     </header>
+  );
+}
+
+const WORKFLOW_STEPS = [
+  { key: "signal", label: "Signal", detail: "Detected and captured" },
+  { key: "investigation", label: "Investigation", detail: "Test competing causes" },
+  { key: "finding", label: "Finding", detail: "Synthesize evidence" },
+  { key: "fix", label: "Fix", detail: "Recommend and verify" },
+] as const;
+
+/** The shared operational model, shown as a compact dossier rail. */
+export function WorkflowRail({ active = "signal" }: {
+  active?: (typeof WORKFLOW_STEPS)[number]["key"];
+}) {
+  const current = WORKFLOW_STEPS.findIndex((step) => step.key === active);
+  return (
+    <div className="el-workflow-rail" aria-label="Case workflow">
+      {WORKFLOW_STEPS.map((step, index) => (
+        <div
+          key={step.key}
+          className={`el-workflow-step${index === current ? " is-active" : ""}${index < current ? " is-done" : ""}`}
+          aria-current={index === current ? "step" : undefined}
+        >
+          <strong>{index + 1}</strong>
+          <span><b>{step.label}</b><small>{step.detail}</small></span>
+        </div>
+      ))}
+    </div>
   );
 }
 
 /** The scrolling body of a screen. One measure, one gutter, everywhere. */
 export function ScreenBody({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
-    <div
+    <div className="el-screen-body"
       style={{
         flex: 1,
         overflow: "auto",
@@ -513,7 +544,7 @@ export function ScreenBody({ children, style }: { children: ReactNode; style?: C
         ...style
       }}
     >
-      <div style={{ maxWidth: MEASURE }}>{children}</div>
+      <div className="el-screen-measure" style={{ maxWidth: MEASURE }}>{children}</div>
     </div>
   );
 }
@@ -538,7 +569,7 @@ export function EmptyState({
   icon?: IconName | string;
 }) {
   return (
-    <div
+    <div className="el-empty-state"
       style={{
         maxWidth: "min(640px, 100%)",
         padding: `${S[8]} ${S[6]}`,
@@ -590,7 +621,7 @@ export function ErrorState({
   onRetry?: () => void;
 }) {
   return (
-    <div
+    <div className="el-error-state"
       role="alert"
       style={{
         maxWidth: "min(640px, 100%)",
@@ -632,7 +663,7 @@ export function Skeleton({ rows = 3, height = 74 }: { rows?: number; height?: nu
     >
       <span className="el-sr-only">Loading…</span>
       {Array.from({ length: rows }).map((_, i) => (
-        <div
+        <div className="el-skeleton-row"
           key={i}
           style={{
             height,

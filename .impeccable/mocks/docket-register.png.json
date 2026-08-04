@@ -1,0 +1,7 @@
+{
+  "title": "Docket Register",
+  "use_case": "ui-mockup",
+  "seed_key": "d344aae4",
+  "approved": false,
+  "decision": "Strong for the Cases screen, but too register-heavy as the product-wide first viewport."
+}

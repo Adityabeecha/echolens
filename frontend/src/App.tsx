@@ -261,7 +261,7 @@ export default function App() {
         />
       )}
 
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column",
+      <div className="el-workspace" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column",
                     overflow: "hidden" }}>
         <ErrorBoundary // The tab is part of the key: a TraceTab that threw stayed broken when
           // you switched to Finding, because nothing in the key had changed.

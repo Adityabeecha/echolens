@@ -82,11 +82,11 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
   };
 
   return (
-    <div style={{ display: "flex", height: "100dvh", background: C.bg, color: C.text, fontFamily: sans, overflow: "hidden" }}>
+    <div className="el-login" style={{ display: "flex", height: "100dvh", background: C.bg, color: C.text, fontFamily: sans, overflow: "hidden" }}>
       {!narrow && <BrandPanel />}
 
       {/* form side */}
-      <div
+      <div className="el-login-form"
         style={{
           flex: narrow ? 1 : "0 0 460px",
           display: "flex",
@@ -98,7 +98,7 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
       >
         {narrow && <Wordmark />}
 
-        <h1 style={{ margin: 0, fontSize: T.xl, fontWeight: 700, letterSpacing: "-0.01em",
+        <h1 className="el-login-title" style={{ margin: 0, fontSize: T.xl, fontWeight: 700, letterSpacing: "-0.01em",
                      marginTop: narrow ? 28 : 0 }}>
           {mode === "signup"
             ? "Create your admin account"
@@ -238,7 +238,7 @@ function BrandPanel() {
     { tag: "FOUND", color: C.good, text: "Background sync holds a wakelock — confidence 0.85." },
   ];
   return (
-    <div
+    <div className="el-login-brand"
       style={{
         flex: 1,
         minWidth: 0,
@@ -260,22 +260,22 @@ function BrandPanel() {
           width: 360,
           height: 360,
           borderRadius: "50%",
-          background: "radial-gradient(circle, rgba(240,166,60,.14), transparent 70%)",
+          background: "transparent",
           pointerEvents: "none"
         }}
       />
       <div style={{ position: "relative", maxWidth: 460 }}>
         <Wordmark large />
-        <div style={{ fontSize: T.display, fontWeight: 700, lineHeight: "var(--el-lh-tight)", letterSpacing: "-0.02em", marginTop: S[8], textWrap: "balance" as const }}>
+        <div className="el-login-promise" style={{ fontSize: T.display, fontWeight: 700, lineHeight: "var(--el-lh-tight)", letterSpacing: "-0.02em", marginTop: S[8], textWrap: "balance" as const }}>
           Find the root cause<br />before the reviews pile up.
         </div>
-        <div style={{ fontSize: T.md, color: C.muted, marginTop: S[3], lineHeight: "var(--el-lh-normal)", maxWidth: 400 }}>
+        <div className="el-login-description" style={{ fontSize: T.md, color: C.muted, marginTop: S[3], lineHeight: "var(--el-lh-normal)", maxWidth: 400 }}>
           EchoLens watches your feedback, notices what's off, and investigates it
           the way an analyst would — every conclusion backed by evidence you can click.
         </div>
 
         {/* miniature reasoning trace */}
-        <div style={{ marginTop: S[8], display: "flex", flexDirection: "column", gap: S[2] }}>
+        <div className="el-login-trace" style={{ marginTop: S[8], display: "flex", flexDirection: "column", gap: S[2] }}>
           {steps.map((s, i) => (
             <div key={i} style={{ display: "grid", gridTemplateColumns: "56px 1fr", columnGap: S[3], alignItems: "start" }}>
               <div
@@ -320,9 +320,7 @@ function Wordmark({ large }: { large?: boolean }) {
   const d = large ? 34 : 26;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: S[3] }}>
-      <div style={{ width: d, height: d, borderRadius: "50%", border: `2px solid ${C.accent}`, position: "relative", flex: "none" }}>
-        <div style={{ position: "absolute", inset: large ? 6 : 5, borderRadius: "50%", background: "radial-gradient(circle at 35% 35%, #f7bd6a, #b06f1a)" }} />
-      </div>
+      <div className="el-brand-mark" style={{ width: d, height: d }}><span /></div>
       <div>
         <div style={{ fontWeight: 700, fontSize: large ? 19 : 16, letterSpacing: "0.01em" }}>EchoLens</div>
         <div style={{ fontFamily: mono, fontSize: large ? 10 : 9.5, color: C.faint, letterSpacing: ".1em" }}>FEEDBACK FORENSICS</div>

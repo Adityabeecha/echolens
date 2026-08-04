@@ -6,7 +6,7 @@ import { age, plural } from "../format";
 import { useAsync } from "../hooks";
 import { CASE_TABS, SEVERITY } from "../status";
 import { C, MEASURE, R, S, T, mono, sans } from "../theme";
-import { EmptyState, ErrorState, Label, ScreenHeader, Skeleton } from "../ui";
+import { EmptyState, ErrorState, Label, ScreenHeader, Skeleton, WorkflowRail } from "../ui";
 import { Icon } from "../components/Icon";
 
 interface Props {
@@ -186,14 +186,16 @@ export function Cases({
             <button onClick={onNewCase} className="el-btn el-btn--primary"
               style={{ borderRadius: R.control,
                        padding: `${S[2]} ${S[4]}`, fontWeight: 600, fontSize: T.base, cursor: "pointer" }}>
-              + New case
+              <Icon name="plus" size={15} /> New case
             </button>
           ) : undefined
         }
       />
 
       {/* filter bar — every value here is in the URL */}
-      <div style={{ flex: "none", borderBottom: `1px solid ${C.border}`,
+      <WorkflowRail active="signal" />
+
+      <div className="el-case-filters" style={{ flex: "none", borderBottom: `1px solid ${C.border}`,
                     padding: `${S[3]} ${S[6]}`, display: "flex", alignItems: "center",
                     gap: S[2], flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" }}>

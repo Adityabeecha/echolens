@@ -1,0 +1,7 @@
+{
+  "title": "Evidence Thread",
+  "use_case": "ui-mockup",
+  "seed_key": "d344aae4",
+  "approved": false,
+  "decision": "The continuous evidence thread is retained for Case Detail, but the three-column topology is too specialized for Today."
+}

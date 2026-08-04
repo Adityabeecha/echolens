@@ -40,19 +40,12 @@ export function CaseCard({
 
   return (
     <div
-      className={clickable ? "el-card el-card--click" : "el-card"}
-      onClick={open}
-      role={clickable ? "button" : undefined}
-      tabIndex={clickable ? 0 : undefined}
-      onKeyDown={(e) => {
-        if (clickable && (e.key === "Enter" || e.key === " ")) {
-          e.preventDefault();
-          open();
-        }
-      }}
+      className="el-card el-case-card"
       style={{ display: "flex", alignItems: "stretch", overflow: "hidden" }}
     >
-      <span aria-hidden style={{ width: 3, flex: "none", background: stripe }} />
+      <span className="el-case-number" aria-label={row.id != null ? `Case ${row.id}` : "Queued case"}>
+        {row.id != null ? String(row.id).padStart(3, "0") : "Q"}
+      </span>
       <div
         style={{
           flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: S[4],
@@ -60,15 +53,22 @@ export function CaseCard({
         }}
       >
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            className={compact ? "el-truncate" : undefined}
-            style={{
-              fontSize: compact ? T.base : T.md, fontWeight: 600, color: C.text,
-              lineHeight: "var(--el-lh-snug)"
-            }}
-          >
-            {row.title}
-          </div>
+          {clickable ? (
+            <button type="button" onClick={open}
+              className={`el-case-title${compact ? " el-truncate" : ""}`}>
+              {row.title}
+            </button>
+          ) : (
+            <div
+              className={compact ? "el-truncate" : undefined}
+              style={{
+                fontSize: compact ? T.base : T.md, fontWeight: 600, color: C.text,
+                lineHeight: "var(--el-lh-snug)"
+              }}
+            >
+              {row.title}
+            </div>
+          )}
           <div style={{ display: "flex", alignItems: "center", gap: S[2], marginTop: S[2],
                         flexWrap: "wrap" }}>
             <StatusChip status={row.status} />
