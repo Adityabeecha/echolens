@@ -21,7 +21,7 @@ interface Props {
 }
 
 /**
- * Add a product: two inputs → hands-off backfill → live health snapshot.
+ * Add a product: choose sources → hands-off backfill → live health snapshot.
  *
  * A LAYER over the running app, not a screen that replaces it. It used to own
  * the whole window with the nav hidden, so landing here with nothing to add —
@@ -116,7 +116,7 @@ function WizardHeader({ phase, product }: { phase: "form" | "running"; product: 
       <p style={{ fontSize: T.base, color: C.muted, lineHeight: "var(--el-lh-normal)",
                   margin: 0, maxWidth: 560 }}>
         {phase === "form"
-          ? "Give it a Play Store package and (optionally) a GitHub repo. EchoLens backfills 90 days of reviews, issues and releases, builds a baseline, and surfaces what needs your attention."
+          ? "Connect Play Store and choose the GitHub data you need. Optional sources can add broader customer and developer context before EchoLens builds the baseline."
           : "Backfilling your feedback. Here's what we've found so far — no need to wait for it to finish."}
       </p>
     </div>
@@ -159,21 +159,67 @@ function Logo() {
   );
 }
 
-// ── step 1: the two inputs ──────────────────────────────────────────────
+// ── step 1: connect sources ─────────────────────────────────────────────
+
+const GITHUB_OPTIONS = [
+  { source: "github", label: "Issues & releases" },
+  { source: "github_discussions", label: "Discussions" },
+  { source: "github_activity", label: "PRs & commits" },
+] as const;
+
+const SOURCE_LABELS: Record<string, string> = {
+  play_store: "Play Store",
+  github: "GitHub Issues & releases",
+  github_discussions: "GitHub Discussions",
+  github_activity: "GitHub PRs & commits",
+  app_store: "App Store",
+  chrome_web_store: "Chrome Web Store",
+  hacker_news: "Hacker News",
+  stack_overflow: "Stack Overflow",
+};
+
+type AdditionalSources = {
+  app_store: string;
+  chrome_web_store: string;
+  hacker_news: string;
+  stack_overflow: string;
+};
 
 function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: string, productId: number) => void; canSkip: boolean; onCancel: () => void }) {
   const [pkg, setPkg] = useState("");
   const [repo, setRepo] = useState("");
   const [name, setName] = useState("");
+  const [githubMode, setGithubMode] = useState<"all" | "specific">("all");
+  const [githubSources, setGithubSources] = useState<string[]>(["github"]);
+  const [showAdditional, setShowAdditional] = useState(false);
+  const [additional, setAdditional] = useState<AdditionalSources>({
+    app_store: "", chrome_web_store: "", hacker_news: "", stack_overflow: "",
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const submit = async () => {
     if (!pkg.trim()) return;
+    const selectedGithub = githubMode === "all"
+      ? GITHUB_OPTIONS.map((option) => option.source)
+      : githubSources;
+    if (repo.trim() && selectedGithub.length === 0) {
+      setError("Select at least one GitHub data type.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const r = await api.onboard({ play_store: pkg.trim(), github: repo.trim() || undefined, product: name.trim() || undefined });
+      const r = await api.onboard({
+        play_store: pkg.trim(),
+        github: repo.trim() || undefined,
+        github_sources: repo.trim() ? selectedGithub : undefined,
+        product: name.trim() || undefined,
+        app_store: additional.app_store.trim() || undefined,
+        chrome_web_store: additional.chrome_web_store.trim() || undefined,
+        hacker_news: additional.hacker_news.trim() || undefined,
+        stack_overflow: additional.stack_overflow.trim() || undefined,
+      });
       onStarted(r.product, r.product_id);
     } catch (e) {
       setError(String(e).replace("Error: ", ""));
@@ -192,6 +238,38 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
         <input value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="signalapp/Signal-Android"
           onKeyDown={(e) => e.key === "Enter" && submit()} style={inputStyle} />
       </Field>
+      <fieldset disabled={!repo.trim()} style={{ margin: 0, padding: `${S[3]} ${S[4]}`, border: `1px solid ${C.border2}`, borderRadius: R.control, opacity: repo.trim() ? 1 : 0.55 }}>
+        <legend style={{ padding: `0 ${S[2]}`, color: C.text2, fontSize: T.sm, fontWeight: 600 }}>GitHub data</legend>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: `${S[2]} ${S[5]}` }}>
+          <Choice checked={githubMode === "all"} type="radio" name="github-mode" label="All GitHub data" onChange={() => setGithubMode("all")} />
+          <Choice checked={githubMode === "specific"} type="radio" name="github-mode" label="Choose specific" onChange={() => setGithubMode("specific")} />
+        </div>
+        {githubMode === "specific" && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: `${S[2]} ${S[5]}`, marginTop: S[3], paddingTop: S[3], borderTop: `1px solid ${C.border2}` }}>
+            {GITHUB_OPTIONS.map((option) => (
+              <Choice key={option.source} checked={githubSources.includes(option.source)} type="checkbox" label={option.label}
+                onChange={() => setGithubSources((current) => current.includes(option.source)
+                  ? current.filter((source) => source !== option.source)
+                  : [...current, option.source])} />
+            ))}
+          </div>
+        )}
+        <div style={{ color: C.faint, fontSize: T.xs, marginTop: S[2] }}>Discussions requires a configured GitHub token.</div>
+      </fieldset>
+
+      <button type="button" onClick={() => setShowAdditional((open) => !open)} aria-expanded={showAdditional}
+        className="el-btn" style={{ alignSelf: "flex-start", background: "transparent", border: `1px solid ${C.border3}`, borderRadius: R.control, color: C.text2, padding: `${S[2]} ${S[3]}`, fontSize: T.base }}>
+        {showAdditional ? "Hide additional sources" : "+ Additional sources"}
+      </button>
+      {showAdditional && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: S[4], padding: S[4], background: C.card, border: `1px solid ${C.border2}`, borderRadius: R.card }}>
+          <AdditionalField label="App Store app ID" placeholder="324684580" value={additional.app_store} onChange={(value) => setAdditional((current) => ({ ...current, app_store: value }))} />
+          <AdditionalField label="Chrome extension ID" placeholder="aapbdbdomjkkjkaonfhkkikfgjllcleb" value={additional.chrome_web_store} onChange={(value) => setAdditional((current) => ({ ...current, chrome_web_store: value }))} />
+          <AdditionalField label="Hacker News search" placeholder="product or company name" value={additional.hacker_news} onChange={(value) => setAdditional((current) => ({ ...current, hacker_news: value }))} />
+          <AdditionalField label="Stack Overflow tag" placeholder="your-product" value={additional.stack_overflow} onChange={(value) => setAdditional((current) => ({ ...current, stack_overflow: value }))} />
+          <div style={{ gridColumn: "1 / -1", color: C.faint, fontSize: T.sm }}>All additional sources are optional.</div>
+        </div>
+      )}
       <Field label="Display name" hint="Optional — defaults to the package name">
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Spotify"
           onKeyDown={(e) => e.key === "Enter" && submit()} style={inputStyle} />
@@ -217,6 +295,28 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
         <span style={{ fontSize: T.sm, color: C.faint }}>You need admin access to connect a product.</span>
       </div>
     </div>
+  );
+}
+
+function Choice({ checked, type, name, label, onChange }: {
+  checked: boolean; type: "radio" | "checkbox"; name?: string; label: string; onChange: () => void;
+}) {
+  return (
+    <label style={{ display: "inline-flex", alignItems: "center", gap: S[2], color: C.text3, fontSize: T.sm, cursor: "pointer" }}>
+      <input type={type} name={name} checked={checked} onChange={onChange} style={{ accentColor: C.accent }} />
+      {label}
+    </label>
+  );
+}
+
+function AdditionalField({ label, placeholder, value, onChange }: {
+  label: string; placeholder: string; value: string; onChange: (value: string) => void;
+}) {
+  return (
+    <label style={{ display: "block" }}>
+      <span style={{ display: "block", marginBottom: S[2], color: C.text2, fontSize: T.sm, fontWeight: 600 }}>{label}</span>
+      <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} style={inputStyle} />
+    </label>
   );
 }
 
@@ -323,7 +423,7 @@ function Backfilling({ product, onDone, onReviewSignals }: {
           return (
             <div key={s.source + s.identifier} style={{ display: "flex", alignItems: "center", gap: S[3], padding: `${S[3]} ${S[4]}`, background: C.card, border: `1px solid ${C.border2}`, borderRadius: R.card }}>
               <Dot color={color} pulse={status.backfilling && s.status !== "error" && s.status !== "healthy"} />
-              <span style={{ fontSize: T.base, fontWeight: 500 }}>{s.source === "play_store" ? "Play Store" : "GitHub"}</span>
+              <span style={{ fontSize: T.base, fontWeight: 500 }}>{SOURCE_LABELS[s.source] || s.source}</span>
               <span style={{ fontFamily: mono, fontSize: T.xs, color: C.faint }}>{s.identifier}</span>
               <div style={{ flex: 1 }} />
               <span style={{ fontSize: T.sm, color: s.status === "error" ? C.bad : C.muted }}>{label}</span>

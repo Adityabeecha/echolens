@@ -1021,7 +1021,14 @@ def _onboard_bg(product: str, product_id: int | None = None) -> None:
 class OnboardBody(BaseModel):
     play_store: str
     github: str | None = None
+    # Keep the old API behaviour (issues + releases only) when this field is
+    # omitted. The onboarding UI sends all three when the user chooses "All".
+    github_sources: list[str] = Field(default_factory=lambda: ["github"], max_length=3)
     product: str | None = None
+    app_store: str | None = None
+    chrome_web_store: str | None = None
+    hacker_news: str | None = None
+    stack_overflow: str | None = None
 
 
 @app.post("/onboard")
@@ -1041,6 +1048,13 @@ def onboard(body: OnboardBody, user: dict = Depends(require_role("admin"))) -> d
     repo, gerr = normalize_github_repo(body.github)
     if gerr:
         raise HTTPException(422, gerr)
+    allowed_github = {"github", "github_discussions", "github_activity"}
+    github_sources = list(dict.fromkeys(body.github_sources))
+    unknown_github = set(github_sources) - allowed_github
+    if unknown_github:
+        raise HTTPException(422, f"unknown GitHub source: {sorted(unknown_github)[0]}")
+    if repo and not github_sources:
+        raise HTTPException(422, "select at least one GitHub source")
     product = (body.product or "").strip() or body.play_store.strip()
     with session_scope() as session:
         from echolens.db.models import Product
@@ -1052,10 +1066,24 @@ def onboard(body: OnboardBody, user: dict = Depends(require_role("admin"))) -> d
         pid = prod.id
         add_source(session, "play_store", body.play_store.strip(), product, pid)
         if repo:
-            add_source(session, "github", repo, product, pid)
+            for source in github_sources:
+                add_source(session, source, repo, product, pid)
+        additional = {
+            "app_store": body.app_store,
+            "chrome_web_store": body.chrome_web_store,
+            "hacker_news": body.hacker_news,
+            "stack_overflow": body.stack_overflow,
+        }
+        connected_additional = []
+        for source, identifier in additional.items():
+            if identifier and identifier.strip():
+                add_source(session, source, identifier.strip(), product, pid)
+                connected_additional.append(source)
     threading.Thread(target=_onboard_bg, args=(product, pid), daemon=True).start()
     return {"status": "backfilling", "product": product, "product_id": pid,
-            "play_store": body.play_store.strip(), "github": repo}
+            "play_store": body.play_store.strip(), "github": repo,
+            "github_sources": github_sources if repo else [],
+            "additional_sources": connected_additional}
 
 
 @app.get("/onboard/status")

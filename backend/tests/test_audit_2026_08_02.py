@@ -15,7 +15,7 @@ from echolens.collectors.github import GitHubCollector
 from echolens.config import settings
 from echolens.db import session as db_session
 from echolens.db.models import (
-    AnomalyEvent, Base, FeedbackEntry, Finding, Investigation, Post, Product,
+    AnomalyEvent, Base, CollectorState, FeedbackEntry, Finding, Investigation, Post, Product,
     Release, Review,
 )
 
@@ -50,6 +50,48 @@ def test_guest_without_a_demo_cannot_fall_through_to_workspace_scope(
     monkeypatch.setattr(settings, "guest_demo_only", True)
     response = client.get("/anomalies")
     assert response.status_code == 404
+
+
+def test_onboard_connects_selected_github_and_optional_sources(api_db, monkeypatch):
+    client, Session = api_db
+    import importlib
+    api_module = importlib.import_module("echolens.api.app")
+    monkeypatch.setattr(api_module, "_onboard_bg", lambda product, product_id: None)
+
+    response = client.post("/onboard", json={
+        "play_store": "com.acme.product",
+        "github": "acme/product",
+        "github_sources": ["github", "github_discussions", "github_activity"],
+        "product": "Acme",
+        "app_store": "123456789",
+        "chrome_web_store": "aapbdbdomjkkjkaonfhkkikfgjllcleb",
+        "hacker_news": "Acme",
+        "stack_overflow": "acme-product",
+    })
+
+    assert response.status_code == 200
+    assert response.json()["additional_sources"] == [
+        "app_store", "chrome_web_store", "hacker_news", "stack_overflow"]
+    with Session() as session:
+        sources = set(session.scalars(select(CollectorState.source)).all())
+    assert sources == {
+        "play_store", "github", "github_discussions", "github_activity",
+        "app_store", "chrome_web_store", "hacker_news", "stack_overflow",
+    }
+
+
+def test_onboard_rejects_unknown_or_empty_github_selection(api_db):
+    client, _ = api_db
+    unknown = client.post("/onboard", json={
+        "play_store": "com.acme.product", "github": "acme/product",
+        "github_sources": ["github_magic"],
+    })
+    assert unknown.status_code == 422
+    empty = client.post("/onboard", json={
+        "play_store": "com.acme.product", "github": "acme/product",
+        "github_sources": [],
+    })
+    assert empty.status_code == 422
 
 
 def test_anomaly_slug_is_resolved_inside_the_requested_product(api_db):

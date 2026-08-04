@@ -914,8 +914,12 @@ export const api = {
                error: string | null; duration_seconds: number }[];
   }>(scoped("/collectors/run")),
   embed: () => post<{ embedded: Record<string, number> }>(scoped("/search/embed")),
-  onboard: (body: { play_store: string; github?: string; product?: string }) =>
-    post<{ status: string; product: string; product_id: number; play_store: string; github: string | null }>(
+  onboard: (body: {
+    play_store: string; github?: string; github_sources?: string[]; product?: string;
+    app_store?: string; chrome_web_store?: string; hacker_news?: string; stack_overflow?: string;
+  }) =>
+    post<{ status: string; product: string; product_id: number; play_store: string;
+           github: string | null; github_sources: string[]; additional_sources: string[] }>(
       "/onboard", body),
   onboardStatus: (product: string) =>
     get<OnboardStatus>(`/onboard/status?product=${encodeURIComponent(product)}`),
