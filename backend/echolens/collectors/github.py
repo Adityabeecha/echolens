@@ -35,6 +35,8 @@ def _ensure_list(resp, what: str) -> list:
 
 
 def _default_fetch(repo: str, since: str | None, per_page: int, max_pages: int = 5) -> dict:
+    from concurrent.futures import ThreadPoolExecutor
+
     import httpx
 
     headers = {"Accept": "application/vnd.github+json"}
@@ -46,24 +48,32 @@ def _default_fetch(repo: str, since: str | None, per_page: int, max_pages: int =
         params["since"] = since
     issues: list = []
     with httpx.Client(timeout=20, headers=headers) as c:
-        # paginate via the Link header (bounded) so big repos aren't truncated to 100
-        url: str | None = f"https://api.github.com/repos/{repo}/issues"
-        page_params: dict | None = dict(params)
-        # Do not request five pages only to slice the result back to `per_page`.
-        # A 200-item collection needs at most two GitHub pages.
-        page_limit = min(max_pages, max(1, (max(per_page, 1) + 99) // 100))
-        for _ in range(page_limit):
-            resp = c.get(url, params=page_params)
-            page = _ensure_list(resp, "issues")
-            issues.extend(page)
-            if len(issues) >= per_page:
-                break
-            nxt = resp.links.get("next", {}).get("url")
-            if not nxt or not page:
-                break
-            url, page_params = nxt, None  # the next link already carries the query
-        releases = _ensure_list(
-            c.get(f"https://api.github.com/repos/{repo}/releases", params={"per_page": 30}), "releases")
+        # Releases do not depend on issue pagination. Pull them concurrently so
+        # the final request does not extend onboarding's critical path. httpx
+        # Client is thread-safe and keeps the shared connection pool benefits.
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            releases_future = pool.submit(
+                c.get, f"https://api.github.com/repos/{repo}/releases",
+                params={"per_page": 30})
+
+            # Paginate via the Link header (bounded) so big repos aren't
+            # truncated to 100.
+            url: str | None = f"https://api.github.com/repos/{repo}/issues"
+            page_params: dict | None = dict(params)
+            # Do not request five pages only to slice the result back to
+            # `per_page`. A 200-item run needs at most two GitHub pages.
+            page_limit = min(max_pages, max(1, (max(per_page, 1) + 99) // 100))
+            for _ in range(page_limit):
+                resp = c.get(url, params=page_params)
+                page = _ensure_list(resp, "issues")
+                issues.extend(page)
+                if len(issues) >= per_page:
+                    break
+                nxt = resp.links.get("next", {}).get("url")
+                if not nxt or not page:
+                    break
+                url, page_params = nxt, None  # next link carries the query
+            releases = _ensure_list(releases_future.result(), "releases")
     return {"issues": issues, "releases": releases}
 
 

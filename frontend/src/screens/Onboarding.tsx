@@ -381,7 +381,9 @@ function Backfilling({ product, onDone, onReviewSignals }: {
       }
     };
     poll();
-    timer.current = window.setInterval(poll, 2500);
+    // Collection usually completes in ~5 seconds. A 2.5-second interval could
+    // add nearly half that time again before the CTA became available.
+    timer.current = window.setInterval(poll, 1000);
     return () => {
       alive = false;
       if (timer.current) window.clearInterval(timer.current);

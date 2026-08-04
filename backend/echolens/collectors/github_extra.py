@@ -123,6 +123,8 @@ class GitHubDiscussionsCollector(FeedbackCollector):
 
 
 def _default_activity_fetch(repo: str, since: str | None, limit: int) -> dict:
+    from concurrent.futures import ThreadPoolExecutor
+
     import httpx
 
     headers = {"Accept": "application/vnd.github+json"}
@@ -132,11 +134,19 @@ def _default_activity_fetch(repo: str, since: str | None, limit: int) -> dict:
     with httpx.Client(timeout=20, headers=headers) as c:
         pr_params: dict = {"state": "closed", "per_page": per_page,
                            "sort": "updated", "direction": "desc"}
-        prs = c.get(f"https://api.github.com/repos/{repo}/pulls", params=pr_params)
         commit_params: dict = {"per_page": per_page}
         if since:
             commit_params["since"] = since
-        commits = c.get(f"https://api.github.com/repos/{repo}/commits", params=commit_params)
+        # Neither endpoint depends on the other. Waiting for them serially
+        # doubled this collector's network latency during first backfill.
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            prs_future = pool.submit(
+                c.get, f"https://api.github.com/repos/{repo}/pulls",
+                params=pr_params)
+            commits_future = pool.submit(
+                c.get, f"https://api.github.com/repos/{repo}/commits",
+                params=commit_params)
+            prs, commits = prs_future.result(), commits_future.result()
     out: dict = {"pulls": [], "commits": []}
     for resp, key, what in ((prs, "pulls", "pulls"), (commits, "commits", "commits")):
         if resp.status_code >= 300:
