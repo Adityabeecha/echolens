@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -153,3 +154,64 @@ def test_constraint_failure_does_not_poison_shared_collector_session(session):
     # A later write on the same scheduler session still succeeds.
     session.add(Product(name="still-usable"))
     session.flush()
+
+
+def test_collector_network_fetches_overlap_but_ingestion_stays_safe(
+        session, monkeypatch):
+    from echolens.collectors import registry
+
+    class Slow(Collector):
+        def fetch(self, since, limit):
+            time.sleep(0.35)
+            return []
+
+        def ingest_item(self, db, item):
+            return False, None
+
+    class SlowA(Slow):
+        source = "slow-a"
+
+    class SlowB(Slow):
+        source = "slow-b"
+
+    monkeypatch.setitem(registry._BUILDERS, "slow-a", lambda i, p: SlowA(i, p))
+    monkeypatch.setitem(registry._BUILDERS, "slow-b", lambda i, p: SlowB(i, p))
+    registry.add_source(session, "slow-a", "a", "Speed")
+    registry.add_source(session, "slow-b", "b", "Speed")
+
+    started = time.monotonic()
+    results = registry.run_all(session, timeout_s=2)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.65, "two 350ms fetches should overlap, not take 700ms"
+    assert all(result.error is None for result in results)
+
+
+def test_product_scoped_collection_does_not_refetch_other_products(
+        session, monkeypatch):
+    from echolens.collectors import registry
+
+    fetched: list[str] = []
+
+    class Seen(Collector):
+        source = "seen"
+
+        def fetch(self, since, limit):
+            fetched.append(self.product)
+            return []
+
+        def ingest_item(self, db, item):
+            return False, None
+
+    monkeypatch.setitem(registry._BUILDERS, "seen", lambda i, p: Seen(i, p))
+    a = Product(name="Scoped A")
+    b = Product(name="Scoped B")
+    session.add_all([a, b])
+    session.flush()
+    registry.add_source(session, "seen", "same", a.name, a.id)
+    registry.add_source(session, "seen", "same", b.name, b.id)
+
+    results = registry.run_all(session, product_id=a.id, timeout_s=2)
+
+    assert len(results) == 1
+    assert fetched == [a.name]

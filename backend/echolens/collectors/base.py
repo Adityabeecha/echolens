@@ -34,6 +34,7 @@ class CollectResult:
     watermark: str | None = None
     error: str | None = None
     warnings: list[str] = field(default_factory=list)
+    duration_s: float = 0.0
 
     @property
     def ok(self) -> bool:
@@ -73,7 +74,14 @@ class Collector(ABC):
 
     # ── the run ─────────────────────────────────────────────────────────
 
-    def run(self, session: Session, limit: int = 200) -> CollectResult:
+    def run(self, session: Session, limit: int = 200,
+            prefetched: list[dict] | None = None) -> CollectResult:
+        """Ingest one source, optionally using rows fetched concurrently.
+
+        Network fetching is side-effect free with respect to the database, so
+        registry.run_all can overlap it safely. Normal direct callers keep the
+        original behavior by omitting ``prefetched``.
+        """
         st = self._state(session)
         st.status = "running"
         st.last_run_at = datetime.now(timezone.utc)
@@ -84,7 +92,8 @@ class Collector(ABC):
             # during the final flush used to escape this try block and leave the
             # caller's shared session unusable for every later collector.
             with session.begin_nested():
-                raw = self.fetch(since=st.watermark, limit=limit)
+                raw = (prefetched if prefetched is not None
+                       else self.fetch(since=st.watermark, limit=limit))
                 result.fetched = len(raw)
                 newest = st.watermark
             # Once an item fails, the watermark stops advancing for the rest of

@@ -931,12 +931,15 @@ def collectors_run(product_id: int | None = None,
                    user: dict = Depends(require_role("reviewer"))) -> dict:
     """Run every configured collector once (deterministic, no LLM)."""
     from echolens.collectors.registry import run_all
+    started = time.monotonic()
     with session_scope() as session:
         prod = _scope(session, product_id, user)
         results = run_all(session, product_id=(prod.id if prod else None))
         return {"results": [
             {"source": r.source, "identifier": r.identifier, "fetched": r.fetched,
-             "inserted": r.inserted, "error": r.error} for r in results]}
+             "inserted": r.inserted, "error": r.error,
+             "duration_seconds": r.duration_s} for r in results],
+                "duration_seconds": round(time.monotonic() - started, 2)}
 
 
 class RetryBody(BaseModel):
@@ -948,7 +951,7 @@ class RetryBody(BaseModel):
 @app.post("/collectors/retry")
 def collectors_retry(body: RetryBody, user: dict = Depends(require_role("reviewer"))) -> dict:
     """Retry ONE source now (the 'Retry now' action on a stale/failed source)."""
-    from echolens.collectors.registry import SourceConfig
+    from echolens.collectors.registry import SourceConfig, run_one
     with session_scope() as session:
         from echolens.db.models import CollectorState
         prod = _scope(session, body.product_id, user)
@@ -958,7 +961,9 @@ def collectors_retry(body: RetryBody, user: dict = Depends(require_role("reviewe
             CollectorState.product_id == (prod.id if prod else None))).first()
         if st is None:
             raise HTTPException(404, "no such source")
-        res = SourceConfig(st.source, st.identifier, st.product, st.product_id).build().run(session)
+        res = run_one(session, SourceConfig(
+            st.source, st.identifier, st.product, st.product_id,
+            st.id, st.watermark))
         return {"source": res.source, "identifier": res.identifier,
                 "inserted": res.inserted, "error": res.error}
 
@@ -1004,7 +1009,8 @@ def _onboard_bg(product: str, product_id: int | None = None) -> None:
     from echolens.detector.detect import scan
     try:
         with session_scope() as session:
-            run_all(session, limit=300)  # 90-day-ish backfill for a first run
+            run_all(session, limit=300, product_id=product_id,
+                    timeout_s=120)  # deeper first-run backfill, still bounded
         with session_scope() as session:
             scan(session, product=product, product_id=product_id)
         log.info("onboard_backfill_done", product=product)
@@ -1044,11 +1050,9 @@ def onboard(body: OnboardBody, user: dict = Depends(require_role("admin"))) -> d
             session.add(prod)
             session.flush()
         pid = prod.id
-        st = add_source(session, "play_store", body.play_store.strip(), product)
-        st.product_id = pid
+        add_source(session, "play_store", body.play_store.strip(), product, pid)
         if repo:
-            st2 = add_source(session, "github", repo, product)
-            st2.product_id = pid
+            add_source(session, "github", repo, product, pid)
     threading.Thread(target=_onboard_bg, args=(product, pid), daemon=True).start()
     return {"status": "backfilling", "product": product, "product_id": pid,
             "play_store": body.play_store.strip(), "github": repo}

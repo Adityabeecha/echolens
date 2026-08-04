@@ -49,10 +49,15 @@ def _default_fetch(repo: str, since: str | None, per_page: int, max_pages: int =
         # paginate via the Link header (bounded) so big repos aren't truncated to 100
         url: str | None = f"https://api.github.com/repos/{repo}/issues"
         page_params: dict | None = dict(params)
-        for _ in range(max_pages):
+        # Do not request five pages only to slice the result back to `per_page`.
+        # A 200-item collection needs at most two GitHub pages.
+        page_limit = min(max_pages, max(1, (max(per_page, 1) + 99) // 100))
+        for _ in range(page_limit):
             resp = c.get(url, params=page_params)
             page = _ensure_list(resp, "issues")
             issues.extend(page)
+            if len(issues) >= per_page:
+                break
             nxt = resp.links.get("next", {}).get("url")
             if not nxt or not page:
                 break

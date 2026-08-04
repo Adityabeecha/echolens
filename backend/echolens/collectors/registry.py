@@ -8,6 +8,7 @@ and the scheduler.
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -68,6 +69,8 @@ class SourceConfig:
     identifier: str
     product: str | None = None
     product_id: int | None = None
+    state_id: int | None = None
+    watermark: str | None = None
 
     def build(self) -> Collector:
         collector = _BUILDERS[self.source](self.identifier, self.product)
@@ -83,7 +86,8 @@ def configured_sources(session: Session, product_id: int | None = None) -> list[
     if product_id is not None:
         stmt = stmt.where(CollectorState.product_id == product_id)
     rows = session.scalars(stmt).all()
-    return [SourceConfig(r.source, r.identifier, r.product, r.product_id) for r in rows]
+    return [SourceConfig(r.source, r.identifier, r.product, r.product_id,
+                         r.id, r.watermark) for r in rows]
 
 
 def add_source(session: Session, source: str, identifier: str, product: str | None = None,
@@ -109,53 +113,114 @@ def add_source(session: Session, source: str, identifier: str, product: str | No
 # One slow source must not stall the whole scheduled job. Each collector gets
 # its own wall-clock ceiling; exceeding it is recorded as that collector's error
 # and the rest still run.
-COLLECTOR_TIMEOUT_S = 180
+# Keep manual collection below common 30-second reverse-proxy ceilings. Initial
+# onboarding uses an explicit longer timeout in its background worker.
+COLLECTOR_TIMEOUT_S = 25
+MAX_PARALLEL_FETCHES = 6
 
 
 def _run_one(cfg: SourceConfig, session: Session, limit: int) -> CollectResult:
-    """One collector, bounded by COLLECTOR_TIMEOUT_S.
+    """Compatibility wrapper for one bounded, safely prefetched source."""
+    return _run_configs(session, [cfg], limit, COLLECTOR_TIMEOUT_S)[0]
 
-    The timeout was declared and documented but never applied — `grep` found
-    exactly one reference, the definition — so a hung HTTP call blocked every
-    LATER collector indefinitely and the scheduled job never finished.
 
-    A worker thread is the only portable way to bound a blocking socket call.
-    The thread is a daemon, so a truly stuck one cannot keep the process alive;
-    it is NOT killed, because interrupting a collector mid-write would leave a
-    half-ingested page. It simply stops being waited on, and its source is
-    recorded as errored so source_health surfaces it.
+def _state_for(session: Session, cfg: SourceConfig) -> CollectorState | None:
+    if cfg.state_id is not None:
+        return session.get(CollectorState, cfg.state_id)
+    return session.scalars(select(CollectorState).where(
+        CollectorState.source == cfg.source,
+        CollectorState.identifier == cfg.identifier,
+        CollectorState.product == cfg.product)).first()
 
-    The session is used only inside the worker, one collector at a time, so no
-    two threads ever touch it concurrently.
+
+def _run_configs(session: Session, configs: list[SourceConfig], limit: int,
+                 timeout_s: float) -> list[CollectResult]:
+    """Fetch concurrently, then ingest serially on the caller's DB session.
+
+    Network waits dominate collection and are independent. SQLAlchemy sessions
+    are not thread-safe, so only fetches overlap; every write remains ordered on
+    this thread. The deadline covers the whole batch rather than each source.
     """
-    box: dict = {}
+    if not configs:
+        return []
 
-    def work():
-        try:
-            box["result"] = cfg.build().run(session, limit=limit)
-        except Exception as err:                      # construction or run
-            box["error"] = f"{type(err).__name__}: {err}"
+    started = datetime.now(timezone.utc)
+    for cfg in configs:
+        state = _state_for(session, cfg)
+        if state is not None:
+            state.status = "running"
+            state.last_run_at = started
+    session.flush()
 
-    th = threading.Thread(target=work, daemon=True,
-                          name=f"collect-{cfg.source}-{cfg.identifier}")
-    th.start()
-    th.join(COLLECTOR_TIMEOUT_S)
-    if th.is_alive():
-        log.error("collector_timeout", source=cfg.source, id=cfg.identifier,
-                  seconds=COLLECTOR_TIMEOUT_S)
-        return CollectResult(
-            source=cfg.source, identifier=cfg.identifier,
-            error=f"timed out after {COLLECTOR_TIMEOUT_S}s")
-    if "error" in box:
-        log.error("collector_build_failed", source=cfg.source,
-                  id=cfg.identifier, error=box["error"])
-        return CollectResult(source=cfg.source, identifier=cfg.identifier,
-                             error=box["error"])
-    return box["result"]
+    slots = threading.Semaphore(max(1, min(MAX_PARALLEL_FETCHES, len(configs))))
+    cancelled = threading.Event()
+    lock = threading.Lock()
+    fetched: dict[int, tuple[Collector | None, list[dict] | None, str | None, float]] = {}
+    batch_started = time.monotonic()
+
+    def fetch_one(index: int, cfg: SourceConfig) -> None:
+        with slots:
+            if cancelled.is_set():
+                return
+            source_started = time.monotonic()
+            try:
+                collector = cfg.build()
+                rows = collector.fetch(since=cfg.watermark, limit=limit)
+                payload = (collector, rows, None, time.monotonic() - source_started)
+            except Exception as err:
+                payload = (None, None, f"{type(err).__name__}: {err}",
+                           time.monotonic() - source_started)
+            with lock:
+                fetched[index] = payload
+
+    threads = [threading.Thread(
+        target=fetch_one, args=(index, cfg), daemon=True,
+        name=f"fetch-{cfg.source}-{cfg.identifier}")
+        for index, cfg in enumerate(configs)]
+    for thread in threads:
+        thread.start()
+    deadline = batch_started + timeout_s
+    for thread in threads:
+        thread.join(max(0.0, deadline - time.monotonic()))
+    cancelled.set()
+
+    results: list[CollectResult] = []
+    for index, cfg in enumerate(configs):
+        payload = fetched.get(index)
+        if payload is None:
+            error = f"timed out after {timeout_s:g}s"
+            log.error("collector_timeout", source=cfg.source, id=cfg.identifier,
+                      seconds=timeout_s)
+            result = CollectResult(source=cfg.source, identifier=cfg.identifier,
+                                   error=error, duration_s=round(timeout_s, 3))
+        else:
+            collector, rows, error, fetch_duration = payload
+            if error is not None or collector is None or rows is None:
+                result = CollectResult(source=cfg.source, identifier=cfg.identifier,
+                                       error=error or "collector fetch failed",
+                                       duration_s=round(fetch_duration, 3))
+                log.error("collector_fetch_failed", source=cfg.source,
+                          id=cfg.identifier, error=result.error)
+            else:
+                ingest_started = time.monotonic()
+                result = collector.run(session, limit=limit, prefetched=rows)
+                result.duration_s = round(
+                    fetch_duration + time.monotonic() - ingest_started, 3)
+
+        if result.error is not None:
+            state = _state_for(session, cfg)
+            if state is not None:
+                state.status = "error"
+                state.last_error = result.error
+                state.items_last_run = 0
+        results.append(result)
+    session.flush()
+    return results
 
 
-def run_all(session: Session, limit: int = 200,
-            product_id: int | None = None) -> list[CollectResult]:
+def run_all(session: Session, limit: int = 100,
+            product_id: int | None = None,
+            timeout_s: float | None = None) -> list[CollectResult]:
     """Run every configured collector. One failure never stops the rest.
 
     Collector.run already catches its own exceptions, but a collector that
@@ -164,8 +229,17 @@ def run_all(session: Session, limit: int = 200,
     no record of why. A collector that HANGS did the same thing more quietly —
     see _run_one.
     """
-    return [_run_one(cfg, session, limit)
-            for cfg in configured_sources(session, product_id=product_id)]
+    return _run_configs(
+        session, configured_sources(session, product_id=product_id), limit,
+        COLLECTOR_TIMEOUT_S if timeout_s is None else timeout_s)
+
+
+def run_one(session: Session, cfg: SourceConfig, limit: int = 100,
+            timeout_s: float | None = None) -> CollectResult:
+    """Run a manually retried source with the same bounded fetch path."""
+    return _run_configs(
+        session, [cfg], limit,
+        COLLECTOR_TIMEOUT_S if timeout_s is None else timeout_s)[0]
 
 
 def source_health(session: Session, product: str | None = None) -> list[dict]:

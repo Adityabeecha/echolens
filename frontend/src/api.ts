@@ -908,7 +908,11 @@ export const api = {
     post<{ inserted: number; error: string | null }>("/collectors/retry", {
       source, identifier, product_id: getActiveProduct()
     }),
-  collectorsRun: () => post<{ results: { source: string; identifier: string; fetched: number; inserted: number; error: string | null }[] }>(scoped("/collectors/run")),
+  collectorsRun: () => post<{
+    duration_seconds: number;
+    results: { source: string; identifier: string; fetched: number; inserted: number;
+               error: string | null; duration_seconds: number }[];
+  }>(scoped("/collectors/run")),
   embed: () => post<{ embedded: Record<string, number> }>(scoped("/search/embed")),
   onboard: (body: { play_store: string; github?: string; product?: string }) =>
     post<{ status: string; product: string; product_id: number; play_store: string; github: string | null }>(

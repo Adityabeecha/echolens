@@ -44,7 +44,10 @@ export function Sources({ onAddProduct, productName }: {
     try {
       const r = await api.collectorsRun();
       const got = r.results.reduce((n, x) => n + x.inserted, 0);
-      setMsg(`Collected ${got} new items across ${r.results.length} source(s).`);
+      const failed = r.results.filter((x) => x.error).length;
+      setMsg(`Collected ${got} new items across ${r.results.length} source(s) in ${r.duration_seconds.toFixed(1)}s${
+        failed ? ` â€” ${failed} source(s) need attention.` : "."
+      }`);
       reload();
     } catch (e) {
       setMsg(String(e).replace("Error: ", ""));

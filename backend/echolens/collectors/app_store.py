@@ -68,7 +68,10 @@ class AppStoreCollector(Collector):
     source = "app_store"
 
     def fetch(self, since: str | None, limit: int) -> list[dict]:
-        fetch = self._fetch_fn or (lambda: _default_fetch(self.identifier))
+        # Apple returns roughly 50 reviews/page. Match page count to the caller's
+        # limit instead of always making four serial HTTP requests.
+        pages = max(1, min(4, (max(limit, 1) + 49) // 50))
+        fetch = self._fetch_fn or (lambda: _default_fetch(self.identifier, pages=pages))
         raw = fetch() if callable(fetch) else fetch
         if since:
             cutoff = datetime.fromisoformat(since)
