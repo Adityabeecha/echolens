@@ -393,7 +393,15 @@ function Backfilling({ product, onDone, onReviewSignals }: {
 
   const snap = status.snapshot;
   const anomalies = status.anomalies.filter((a) => a.status === "pending");
-  const ready = snap.reviews > 0;
+  const hasReviews = snap.reviews > 0;
+  // Completion is about the collectors, not specifically Play Store reviews.
+  // A valid app can have no public reviews while GitHub still supplies hundreds
+  // of useful items. Tying the CTA to `reviews > 0` trapped those products on
+  // this screen forever even after every source had finished successfully.
+  const ready = !status.backfilling;
+  const githubItems = status.sources
+    .filter((source) => source.source.startsWith("github"))
+    .reduce((total, source) => total + source.items_last_run, 0);
   // What Cases will actually offer to triage: pending anomalies become Signals
   // rows there. `top_themes` are NOT signals — they are the most frequent
   // phrases in the corpus, capped at k=6 and computed by word frequency, so
@@ -432,11 +440,15 @@ function Backfilling({ product, onDone, onReviewSignals }: {
         })}
       </div>
 
-      {ready ? (
+      {hasReviews ? (
         <SnapshotView snap={snap} />
       ) : (
         <div style={{ padding: `${S[6]} ${S[5]}`, border: `1px dashed ${C.border4}`, borderRadius: R.card, textAlign: "center", color: C.dim, fontSize: T.base }}>
-          {status.backfilling ? "Pulling your first reviews…" : "No reviews came back yet. Check the package name is exactly as it appears in the Play Store URL."}
+          {status.backfilling
+            ? "Pulling your first reviews…"
+            : githubItems > 0
+              ? `No public Play Store reviews were available. GitHub collection finished with ${githubItems.toLocaleString()} items.`
+              : "Collection finished, but no public reviews were available for this app."}
         </div>
       )}
 

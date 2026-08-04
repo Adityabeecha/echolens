@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from echolens.collectors.github import GitHubCollector
-from echolens.collectors.play_store import PlayStoreCollector
+from echolens.collectors.play_store import PlayStoreCollector, _default_fetch
 from echolens.collectors.registry import add_source
 from echolens.db.models import Base, CollectorState, Issue, Release, Review
 
@@ -50,6 +50,34 @@ def test_play_store_incremental_watermark(db):
         {"reviewId": "r2", "score": 2, "content": "y", "at": _dt(14)}])
     r = c2.run(db)
     assert r.fetched == 1 and r.inserted == 1  # r1 filtered by watermark
+
+
+def test_play_store_empty_reviews_verifies_package_exists(monkeypatch):
+    import google_play_scraper
+    from google_play_scraper.exceptions import NotFoundError
+
+    monkeypatch.setattr(
+        google_play_scraper, "reviews", lambda *args, **kwargs: ([], "token"))
+    checked = []
+
+    def missing(package, **kwargs):
+        checked.append(package)
+        raise NotFoundError("App not found(404).")
+
+    monkeypatch.setattr(google_play_scraper, "app", missing)
+    with pytest.raises(NotFoundError, match="App not found"):
+        _default_fetch("app.missing", 100, retries=1)
+    assert checked == ["app.missing"]
+
+
+def test_play_store_real_app_with_no_reviews_remains_healthy(monkeypatch):
+    import google_play_scraper
+
+    monkeypatch.setattr(
+        google_play_scraper, "reviews", lambda *args, **kwargs: ([], "token"))
+    monkeypatch.setattr(
+        google_play_scraper, "app", lambda package, **kwargs: {"appId": package})
+    assert _default_fetch("app.new", 100, retries=1) == []
 
 
 def test_github_issues_labels_reactions_and_releases(db):
