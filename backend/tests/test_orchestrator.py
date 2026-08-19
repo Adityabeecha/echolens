@@ -1,0 +1,71 @@
+"""Orchestrator triage: LLM proposes, code enforces the daily cap."""
+from __future__ import annotations
+
+from echolens.db.models import AnomalyEvent, TriageDecision
+from echolens.detector.detect import scan
+from echolens.eval.harness import ScriptedLLM
+from echolens.orchestrator.triage import Orchestrator
+
+
+def _pending(session):
+    return {a.slug: a for a in session.query(AnomalyEvent).filter_by(status="pending")}
+
+
+def test_triage_applies_and_persists_decisions(session):
+    events = scan(session)
+    # Detector terms are derived from the product's own text now, so the GitHub
+    # signal is found by behaviour rather than by a hardcoded slug.
+    issue_slug = next(e.slug for e in events if e.type == "issue_velocity_surge")
+    script = {"decisions": [
+        {"anomaly": "auto-neg-review-spike", "decision": "investigate",
+         "reason": "clear spike", "budget_tier": "standard"},
+        {"anomaly": issue_slug, "decision": "merge",
+         "reason": "same signal", "merge_into": "auto-neg-review-spike"},
+        {"anomaly": "auto-theme-battery-drain", "decision": "ignore",
+         "reason": "duplicate theme"},
+    ]}
+    decisions = Orchestrator(session, llm=ScriptedLLM([script])).triage()
+    by_slug = {d.anomaly.slug: d for d in decisions}
+
+    assert by_slug["auto-neg-review-spike"].decision == "investigate"
+    # tier is now set adaptively by complexity (v2.0), not taken from the LLM
+    assert by_slug["auto-neg-review-spike"].budget_tier in ("quick", "standard", "deep")
+    merged = by_slug[issue_slug]
+    assert merged.decision == "merge" and merged.merge_into.slug == "auto-neg-review-spike"
+
+    # persisted + anomaly statuses updated
+    assert session.query(TriageDecision).count() >= 3
+    spike = session.query(AnomalyEvent).filter_by(slug="auto-neg-review-spike").one()
+    assert spike.status == "triaged"
+    assert session.query(AnomalyEvent).filter_by(slug=issue_slug).one().status == "merged"
+
+
+def test_daily_cap_is_enforced_in_code(session):
+    """The model may propose many investigations; the cap keeps only the
+    highest-severity ones and defers the rest."""
+    scan(session)
+    pending = _pending(session)
+    script = {"decisions": [
+        {"anomaly": s, "decision": "investigate", "reason": "x", "budget_tier": "standard"}
+        for s in pending
+    ]}
+    decisions = Orchestrator(session, llm=ScriptedLLM([script]), daily_limit=1).triage()
+    investigate = [d for d in decisions if d.decision == "investigate"]
+    assert len(investigate) == 1
+    # the survivor is the highest-|z| anomaly
+    assert abs(investigate[0].anomaly.z) == max(abs(a.z) for a in pending.values())
+    # Capped work is DEFERRED, not ignored. It was judged worth investigating and
+    # only lost on budget, so it must stay pending and come back next cycle —
+    # marking it "ignore" wrote status="ignored" and the queries that look for
+    # pending anomalies never saw it again, silently discarding the work.
+    deferred = [d for d in decisions if d.decision == "defer" and "cap" in d.reason]
+    assert deferred
+    assert all(d.anomaly.status == "pending" for d in deferred), \
+        "a deferred anomaly must stay pending so the next run picks it up"
+
+
+def test_unmentioned_anomalies_default_to_ignore(session):
+    scan(session)
+    decisions = Orchestrator(session, llm=ScriptedLLM([{"decisions": []}])).triage()
+    assert decisions
+    assert all(d.decision == "ignore" for d in decisions)

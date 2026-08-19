@@ -1,0 +1,172 @@
+"""Collector framework (v1.0). Deterministic ingestion — NO LLM, no judgment.
+
+A Collector fetches raw items from a source, normalizes them to corpus rows,
+and upserts them idempotently (dedup by ext_id) while advancing a persisted
+watermark so repeated runs only pull what's new. The network call is injected
+(`fetch_fn`) so collectors are unit-testable offline; the default fetcher lazily
+imports the third-party client only when actually run against the live source.
+"""
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from echolens.db.models import CollectorState
+from echolens.logging import get_logger
+
+log = get_logger("collector")
+
+
+@dataclass
+class CollectResult:
+    source: str
+    identifier: str
+    fetched: int = 0
+    inserted: int = 0
+    skipped_duplicate: int = 0
+    # Items that raised during ingest. Reported rather than silently dropped —
+    # a run that skipped rows is not the same as one that had nothing to add.
+    failed_items: int = 0
+    watermark: str | None = None
+    error: str | None = None
+    warnings: list[str] = field(default_factory=list)
+    duration_s: float = 0.0
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+
+class Collector(ABC):
+    """Base class. Subclasses implement `source`, `fetch` (may be injected), and
+    `ingest_item` (normalize + persist one raw item, returning True if inserted)."""
+
+    source: str = "base"
+
+    def __init__(self, identifier: str, product: str | None = None, fetch_fn=None,
+                 product_id: int | None = None):
+        self.identifier = identifier          # package name / repo
+        self.product = product or identifier
+        self.product_id = product_id
+        self._fetch_fn = fetch_fn             # injectable for tests
+
+    # ── watermark / health persistence ─────────────────────────────────
+
+    def _state(self, session: Session) -> CollectorState:
+        st = session.scalars(
+            select(CollectorState).where(
+                CollectorState.source == self.source,
+                CollectorState.identifier == self.identifier,
+                CollectorState.product == self.product,
+            )
+        ).first()
+        if st is None:
+            st = CollectorState(source=self.source, identifier=self.identifier,
+                                product=self.product, product_id=self.product_id,
+                                status="idle")
+            session.add(st)
+            session.flush()
+        return st
+
+    # ── the run ─────────────────────────────────────────────────────────
+
+    def run(self, session: Session, limit: int = 200,
+            prefetched: list[dict] | None = None) -> CollectResult:
+        """Ingest one source, optionally using rows fetched concurrently.
+
+        Network fetching is side-effect free with respect to the database, so
+        registry.run_all can overlap it safely. Normal direct callers keep the
+        original behavior by omitting ``prefetched``.
+        """
+        st = self._state(session)
+        st.status = "running"
+        st.last_run_at = datetime.now(timezone.utc)
+        session.flush()
+        result = CollectResult(source=self.source, identifier=self.identifier)
+        try:
+            # Keep all corpus writes behind a savepoint. A constraint failure
+            # during the final flush used to escape this try block and leave the
+            # caller's shared session unusable for every later collector.
+            with session.begin_nested():
+                raw = (prefetched if prefetched is not None
+                       else self.fetch(since=st.watermark, limit=limit))
+                result.fetched = len(raw)
+                newest = st.watermark
+            # Once an item fails, the watermark stops advancing for the rest of
+            # the page. A later item would otherwise carry it PAST the failed
+            # one, so the next run starts after it and that item is lost for
+            # good — while the run still reports healthy. Freezing here means a
+            # poison item is retried next time rather than skipped: a
+            # permanently bad item stalls its source, which is visible in
+            # source_health, instead of silently dropping data.
+            #
+            # Items arrive oldest-first from every collector's fetch(), so the
+            # last good watermark before the failure is the correct resume point.
+                stop_advancing = False
+                for item in raw:
+                # One malformed item must not discard the whole page. The loop
+                # was unguarded and the watermark assignment sat AFTER it, so an
+                # exception on item 150 of 200 kept the 149 rows already added
+                # while leaving the watermark unadvanced — and if the poison item
+                # was deterministic (a malformed timestamp, say) every later run
+                # re-fetched the same window forever and never got past it.
+                    try:
+                        # Flush each item while its own savepoint can discard a
+                        # malformed/duplicate row without poisoning the page.
+                        with session.begin_nested():
+                            inserted, wm = self.ingest_item(session, item)
+                            session.flush()
+                    except Exception as err:
+                        result.failed_items += 1
+                        stop_advancing = True
+                        log.warning("collector_item_failed", source=self.source,
+                                    id=self.identifier, error=f"{type(err).__name__}: {err}")
+                        continue
+                    if inserted:
+                        result.inserted += 1
+                    else:
+                        result.skipped_duplicate += 1
+                    if wm and not stop_advancing and (newest is None or wm > newest):
+                        newest = wm
+                result.watermark = newest
+                st.watermark = newest
+                st.items_last_run = result.inserted
+            # A run that dropped items is NOT healthy. source_health computes
+            # `errored = status == "error"`, so marking this healthy meant a
+            # collector failing on every item still read as fine and the
+            # "findings disclose stale sources" guarantee never fired for it.
+                st.status = "error" if result.failed_items else "healthy"
+                st.last_error = (None if not result.failed_items else
+                                 f"{result.failed_items} item(s) could not be ingested")
+                session.flush()
+                log.info("collector_run", source=self.source, id=self.identifier,
+                         fetched=result.fetched, inserted=result.inserted)
+        except Exception as err:  # a broken source must not crash the app
+            result.error = f"{type(err).__name__}: {err}"
+            st.status = "error"
+            st.last_error = result.error
+            log.error("collector_failed", source=self.source, id=self.identifier, error=result.error)
+        # The failure status is outside the failed savepoint and is safe to
+        # persist; if even this flush fails, let session_scope own the rollback.
+        session.flush()
+        return result
+
+    # ── subclass hooks ──────────────────────────────────────────────────
+
+    @abstractmethod
+    def fetch(self, since: str | None, limit: int) -> list[dict]:
+        """Return raw items newer than `since` (a watermark cursor)."""
+
+    @abstractmethod
+    def ingest_item(self, session: Session, item: dict) -> tuple[bool, str | None]:
+        """Normalize + upsert one item. Return (inserted?, watermark_for_item)."""
+
+
+def iso(dt: datetime) -> str:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat()

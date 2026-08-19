@@ -1,0 +1,43 @@
+# Verify the deployed API after a backend push.
+#
+# Northflank builds and deploys on its own when the service is linked to this
+# branch, so there is nothing to push from here. What CI is useful for is the
+# part that silently went wrong before: confirming the new build is ACTUALLY
+# serving, rather than assuming the rollout worked.
+name: verify-api
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch: {}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for the rollout, then check health
+        env:
+          API: ${{ vars.ECHOLENS_API }}
+        run: |
+          if [ -z "$API" ]; then
+            echo "::notice::Set the ECHOLENS_API repo variable (Settings -> Secrets and"
+            echo "::notice::variables -> Actions -> Variables) to verify deploys automatically."
+            exit 0
+          fi
+          echo "Waiting for Northflank to build and roll out…"
+          sleep 60
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$API/health" || true)
+            if [ "$code" = "200" ]; then
+              echo "healthy after $((60 + i * 15))s"
+              curl -s "$API/health"
+              exit 0
+            fi
+            echo "  attempt $i: HTTP $code"
+            sleep 15
+          done
+          echo "::error::$API/health never returned 200. Check the build logs in Northflank."
+          exit 1

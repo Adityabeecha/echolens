@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.pytest-tmp/
+.venv/
+
+# Node and frontend builds
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+backend/.env
+
+# Runtime data and logs
+*.db
+*.sqlite
+*.sqlite3
+*.log
+graphify-out/
+
+# Editors and operating systems
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+Microsoft/
+
+# Internal AI, design, and generated QA material
+.agents/
+.codex/
+.claude/
+.impeccable/
+.worktrees/
+docs/superpowers/
+frontend/artifacts/
+frontend/scripts/capture-responsive.mjs
+frontend/scripts/qa-state.mjs
+frontend/scripts/verify-capture-state.mjs
+PRODUCT.md
+DESIGN.md
+UI-AUDIT.md
+AUDIT*.md
+ARCHITECTURE.md
+PRD.md
+ROADMAP.md
+echolens-ui-build/
+skills-lock.json

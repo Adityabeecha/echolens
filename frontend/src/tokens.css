@@ -1,0 +1,2145 @@
+/* ============================================================================
+   EchoLens design tokens — the single source of truth.
+
+   Previously this file and theme.ts defined the same 27 values twice, and
+   components imported the JS copy, so these variables styled almost nothing.
+   Now theme.ts reads FROM here (via var()), so there is one definition per
+   value and changing it here changes it everywhere.
+   ========================================================================= */
+:root {
+  /* ── surface ────────────────────────────────────────────────────────────
+     Four levels, not six. `card` and `card2` used to differ by 1/255 on one
+     channel — a distinction nobody could see but everybody had to choose. */
+  --el-bg: #0e0f13;
+  --el-bg-raised: #101117;
+  --el-bg-card: #15161c;
+  --el-bg-hover: #1b1d26;
+  --el-bg-active: #1e202b;
+  /* Kept as an alias so existing card2 references stay valid. */
+  --el-bg-card-2: var(--el-bg-card);
+
+  /* ── border ──────────────────────────────────────────────────────────── */
+  --el-border: #22242e;
+  --el-border-2: #262933;
+  --el-border-3: #2e3140;
+  /* Was #3a3e4d at 1.80:1 — invisible as a control edge. Lifted to clear the
+     3:1 non-text contrast floor (WCAG 1.4.11) so input and control edges are
+     actually visible: 3.07:1 on a card, 3.26:1 on the page background. */
+  --el-border-4: #5e6478;
+
+  /* ── text ────────────────────────────────────────────────────────────────
+     Every value below passes WCAG AA (4.5:1) on --el-bg-card, the darkest
+     surface text ever sits on. Measured, not estimated. */
+  --el-text: #e9eaee;        /* 15.0:1 */
+  --el-text-2: #d7d9e0;      /* 12.8:1 */
+  --el-text-3: #c6c8d1;      /* 10.8:1 */
+  --el-text-muted: #9a9daa;  /*  6.7:1 */
+  --el-text-dim: #8b8e9c;    /*  5.4:1 — was #7c7f8c (4.53, marginal) */
+  --el-text-faint: #9296a3;  /*  6.0:1 — was #6b6e7b (3.56, FAILED AA) */
+  --el-text-ghost: #868a99;  /*  5.2:1 — was #565968 (2.60, FAILED badly) */
+
+  /* ── accent ──────────────────────────────────────────────────────────── */
+  --el-accent: #f0a63c;      /* 8.8:1 on card */
+  --el-accent-hover: #f7bd6a;
+  --el-accent-deep: #b06f1a;
+  --el-on-accent: #17130a;   /* 9.0:1 on accent */
+
+  /* Named accent alphas. These replace 30 hand-written rgba() literals that
+     were the same colours at nine ad-hoc opacities. */
+  --el-accent-bg: rgba(240, 166, 60, 0.1);
+  --el-accent-bg-hover: rgba(240, 166, 60, 0.16);
+  --el-accent-line: rgba(240, 166, 60, 0.35);
+  --el-accent-line-strong: rgba(240, 166, 60, 0.55);
+
+  /* ── semantic ────────────────────────────────────────────────────────── */
+  --el-good: #4cc077;
+  --el-good-bg: rgba(76, 192, 119, 0.1);
+  --el-good-line: rgba(76, 192, 119, 0.35);
+  --el-bad: #e0584f;
+  --el-bad-bg: rgba(224, 88, 79, 0.1);
+  --el-bad-line: rgba(224, 88, 79, 0.35);
+  --el-info: #8fd0ff;
+  --el-info-bg: rgba(143, 208, 255, 0.1);
+  --el-info-line: rgba(143, 208, 255, 0.35);
+
+  /* Modal scrim. One value, so every overlay dims the page identically —
+     three modals each had their own opacity (.45/.55/.62). */
+  --el-scrim: rgba(6, 7, 12, 0.66);
+
+  --el-track: #23252f;
+  --el-scrollbar: #2a2d38;
+
+  /* ── type ────────────────────────────────────────────────────────────────
+     Seven steps, no half-pixels. Replaces 25 sizes of which eleven were
+     fractional — the reason the whole interface rendered slightly soft. */
+  --el-font: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --el-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --el-fs-micro: 10px;   /* mono labels, tags */
+  --el-fs-xs: 11px;      /* dense metadata */
+  --el-fs-sm: 12px;      /* secondary body, table cells */
+  --el-fs-base: 13px;    /* body — the default */
+  --el-fs-md: 15px;      /* card titles, emphasis */
+  --el-fs-lg: 18px;      /* screen headings */
+  --el-fs-xl: 24px;      /* section numbers */
+  --el-fs-display: 36px; /* the score, and nothing else */
+
+  --el-lh-tight: 1.25;
+  --el-lh-snug: 1.4;
+  --el-lh-normal: 1.55;
+
+  --el-ls-wide: 0.08em;   /* mono labels */
+  --el-ls-tight: -0.01em; /* large headings */
+
+  --el-fw-normal: 400;
+  --el-fw-medium: 500;
+  --el-fw-semi: 600;
+  --el-fw-bold: 700;
+
+  /* ── space ───────────────────────────────────────────────────────────────
+     4px base. Replaces 86 padding strings and 20 gap values in which every
+     integer from 1 to 14 appeared. */
+  --el-s1: 4px;
+  --el-s2: 8px;
+  --el-s3: 12px;
+  --el-s4: 16px;
+  --el-s5: 20px;
+  --el-s6: 24px;
+  --el-s8: 32px;
+  --el-s10: 40px;
+  --el-s12: 48px;
+
+  /* ── shape ───────────────────────────────────────────────────────────────
+     Four radii with a rule: controls 6, cards 10, overlays 14, pills full.
+     Replaces 14 values with six of them between 6 and 12. */
+  --el-r-sm: 4px;
+  --el-r-control: 6px;
+  --el-r-card: 10px;
+  --el-r-overlay: 14px;
+  --el-r-pill: 999px;
+
+  /* ── elevation ───────────────────────────────────────────────────────────
+     A real scale. All five previous shadows were pure black at unrelated
+     blurs; on a blue-tinted dark surface that reads as dirt, not depth, so
+     these are tinted toward the background hue. */
+  --el-e1: 0 1px 2px rgba(6, 7, 12, 0.4);
+  --el-e2: 0 4px 12px rgba(6, 7, 12, 0.45);
+  --el-e3: 0 12px 32px rgba(6, 7, 12, 0.55);
+  --el-e4: 0 24px 64px rgba(6, 7, 12, 0.65);
+
+  /* ── motion ────────────────────────────────────────────────────────────── */
+  --el-dur-fast: 120ms;
+  --el-dur: 180ms;
+  --el-dur-slow: 320ms;
+  --el-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* ── layout ──────────────────────────────────────────────────────────────
+     One content measure, replacing 20 hardcoded maxWidth values. */
+  --el-measure: 1040px;
+  --el-gutter: var(--el-s6);
+  --el-sidebar-w: 216px;
+}
+
+/* Quiet product workspace: neutral structure, restrained semantic color. */
+:root {
+  --el-bg: #f7f7f8;
+  --el-bg-raised: #f0f0f2;
+  --el-bg-card: #ffffff;
+  --el-bg-hover: #f3f3f5;
+  --el-bg-active: #ececf1;
+  --el-border: #e8e8eb;
+  --el-border-2: #ddddE2;
+  --el-border-3: #c5c5cc;
+  --el-border-4: #85858f;
+  --el-text: #202124;
+  --el-text-2: #2f3035;
+  --el-text-3: #45464c;
+  --el-text-muted: #5e6069;
+  --el-text-dim: #6d6f78;
+  --el-text-faint: #73757e;
+  --el-text-ghost: #7b7d86;
+  --el-accent: #5e6ad2;
+  --el-accent-hover: #4f5bc2;
+  --el-accent-deep: #414ca8;
+  --el-on-accent: #ffffff;
+  --el-accent-bg: rgba(94, 106, 210, 0.09);
+  --el-accent-bg-hover: rgba(94, 106, 210, 0.14);
+  --el-accent-line: rgba(94, 106, 210, 0.3);
+  --el-accent-line-strong: rgba(94, 106, 210, 0.55);
+  --el-good: #2e7d5b;
+  --el-good-bg: rgba(46, 125, 91, 0.09);
+  --el-good-line: rgba(46, 125, 91, 0.28);
+  --el-bad: #c34848;
+  --el-bad-bg: rgba(195, 72, 72, 0.08);
+  --el-bad-line: rgba(195, 72, 72, 0.28);
+  --el-info: #4776b9;
+  --el-info-bg: rgba(71, 118, 185, 0.08);
+  --el-info-line: rgba(71, 118, 185, 0.28);
+  --el-scrim: rgba(20, 20, 24, 0.66);
+  --el-track: #e5e5e9;
+  --el-scrollbar: #b7b7be;
+  --el-display: var(--el-font);
+  --el-fs-micro: 11px;
+  --el-fs-xs: 12px;
+  --el-fs-sm: 13px;
+  --el-fs-base: 15px;
+  --el-fs-md: 16px;
+  --el-fs-lg: 22px;
+  --el-fs-xl: 28px;
+  --el-fs-display: 40px;
+  --el-r-control: 7px;
+  --el-r-card: 10px;
+  --el-r-overlay: 14px;
+  --el-e1: 0 1px 2px rgba(20, 20, 24, 0.06);
+  --el-e2: 0 8px 22px rgba(20, 20, 24, 0.08);
+  --el-e3: 0 18px 44px rgba(20, 20, 24, 0.12);
+  --el-e4: 0 30px 72px rgba(20, 20, 24, 0.16);
+  --el-measure: 1200px;
+  --el-sidebar-w: 232px;
+}
+
+/* Narrower gutters once the viewport can't afford them. */
+@media (max-width: 900px) {
+  :root {
+    --el-gutter: var(--el-s4);
+  }
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--el-bg);
+  color: var(--el-text);
+  height: 100%;
+  font-family: var(--el-font);
+  font-size: var(--el-fs-base);
+  line-height: var(--el-lh-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+body { background-image: none; }
+* {
+  box-sizing: border-box;
+}
+a {
+  color: var(--el-accent);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--el-accent-hover);
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--el-scrollbar);
+  border-radius: var(--el-r-control);
+  border: 2px solid var(--el-bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--el-border-4);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ── focus ────────────────────────────────────────────────────────────────
+   Applies to [role="button"] and [tabindex] too. The old rule targeted only
+   `button` and `a`, so the 33 <div role="button"> controls in the app had NO
+   visible focus ring at all — a keyboard-navigation dead end. */
+:where(button, a, [role="button"], [tabindex]:not([tabindex="-1"]), input, textarea, select):focus-visible {
+  outline: 2px solid var(--el-accent);
+  outline-offset: 2px;
+  border-radius: var(--el-r-control);
+}
+/* Never remove the ring without replacing it. */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+button {
+  font-family: inherit;
+}
+
+/* ── keyframes ──────────────────────────────────────────────────────────── */
+@keyframes elPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes elSkeleton {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+@keyframes elSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes elFadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── surfaces ─────────────────────────────────────────────────────────────
+   Class-based so :hover/:active/:focus-visible can actually be expressed.
+   Inline styles cannot hold a pseudo-class, which is why the app had no
+   press feedback anywhere. */
+.el-card {
+  background: var(--el-bg-card);
+  border: 1px solid var(--el-border-2);
+  border-radius: var(--el-r-card);
+  transition:
+    border-color var(--el-dur) var(--el-ease),
+    box-shadow var(--el-dur) var(--el-ease),
+    transform var(--el-dur-fast) var(--el-ease);
+}
+.el-card--click {
+  cursor: pointer;
+}
+.el-card--click:hover {
+  border-color: var(--el-border-4);
+  box-shadow: var(--el-e2);
+  transform: translateY(-1px);
+}
+.el-card--click:active {
+  transform: translateY(0);
+  box-shadow: var(--el-e1);
+}
+
+/* ── buttons ──────────────────────────────────────────────────────────────
+   Full state cycle: default / hover / active / focus / disabled / loading. */
+.el-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--el-s2);
+  font-family: inherit;
+  font-size: var(--el-fs-base);
+  font-weight: var(--el-fw-medium);
+  line-height: 1;
+  /* WCAG 2.2 SC 2.5.8 requires a 24x24 CSS px target. `line-height: 1` makes a
+     button exactly as tall as its text, so the default landed at 31px and the
+     --sm variant at 22px — under the floor. min-height guarantees the target
+     without changing padding or how the label sits. */
+  min-height: 32px;
+  padding: var(--el-s2) var(--el-s4);
+  border-radius: var(--el-r-control);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--el-text-2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--el-dur) var(--el-ease),
+    border-color var(--el-dur) var(--el-ease),
+    color var(--el-dur) var(--el-ease),
+    transform var(--el-dur-fast) var(--el-ease),
+    opacity var(--el-dur) var(--el-ease);
+}
+.el-btn:hover {
+  background: var(--el-bg-hover);
+  color: var(--el-text);
+}
+/* Physical press. The app previously had no :active state anywhere. */
+.el-btn:active {
+  transform: translateY(1px);
+}
+.el-btn[disabled],
+.el-btn[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+.el-btn[disabled]:hover,
+.el-btn[aria-disabled="true"]:hover {
+  background: transparent;
+  color: var(--el-text-2);
+}
+
+.el-btn--primary {
+  background: var(--el-accent);
+  color: var(--el-on-accent);
+  font-weight: var(--el-fw-semi);
+}
+.el-btn--primary:hover {
+  background: var(--el-accent-hover);
+  color: var(--el-on-accent);
+}
+.el-btn--primary[disabled]:hover {
+  background: var(--el-accent);
+}
+
+.el-btn--ghost {
+  border-color: var(--el-accent-line);
+  color: var(--el-accent);
+}
+.el-btn--ghost:hover {
+  background: var(--el-accent-bg);
+  border-color: var(--el-accent-line-strong);
+  color: var(--el-accent-hover);
+}
+
+.el-btn--quiet {
+  color: var(--el-text-muted);
+}
+.el-btn--quiet:hover {
+  background: var(--el-bg-hover);
+  color: var(--el-text);
+}
+
+.el-btn--danger {
+  border-color: var(--el-bad-line);
+  color: var(--el-bad);
+}
+.el-btn--danger:hover {
+  background: var(--el-bad-bg);
+  color: var(--el-bad);
+}
+
+.el-btn--sm {
+  font-size: var(--el-fs-sm);
+  padding: var(--el-s1) var(--el-s3);
+  min-height: 26px;   /* clears the 24px floor */
+}
+
+/* Inline controls that sit INSIDE a line of prose — a case reference, a
+   "hide evidence" toggle. A min-height would force a gap in the text, so these
+   opt out; they are not primary targets and always sit beside larger ones. */
+.el-btn--inline {
+  min-height: 0;
+}
+
+/* A button whose content is a block of text rather than a label.
+   `.el-btn` centres its content and sets `white-space: nowrap` — correct for
+   an inline control, but it clips a wrapped paragraph at BOTH ends. Any
+   card-shaped button (a selectable hypothesis, a product row) needs this. */
+.el-btn.el-btn--block {
+  /* Doubled class for specificity: `.el-btn` sets justify-content and the UA
+     stylesheet gives <button> `text-align: center`, both of which have to lose
+     here or the text stays centred. */
+  display: block;
+  width: 100%;
+  text-align: left;
+  white-space: normal;
+  line-height: var(--el-lh-normal);
+  justify-content: flex-start;
+}
+.el-btn--block:active {
+  transform: none;
+}
+
+/* Loading: a spinner replaces the label without the button changing size. */
+.el-btn--loading {
+  position: relative;
+  color: transparent !important;
+  pointer-events: none;
+}
+.el-btn--loading::after {
+  content: "";
+  position: absolute;
+  width: 13px;
+  height: 13px;
+  border: 2px solid currentcolor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  color: var(--el-text-2);
+  animation: elSpin 0.7s linear infinite;
+}
+.el-btn--primary.el-btn--loading::after {
+  color: var(--el-on-accent);
+}
+
+/* ── inputs ─────────────────────────────────────────────────────────────── */
+.el-input {
+  width: 100%;
+  background: var(--el-bg-raised);
+  border: 1px solid var(--el-border-3);
+  border-radius: var(--el-r-control);
+  color: var(--el-text);
+  font-family: inherit;
+  font-size: var(--el-fs-base);
+  padding: var(--el-s2) var(--el-s3);
+  transition:
+    border-color var(--el-dur) var(--el-ease),
+    background var(--el-dur) var(--el-ease);
+}
+.el-input::placeholder {
+  color: var(--el-text-dim);
+}
+.el-input:hover:not(:disabled) {
+  border-color: var(--el-border-4);
+}
+.el-input:focus {
+  border-color: var(--el-accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--el-accent-bg);
+}
+.el-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.el-input[aria-invalid="true"] {
+  border-color: var(--el-bad);
+}
+
+/* ── rows ─────────────────────────────────────────────────────────────────
+   Table rows and list rows. Hairline between, never boxed per row. */
+.el-row {
+  background: var(--el-bg-card);
+  transition: background var(--el-dur-fast) var(--el-ease);
+}
+.el-row--click {
+  cursor: pointer;
+}
+.el-row--click:hover {
+  background: var(--el-bg-hover);
+}
+.el-row--click:active {
+  background: var(--el-bg-active);
+}
+
+/* ── utilities ──────────────────────────────────────────────────────────── */
+.el-mono {
+  font-family: var(--el-mono);
+  font-variant-numeric: tabular-nums;
+}
+/* Numbers in tables must not jitter as they update. */
+.el-num {
+  font-family: var(--el-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+.el-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.el-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Legacy component compatibility foundation ─────────────────────────────
+   These selectors normalize older screens; the product-workspace layer below
+   supplies the current visual language. */
+.el-workspace {
+  background: var(--el-bg);
+  background-image: none;
+  position: relative;
+}
+
+.el-sidebar {
+  background: #1d2325 !important;
+  border-right-color: #30383a !important;
+  color: #f6f2e9;
+}
+.el-nav-brand {
+  min-height: 82px;
+  border-bottom: 1px solid #343c3e;
+  margin-bottom: var(--el-s4);
+}
+.el-brand-mark {
+  width: 30px;
+  height: 30px;
+  border: 1px solid #f6f2e9;
+  border-radius: var(--el-r-control);
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+.el-brand-mark::before,
+.el-brand-mark::after {
+  content: "";
+  position: absolute;
+  background: #f6f2e9;
+}
+.el-brand-mark::before { width: 14px; height: 1px; }
+.el-brand-mark::after { width: 1px; height: 14px; }
+.el-brand-mark > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #d1493f;
+  z-index: 1;
+}
+.el-brand-name {
+  color: #fffaf3 !important;
+  font-family: var(--el-display);
+  font-size: 20px !important;
+  letter-spacing: -0.02em !important;
+}
+.el-sidebar .el-nav-brand .el-mono,
+.el-sidebar .el-nav-brand span span:last-child {
+  color: #b9beb9 !important;
+}
+.el-sidebar .el-btn {
+  color: #c9ceca !important;
+}
+.el-sidebar .el-btn:hover {
+  background: #293133 !important;
+  color: #fffaf3 !important;
+}
+.el-sidebar .el-nav-item {
+  min-height: 42px;
+  border-radius: var(--el-r-control) !important;
+}
+.el-sidebar .el-nav-item--active,
+.el-sidebar [aria-current="page"] {
+  background: #343c3e !important;
+  color: #fffaf3 !important;
+}
+.el-sidebar .el-nav-item--active::after,
+.el-sidebar [aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  left: -12px;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  background: #e05549;
+}
+.el-sidebar .el-product-switcher > button {
+  background: #242b2d !important;
+  border-color: #465052 !important;
+  color: #fffaf3 !important;
+}
+.el-sidebar .el-product-switcher > button span span:first-child {
+  color: #fffaf3 !important;
+}
+.el-sidebar .el-product-switcher > button span span:last-child {
+  color: #aeb5b1 !important;
+}
+
+.el-screen-header {
+  min-height: 92px;
+  background: var(--el-bg-card) !important;
+  border-bottom-color: var(--el-border-2) !important;
+  padding-block: var(--el-s5) !important;
+}
+.el-screen-header h1 {
+  font-family: var(--el-display);
+  font-size: clamp(25px, 2.2vw, 34px) !important;
+  letter-spacing: -0.025em !important;
+}
+.el-screen-header h1 > span {
+  display: inline-block;
+  margin-left: var(--el-s2);
+  padding-left: var(--el-s3);
+  border-left: 1px solid var(--el-border-3);
+  font-family: var(--el-font);
+  font-size: var(--el-fs-base);
+  letter-spacing: 0;
+  vertical-align: middle;
+}
+.el-docket-stamp {
+  border: 1px solid var(--el-accent-line-strong);
+  border-radius: var(--el-r-sm);
+  padding: var(--el-s2) var(--el-s3);
+  color: var(--el-accent);
+  font: 600 var(--el-fs-micro)/1 var(--el-mono);
+  letter-spacing: var(--el-ls-wide);
+  text-transform: uppercase;
+  transform: rotate(-1deg);
+}
+.el-screen-body {
+  scrollbar-gutter: stable;
+}
+.el-screen-measure {
+  width: 100%;
+}
+
+.el-card {
+  border-color: var(--el-border-2);
+  box-shadow: none;
+}
+.el-card--click:hover {
+  border-color: var(--el-border-4);
+  box-shadow: var(--el-e2);
+}
+.el-empty-state,
+.el-error-state {
+  background: var(--el-bg-card);
+}
+.el-empty-state {
+  border-style: solid !important;
+}
+.el-skeleton-row {
+  background: var(--el-bg-raised) !important;
+  border-color: var(--el-border) !important;
+}
+
+.el-btn {
+  min-height: 38px;
+}
+.el-btn--sm {
+  min-height: 30px;
+}
+.el-btn--primary {
+  box-shadow: 0 2px 6px rgba(115, 28, 23, 0.18);
+}
+.el-btn--primary:hover {
+  box-shadow: 0 5px 14px rgba(115, 28, 23, 0.2);
+}
+input:not([type="checkbox"]):not([type="radio"]),
+textarea,
+select {
+  min-height: 40px;
+  background: var(--el-bg-card) !important;
+  border-color: var(--el-border-3) !important;
+  color: var(--el-text) !important;
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--el-text-dim) !important;
+}
+
+/* The workflow rail repeats the product's mental model wherever work begins. */
+.el-workflow-rail {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  background: var(--el-bg-card);
+  border-bottom: 1px solid var(--el-border-2);
+  padding: 0 var(--el-gutter);
+}
+.el-workflow-step {
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  gap: var(--el-s3);
+  color: var(--el-text-muted);
+  border-right: 1px solid var(--el-border);
+  padding: var(--el-s2) var(--el-s4);
+  font-size: var(--el-fs-sm);
+}
+.el-workflow-step:first-child { padding-left: 0; }
+.el-workflow-step:last-child { border-right: 0; }
+.el-workflow-step strong {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--el-border-3);
+  border-radius: var(--el-r-sm);
+  color: var(--el-text-2);
+  font: 600 var(--el-fs-xs)/1 var(--el-mono);
+}
+.el-workflow-step:first-child strong {
+  border-color: var(--el-accent);
+  color: var(--el-accent);
+}
+.el-workflow-step span { min-width: 0; }
+.el-workflow-step b {
+  display: block;
+  color: var(--el-text-2);
+  font-size: var(--el-fs-sm);
+  font-weight: var(--el-fw-semi);
+}
+.el-workflow-step small {
+  display: block;
+  color: var(--el-text-ghost);
+  margin-top: 1px;
+}
+.el-workflow-step.is-active {
+  background: var(--el-accent-bg);
+}
+.el-workflow-step.is-active strong {
+  background: var(--el-accent);
+  border-color: var(--el-accent);
+  color: var(--el-on-accent);
+}
+.el-workflow-step.is-done strong {
+  border-color: var(--el-good);
+  color: var(--el-good);
+}
+.el-case-filters {
+  background: var(--el-bg-card);
+  border-bottom-color: var(--el-border-2) !important;
+}
+.el-score-docket {
+  border-radius: var(--el-r-sm) !important;
+}
+.el-today-section > div:first-child h2 {
+  font-family: var(--el-display);
+  letter-spacing: -0.02em;
+}
+.el-today .el-screen-measure {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(310px, 0.8fr);
+  gap: var(--el-s6);
+  align-items: start;
+}
+.el-today .el-screen-measure > * {
+  min-width: 0;
+}
+.el-access-note {
+  grid-column: 1 / -1;
+  margin-bottom: 0 !important;
+}
+.el-today-section {
+  margin-bottom: 0 !important;
+}
+.el-today-section--needs-you {
+  grid-column: 1;
+  grid-row: 1;
+}
+.el-today-section--running-queued {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  border: 1px solid var(--el-border-2);
+  background: var(--el-bg-card);
+  padding: var(--el-s4);
+}
+.el-today-section--top-open-problems {
+  grid-column: 1;
+  grid-row: 2;
+}
+.el-today-section--fixes-verified {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  border-top: 1px solid var(--el-border-2);
+  padding-top: var(--el-s5);
+}
+.el-score-docket {
+  grid-column: 1 / -1;
+  grid-row: 4;
+  margin-bottom: 0 !important;
+}
+.el-today-section--this-week {
+  grid-column: 1 / -1;
+  grid-row: 5;
+}
+.el-case-card {
+  position: relative;
+  border-radius: var(--el-r-sm);
+  background: var(--el-bg-card);
+}
+.el-case-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 1px;
+  background: var(--el-accent);
+}
+.el-case-number {
+  display: grid;
+  place-items: center;
+  flex: 0 0 58px;
+  margin: var(--el-s3) 0 var(--el-s3) var(--el-s3);
+  border: 1px solid var(--el-border-3);
+  border-radius: var(--el-r-sm);
+  color: var(--el-accent);
+  background: var(--el-bg);
+  font: 600 var(--el-fs-xs)/1 var(--el-mono);
+  letter-spacing: 0.04em;
+}
+.el-case-title {
+  display: block;
+  max-width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--el-text);
+  font: 600 var(--el-fs-md)/var(--el-lh-snug) var(--el-font);
+  text-align: left;
+  cursor: pointer;
+}
+.el-case-title:hover {
+  color: var(--el-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.el-case-dossier-header {
+  background: var(--el-bg-card);
+  padding-top: var(--el-s4) !important;
+}
+.el-case-dossier-header > div:nth-child(2) > div:first-child {
+  font-family: var(--el-display);
+  font-size: clamp(23px, 2vw, 31px) !important;
+  letter-spacing: -0.025em !important;
+}
+.el-case-dossier-header > div:last-child {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.el-case-dossier-header > div:last-child::-webkit-scrollbar { display: none; }
+
+.el-login-brand {
+  background: #1d2325 !important;
+  color: #fffaf3;
+}
+.el-login-brand .el-login-promise {
+  font-family: var(--el-display);
+  font-size: clamp(42px, 4.5vw, 66px) !important;
+  max-width: 12ch;
+}
+.el-login-brand .el-brand-mark {
+  border-color: #f6f2e9;
+}
+.el-login-brand .el-brand-mark::before,
+.el-login-brand .el-brand-mark::after { background: #f6f2e9; }
+.el-login-brand .el-brand-mark > span { background: #e05549; }
+.el-login-description {
+  border-left: 1px solid #4b5557;
+  padding-left: var(--el-s5);
+  color: #c7ceca !important;
+}
+.el-login-trace > div > div:last-child {
+  color: #c2cac6 !important;
+}
+.el-login-trace > div:nth-child(2) > div:last-child {
+  color: #82b7ff !important;
+}
+.el-login-title,
+.el-onboarding-dossier h1 {
+  font-family: var(--el-display);
+  letter-spacing: -0.025em !important;
+}
+.el-login-form {
+  background: var(--el-bg-card);
+}
+.el-login-form .el-brand-mark,
+.el-brand-mark--light {
+  border-color: var(--el-text);
+}
+.el-login-form .el-brand-mark::before,
+.el-login-form .el-brand-mark::after,
+.el-brand-mark--light::before,
+.el-brand-mark--light::after { background: var(--el-text); }
+.el-onboarding-dossier {
+  background: var(--el-bg-card) !important;
+  border-radius: var(--el-r-overlay) !important;
+}
+
+@media (max-width: 900px) {
+  .el-workflow-step small { display: none; }
+  .el-workflow-step { min-height: 46px; padding-inline: var(--el-s2); }
+  .el-docket-stamp { display: none; }
+  .el-screen-header { min-height: 72px; }
+}
+
+@media (max-width: 720px) {
+  html,
+  body,
+  #root,
+  .el-shell,
+  .el-workspace,
+  .el-screen-header,
+  .el-screen-body {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+  html,
+  body,
+  #root,
+  .el-shell,
+  .el-workspace {
+    overflow-x: hidden !important;
+  }
+  .el-workflow-rail {
+    overflow-x: auto;
+    grid-template-columns: repeat(4, minmax(132px, 1fr));
+    padding-inline: var(--el-s3);
+  }
+  .el-workflow-step:first-child { padding-left: var(--el-s2); }
+  .el-case-filters {
+    align-items: stretch !important;
+    padding: var(--el-s3) var(--el-s4) !important;
+  }
+  .el-case-filters > div:first-child {
+    width: 100%;
+    overflow-x: auto;
+    flex-wrap: nowrap !important;
+  }
+  .el-case-filters input,
+  .el-case-filters select {
+    flex: 1 1 145px;
+    width: auto !important;
+  }
+  .el-case-dossier-header {
+    padding-inline: var(--el-s4) !important;
+  }
+  .el-screen-header h1 > span {
+    display: block;
+    border-left: 0;
+    padding-left: 0;
+    margin-left: 0;
+    margin-top: var(--el-s1);
+  }
+  .el-onboarding-dossier {
+    padding: var(--el-s6) var(--el-s4) var(--el-s8) !important;
+  }
+  .el-today .el-screen-measure {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .el-today-section--needs-you { grid-column: 1; grid-row: 1; }
+  .el-today-section--running-queued { grid-column: 1; grid-row: 2; }
+  .el-today-section--top-open-problems { grid-column: 1; grid-row: 3; }
+  .el-today-section--fixes-verified { grid-column: 1; grid-row: 4; }
+  .el-score-docket { grid-column: 1; grid-row: 5; }
+  .el-today-section--this-week { grid-column: 1; grid-row: 6; }
+  .el-case-number {
+    flex-basis: 42px;
+    margin-inline-start: var(--el-s2);
+  }
+}
+
+/* ── Product workspace refinement ──────────────────────────────────────────
+   The interface recedes behind the work: restrained surfaces, consistent
+   headers, compact controls, and semantic color only where state needs it. */
+.el-workspace {
+  background: var(--el-bg);
+  background-image: none;
+}
+
+.el-sidebar {
+  background: #1e1e20 !important;
+  border-right-color: #2c2c2f !important;
+}
+.el-nav-brand {
+  min-height: 68px;
+  margin-bottom: var(--el-s2);
+  border-bottom: 0;
+}
+.el-brand-mark {
+  width: 28px;
+  height: 28px;
+  border: 1px solid #5a5a61;
+  border-radius: 8px;
+  background: #262629;
+}
+.el-brand-mark::before {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid #b9b9c1;
+  border-radius: 50%;
+  background: transparent;
+}
+.el-brand-mark::after { display: none; }
+.el-brand-mark > span {
+  width: 4px;
+  height: 4px;
+  background: #7b86e8;
+}
+.el-brand-name {
+  color: #f4f4f5 !important;
+  font-family: var(--el-font);
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.02em !important;
+}
+.el-sidebar .el-nav-brand .el-mono,
+.el-sidebar .el-nav-brand span span:last-child {
+  color: #8e8e98 !important;
+  font-family: var(--el-font) !important;
+  font-size: 10px !important;
+  letter-spacing: 0.05em !important;
+}
+.el-sidebar .el-btn { color: #a7a7b0 !important; }
+.el-sidebar .el-btn:hover {
+  background: #29292c !important;
+  color: #f1f1f3 !important;
+}
+.el-sidebar .el-nav-item {
+  min-height: 38px;
+  border-radius: 7px !important;
+}
+.el-sidebar .el-nav-item--active,
+.el-sidebar [aria-current="page"] {
+  background: #303034 !important;
+  color: #ffffff !important;
+}
+.el-sidebar .el-nav-item--active::after,
+.el-sidebar [aria-current="page"]::after {
+  left: -12px;
+  top: 9px;
+  bottom: 9px;
+  width: 2px;
+  border-radius: 2px;
+  background: #7b86e8;
+}
+.el-sidebar .el-product-switcher > button {
+  background: transparent !important;
+  border-color: #3a3a3f !important;
+  color: #ededf0 !important;
+}
+.el-sidebar .el-product-switcher > button span span:first-child { color: #ededf0 !important; }
+.el-sidebar .el-product-switcher > button span span:last-child { color: #888891 !important; }
+
+.el-screen-header {
+  min-height: 74px;
+  padding-block: var(--el-s4) !important;
+  background: #ffffff !important;
+  border-bottom-color: var(--el-border) !important;
+}
+.el-screen-header h1 {
+  font-family: var(--el-font);
+  font-size: clamp(22px, 1.8vw, 27px) !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.03em !important;
+}
+.el-screen-header h1 > span {
+  display: inline-block;
+  margin-left: var(--el-s2);
+  padding-left: var(--el-s3);
+  border-left: 1px solid var(--el-border-2);
+  font-family: var(--el-font);
+  font-size: var(--el-fs-base);
+  font-weight: 400 !important;
+  letter-spacing: -0.01em;
+  vertical-align: middle;
+}
+.el-screen-heading > div {
+  font-family: var(--el-font) !important;
+  font-size: var(--el-fs-sm) !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+.el-docket-stamp { display: none !important; }
+
+.el-card {
+  background: #ffffff;
+  border-color: var(--el-border-2);
+  border-radius: var(--el-r-card);
+  box-shadow: none;
+}
+.el-card--click:hover,
+.el-case-card:hover {
+  border-color: #b8b8c2;
+  box-shadow: var(--el-e1);
+}
+.el-empty-state,
+.el-error-state {
+  background: #ffffff;
+  border-color: var(--el-border-2) !important;
+}
+.el-empty-state { border-style: solid !important; }
+.el-skeleton-row {
+  background: var(--el-bg-raised) !important;
+  border-color: var(--el-border) !important;
+}
+
+.el-btn {
+  min-height: 36px;
+  border-radius: var(--el-r-control);
+  font-weight: 500;
+}
+.el-btn--sm { min-height: 30px; }
+.el-btn--primary {
+  box-shadow: 0 1px 2px rgba(65, 76, 168, 0.18);
+}
+.el-btn--primary:hover {
+  box-shadow: 0 3px 9px rgba(65, 76, 168, 0.2);
+}
+input:not([type="checkbox"]):not([type="radio"]),
+textarea,
+select {
+  min-height: 38px;
+  background: #ffffff !important;
+  border-color: var(--el-border-3) !important;
+}
+
+.el-case-filters {
+  background: #ffffff;
+  border-bottom-color: var(--el-border) !important;
+}
+.el-today .el-screen-body { background: var(--el-bg); }
+.el-today .el-screen-measure {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(300px, 0.78fr);
+  gap: var(--el-s6);
+  align-items: start;
+}
+.el-today .el-screen-measure > * { min-width: 0; }
+.el-access-note {
+  grid-column: 1 / -1;
+  margin-bottom: 0 !important;
+}
+.el-today-section { margin-bottom: 0 !important; }
+.el-today-section > div:first-child {
+  min-height: 32px;
+  margin-bottom: var(--el-s2) !important;
+}
+.el-today-section > div:first-child h2,
+.el-today-section > div:first-child > div:first-child {
+  font-family: var(--el-font) !important;
+  font-size: var(--el-fs-md) !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.02em !important;
+  text-transform: none !important;
+  color: var(--el-text) !important;
+}
+.el-today-section > div:first-child h2 span {
+  background: var(--el-bg-active) !important;
+  color: var(--el-text-muted) !important;
+}
+.el-today-section--needs-you {
+  grid-column: 1;
+  grid-row: 1;
+}
+.el-today-section--running-queued {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  padding: var(--el-s4);
+  border: 1px solid var(--el-border-2);
+  border-radius: var(--el-r-card);
+  background: #ffffff;
+}
+.el-today-section--top-open-problems {
+  grid-column: 1;
+  grid-row: 2;
+}
+.el-today-section--fixes-verified {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  padding-top: var(--el-s5);
+  border-top: 1px solid var(--el-border-2);
+}
+.el-score-docket {
+  grid-column: 1 / -1;
+  grid-row: 4;
+  margin-bottom: 0 !important;
+  border-color: var(--el-border-2) !important;
+  border-radius: var(--el-r-card) !important;
+}
+.el-today-section--this-week {
+  grid-column: 1 / -1;
+  grid-row: 5;
+}
+
+.el-case-card {
+  min-height: 68px;
+  position: relative;
+  border-radius: 8px;
+  background: #ffffff;
+}
+.el-case-card::before { display: none; }
+.el-case-status-mark {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  margin: auto 0 auto var(--el-s4);
+  border-radius: 50%;
+}
+.el-case-id {
+  color: var(--el-text-dim);
+  font-size: var(--el-fs-xs);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.el-case-title {
+  color: var(--el-text);
+  font: 500 var(--el-fs-md)/var(--el-lh-snug) var(--el-font);
+  letter-spacing: -0.015em;
+}
+.el-case-title:hover {
+  color: var(--el-accent-hover);
+  text-decoration: none;
+}
+.el-case-dossier-header {
+  background: #ffffff;
+  padding-top: var(--el-s3) !important;
+}
+.el-case-breadcrumb {
+  color: var(--el-text-muted);
+  font-size: var(--el-fs-sm);
+  font-weight: 500;
+}
+.el-case-dossier-header > div:nth-child(2) > div:first-child {
+  font-family: var(--el-font);
+  font-size: clamp(21px, 1.8vw, 27px) !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.03em !important;
+}
+
+.el-login-brand {
+  background: #1e1e20 !important;
+  color: #ffffff;
+}
+.el-login-brand .el-login-promise {
+  font-family: var(--el-font);
+  font-size: clamp(38px, 4vw, 58px) !important;
+  font-weight: 600;
+  letter-spacing: -0.045em;
+  max-width: 13ch;
+}
+.el-login-description {
+  border-left: 1px solid #4a4a50;
+  color: #b4b4bc !important;
+}
+.el-login-title,
+.el-onboarding-dossier h1 {
+  font-family: var(--el-font);
+  font-weight: 600 !important;
+  letter-spacing: -0.035em !important;
+}
+.el-login-form { background: #ffffff; }
+.el-onboarding-dossier {
+  background: #ffffff !important;
+  border-radius: var(--el-r-overlay) !important;
+}
+
+@media (max-width: 900px) {
+  .el-screen-header { min-height: 68px; }
+  .el-today .el-screen-measure {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .el-today-section--needs-you { grid-column: 1; grid-row: 1; }
+  .el-today-section--running-queued { grid-column: 1; grid-row: 2; }
+  .el-today-section--top-open-problems { grid-column: 1; grid-row: 3; }
+  .el-today-section--fixes-verified { grid-column: 1; grid-row: 4; }
+  .el-score-docket { grid-column: 1; grid-row: 5; }
+  .el-today-section--this-week { grid-column: 1; grid-row: 6; }
+}
+
+@media (max-width: 720px) {
+  .el-case-filters {
+    align-items: stretch !important;
+    padding: var(--el-s3) var(--el-s4) !important;
+  }
+  .el-case-filters > div:first-child {
+    width: 100%;
+    overflow-x: auto;
+    flex-wrap: nowrap !important;
+  }
+  .el-case-filters input,
+  .el-case-filters select {
+    flex: 1 1 145px;
+    width: auto !important;
+  }
+  .el-screen-header h1 > span {
+    display: block;
+    margin: var(--el-s1) 0 0;
+    padding-left: 0;
+    border-left: 0;
+  }
+  .el-case-dossier-header { padding-inline: var(--el-s4) !important; }
+  .el-today-section--running-queued { padding: var(--el-s4); }
+  .el-case-status-mark { margin-left: var(--el-s3); }
+  .el-shell nav.el-sidebar {
+    background: #1e1e20 !important;
+    border-bottom-color: #2c2c2f !important;
+  }
+}
+
+.el-sidebar .el-nav-item > span[aria-hidden] { display: none; }
+
+.el-today--no-flight .el-today-section--running-queued {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+.el-today--no-flight .el-today-section--top-open-problems { grid-row: 3; }
+.el-today--no-flight .el-today-section--fixes-verified { grid-row: 4; }
+.el-today--no-flight .el-score-docket { grid-row: 5; }
+.el-today--no-flight .el-today-section--this-week { grid-row: 6; }
+
+.el-screen-product {
+  display: inline-block;
+  margin-left: var(--el-s3);
+  padding-left: var(--el-s3);
+  border-left: 1px solid var(--el-border);
+}
+
+.el-quiet-state {
+  display: flex;
+  align-items: center;
+  gap: var(--el-s3);
+  min-height: 52px;
+  padding: var(--el-s3) 0;
+  color: var(--el-text-2);
+}
+.el-quiet-state__mark {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--el-text-4);
+}
+.el-quiet-state__mark.is-good { background: var(--el-green); }
+.el-quiet-state strong {
+  display: block;
+  color: var(--el-text);
+  font-size: var(--el-text-sm);
+  font-weight: 500;
+}
+.el-quiet-state p {
+  margin: 2px 0 0;
+  color: var(--el-text-3);
+  font-size: var(--el-text-sm);
+}
+.el-quiet-state .el-btn { margin-left: auto; }
+
+@media (max-width: 720px) {
+  .el-screen-product {
+    display: block;
+    margin: var(--el-s1) 0 0;
+    padding-left: 0;
+    border-left: 0;
+  }
+  .el-quiet-state { align-items: flex-start; }
+  .el-quiet-state .el-btn { flex: none; }
+  .el-shell nav.el-sidebar .el-nav-primary {
+    flex: 1 0 auto !important;
+    padding: var(--el-s2) !important;
+  }
+  .el-shell nav.el-sidebar .el-nav-primary .el-btn {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 74px;
+    padding: 0 var(--el-s3) !important;
+    gap: var(--el-s2) !important;
+  }
+  .el-shell nav.el-sidebar .el-nav-primary .el-nav-label {
+    display: inline !important;
+  }
+  .el-shell nav.el-sidebar .el-nav-system-group {
+    position: static;
+  }
+  .el-shell nav.el-sidebar .el-nav-system-toggle {
+    display: flex !important;
+    width: 42px !important;
+    flex: 0 0 42px !important;
+  }
+  .el-shell nav.el-sidebar .el-nav-system-toggle .el-nav-label {
+    display: none !important;
+  }
+  .el-shell nav.el-sidebar .el-nav-system {
+    display: none !important;
+  }
+  .el-shell nav.el-sidebar .el-nav-system.is-open {
+    display: flex !important;
+  }
+  .el-live-summary { font-size: var(--el-fs-xs) !important; }
+}
+
+/* ── responsive ───────────────────────────────────────────────────────────
+   The app had exactly one breakpoint (in Login, written in JavaScript with a
+   resize listener) and a 216px fixed sidebar, so below roughly 1100px it
+   overflowed rather than adapting.
+
+   Tablet: the sidebar keeps its icons and drops its labels, which buys 150px
+   without losing navigation. Phone: it becomes a horizontal bar at the top. */
+@media (max-width: 1024px) {
+  :root {
+    --el-sidebar-w: 64px;
+  }
+  /* Labels are hidden the accessible way: clipped, not `display: none` and not
+     `font-size: 0`. The text stays in the accessibility tree, so a screen
+     reader still announces "Cases" while the sighted user sees only the icon.
+     Each control also carries a `title`, giving a hover tooltip. */
+  .el-shell nav[aria-label="Main"] .el-nav-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  /* Wide-only furniture: the product switcher and the running-investigations
+     badge are unreadable at 64px, so they fold away entirely rather than
+     truncating into nonsense. */
+  .el-shell nav[aria-label="Main"] .el-nav-wide {
+    display: none;
+  }
+  .el-shell nav[aria-label="Main"] .el-btn {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+}
+
+@media (max-width: 720px) {
+  :root {
+    --el-sidebar-w: 100%;
+  }
+  .el-shell {
+    flex-direction: column;
+  }
+  .el-shell nav[aria-label="Main"] {
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--el-border);
+  }
+  /* Only the genuinely wide furniture folds away — the product switcher and
+     the running-investigations badge, both already tagged .el-nav-wide.
+
+     This used to be `> *:not(.el-nav-primary)`, which hid EVERYTHING else:
+     Sign out, the System group and the All-products link all disappeared, so a
+     phone had exactly three destinations and no way to sign out or reach
+     Settings, Sources, Patterns, Calibration or Costs. Five of twelve screens
+     were unreachable. The System wrapper was simply a <div> nobody had given an
+     opt-out class to. */
+  .el-shell nav[aria-label="Main"] > .el-nav-wide,
+  .el-shell nav[aria-label="Main"] > .el-nav-brand {
+    display: none;
+  }
+  /* The nav scrolls horizontally, so every group lays out in a row. */
+  .el-shell nav[aria-label="Main"] .el-nav-primary,
+  .el-shell nav[aria-label="Main"] .el-nav-system {
+    flex-direction: row;
+    padding: var(--el-s2);
+    gap: var(--el-s1);
+  }
+  /* The System group's disclosure is pointless in a row that already scrolls:
+     show its items inline and drop the toggle. !important because the group
+     carries an inline `display` for the desktop disclosure, and an inline
+     style otherwise wins over this rule. */
+  .el-shell nav[aria-label="Main"] .el-nav-system-toggle {
+    display: none;
+  }
+  .el-shell nav[aria-label="Main"] .el-nav-system {
+    display: flex !important;
+  }
+  .el-shell nav[aria-label="Main"] .el-nav-spacer {
+    display: none;
+  }
+  /* Labels stay hidden (the 1024px rule already clipped them), so this is an
+     icon bar — but every destination is still in it. */
+}
+
+/* ── motion preference ────────────────────────────────────────────────────
+   Existing behaviour, preserved. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Inline layout declarations are intentional throughout the legacy screens;
+   the phone shell is the one place the composition must decisively override
+   them so navigation stays a compact, reachable strip. */
+@media (max-width: 720px) {
+  .el-workspace,
+  .el-screen-body,
+  .el-screen-measure,
+  .el-today-section,
+  .el-today-section--running-queued {
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+  .el-screen-body {
+    overflow-x: hidden !important;
+  }
+  .el-empty-state,
+  .el-error-state {
+    width: 100%;
+    max-width: 100% !important;
+    padding-inline: var(--el-s4) !important;
+  }
+  .el-today-section--running-queued {
+    overflow: hidden;
+  }
+  .el-today-section {
+    width: 100% !important;
+  }
+  .el-today-section :where(p, div, span, strong) {
+    overflow-wrap: anywhere;
+  }
+  .el-shell nav.el-sidebar {
+    width: 100% !important;
+    height: 64px !important;
+    min-height: 64px;
+    flex: none !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    border-right: 0 !important;
+    border-bottom: 1px solid #343c3e !important;
+  }
+  .el-shell nav.el-sidebar > .el-nav-brand,
+  .el-shell nav.el-sidebar > .el-nav-wide,
+  .el-shell nav.el-sidebar > .el-nav-spacer {
+    display: none !important;
+  }
+  .el-shell nav.el-sidebar .el-nav-primary,
+  .el-shell nav.el-sidebar .el-nav-system {
+    display: flex !important;
+    flex: none !important;
+    flex-direction: row !important;
+    padding: var(--el-s2) !important;
+  }
+  .el-shell nav.el-sidebar .el-nav-system-group {
+    display: flex;
+    flex: none;
+    padding: 0 !important;
+  }
+  .el-shell nav.el-sidebar .el-btn {
+    flex: 0 0 40px;
+    width: 40px;
+    min-height: 40px;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  .el-shell nav.el-sidebar .el-nav-item--active::after,
+  .el-shell nav.el-sidebar [aria-current="page"]::after {
+    left: 6px;
+    right: 6px;
+    top: auto;
+    bottom: -8px;
+    width: auto;
+    height: 2px;
+  }
+  .el-screen-header {
+    align-items: flex-start !important;
+  }
+  .el-today-header-actions {
+    width: 100%;
+    min-width: 0;
+    flex-direction: column;
+    align-items: flex-start !important;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+  .el-screen-header__spacer { display: none; }
+  .el-action-row > div {
+    flex-wrap: wrap;
+  }
+  .el-action-row .el-btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .el-action-row .el-truncate {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+  .el-quiet-state {
+    flex-wrap: wrap;
+  }
+  .el-quiet-state > div {
+    flex: 1 1 calc(100% - var(--el-s5));
+    min-width: 0;
+  }
+  .el-quiet-state .el-btn {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-start;
+  }
+  .el-section-heading {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .el-section-heading__spacer { display: none; }
+  .el-section-heading > .el-btn {
+    flex-basis: 100%;
+    margin-left: 0 !important;
+    justify-content: flex-start;
+  }
+}
+
+/* ========================================================================== */
+/* HUMAN PRECISION UI — Human Signal Studio × Precision Workspace             */
+/* ========================================================================== */
+:root {
+  --el-canvas-warm: #f6f4ef;
+  --el-nav-ink: #12302d;
+  --el-accent-teal: #2a7d70;
+  --el-paper: #fffdf8;
+  --el-rule-warm: #ddd8cd;
+  --el-bg: var(--el-canvas-warm);
+  --el-bg-raised: #efebe3;
+  --el-bg-card: var(--el-paper);
+  --el-bg-hover: #f0eee8;
+  --el-bg-active: #dfece8;
+  --el-border: #e6e1d7;
+  --el-border-2: var(--el-rule-warm);
+  --el-border-3: #c9c2b5;
+  --el-border-4: #817b70;
+  --el-text: #172825;
+  --el-text-2: #263b37;
+  --el-text-3: #435650;
+  --el-text-muted: #586a65;
+  --el-text-dim: #667771;
+  --el-text-faint: #64756f;
+  --el-text-ghost: #71817c;
+  --el-accent: var(--el-accent-teal);
+  --el-accent-hover: #206a60;
+  --el-accent-deep: #18574f;
+  --el-on-accent: #ffffff;
+  --el-accent-bg: #e1efeb;
+  --el-accent-bg-hover: #d5e8e2;
+  --el-accent-line: #9cc8bd;
+  --el-accent-line-strong: #68aa9b;
+  --el-good: #25745b;
+  --el-good-bg: #e2f1ea;
+  --el-good-line: #9bc6b2;
+  --el-bad: #bd5145;
+  --el-bad-bg: #fae8e3;
+  --el-bad-line: #e5afa5;
+  --el-info: #3f6f9e;
+  --el-info-bg: #e7eef5;
+  --el-info-line: #a9bfd4;
+  --el-track: #e4e0d7;
+  --el-scrollbar: #b8b2a7;
+  --el-r-control: 9px;
+  --el-r-card: 14px;
+  --el-r-overlay: 18px;
+  --el-e1: 0 1px 2px rgba(25, 45, 40, 0.05);
+  --el-e2: 0 10px 28px rgba(25, 45, 40, 0.08);
+  --el-e3: 0 20px 48px rgba(25, 45, 40, 0.13);
+  --el-e4: 0 32px 80px rgba(25, 45, 40, 0.18);
+  --el-measure: 1240px;
+  --el-sidebar-w: 232px;
+  --el-gutter: 28px;
+}
+
+body { background: var(--el-canvas-warm); }
+.el-mobile-context,
+.el-mobile-task-nav { display: none; }
+
+.el-shell nav.el-sidebar {
+  color: #edf5f2 !important;
+  background: var(--el-nav-ink) !important;
+  border-right: 0 !important;
+}
+.el-sidebar .el-brand-name,
+.el-sidebar .el-nav-brand > span > span:first-child { color: #f7fbf9 !important; }
+.el-sidebar .el-nav-brand > span > span:last-child,
+.el-sidebar .el-nav-label { color: #b8cbc5; }
+.el-sidebar .el-product-switcher > button,
+.el-sidebar .el-nav-wide {
+  color: #e8f1ee !important;
+  background: rgba(255,255,255,.055) !important;
+  border-color: rgba(255,255,255,.11) !important;
+}
+.el-sidebar .el-nav-item { color: #bdd0ca !important; }
+.el-sidebar .el-nav-item:hover { background: rgba(255,255,255,.06) !important; }
+.el-sidebar .el-nav-item--active,
+.el-sidebar [aria-current="page"] {
+  color: #ffffff !important;
+  background: rgba(84, 176, 157, .18) !important;
+}
+.el-sidebar .el-nav-item--active .el-nav-label,
+.el-sidebar [aria-current="page"] .el-nav-label { color: #ffffff !important; }
+
+.el-screen-header {
+  min-height: 84px;
+  padding: 18px var(--el-gutter) !important;
+  background: rgba(255,253,248,.92) !important;
+  border-bottom-color: var(--el-border) !important;
+}
+.el-screen-header h1 { font-size: 24px !important; letter-spacing: -0.025em !important; }
+.el-screen-body { padding: 28px var(--el-gutter) 64px !important; }
+.el-card,
+.el-score-docket { background: var(--el-paper) !important; border-color: var(--el-border-2) !important; }
+.el-card--click:hover { border-color: var(--el-accent-line) !important; box-shadow: var(--el-e1); }
+.el-btn--primary { box-shadow: none !important; }
+
+.el-attention-brief {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 32px;
+  margin-bottom: 4px;
+  padding: 2px 0 24px;
+  border-bottom: 1px solid var(--el-border-2);
+}
+.el-attention-brief h2 {
+  margin: 0;
+  max-width: 760px;
+  color: var(--el-text);
+  font-size: clamp(25px, 2.2vw, 34px);
+  line-height: 1.18;
+  letter-spacing: -0.03em;
+}
+.el-attention-brief p {
+  margin: 8px 0 0;
+  max-width: 62ch;
+  color: var(--el-text-muted);
+  font-size: 14px;
+}
+.el-attention-brief__activity {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  flex: none;
+  padding: 10px 14px;
+  color: var(--el-accent-deep);
+  background: var(--el-accent-bg);
+  border-radius: 12px;
+}
+.el-attention-brief__activity strong { font-size: 19px; }
+.el-attention-brief__activity span { font-size: 12px; font-weight: 600; }
+
+/* Keep the product story in DOM order. Earlier dashboard layouts pinned each
+   Today section to a numbered grid row; that pushed the human briefing below
+   operational cards even though it is the page's lead. */
+.el-today .el-access-note,
+.el-today .el-attention-brief,
+.el-today .el-score-docket,
+.el-today .el-today-section { grid-row: auto !important; }
+.el-today .el-access-note,
+.el-today .el-attention-brief,
+.el-today .el-score-docket,
+.el-today .el-today-section--fixes-verified,
+.el-today .el-today-section--this-week { grid-column: 1 / -1; }
+.el-today .el-today-section--needs-you,
+.el-today .el-today-section--top-open-problems { grid-column: 1; }
+.el-today .el-today-section--running-queued { grid-column: 2; }
+
+.el-overlay-panel {
+  width: min(680px, calc(100vw - 32px));
+  max-height: min(88dvh, 820px);
+  overflow: auto;
+  border-radius: var(--el-r-overlay);
+  box-shadow: var(--el-e4);
+  z-index: 90 !important;
+}
+.el-overlay-scrim { z-index: 80 !important; }
+.el-evidence-sheet { width: min(460px, 100vw) !important; }
+.el-case-tabs {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.el-case-tabs::-webkit-scrollbar { display: none; }
+.el-case-tabs > button { min-height: 42px; white-space: nowrap; }
+
+@media (max-width: 1200px) {
+  :root { --el-gutter: 22px; --el-sidebar-w: 76px; }
+  .el-shell nav.el-sidebar .el-nav-label {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    overflow: hidden !important;
+    clip: rect(0 0 0 0) !important;
+  }
+  .el-shell nav.el-sidebar .el-nav-wide { display: none !important; }
+  .el-shell nav.el-sidebar .el-nav-item { justify-content: center !important; min-height: 44px; }
+  .el-shell nav.el-sidebar .el-nav-brand { justify-content: center; padding-inline: 0 !important; }
+  .el-shell nav.el-sidebar .el-nav-brand > span:last-child { display: none !important; }
+  .el-today-section--running-queued .el-quiet-state { align-items: flex-start; flex-wrap: wrap; }
+  .el-today-section--running-queued .el-quiet-state > div { flex: 1 1 calc(100% - 24px); }
+  .el-today-section--running-queued .el-quiet-state .el-btn {
+    width: 100%;
+    margin-left: 19px;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 900px) {
+  :root { --el-gutter: 18px; }
+  .el-today .el-screen-measure { grid-template-columns: minmax(0, 1fr) !important; }
+  .el-attention-brief { grid-column: 1; }
+  .el-score-docket,
+  .el-today-section { grid-column: 1 !important; }
+}
+
+@media (max-width: 720px) {
+  :root { --el-gutter: 16px; --el-sidebar-w: 100%; }
+  .el-shell { flex-direction: column !important; }
+  .el-workspace { padding-top: 64px; padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
+  .el-mobile-context {
+    position: fixed;
+    z-index: 60;
+    inset: 0 0 auto 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 64px;
+    padding: 0 16px;
+    color: var(--el-text);
+    background: rgba(255,253,248,.96);
+    border-bottom: 1px solid var(--el-border-2);
+  }
+  .el-mobile-context__brand { display: inline-flex; align-items: center; gap: 9px; }
+  .el-mobile-context__brand .el-brand-mark { width: 25px; height: 25px; }
+  .el-mobile-context__product {
+    max-width: 46vw;
+    overflow: hidden;
+    color: var(--el-text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .el-shell nav.el-sidebar {
+    position: fixed !important;
+    z-index: 70 !important;
+    inset: auto 0 0 0 !important;
+    display: block !important;
+    width: 100% !important;
+    height: calc(72px + env(safe-area-inset-bottom)) !important;
+    min-height: 72px !important;
+    padding-bottom: env(safe-area-inset-bottom) !important;
+    overflow: visible !important;
+    background: var(--el-paper) !important;
+    border-top: 1px solid var(--el-border-2) !important;
+    border-bottom: 0 !important;
+  }
+  .el-shell nav.el-sidebar > *:not(.el-mobile-task-nav) { display: none !important; }
+  .el-mobile-task-nav {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0,1fr));
+    height: 72px;
+  }
+  .el-mobile-task-nav button {
+    display: flex;
+    min-width: 0;
+    min-height: 48px;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 4px;
+    padding: 7px 4px 5px;
+    color: var(--el-text-dim);
+    background: transparent;
+    border: 0;
+    font: inherit;
+    font-size: 10px;
+  }
+  .el-mobile-task-nav button.is-active { color: var(--el-accent); font-weight: 600; }
+  .el-screen-header { min-height: auto; padding: 14px 16px !important; }
+  .el-screen-header > div:last-child { width: 100%; }
+  .el-screen-body { padding: 20px 16px 40px !important; }
+  .el-attention-brief { align-items: flex-start; flex-direction: column; gap: 14px; padding-bottom: 20px; }
+  .el-attention-brief h2 { font-size: 27px; }
+  .el-attention-brief__activity { width: 100%; }
+  .el-score-docket { padding: 18px !important; gap: 18px !important; }
+  .el-score-docket > div:last-child { min-width: 0 !important; flex-basis: 100%; }
+  .el-case-filters { position: sticky; top: 0; z-index: 5; background: var(--el-paper); }
+  .el-overlay-panel { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); border-radius: 16px; }
+  .el-evidence-sheet {
+    inset: auto 0 0 0 !important;
+    width: 100% !important;
+    height: min(78dvh, 720px);
+    max-height: 78dvh;
+    border-top: 1px solid var(--el-border-2) !important;
+    border-left: 0 !important;
+    border-radius: 18px 18px 0 0 !important;
+  }
+  .el-new-case-modal,
+  .el-delete-product-modal { padding: 20px !important; }
+  .el-case-dossier-header { padding: 14px 16px 0 !important; }
+  .el-case-dossier-header > div:nth-child(2) { align-items: flex-start !important; }
+  .el-case-tabs { margin-inline: -16px; padding-inline: 16px; }
+  .el-case-card > div {
+    align-items: flex-start !important;
+    flex-wrap: wrap;
+    padding: 14px !important;
+  }
+  .el-case-card > div > :last-child { margin-left: auto; }
+  :where(.el-btn, button, input, select, textarea) { min-height: 40px; }
+}
+
+@media (max-width: 320px) {
+  :root { --el-gutter: 12px; }
+  .el-screen-body { padding-inline: 12px !important; }
+  .el-mobile-context { padding-inline: 12px; }
+  .el-attention-brief h2 { font-size: 24px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .el-attention-brief *, .el-mobile-task-nav * { animation: none !important; transition: none !important; }
+}
+
+/* ========================================================================== */
+/* APPEARANCE — dark by default, light by explicit choice                      */
+/* ========================================================================== */
+.el-theme-toggle {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  margin: 4px 12px;
+  padding: 7px 8px;
+  color: #bdd0ca;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--el-r-control);
+  font: inherit;
+  font-size: var(--el-fs-sm);
+  cursor: pointer;
+}
+.el-theme-toggle:hover { color: #ffffff; background: rgba(255,255,255,.06); }
+.el-theme-toggle.is-compact {
+  width: 44px;
+  min-height: 44px;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+}
+.el-mobile-context__actions { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.el-mobile-context .el-theme-toggle,
+.el-login-theme-toggle .el-theme-toggle {
+  color: var(--el-text-muted);
+  background: var(--el-bg-raised);
+  border-color: var(--el-border-2);
+}
+.el-mobile-context .el-theme-toggle:hover,
+.el-login-theme-toggle .el-theme-toggle:hover { color: var(--el-text); background: var(--el-bg-hover); }
+.el-login-theme-toggle { position: fixed; z-index: 30; top: 16px; right: 16px; }
+
+:root[data-theme="dark"] {
+  --el-canvas-warm: #101816;
+  --el-nav-ink: #0a1211;
+  --el-paper: #16211f;
+  --el-rule-warm: #2b3a36;
+  --el-bg: #101816;
+  --el-bg-raised: #14201d;
+  --el-bg-card: #16211f;
+  --el-bg-hover: #1c2a27;
+  --el-bg-active: #1c3732;
+  --el-border: #24322f;
+  --el-border-2: #2b3a36;
+  --el-border-3: #40524d;
+  --el-border-4: #71847e;
+  --el-text: #f1f6f4;
+  --el-text-2: #dbe5e1;
+  --el-text-3: #bdcbc6;
+  --el-text-muted: #a7b8b2;
+  --el-text-dim: #93a69f;
+  --el-text-faint: #849992;
+  --el-text-ghost: #82958f;
+  --el-accent-teal: #58b7a3;
+  --el-accent: #58b7a3;
+  --el-accent-hover: #70cbb7;
+  --el-accent-deep: #93dfcf;
+  --el-on-accent: #07110f;
+  --el-accent-bg: #183b35;
+  --el-accent-bg-hover: #204940;
+  --el-accent-line: #347d6d;
+  --el-accent-line-strong: #58b7a3;
+  --el-good: #69c69d;
+  --el-good-bg: #17372d;
+  --el-good-line: #356c58;
+  --el-bad: #f08c7e;
+  --el-bad-bg: #3c211e;
+  --el-bad-line: #7d463e;
+  --el-info: #86b6e3;
+  --el-info-bg: #1a2d3e;
+  --el-info-line: #3f6483;
+  --el-track: #263530;
+  --el-scrollbar: #52635e;
+  --el-scrim: rgba(2, 7, 6, .78);
+  --el-e1: 0 1px 2px rgba(0, 0, 0, .2);
+  --el-e2: 0 10px 28px rgba(0, 0, 0, .28);
+  --el-e3: 0 20px 48px rgba(0, 0, 0, .36);
+  --el-e4: 0 32px 80px rgba(0, 0, 0, .46);
+}
+
+html[data-theme="dark"] body { background: var(--el-bg); }
+html[data-theme="dark"] .el-screen-header,
+html[data-theme="dark"] .el-mobile-context { background: rgba(16, 24, 22, .94) !important; }
+html[data-theme="dark"] .el-card,
+html[data-theme="dark"] .el-empty-state,
+html[data-theme="dark"] .el-error-state,
+html[data-theme="dark"] .el-case-filters,
+html[data-theme="dark"] .el-today-section--running-queued,
+html[data-theme="dark"] .el-case-card,
+html[data-theme="dark"] .el-case-dossier-header,
+html[data-theme="dark"] .el-login-form,
+html[data-theme="dark"] .el-onboarding-dossier {
+  color: var(--el-text);
+  background: var(--el-paper) !important;
+}
+html[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]),
+html[data-theme="dark"] textarea,
+html[data-theme="dark"] select { color: var(--el-text); background: var(--el-bg-raised) !important; }
+html[data-theme="dark"] .el-shell nav.el-sidebar { background: var(--el-nav-ink) !important; }
+
+@media (max-width: 1200px) {
+  .el-shell nav.el-sidebar > .el-theme-toggle { justify-content: center; }
+}
+
+@media (max-width: 720px) {
+  .el-mobile-context__product { max-width: 38vw; }
+  .el-login-theme-toggle { top: 12px; right: 12px; }
+}
+
+/* Desktop navigation can be tucked into the same 76px rail used by compact
+   layouts. The control lives on the seam so it remains discoverable without
+   consuming a navigation row. */
+.el-sidebar { position: relative; transition: width 180ms cubic-bezier(.2,.8,.2,1); }
+.el-sidebar-collapse {
+  position: absolute;
+  z-index: 4;
+  top: 18px;
+  right: -22px;
+  display: grid;
+  width: 44px;
+  min-height: 44px;
+  place-items: center;
+  padding: 0;
+  color: var(--el-text-muted);
+  background: var(--el-paper);
+  border: 1px solid var(--el-border-2);
+  border-radius: 12px;
+  box-shadow: var(--el-e1);
+  cursor: pointer;
+}
+.el-sidebar-collapse:hover { color: var(--el-accent); background: var(--el-bg-hover); }
+
+@media (min-width: 1201px) {
+  .el-shell nav.el-sidebar.is-user-collapsed { width: 76px !important; }
+  .el-shell nav.el-sidebar.is-user-collapsed .el-nav-label {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    overflow: hidden !important;
+    clip: rect(0 0 0 0) !important;
+  }
+  .el-shell nav.el-sidebar.is-user-collapsed .el-nav-wide { display: none !important; }
+  .el-shell nav.el-sidebar.is-user-collapsed .el-nav-brand {
+    min-height: 80px;
+    justify-content: center;
+    padding-inline: 0 !important;
+  }
+  .el-shell nav.el-sidebar.is-user-collapsed .el-nav-brand > span:nth-child(2),
+  .el-shell nav.el-sidebar.is-user-collapsed .el-num { display: none !important; }
+  .el-shell nav.el-sidebar.is-user-collapsed .el-nav-primary { padding-inline: 12px !important; }
+  .el-shell nav.el-sidebar.is-user-collapsed .el-nav-item,
+  .el-shell nav.el-sidebar.is-user-collapsed .el-nav-system-toggle,
+  .el-shell nav.el-sidebar.is-user-collapsed > .el-theme-toggle,
+  .el-shell nav.el-sidebar.is-user-collapsed > .el-btn { justify-content: center !important; }
+}
+
+@media (max-width: 1200px) {
+  .el-sidebar-collapse { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .el-sidebar { transition: none; }
+}

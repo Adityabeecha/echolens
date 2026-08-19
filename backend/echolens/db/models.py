@@ -1,0 +1,492 @@
+"""Storage schema (PRD §7) plus UI-driven fields (pause/escalate/manual cases).
+
+SQLite in dev, Postgres (Supabase) later — everything here is portable.
+`embedding` columns are nullable JSON placeholders reserving the pgvector
+upgrade path; M1 search is keyword-based.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from sqlalchemy import Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+# ── corpus ──────────────────────────────────────────────────────────────
+
+
+class Review(Base):
+    __tablename__ = "reviews"
+    __table_args__ = (UniqueConstraint("ext_id", "product", name="uq_reviews_ext_product"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source: Mapped[str] = mapped_column(String(32), default="play_store", index=True)
+    ext_id: Mapped[str] = mapped_column(String(64), index=True)
+    rating: Mapped[int] = mapped_column(Integer, index=True)
+    text: Mapped[str] = mapped_column(Text)
+    version: Mapped[str | None] = mapped_column(String(32), index=True)
+    os_version: Mapped[str | None] = mapped_column(String(32), index=True)
+    created_at: Mapped[datetime] = mapped_column(index=True)
+    embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # v1.0: which tracked product/app this row belongs to (package name)
+    product: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+
+
+class Issue(Base):
+    __tablename__ = "issues"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Repo-qualified ("owner/repo#123") and NOT globally unique: two tracked
+    # repos legitimately both have an issue #1. Uniqueness is per (ext_id,
+    # product), enforced by the collector's scoped lookup.
+    ext_id: Mapped[str] = mapped_column(String(64), index=True)
+    title: Mapped[str] = mapped_column(Text)
+    body_snippet: Mapped[str] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(String(16), default="open")
+    reactions: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(index=True)
+    embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    labels: Mapped[list | None] = mapped_column(JSON, nullable=True)  # v1.0 GitHub labels
+    product: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+
+
+class Post(Base):
+    __tablename__ = "posts"
+    __table_args__ = (UniqueConstraint("ext_id", "product", name="uq_posts_ext_product"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source: Mapped[str] = mapped_column(String(32), default="reddit")
+    ext_id: Mapped[str] = mapped_column(String(64), index=True)
+    subreddit: Mapped[str | None] = mapped_column(String(64))
+    text_snippet: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(index=True)
+    embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    product: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+
+
+class FeedbackEntry(Base):
+    """v10: the channels that aren't stores, trackers or social — support
+    tickets, in-app feedback, community forums.
+
+    Deliberately generic. Every new channel that arrives shaped like "someone
+    said something at a time" lands here instead of earning its own table, and
+    feedback.collect_items normalises it alongside the older three.
+    """
+    __tablename__ = "feedback_entries"
+    __table_args__ = (
+        UniqueConstraint("ext_id", "product", name="uq_feedback_entries_ext_product"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    channel: Mapped[str] = mapped_column(String(32), index=True)  # support|in_app|forum
+    ext_id: Mapped[str] = mapped_column(String(96), index=True)
+    text: Mapped[str] = mapped_column(Text)
+    product: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    author_kind: Mapped[str] = mapped_column(String(16), default="user")
+    priority: Mapped[str | None] = mapped_column(String(16), nullable=True)  # p0..p3
+    status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(index=True)
+    embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    meta_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class KnowledgeEdge(Base):
+    """v12: one learned cause->effect belief about how THIS product breaks.
+
+    "Changes to <subsystem> tend to cause <symptom>." Mined from confirmed
+    findings, then self-calibrated: every time a new problem in the subsystem
+    does or does not show the symptom, the edge is reinforced or decayed, so a
+    cause that stops holding retires itself instead of lingering as folklore.
+    """
+    __tablename__ = "knowledge_edges"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    subsystem: Mapped[str] = mapped_column(String(48), index=True)   # sync, onboarding, ...
+    symptom: Mapped[str] = mapped_column(String(48), index=True)     # battery-drain, churn, ...
+    # evidence tallies — the edge's whole justification
+    supports: Mapped[int] = mapped_column(Integer, default=0)   # confirmed times it held
+    refutes: Mapped[int] = mapped_column(Integer, default=0)    # times predicted, didn't hold
+    verified_count: Mapped[int] = mapped_column(Integer, default=0)  # distinct confirmed fixes
+    case_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)   # findings behind it
+    # Every investigation already GRADED against this edge. Distinct from
+    # case_ids (which is provenance — the confirmed fixes that mined it) because
+    # calibrate_from_history must never score the same case twice: it used to
+    # re-grade the whole corpus on every call, so pressing "rebuild" five times
+    # manufactured corroboration out of nothing.
+    graded_case_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    terms: Mapped[list | None] = mapped_column(JSON, nullable=True)      # matching vocabulary
+    last_seen: Mapped[datetime | None] = mapped_column(nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="active")   # active|retired
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class Release(Base):
+    __tablename__ = "releases"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Not globally unique: two products can both ship "v1.0.0". The version
+    # string stays bare because get_release_notes prefix-matches it.
+    version: Mapped[str] = mapped_column(String(32), index=True)
+    notes: Mapped[str] = mapped_column(Text)
+    released_at: Mapped[datetime] = mapped_column(index=True)
+    product: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+
+
+# ── v1.0 operational tables ─────────────────────────────────────────────
+
+
+class Product(Base):
+    """v8.0: the tenant of everything. Each product owns its own sources, corpus
+    slice, anomalies, cases, patterns and budgets — nothing is global anymore."""
+    __tablename__ = "products"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    package_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    github_repo: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    is_demo: Mapped[bool] = mapped_column(default=False)
+    # per-product budget overrides; falls back to the global defaults
+    limits_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class CollectorState(Base):
+    """One row per configured collector — its incremental watermark and health
+    (PRD/roadmap v1.0). Lets ingestion be idempotent and observable."""
+    __tablename__ = "collector_state"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source: Mapped[str] = mapped_column(String(32), index=True)      # play_store|github|reddit
+    identifier: Mapped[str] = mapped_column(String(256))            # package / repo / subreddit
+    product: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    watermark: Mapped[str | None] = mapped_column(String(64), nullable=True)  # ISO ts or ext_id cursor
+    status: Mapped[str] = mapped_column(String(16), default="idle")  # idle|running|healthy|error
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    items_last_run: Mapped[int] = mapped_column(Integer, default=0)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+
+
+class Setting(Base):
+    """Workspace-level key/value settings (e.g. adjustable budget limits)."""
+    __tablename__ = "settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class User(Base):
+    """Auth principal with an RBAC role (v1.0). Passwords are bcrypt-hashed."""
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(256))
+    role: Mapped[str] = mapped_column(String(16), default="viewer")  # admin|reviewer|viewer
+    # v8.0: which product this user was last looking at (server-side, so a refresh
+    # lands them back on it instead of re-showing the wizard)
+    last_active_product_id: Mapped[int | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+# ── investigation state ────────────────────────────────────────────────
+
+
+class AnomalyEvent(Base):
+    __tablename__ = "anomaly_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    slug: Mapped[str | None] = mapped_column(String(64), unique=True)  # "demo1"
+    type: Mapped[str] = mapped_column(String(64))  # negative_review_spike, ...
+    metric: Mapped[str] = mapped_column(String(128))
+    delta: Mapped[float] = mapped_column(Float)
+    z: Mapped[float] = mapped_column(Float)
+    window: Mapped[str] = mapped_column(String(64))
+    description: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(32), default="pending")  # pending|triaged|investigating|closed
+    # v6.0: for a regression anomaly, the original resolved case it re-opens.
+    parent_case_id: Mapped[int | None] = mapped_column(nullable=True)
+    product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    # v8.0 dedupe key: one anomaly per (product, metric, type, window)
+    window_start: Mapped[datetime | None] = mapped_column(nullable=True)
+    window_end: Mapped[datetime | None] = mapped_column(nullable=True)
+    # when this row was superseded/merged into another anomaly
+    merged_into_id: Mapped[int | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class QueuedInvestigation(Base):
+    """v10: one queue for everything waiting to be investigated.
+
+    Per-theme "Investigate" buttons fought the daily budget — each click either
+    started a run or was silently refused, and you had to click one at a time.
+    Selections now become queue rows the orchestrator drains: it merges them with
+    anomaly-driven work, orders by severity then by the order you picked, and
+    stops at the daily cap instead of dropping the remainder on the floor.
+    """
+    __tablename__ = "investigation_queue"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    anomaly_id: Mapped[int | None] = mapped_column(ForeignKey("anomaly_events.id"))
+    # queued|running|done|cancelled|failed
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    # anomaly|manual_theme — manual picks rank below real spikes
+    source: Mapped[str] = mapped_column(String(24), default="anomaly")
+    # severity band first, then the order the user selected them in
+    priority: Mapped[int] = mapped_column(Integer, default=100)
+    selection_order: Mapped[int] = mapped_column(Integer, default=0)
+    budget_tier: Mapped[str] = mapped_column(String(16), default="quick")
+    title: Mapped[str] = mapped_column(Text, default="")
+    # set once the orchestrator starts it, so the feed can link to the live case
+    investigation_id: Mapped[int | None] = mapped_column(nullable=True)
+    # why it is still waiting, e.g. "daily limit reached — runs tomorrow"
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class FixWatch(Base):
+    """v6.0 closed-loop verification: links a finding's GitHub issue to the metric
+    it should fix, then watches whether the fix actually worked.
+
+    Lifecycle: issue_open → (issue closes) watching → confirmed | persists_reopened,
+    and later possibly → regressed if the fixed theme re-spikes."""
+    __tablename__ = "fix_watches"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    finding_id: Mapped[int] = mapped_column(ForeignKey("findings.id"), index=True)
+    investigation_id: Mapped[int] = mapped_column(ForeignKey("investigations.id"), index=True)
+    repo: Mapped[str] = mapped_column(String(256))
+    issue_number: Mapped[int] = mapped_column(Integer, index=True)
+    issue_url: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(24), default="issue_open")
+    terms: Mapped[list] = mapped_column(JSON, default=list)   # theme keywords being watched
+    metric: Mapped[str] = mapped_column(String(160), default="")
+    window_days: Mapped[int] = mapped_column(Integer, default=14)
+    fix_date: Mapped[datetime | None] = mapped_column(nullable=True)      # when the issue closed
+    baseline_rate: Mapped[float | None] = mapped_column(Float, nullable=True)  # pre-fix complaint rate
+    post_rate: Mapped[float | None] = mapped_column(Float, nullable=True)      # post-fix complaint rate
+    confirmed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    chart_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # before/after series
+    product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class TriageDecision(Base):
+    """One orchestrator ruling on one anomaly (PRD §4.1): investigate / ignore /
+    merge. First-class so Cases can show *why* something was not pursued."""
+    __tablename__ = "triage_decisions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    anomaly_id: Mapped[int] = mapped_column(ForeignKey("anomaly_events.id"), index=True)
+    decision: Mapped[str] = mapped_column(String(16))  # investigate|ignore|merge
+    reason: Mapped[str] = mapped_column(Text, default="")
+    budget_tier: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    merge_into_anomaly_id: Mapped[int | None] = mapped_column(
+        ForeignKey("anomaly_events.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class Investigation(Base):
+    __tablename__ = "investigations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    anomaly_id: Mapped[int | None] = mapped_column(ForeignKey("anomaly_events.id"))
+    status: Mapped[str] = mapped_column(String(32), default="running")
+    # running|resolved|insufficient_evidence|needs_human|budget_exhausted
+    opened_by: Mapped[str] = mapped_column(String(16), default="anomaly")  # anomaly|manual
+    budget_tier: Mapped[str] = mapped_column(String(16), default="standard")
+    budget_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    paused: Mapped[bool] = mapped_column(default=False)
+    escalated: Mapped[bool] = mapped_column(default=False)
+    # set when this case was re-opened by a human challenge (PRD §4.1)
+    reopens_investigation_id: Mapped[int | None] = mapped_column(nullable=True)
+    # v1.0 recovery: serialized loop state, refreshed each iteration
+    checkpoint_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # v3.0: data-availability caveats captured at start (e.g. a stale source), so
+    # the finding can disclose what was unavailable during the investigation.
+    data_notes: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    # v9.0 cross-product transfer: the validated pattern this case started from,
+    # if any. Recorded so the shortcut can be MEASURED (seeded vs cold cases)
+    # rather than asserted.
+    seeded_from_pattern: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class HypothesisRow(Base):
+    __tablename__ = "hypotheses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    investigation_id: Mapped[int] = mapped_column(ForeignKey("investigations.id"), index=True)
+    hid: Mapped[str] = mapped_column(String(8))  # "H1"
+    statement: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[float] = mapped_column(Float, default=0.5)
+    status: Mapped[str] = mapped_column(String(16), default="active")  # active|supported|rejected
+    json: Mapped[dict] = mapped_column(JSON, default=dict)  # evidence_for/against, next_test
+
+
+class EvidenceRow(Base):
+    __tablename__ = "evidence"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    investigation_id: Mapped[int] = mapped_column(ForeignKey("investigations.id"), index=True)
+    eid: Mapped[str] = mapped_column(String(12))  # "ev_007"
+    source: Mapped[str] = mapped_column(String(32))
+    ref: Mapped[str] = mapped_column(String(128))  # re-retrievable pointer
+    snippet: Mapped[str] = mapped_column(Text)
+    retrieved_by: Mapped[str] = mapped_column(Text)
+    json: Mapped[dict] = mapped_column(JSON, default=dict)  # supports/contradicts
+
+
+class TraceStep(Base):
+    __tablename__ = "trace_steps"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    investigation_id: Mapped[int] = mapped_column(ForeignKey("investigations.id"), index=True)
+    seq: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(8))  # THINK|TOOL|EVID|UPDT|FAIL|CHECK
+    content_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    tokens: Mapped[int] = mapped_column(Integer, default=0)
+    ms: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class Finding(Base):
+    __tablename__ = "findings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    investigation_id: Mapped[int] = mapped_column(ForeignKey("investigations.id"), index=True)
+    summary: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[float] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String(16), default="draft")  # draft|approved|challenged
+    json: Mapped[dict] = mapped_column(JSON, default=dict)  # prose, claim->evidence map, what_would_settle_it
+    product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class Recommendation(Base):
+    __tablename__ = "recommendations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    finding_id: Mapped[int] = mapped_column(ForeignKey("findings.id"), index=True)
+    action: Mapped[str] = mapped_column(Text)
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    effort: Mapped[str] = mapped_column(String(8), default="MED")
+    impact: Mapped[str] = mapped_column(String(8), default="MED")
+    rank: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class ReviewFeedback(Base):
+    __tablename__ = "review_feedback"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    finding_id: Mapped[int] = mapped_column(ForeignKey("findings.id"), index=True)
+    action: Mapped[str] = mapped_column(String(16))  # approve|challenge
+    note: Mapped[str] = mapped_column(Text, default="")
+    user_id: Mapped[int | None] = mapped_column(nullable=True)  # v1.0 audit: who acted
+    # v5.0 challenge autopsy: structured reason category (wrong_cause|weak_evidence|
+    # wrong_severity|already_knew) so failure modes roll up into visible weak spots.
+    reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class Comment(Base):
+    """v5.0: a threaded discussion on a case.
+
+    Anchored to the INVESTIGATION, not the finding. A challenged case re-opens
+    as a new investigation with a new finding, and the discussion that led to
+    the challenge is exactly the context the next reviewer needs — anchoring to
+    the finding would strand it on the superseded row.
+
+    `product_id` is denormalised from the investigation so comments can be
+    scoped and filtered without a join, the same way findings are.
+    """
+    __tablename__ = "comments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    investigation_id: Mapped[int] = mapped_column(ForeignKey("investigations.id"), index=True)
+    # Threading is one level deep on purpose: a reply-to-a-reply chain buries
+    # the decision a PM is looking for. Replies hang off a top-level comment.
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("comments.id"),
+                                                  nullable=True, index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"),
+                                                nullable=True, index=True)
+    body: Mapped[str] = mapped_column(Text)
+    # Soft delete: removing the row would orphan its replies and silently
+    # rewrite the audit trail a challenge decision was based on.
+    deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"),
+                                                   nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    edited_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class Mention(Base):
+    """v5.0: one @mention, resolved to a real user at write time.
+
+    Stored rather than re-parsed on read: the body is editable, and an inbox
+    that recomputed mentions would silently un-notify someone when a typo was
+    fixed. Resolution happens once, against the users table, so a mention of a
+    non-existent handle is dropped instead of becoming a dangling notification.
+    """
+    __tablename__ = "mentions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    comment_id: Mapped[int] = mapped_column(ForeignKey("comments.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    read_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"),
+                                                   nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+
+
+class ReviewRequest(Base):
+    """v5.0: an explicit ask for a named person to sign off a case.
+
+    The existing approve/challenge is a single reviewer acting alone. This adds
+    the step before it — "who is meant to look at this, and are they done?" —
+    without changing what approve/challenge mean, so the honesty guarantees
+    around a finding's status are untouched.
+    """
+    __tablename__ = "review_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    investigation_id: Mapped[int] = mapped_column(ForeignKey("investigations.id"), index=True)
+    requested_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    requested_of_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"),
+                                                        nullable=True, index=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+    # pending | approved | changes_requested | cancelled
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"),
+                                                   nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+
+
+class LLMCall(Base):
+    __tablename__ = "llm_calls"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    investigation_id: Mapped[int | None] = mapped_column(ForeignKey("investigations.id"), index=True)
+    agent: Mapped[str] = mapped_column(String(32))  # investigator.plan, orchestrator, ...
+    model: Mapped[str] = mapped_column(String(64), default="")
+    tokens_in: Mapped[int] = mapped_column(Integer, default=0)
+    tokens_out: Mapped[int] = mapped_column(Integer, default=0)
+    cost: Mapped[float] = mapped_column(Float, default=0.0)
+    ms: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)

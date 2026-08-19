@@ -1,0 +1,354 @@
+import { useEffect, useState } from "react";
+import { api, setGuest, setRole, setToken } from "../api";
+import { useAsync } from "../hooks";
+import { C, R, S, T, mono, sans } from "../theme";
+import { GoogleButton } from "../components/GoogleButton";
+
+// A branded split sign-in: the left panel is a taste of the product (the lens
+// mark + a miniature reasoning trace), the right panel is the form. Collapses
+// to a single column on narrow screens.
+//
+// Signing in is optional when the deployment allows guests: the primary action
+// is then "Explore the demo", and an account is what unlocks the controls that
+// spend money or change data.
+export function Login({ onAuthed }: { onAuthed: () => void }) {
+  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [showPassword, setShowPassword] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [narrow, setNarrow] = useState(typeof window !== "undefined" && window.innerWidth < 900);
+
+  // What this deployment offers. If the call fails (backend asleep on a free
+  // tier), fall back to showing the password form rather than a blank screen.
+  const cfg = useAsync(() => api.authConfig(), []);
+  const googleId = cfg.data?.google_enabled ? cfg.data.google_client_id : "";
+  const guestAllowed = !!cfg.data?.allow_guest;
+
+  useEffect(() => {
+    const onResize = () => setNarrow(window.innerWidth < 900);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const submit = async () => {
+    if (!email.trim() || !password) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = mode === "login"
+        ? await api.login(email.trim(), password)
+        : await api.signup(email.trim(), password);
+      setGuest(false);
+      setToken(r.token);
+      setRole(r.role);
+      onAuthed();
+    } catch (e) {
+      setError(
+        mode === "login"
+          ? "That email and password didn't match. Check them and try again."
+          : String(e).replace("Error: ", "") || "Couldn't create the account."
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const signInWithGoogle = async (credential: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.google(credential);
+      setGuest(false);
+      setToken(r.token);
+      setRole(r.role);
+      onAuthed();
+    } catch (e) {
+      setError(String(e).replace("Error: ", "") || "Google sign-in didn't work.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const browseAsGuest = () => {
+    setGuest(true);
+    setToken(null);
+    // Explicitly viewer: a browser holding "admin" from a previous session
+    // would otherwise carry it into the guest visit and unlock UI the server
+    // will refuse. Boot re-confirms this against /auth/me anyway.
+    setRole("viewer");
+    onAuthed();
+  };
+
+  return (
+    <div className="el-login" style={{ display: "flex", height: "100dvh", background: C.bg, color: C.text, fontFamily: sans, overflow: "hidden" }}>
+      {!narrow && <BrandPanel />}
+
+      {/* form side */}
+      <div className="el-login-form"
+        style={{
+          flex: narrow ? 1 : "0 0 460px",
+          display: "flex",
+          flexDirection: "column",
+          overflowX: "hidden",
+          overflowY: "auto",
+          padding: narrow ? "32px 24px" : "32px 56px",
+          borderLeft: narrow ? "none" : `1px solid ${C.border}`
+        }}
+      >
+        <div className="el-login-form-content"
+          style={{ width: "100%", display: "flex", flexDirection: "column", margin: "auto 0" }}>
+        {narrow && <Wordmark />}
+
+        <h1 className="el-login-title" style={{ margin: 0, fontSize: T.xl, fontWeight: 700, letterSpacing: "-0.01em",
+                     marginTop: narrow ? 28 : 0 }}>
+          {mode === "signup"
+            ? "Create your admin account"
+            : guestAllowed ? "Take a look around" : "Sign in"}
+        </h1>
+        <p style={{ fontSize: T.base, color: C.muted, marginTop: S[2],
+                    lineHeight: "var(--el-lh-normal)", maxWidth: 360 }}>
+          {mode === "signup"
+            ? "The first account becomes the workspace admin. You can add reviewers later."
+            : guestAllowed
+              ? "Explore every screen with real data, no account needed. Sign in when you want to run an investigation or change something."
+              : "Pick up where the investigations left off."}
+        </p>
+
+        {/* Guest first: on a public demo it is the thing most visitors want,
+            and burying it under a password form they cannot fill is hostile. */}
+        {guestAllowed && mode === "login" && (
+          <div style={{ maxWidth: 360, marginTop: S[5] }}>
+            <button
+              onClick={browseAsGuest}
+              disabled={busy}
+              className="el-btn el-btn--primary"
+              style={{ width: "100%", padding: `${S[3]} 0`, fontSize: T.md }}
+            >
+              Explore the demo
+            </button>
+            <div style={{ fontSize: T.xs, color: C.dim, marginTop: S[2],
+                          lineHeight: "var(--el-lh-snug)" }}>
+              Read-only. Investigations, sources and deletions need an account.
+            </div>
+          </div>
+        )}
+
+        {(googleId || guestAllowed) && mode === "login" && (
+          <div style={{ display: "flex", alignItems: "center", gap: S[3], maxWidth: 360,
+                        marginTop: S[5] }}>
+            <span style={{ flex: 1, height: 1, background: C.border2 }} />
+            <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint,
+                           letterSpacing: "var(--el-ls-wide)" }}>
+              {guestAllowed ? "OR SIGN IN" : "SIGN IN"}
+            </span>
+            <span style={{ flex: 1, height: 1, background: C.border2 }} />
+          </div>
+        )}
+
+        {/* width, not just maxWidth: the Google button measures this box to size
+            its iframe, and an auto-width box measures as its content (zero on
+            first paint) rather than as the column. */}
+        {googleId && (
+          <div style={{ width: "100%", maxWidth: 360, marginTop: S[4] }}>
+            <GoogleButton clientId={googleId} onCredential={signInWithGoogle} disabled={busy} />
+          </div>
+        )}
+
+        {/* The password form is secondary once there are better options, so it
+            folds away behind a link rather than dominating the screen. */}
+        {googleId && mode === "login" && !showPassword && (
+          <button
+            onClick={() => setShowPassword(true)}
+            className="el-btn el-btn--sm"
+            style={{ marginTop: S[3], color: C.dim, alignSelf: "flex-start",
+                     paddingLeft: 0, maxWidth: 360 }}
+          >
+            Use email and password instead
+          </button>
+        )}
+
+        <div hidden={!!googleId && mode === "login" && !showPassword}
+             style={{ display: "flex", flexDirection: "column", gap: S[3],
+                      marginTop: S[5], maxWidth: 360 }}>
+          <Field label="Email">
+            <input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@company.com"
+              autoComplete="username"
+              onKeyDown={(e) => e.key === "Enter" && submit()}
+              className="el-input"
+            />
+          </Field>
+          <Field label="Password">
+            <input
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              type="password"
+              autoComplete={mode === "login" ? "current-password" : "new-password"}
+              onKeyDown={(e) => e.key === "Enter" && submit()}
+              className="el-input"
+            />
+          </Field>
+
+          {error && (
+            <div role="alert" style={{ fontSize: T.sm, color: C.bad, background: C.badBg,
+                          border: `1px solid ${C.badLine}`, borderRadius: R.control,
+                          padding: `${S[2]} ${S[3]}`, lineHeight: "var(--el-lh-snug)" }}>
+              {error}
+            </div>
+          )}
+
+          <button
+            onClick={submit}
+            disabled={busy || !email.trim() || !password}
+            className={`el-btn el-btn--primary${busy ? " el-btn--loading" : ""}`}
+            style={{ marginTop: S[1], padding: `${S[3]} 0`, fontSize: T.md }}
+          >
+            {mode === "login" ? "Sign in" : "Create account & sign in"}
+          </button>
+        </div>
+
+        <div style={{ marginTop: S[5], fontSize: T.sm, color: C.dim, maxWidth: 360 }}>
+          {mode === "login" ? "First time setting this up? " : "Already have an account? "}
+          <button
+            onClick={() => {
+              setMode(mode === "login" ? "signup" : "login");
+              setError(null);
+              setShowPassword(true);
+            }}
+            className="el-btn el-btn--sm"
+            style={{ color: C.accent, fontWeight: 500, padding: `0 ${S[1]}` }}
+          >
+            {mode === "login" ? "Create the admin account" : "Sign in instead"}
+          </button>
+        </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── left brand panel: the product's world ──────────────────────────────
+
+function BrandPanel() {
+  const steps: { tag: string; color: string; text: string; mono?: boolean }[] = [
+    { tag: "THINK", color: C.muted, text: "1-star reviews jumped 23% — three days after v3.2 shipped." },
+    { tag: "TOOL", color: C.info, text: 'search_reviews("battery drain", since="v3.2")', mono: true },
+    { tag: "EVID", color: C.accent, text: "“Phone dies by 2pm since the update.”  ev_003" },
+    { tag: "FOUND", color: C.good, text: "Background sync holds a wakelock — confidence 0.85." },
+  ];
+  return (
+    <div className="el-login-brand"
+      style={{
+        flex: 1,
+        minWidth: 0,
+        position: "relative",
+        background: C.bgRaised,
+        padding: `${S[12]} ${S[12]}`,
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        overflow: "hidden"
+      }}
+    >
+      {/* soft amber lens glow, top-left */}
+      <div
+        style={{
+          position: "absolute",
+          top: -120,
+          left: -120,
+          width: 360,
+          height: 360,
+          borderRadius: "50%",
+          background: "transparent",
+          pointerEvents: "none"
+        }}
+      />
+      <div style={{ position: "relative", maxWidth: 460 }}>
+        <Wordmark large />
+        <div className="el-login-promise" style={{ fontSize: T.display, fontWeight: 700, lineHeight: "var(--el-lh-tight)", letterSpacing: "-0.02em", marginTop: S[8], textWrap: "balance" as const }}>
+          Find the root cause<br />before the reviews pile up.
+        </div>
+        <div className="el-login-description" style={{ fontSize: T.md, color: C.muted, marginTop: S[3], lineHeight: "var(--el-lh-normal)", maxWidth: 400 }}>
+          EchoLens watches your feedback, notices what's off, and investigates it
+          the way an analyst would — every conclusion backed by evidence you can click.
+        </div>
+
+        {/* miniature reasoning trace */}
+        <div className="el-login-trace" style={{ marginTop: S[8], display: "flex", flexDirection: "column", gap: S[2] }}>
+          {steps.map((s, i) => (
+            <div key={i} style={{ display: "grid", gridTemplateColumns: "56px 1fr", columnGap: S[3], alignItems: "start" }}>
+              <div
+                style={{
+                  fontFamily: mono,
+                  fontSize: T.micro,
+                  letterSpacing: ".05em",
+                  textAlign: "center",
+                  padding: `${S[1]} 0`,
+                  borderRadius: R.sm,
+                  border: `1px solid ${s.color}`,
+                  color: s.color,
+                  background: C.bg
+                }}
+              >
+                {s.tag}
+              </div>
+              <div
+                style={{
+                  fontSize: T.sm,
+                  lineHeight: "var(--el-lh-snug)",
+                  color: s.tag === "TOOL" ? C.info : C.text3,
+                  fontFamily: s.mono ? mono : sans,
+                  paddingTop: 2
+                }}
+              >
+                {s.text}
+              </div>
+            </div>
+          ))}
+          <div style={{ display: "flex", alignItems: "center", gap: S[2], marginTop: S[1], marginLeft: 68 }}>
+            <div style={{ width: 6, height: 6, borderRadius: "50%", background: C.accent, animation: "elPulse 1.4s infinite" }} />
+            <span style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".1em", color: C.accent }}>LIVE · EVERY STEP VISIBLE</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Wordmark({ large }: { large?: boolean }) {
+  const d = large ? 34 : 26;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: S[3] }}>
+      <div className="el-brand-mark" style={{ width: d, height: d }}><span /></div>
+      <div>
+        <div style={{ fontWeight: 700, fontSize: large ? 19 : 16, letterSpacing: "0.01em" }}>EchoLens</div>
+        <div style={{ fontFamily: mono, fontSize: large ? 10 : 9.5, color: C.faint, letterSpacing: ".1em" }}>FEEDBACK FORENSICS</div>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
+      <span style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".1em", color: C.faint }}>{label.toUpperCase()}</span>
+      {children}
+    </label>
+  );
+}
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  background: C.bgRaised,
+  border: `1px solid ${C.border3}`,
+  borderRadius: R.control,
+  color: C.text,
+  fontFamily: "inherit",
+  fontSize: T.md,
+  padding: `${S[3]} ${S[3]}`
+};

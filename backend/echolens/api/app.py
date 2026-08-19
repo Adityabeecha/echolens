@@ -1,0 +1,3147 @@
+"""FastAPI surface (PRD §8) + M2 additions (triage, recommend).
+
+Investigations run in a background thread with their own DB session so the
+trace endpoints can tail progress live (poll or SSE) — this is what the
+Milestone-3 Investigation screen consumes.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import threading
+import time
+from typing import Any
+
+from contextlib import asynccontextmanager
+from datetime import date, datetime, timezone
+
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+from sqlalchemy import func, select
+
+from echolens.cases import case_history, case_title, case_view, derive_status
+from echolens.config import (
+    BUDGET_TIERS,
+    EXTENSION_FACTOR,
+    ORCHESTRATOR_DAILY_INVESTIGATIONS,
+    settings,
+)
+from echolens.db.models import (
+    AnomalyEvent,
+    EvidenceRow,
+    Finding,
+    FixWatch,
+    HypothesisRow,
+    Investigation,
+    Issue,
+    LLMCall,
+    Recommendation,
+    Release,
+    Review,
+    ReviewFeedback,
+    Setting,
+    TraceStep,
+    TriageDecision,
+)
+from echolens.db.session import init_db, session_scope
+from echolens.logging import get_logger
+from echolens.timeutil import aware_utc
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Fail fast on an insecure production config (v1.0).
+    problems = settings.check_production_ready()
+    if problems:
+        raise RuntimeError("refusing to start in production: " + "; ".join(problems))
+    init_db()
+    _bootstrap()  # free-tier: seed + first admin from env, no shell needed
+    # Resume interrupted work AFTER the app starts accepting requests. Recovery
+    # used to run synchronously here, before ``yield``; a single 45-minute case
+    # therefore kept the whole deployment unready and its proxy returned 503 to
+    # every case refresh for the duration of the resumed LLM loop.
+    _start_recovery_bg()
+    yield
+
+
+def _recover_running_bg() -> None:
+    """Resume interrupted investigations without blocking API availability."""
+    try:
+        from echolens.investigator.recover import resume_running
+        with session_scope() as s:
+            recovered = resume_running(s)
+        if recovered:
+            log.info("startup_recovery", investigations=recovered)
+    except Exception as err:
+        log.error("startup_recovery_failed", error=str(err))
+
+
+def _start_recovery_bg() -> threading.Thread:
+    thread = threading.Thread(
+        target=_recover_running_bg,
+        name="echolens-startup-recovery",
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
+def _bootstrap() -> None:
+    """Seed demo data and/or create the first admin from env vars, so a shell-
+    less free-tier deploy is self-sufficient. Both steps are idempotent."""
+    from echolens.auth import create_user
+    from echolens.db.models import Review, User
+
+    try:
+        with session_scope() as s:
+            if settings.seed_on_start and s.scalar(select(Review).limit(1)) is None:
+                from echolens.synthetic.generate import generate
+                generate(s)
+                log.info("bootstrap_seeded")
+            if settings.bootstrap_admin_email and settings.bootstrap_admin_password:
+                if s.scalar(select(User).limit(1)) is None:
+                    create_user(s, settings.bootstrap_admin_email,
+                                settings.bootstrap_admin_password, "admin")
+                    log.info("bootstrap_admin_created", email=settings.bootstrap_admin_email)
+    except Exception as err:
+        # Loud, and specific about the consequence: with no admin and
+        # auth_signup blocked in production, the instance cannot be administered
+        # at all. A one-line "bootstrap_failed" gave no hint of that.
+        log.error("bootstrap_failed", error=str(err),
+                  consequence="no admin user may exist; set BOOTSTRAP_ADMIN_EMAIL/PASSWORD "
+                              "and restart, or the instance cannot be administered")
+
+
+limiter = Limiter(key_func=get_remote_address, default_limits=["240/minute"])
+app = FastAPI(title="EchoLens API", version="1.0.0", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+log = get_logger("api")
+
+# CORS: explicit allowlist in prod; permissive in dev for localhost tooling.
+_cors_origins = settings.cors_list or (["*"] if settings.echolens_env == "dev" else [])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=False,  # auth is via Authorization bearer header, not cookies
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ── serializers ────────────────────────────────────────────────────────
+
+def _anomaly_headline(session, a: AnomalyEvent) -> str:
+    """A PM-readable problem statement, not a metric name. The metric + z stay as
+    secondary metadata on the card."""
+    metric = (a.metric or "").strip()
+    if a.type == "manual":
+        return (a.description or "Manual case").strip()
+    if a.type == "regression":
+        return f"Regression — “{metric}” came back after being fixed"
+    if a.type == "fix_regression":
+        return f"Fix didn't hold — “{metric}” complaints continue"
+    if a.type == "theme_volume_surge":
+        label = metric.split(" share of")[0].split(" on ")[0].strip() or "complaints"
+        return f"{label[:1].upper()}{label[1:]} rising"
+    if a.type == "issue_velocity_surge":
+        label = metric.split(" per week")[0].strip() or "issue reports"
+        return f"{label[:1].upper()}{label[1:]} piling up on GitHub"
+    if a.type == "rating_drop":
+        return "Average rating falling"
+    if a.type == "negative_review_spike":
+        # name the theme driving it when a matching theme surge was detected
+        stmt = select(AnomalyEvent).where(AnomalyEvent.type == "theme_volume_surge")
+        if a.product_id is not None:
+            stmt = stmt.where(AnomalyEvent.product_id == a.product_id)
+        theme = session.scalars(stmt.order_by(AnomalyEvent.z.desc())).first()
+        if theme is not None:
+            label = (theme.metric or "").split(" share of")[0].strip()
+            if label:
+                return f"1-star reviews spiking — {label} driving it"
+        return "1-star reviews spiking"
+    return metric or "Signal detected"
+
+
+def _anomaly_dict(session, a: AnomalyEvent, td=None, inv=None) -> dict:
+    return {
+        "slug": a.slug, "type": a.type, "metric": a.metric, "delta": a.delta,
+        "z": a.z, "window": a.window, "description": a.description, "status": a.status,
+        "headline": _anomaly_headline(session, a), "product_id": a.product_id,
+        "triage": None if td is None else {
+            "decision": td.decision, "reason": td.reason, "budget_tier": td.budget_tier,
+            "merge_into_anomaly_id": td.merge_into_anomaly_id,
+        },
+        "investigation_id": inv.id if inv else None,
+    }
+
+
+def _anomaly_dicts(session, anomalies: list[AnomalyEvent]) -> list[dict]:
+    """Serialize an anomaly list with two bounded relation queries."""
+    ids = [a.id for a in anomalies]
+    if not ids:
+        return []
+    decisions: dict[int, TriageDecision] = {}
+    for row in session.scalars(select(TriageDecision).where(
+            TriageDecision.anomaly_id.in_(ids)).order_by(TriageDecision.id)).all():
+        decisions[row.anomaly_id] = row
+    investigations: dict[int, Investigation] = {}
+    for row in session.scalars(select(Investigation).where(
+            Investigation.anomaly_id.in_(ids)).order_by(Investigation.id)).all():
+        investigations[row.anomaly_id] = row
+    return [_anomaly_dict(session, a, decisions.get(a.id), investigations.get(a.id))
+            for a in anomalies]
+
+
+def _investigation_dict(session, inv: Investigation) -> dict:
+    hyps = session.scalars(select(HypothesisRow).where(
+        HypothesisRow.investigation_id == inv.id)).all()
+    evs = session.scalars(select(EvidenceRow).where(
+        EvidenceRow.investigation_id == inv.id)).all()
+    finding = session.scalars(select(Finding).where(
+        Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
+    recs = []
+    if finding is not None:
+        recs = session.scalars(select(Recommendation).where(
+            Recommendation.finding_id == finding.id).order_by(Recommendation.rank)).all()
+    anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv.anomaly_id else None
+    # The title is a problem statement, never a metric name — the case detail and
+    # the case list must not disagree about what this case is called.
+    title = case_title(finding, anomaly)
+    # ...and they must not disagree about its state either, so the derivation
+    # lives once, in echolens.cases, and both read it.
+    watch = session.scalars(select(FixWatch).where(
+        FixWatch.investigation_id == inv.id).order_by(FixWatch.id.desc())).first()
+    case_status, case_why = derive_status(inv, finding, watch)
+    return {
+        "id": inv.id, "anomaly_id": inv.anomaly_id, "status": inv.status,
+        "case_status": case_status, "case_why": case_why,
+        "title": title,
+        "opened_by": inv.opened_by, "budget_tier": inv.budget_tier,
+        "budget": inv.budget_json, "paused": inv.paused, "escalated": inv.escalated,
+        "reopens_investigation_id": inv.reopens_investigation_id,
+        "data_notes": inv.data_notes or [],
+        # v13: the case's own audit trail, so History is a tab rather than a
+        # thing that happened somewhere you can no longer see.
+        "history": case_history(session, inv),
+        "hypotheses": [{"id": h.hid, "statement": h.statement, "confidence": h.confidence,
+                        "status": h.status, **h.json} for h in hyps],
+        "evidence": [{"id": e.eid, "source": e.source, "ref": e.ref, "snippet": e.snippet,
+                      "retrieved_by": e.retrieved_by, **e.json} for e in evs],
+        "finding": None if finding is None else {
+            "id": finding.id, "status": finding.status, **finding.json,
+            **_finding_extras(session, finding, recs, inv.status)},
+        "recommendations": [{"rank": r.rank, "action": r.action, "impact": r.impact,
+                             "effort": r.effort, "rationale": r.rationale} for r in recs],
+    }
+
+
+def _finding_extras(session, finding, recs, status: str) -> dict:
+    """The decision doc + severity (v4.0) plus the fix-verification status (v6.0),
+    so the UI can show What's broken / How bad / What to do and — once a fix
+    ships — a confirmed-fix badge with a before/after chart."""
+    from echolens.db.models import FixWatch
+    from echolens.impact import decision_doc, severity
+    fj = finding.json or {}
+    impact = fj.get("impact", {})
+    watch = session.scalars(select(FixWatch).where(
+        FixWatch.finding_id == finding.id).order_by(FixWatch.id.desc())).first()
+    fix = None
+    if watch is not None:
+        fix = {"status": watch.status, "issue_number": watch.issue_number,
+               "issue_url": watch.issue_url, "chart": watch.chart_json,
+               "baseline_rate": watch.baseline_rate, "post_rate": watch.post_rate}
+    # v10: how broadly this finding's own cited evidence is corroborated. The
+    # two-source rule proves at least two channels agree; this reports the actual
+    # spread, so "proven across reviews, GitHub and support" is a fact the finding
+    # carries rather than a claim it makes.
+    breadth = None
+    try:
+        from echolens.db.models import Investigation, Product
+        from echolens.feedback_graph import evidence_breadth
+        inv = session.get(Investigation, finding.investigation_id)
+        prod = session.get(Product, inv.product_id) if inv and inv.product_id else None
+        refs = [e.ref for e in session.scalars(select(EvidenceRow).where(
+            EvidenceRow.investigation_id == finding.investigation_id)).all()]
+        breadth = evidence_breadth(session, refs, prod.name if prod else None)
+    except Exception as err:  # never let a presentation extra break the finding
+        log.warning("evidence_breadth_failed", finding_id=finding.id, error=str(err))
+
+    return {
+        "decision": decision_doc(fj, list(recs), impact, status),
+        "severity": severity(float(fj.get("confidence", 0.0)), impact),
+        "fix": fix,
+        "breadth": breadth,
+    }
+
+
+def _trace_dict(t: TraceStep) -> dict:
+    return {"seq": t.seq, "kind": t.kind, "content": t.content_json,
+            "tokens": t.tokens, "ms": t.ms}
+
+
+# ── background investigation runner ────────────────────────────────────
+
+def _try_notify(session, finding) -> None:
+    """Auto-deliver a concluded finding by severity (v4.0). Never let a delivery
+    failure affect the investigation result."""
+    try:
+        from echolens.notify import notify_finding
+        result = notify_finding(session, finding)
+        log.info("finding_notified", finding_id=finding.id, routed=result.get("routed"))
+    except Exception as err:
+        log.error("notify_failed", finding_id=finding.id, error=str(err))
+
+
+_queue_worker_active: set[int | None] = set()
+# The set above is mutated from several request threads. `if x in s: ... s.add(x)`
+# is check-then-act: two concurrent POSTs both passed the membership test before
+# either added, so two drain workers ran for one product and the daily cap was
+# a suggestion. The docstring below claimed this could not happen.
+_queue_worker_lock = threading.Lock()
+
+
+def _drain_queue_bg(product_id: int | None) -> None:
+    """Run the queue sequentially until it empties or the daily budget is spent.
+
+    One worker per product: a second call while one is draining is a no-op, so
+    pressing the button twice cannot run the same item twice or blow past the
+    cap by racing.
+    """
+    from echolens.orchestrator import queue as q
+
+    with _queue_worker_lock:
+        if product_id in _queue_worker_active:
+            return
+        _queue_worker_active.add(product_id)
+    try:
+        while True:
+            with session_scope() as session:
+                limit = _daily_limit(session, product_id)
+                row = q.claim_next(session, product_id, limit)
+                if row is None:
+                    return  # queue empty, or today's budget is gone
+                queue_id, anomaly_id, tier = row.id, row.anomaly_id, row.budget_tier
+                anomaly = session.get(AnomalyEvent, anomaly_id)
+                inv = Investigation(anomaly_id=anomaly_id, status="running",
+                                    opened_by="anomaly", budget_tier=tier, budget_json={},
+                                    data_notes=_data_notes(session, product_id),
+                                    product_id=(anomaly.product_id if anomaly else product_id))
+                session.add(inv)
+                if anomaly is not None:
+                    anomaly.status = "investigating"
+                session.flush()
+                investigation_id = inv.id
+                row.investigation_id = investigation_id
+            ok = True
+            try:
+                _run_investigation_bg(investigation_id, tier)
+            except Exception as err:  # one bad case must not stall the queue
+                ok = False
+                log.error("queued_investigation_failed", queue_id=queue_id, error=str(err))
+            with session_scope() as session:
+                q.finish(session, queue_id, investigation_id, ok=ok)
+    finally:
+        with _queue_worker_lock:
+            _queue_worker_active.discard(product_id)
+
+
+def _fail_investigation(session, inv_row, reason: str) -> None:
+    """End a case honestly instead of leaving it stuck at "running"."""
+    inv_row.status = "insufficient_evidence"
+    inv_row.resolved_at = datetime.now(timezone.utc)
+    notes = list(inv_row.data_notes or [])
+    notes.append(f"Investigation could not run: {reason}.")
+    inv_row.data_notes = notes
+    session.flush()
+
+
+def _mark_investigation_failed(investigation_id: int, error: str) -> None:
+    """Best-effort status write from a failed background thread, on its own
+    session — the one that raised is already rolled back."""
+    try:
+        with session_scope() as session:
+            row = session.get(Investigation, investigation_id)
+            if row is not None and row.status == "running":
+                _fail_investigation(session, row, f"an internal error stopped it ({error[:120]})")
+    except Exception as err:
+        log.error("mark_failed_failed", investigation_id=investigation_id, error=str(err))
+
+
+def _run_investigation_bg(investigation_id: int, tier: str) -> None:
+    """Run the loop on an investigation row that was already created (so the
+    POST could return its id immediately for the UI to jump to)."""
+    from echolens.investigator.graph import Investigator
+    from echolens.recommender.recommend import recommend
+
+    try:
+        with session_scope() as session:
+            inv_row = session.get(Investigation, investigation_id)
+            if inv_row is None:
+                log.error("run_investigation_missing", investigation_id=investigation_id)
+                return
+            anomaly = session.get(AnomalyEvent, inv_row.anomaly_id) if inv_row.anomaly_id else None
+            if anomaly is None:
+                # Deleting a product purges its anomalies while an investigation
+                # for it may still be queued. This used to dereference None,
+                # kill the daemon thread silently, and leave the case at
+                # "running" FOREVER — invisible in /archive (which skips running)
+                # and un-resumable, because resume re-enters the same crash.
+                _fail_investigation(session, inv_row, "its source signal no longer exists")
+                return
+            anomaly.status = "investigating"
+            inv = Investigator(session, anomaly, tier=tier,
+                               existing_investigation=inv_row).run()
+            finding = session.scalars(select(Finding).where(
+                Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
+            if finding is not None:
+                # The investigation and its finding are the core result. Make
+                # them durable before optional action drafting/delivery: a bad
+                # recommendation payload or provider outage must not roll back a
+                # completed case and make recovery run the whole loop again.
+                finding_id = finding.id
+                session.commit()
+                try:
+                    recommend(session, finding)
+                except Exception as err:
+                    session.rollback()
+                    log.error("recommend_failed", finding_id=finding_id,
+                              error=f"{type(err).__name__}: {err}")
+                    finding = session.get(Finding, finding_id)
+                _try_notify(session, finding)
+    except Exception as err:
+        # A dead background thread must not strand the case. Without this the row
+        # sat at "running" permanently with no error anywhere the user could see.
+        log.error("run_investigation_failed", investigation_id=investigation_id, error=str(err))
+        _mark_investigation_failed(investigation_id, str(err))
+
+
+# ── endpoints ──────────────────────────────────────────────────────────
+
+from echolens.auth import (
+    DEV_ADMIN, GUEST, authenticate, create_token, create_user, current_user,
+    decode_token, require_role)
+
+
+class SignupBody(BaseModel):
+    email: str
+    password: str
+    role: str = "viewer"
+
+
+class LoginBody(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/auth/signup")
+def auth_signup(body: SignupBody, request: Request) -> dict:
+    """User creation. In production the FIRST admin must come from the
+    BOOTSTRAP_ADMIN_* env (not open self-service) — otherwise a stranger could
+    claim admin by being first to hit this endpoint. After an admin exists, only
+    an admin may create users. In dev, the first signup bootstraps an admin."""
+    from echolens.db.models import User
+    with session_scope() as session:
+        first_user = session.scalar(select(User).limit(1)) is None
+        if first_user:
+            if settings.echolens_env == "production":
+                raise HTTPException(
+                    403,
+                    "Open signup is disabled in production. Create the first admin via the "
+                    "BOOTSTRAP_ADMIN_EMAIL / BOOTSTRAP_ADMIN_PASSWORD environment variables.",
+                )
+            role = "admin"  # dev bootstrap
+        else:
+            caller = current_user(request)  # 401 without a token in prod
+            if caller["role"] != "admin":
+                raise HTTPException(403, "only an admin can create users")
+            role = body.role
+        try:
+            user = create_user(session, body.email, body.password, role)
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        return {"id": user.id, "email": user.email, "role": user.role,
+                "token": create_token(user)}
+
+
+@app.post("/auth/login")
+@limiter.limit("10/minute")
+def auth_login(body: LoginBody, request: Request) -> dict:
+    """Rate-limited: bcrypt is slow per attempt, which protects the password but
+    makes an unthrottled endpoint a cheap way to burn every worker thread. The
+    cap bounds both credential-stuffing and that DoS."""
+    with session_scope() as session:
+        user = authenticate(session, body.email, body.password)
+        if user is None:
+            raise HTTPException(401, "invalid credentials")
+        return {"token": create_token(user), "role": user.role}
+
+
+class GoogleBody(BaseModel):
+    credential: str
+
+
+@app.post("/auth/google")
+@limiter.limit("20/minute")
+def auth_google(body: GoogleBody, request: Request) -> dict:
+    """Exchange a Google ID token for an EchoLens token.
+
+    The ID token is verified against Google's published keys (signature,
+    issuer, audience, expiry) before anything is trusted — see
+    echolens.google_auth. Rate-limited because verification can trigger an
+    outbound JWKS fetch.
+    """
+    from echolens.google_auth import GoogleAuthError, role_for, verify_id_token
+    from echolens.auth import upsert_google_user
+
+    try:
+        claims = verify_id_token(body.credential)
+    except GoogleAuthError as err:
+        # The detail is safe to show: it describes the caller's own token, and
+        # the specific reason ("not configured", "email not verified") is the
+        # difference between a user retrying usefully and giving up.
+        raise HTTPException(401, str(err))
+
+    with session_scope() as session:
+        user = upsert_google_user(session, claims["email"], role_for(claims["email"]))
+        return {"token": create_token(user), "role": user.role, "email": user.email}
+
+
+@app.get("/auth/config")
+def auth_config() -> dict:
+    """What sign-in options this deployment offers, and whether guests are let
+    in. Unauthenticated on purpose: the login screen has to read it before a
+    token exists. It exposes only the public OAuth client id, which is designed
+    to be embedded in a web page."""
+    return {
+        "google_client_id": settings.google_client_id,
+        "google_enabled": bool(settings.google_client_id),
+        "allow_guest": settings.allow_guest,
+        "auth_required": settings.auth_required,
+    }
+
+
+@app.get("/auth/me")
+def auth_me(user: dict = Depends(current_user)) -> dict:
+    return user
+
+
+# ── v8.0: products are the scope of everything ──────────────────────────
+
+def _guest_locked(user: dict | None) -> bool:
+    """True when this caller may only see demo products.
+
+    A guest is an anonymous visitor on a public URL. Without this they saw
+    every real product in the workspace — reviews, findings, costs and all —
+    because `is_demo` was recorded but never enforced anywhere.
+    """
+    return bool(user and user.get("guest") and settings.guest_demo_only)
+
+
+def _may_spend(user: dict | None) -> bool:
+    """May this caller cause an LLM call?
+
+    A guest may not. Guest mode exists so a public demo URL is browsable, and
+    every route that spends money is behind require_role — except the two GETs
+    that build an LLM client inline (/graph, /feed/candidates). Those served an
+    anonymous visitor a fresh OpenAI call per request, on the deployment's key.
+
+    Reads still work: the caller gets the deterministic result and a flag saying
+    the richer view needs an account.
+    """
+    return not (user and user.get("guest"))
+
+
+def _visible_products(session, user: dict | None = None):
+    """The products this caller may see, newest-id-last."""
+    from echolens.db.models import Product
+    q = select(Product).order_by(Product.id)
+    if _guest_locked(user):
+        q = q.where(Product.is_demo == True)  # noqa: E712
+    return session.scalars(q).all()
+
+
+def _scope(session, product_id: int | None, user: dict | None = None):
+    """The product this request is scoped to: the explicit id, else the first.
+
+    An explicit id that does not exist is a 404, not a silent redirect. This
+    used to fall through to "the first product", so `?product_id=999` (stale
+    link, deleted product, typo) quietly operated on somebody else's data —
+    PUT /backlog/plan saved the PM's edits onto Product #1's backlog, and
+    /anomalies/scan scanned the wrong corpus, with no error surfaced anywhere.
+
+    Guests are confined to demo products here, at the single choke point every
+    scoped route already passes through, rather than in each route. A real
+    product requested by id is a 404 for them — the same answer as a product
+    that does not exist, so the response does not confirm it is there.
+    """
+    from echolens.db.models import Product
+    if product_id is not None:
+        p = session.get(Product, product_id)
+        if p is None:
+            raise HTTPException(404, f"no product with id {product_id}")
+        if _guest_locked(user) and not p.is_demo:
+            raise HTTPException(404, f"no product with id {product_id}")
+        return p
+    rows = _visible_products(session, user)
+    # For a demo-only guest, no visible product must never mean "all products".
+    # Most callers use ``None`` as the intentional workspace-wide scope for a
+    # brand-new authenticated workspace, so returning it here leaked every real
+    # product whenever a public deployment had not seeded a demo row.
+    if _guest_locked(user) and not rows:
+        raise HTTPException(404, "no demo product is available")
+    return rows[0] if rows else None
+
+
+def _owned(session, model, resource_id: int, product_id: int | None):
+    """Fetch a row by id and REFUSE it if it belongs to another product.
+
+    Product scoping was applied as a WHERE clause on list endpoints and nowhere
+    else, so every single-resource route (`GET /investigations/{id}`,
+    `POST /findings/{id}/review`, …) served or mutated any id the caller could
+    guess, across every product in the workspace. Filtering a list is not
+    authorisation; this is the enforcement point those routes never had.
+
+    A cross-product id returns 404, not 403 — a 403 confirms the row exists.
+    """
+    row = session.get(model, resource_id)
+    if row is None:
+        raise HTTPException(404, f"no such {model.__tablename__.rstrip('s')}")
+    owner = getattr(row, "product_id", None)
+    # Legacy investigations may predate their direct product_id. Resolve their
+    # anomaly instead of treating NULL as a wildcard across every product.
+    if product_id is not None and owner is None and isinstance(row, Investigation):
+        anomaly = session.get(AnomalyEvent, row.anomaly_id)
+        owner = anomaly.product_id if anomaly else None
+    if product_id is not None and owner != product_id:
+        raise HTTPException(404, f"no such {model.__tablename__.rstrip('s')}")
+    return row
+
+
+def _owned_finding(session, finding_id: int, product_id: int | None):
+    """A finding, verified to belong to the caller's product.
+
+    Findings carry product_id directly, but older rows may not, so fall back to
+    the parent investigation's scope rather than letting a NULL wave it through.
+    """
+    finding = session.get(Finding, finding_id)
+    if finding is None:
+        raise HTTPException(404, "no such finding")
+    owner = finding.product_id
+    if owner is None:
+        inv = session.get(Investigation, finding.investigation_id)
+        owner = inv.product_id if inv else None
+    if product_id is not None and owner != product_id:
+        raise HTTPException(404, "no such finding")
+    return finding
+
+
+def _user_row(session, user: dict):
+    """The DB row behind the authenticated principal, for per-user settings.
+
+    With auth on, the JWT carries a real user id. In dev mode `current_user`
+    returns a synthetic admin with id 0 — falsy, and backed by no row — so a
+    naive `if uid:` silently dropped every write and product switching appeared
+    to work while never persisting. Resolve the dev principal by email (creating
+    its row once) so local behaviour matches production instead of diverging.
+    """
+    from echolens.db.models import User
+    uid = user.get("id")
+    if uid:
+        return session.get(User, uid)
+    email = user.get("email")
+    if not email:
+        return None
+    row = session.scalars(select(User).where(User.email == email)).first()
+    if row is None:
+        row = User(email=email, password_hash="!dev-no-login", role=user.get("role", "admin"))
+        session.add(row)
+        session.flush()
+    return row
+
+
+def _product_dict(p) -> dict:
+    return {"id": p.id, "name": p.name, "package_name": p.package_name,
+            "github_repo": p.github_repo, "is_demo": p.is_demo,
+            "created_at": p.created_at.isoformat() if p.created_at else None}
+
+
+@app.get("/products")
+def list_products(user: dict = Depends(current_user)) -> dict:
+    """Every product + the caller's last-active one. The client uses this on boot
+    to decide between Today and the add-product wizard (server-derived)."""
+    from echolens.db.models import Product, User
+    with session_scope() as session:
+        # Guests see only demo products: this list drives the switcher, so
+        # anything here is a product the visitor can open.
+        rows = _visible_products(session, user)
+        active = None
+        u = _user_row(session, user)
+        if u is not None and u.last_active_product_id:
+            active = u.last_active_product_id
+        if active not in {p.id for p in rows}:
+            active = rows[0].id if rows else None
+        return {"products": [_product_dict(p) for p in rows], "active_product_id": active}
+
+
+class ProductBody(BaseModel):
+    name: str
+    package_name: str | None = None
+    github_repo: str | None = None
+
+
+@app.post("/products")
+def create_product(body: ProductBody, user: dict = Depends(require_role("admin"))) -> dict:
+    """Admin-only, deliberately.
+
+    A product is a billing and scope boundary, not a document. Creating one
+    attaches collectors that keep pulling every few hours and opens a new
+    corpus that investigations run against — an ongoing commitment on the
+    workspace owner's API key, not a single action. `reviewer` is "can act on
+    the work" (investigate, approve, challenge); `admin` is "can change what
+    the system watches and what it costs".
+    """
+    from echolens.db.models import Product
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(422, "a product needs a name")
+    with session_scope() as session:
+        if session.scalars(select(Product).where(Product.name == name)).first():
+            raise HTTPException(409, f"a product named '{name}' already exists")
+        p = Product(name=name, package_name=body.package_name, github_repo=body.github_repo)
+        session.add(p)
+        session.flush()
+        return _product_dict(p)
+
+
+@app.post("/products/{product_id}/activate")
+def activate_product(product_id: int, user: dict = Depends(current_user)) -> dict:
+    """Persist the caller's active product server-side so a refresh returns here."""
+    from echolens.db.models import Product, User
+    with session_scope() as session:
+        # Via _scope so a guest cannot activate — or learn the name of — a
+        # product they are not allowed to see. `session.get` bypassed that.
+        p = _scope(session, product_id, user)
+        if p is None:
+            raise HTTPException(404, "no such product")
+        u = _user_row(session, user)
+        if u is None:
+            # A guest has no `users` row to remember anything on, which is
+            # expected, not an error: their active product lives in the URL.
+            # This used to 500, so switching product as a guest always failed.
+            if user.get("guest"):
+                return {"active_product_id": product_id, "name": p.name,
+                        "persisted": False}
+            raise HTTPException(500, "could not resolve the current user to persist the switch")
+        u.last_active_product_id = product_id
+        return {"active_product_id": product_id, "name": p.name, "persisted": True}
+
+
+@app.get("/products/{product_id}/deletion-preview")
+def product_deletion_preview(product_id: int, user: dict = Depends(current_user)) -> dict:
+    """What deleting this product would destroy.
+
+    A destructive confirmation that says "this cannot be undone" without saying
+    what "this" is asks the user to trust a number they cannot see. These are the
+    real counts.
+    """
+    from echolens.db.models import (
+        AnomalyEvent, CollectorState, Finding, Investigation, Product, Review)
+    with session_scope() as session:
+        # _scope, not session.get: this returns a product's NAME and its review,
+        # case and finding counts, so an unscoped lookup let a demo visitor
+        # enumerate every real product in the workspace by id.
+        p = _scope(session, product_id, user)
+        if p is None:
+            raise HTTPException(404, "no such product")
+
+        def count(model, *where):
+            return len(session.scalars(select(model).where(*where)).all())
+
+        return {
+            "id": p.id,
+            "name": p.name,
+            "is_demo": p.is_demo,
+            "reviews": count(Review, Review.product == p.name),
+            "cases": count(Investigation, Investigation.product_id == p.id),
+            "findings": count(Finding, Finding.product_id == p.id),
+            "anomalies": count(AnomalyEvent, AnomalyEvent.product_id == p.id),
+            "sources": count(CollectorState, CollectorState.product_id == p.id),
+        }
+
+
+@app.delete("/products/{product_id}")
+def delete_product(product_id: int, confirm: str = "",
+                   user: dict = Depends(require_role("admin"))) -> dict:
+    """Delete a product and cascade its data. Requires ?confirm=<exact name>."""
+    from echolens.db.models import (
+        AnomalyEvent, CollectorState, Comment, EvidenceRow, FeedbackEntry, Finding,
+        FixWatch, HypothesisRow, Investigation, Issue, KnowledgeEdge, LLMCall, Mention,
+        Post, Product, QueuedInvestigation, Recommendation, Release, Review,
+        ReviewFeedback, ReviewRequest, TraceStep, TriageDecision, User)
+    with session_scope() as session:
+        p = session.get(Product, product_id)
+        if p is None:
+            raise HTTPException(404, "no such product")
+        if confirm.strip() != p.name:
+            raise HTTPException(422, f"type the product name exactly to confirm deletion ('{p.name}')")
+        name = p.name
+        inv_ids = [i.id for i in session.scalars(select(Investigation).where(
+            Investigation.product_id == product_id)).all()]
+        find_ids = [f.id for f in session.scalars(select(Finding).where(
+            Finding.product_id == product_id)).all()]
+        anom_ids = [a.id for a in session.scalars(select(AnomalyEvent).where(
+            AnomalyEvent.product_id == product_id)).all()]
+
+        def _purge(model, col, ids):
+            if ids:
+                for row in session.scalars(select(model).where(col.in_(ids))).all():
+                    session.delete(row)
+
+        # Mentions hang off comments, so they go first — deleting the comment
+        # out from under them is the same FK violation one level down.
+        comment_ids = [c.id for c in session.scalars(select(Comment).where(
+            Comment.product_id == product_id)).all()]
+        _purge(Mention, Mention.comment_id, comment_ids)
+
+        _purge(ReviewFeedback, ReviewFeedback.finding_id, find_ids)
+        _purge(Recommendation, Recommendation.finding_id, find_ids)
+        _purge(TraceStep, TraceStep.investigation_id, inv_ids)
+        _purge(HypothesisRow, HypothesisRow.investigation_id, inv_ids)
+        _purge(EvidenceRow, EvidenceRow.investigation_id, inv_ids)
+        _purge(LLMCall, LLMCall.investigation_id, inv_ids)
+        _purge(TriageDecision, TriageDecision.anomaly_id, anom_ids)
+        # Anything that references an investigation must be gone before the
+        # investigations themselves, hence two ordered passes rather than one
+        # loop over every product-scoped model.
+        _purge(Comment, Comment.investigation_id, inv_ids)
+        _purge(ReviewRequest, ReviewRequest.investigation_id, inv_ids)
+        _purge(QueuedInvestigation, QueuedInvestigation.investigation_id, inv_ids)
+        for model in (FixWatch, Finding, Investigation, AnomalyEvent, CollectorState,
+                      QueuedInvestigation, KnowledgeEdge, Comment, Mention, ReviewRequest):
+            for row in session.scalars(select(model).where(model.product_id == product_id)).all():
+                session.delete(row)
+        # Older collector rows were created before product_id was populated.
+        # They are still owned by their product name and must not survive a
+        # delete only to be inherited by a later product with the same name.
+        for row in session.scalars(select(CollectorState).where(
+                CollectorState.product == name, CollectorState.product_id.is_(None))).all():
+            session.delete(row)
+        # Corpus rows are keyed by product NAME, not id. FeedbackEntry was
+        # missing: every v2 source (Hacker News, Stack Overflow, GitHub
+        # Discussions, PRs/commits) lands there, so deleting a product left its
+        # entire non-store corpus behind, and a product recreated with the same
+        # name silently inherited it.
+        for model in (Review, Issue, Post, Release, FeedbackEntry):
+            for row in session.scalars(select(model).where(model.product == name)).all():
+                session.delete(row)
+        for u in session.scalars(select(User).where(User.last_active_product_id == product_id)).all():
+            u.last_active_product_id = None
+        session.delete(p)
+        return {"deleted": name}
+
+
+@app.get("/health")
+def health() -> dict:
+    ok = True
+    try:
+        with session_scope() as s:
+            s.execute(select(AnomalyEvent).limit(1))
+    except Exception:
+        ok = False
+    return {"db": ok, "llm_key_present": bool(settings.openai_api_key),
+            "model": settings.echolens_model}
+
+
+@app.post("/collect/run")
+def collect_run(user: dict = Depends(require_role("admin"))) -> dict:
+    """Dev convenience: seed the synthetic corpus if empty (real collectors are M3)."""
+    from echolens.db.models import Review
+    from echolens.synthetic.generate import generate
+    with session_scope() as session:
+        if session.scalar(select(Review).limit(1)) is not None:
+            return {"status": "already_populated"}
+        counts = generate(session)
+    return {"status": "seeded", "counts": counts}
+
+
+class ConnectSource(BaseModel):
+    source: str            # any key of collectors.registry._BUILDERS
+    identifier: str        # package name / repo / search term
+    product: str | None = None
+    product_id: int | None = None
+
+
+@app.get("/sources/available")
+def sources_available() -> dict:
+    """The connectable sources, from the registry.
+
+    Served rather than hardcoded in the frontend so a source can never appear in
+    the form without a collector behind it — the connect form and _BUILDERS
+    cannot drift apart.
+    """
+    from echolens.collectors.registry import SOURCE_INFO, _BUILDERS
+
+    return {"sources": [
+        {"source": s,
+         "label": SOURCE_INFO.get(s, {}).get("label", s.replace("_", " ").title()),
+         "hint": SOURCE_INFO.get(s, {}).get("hint", "")}
+        for s in sorted(_BUILDERS)
+    ]}
+
+
+@app.post("/sources/connect")
+def connect_source(body: ConnectSource, user: dict = Depends(require_role("admin"))) -> dict:
+    """Register a real data source (v1.0). Collection happens on the schedule
+    or via POST /collectors/run.
+
+    product_id wins over the free-text `product`. Sources is a per-product
+    screen, but its form defaulted the name to "" — and add_source falls back to
+    `product or identifier`, so the source attached to a product named after the
+    raw PACKAGE rather than the one being viewed. Nothing errored; the data just
+    filed itself somewhere invisible.
+    """
+    from echolens.collectors.registry import add_source
+    with session_scope() as session:
+        product = body.product
+        if body.product_id is not None:
+            prod = _scope(session, body.product_id, user)
+            if prod is not None:
+                product = prod.name
+        try:
+            st = add_source(session, body.source, body.identifier, product,
+                            body.product_id)
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        # Scope the collector row too, so product-filtered health and collection
+        # actually see it.
+        if body.product_id is not None:
+            st.product_id = body.product_id
+            session.flush()
+        return {"connected": {"source": st.source, "identifier": st.identifier, "product": st.product}}
+
+
+@app.post("/collectors/run")
+def collectors_run(product_id: int | None = None,
+                   user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Run every configured collector once (deterministic, no LLM)."""
+    from echolens.collectors.registry import run_all
+    started = time.monotonic()
+    with session_scope() as session:
+        prod = _scope(session, product_id, user)
+        results = run_all(session, product_id=(prod.id if prod else None))
+        return {"results": [
+            {"source": r.source, "identifier": r.identifier, "fetched": r.fetched,
+             "inserted": r.inserted, "error": r.error,
+             "duration_seconds": r.duration_s} for r in results],
+                "duration_seconds": round(time.monotonic() - started, 2)}
+
+
+class RetryBody(BaseModel):
+    source: str
+    identifier: str
+    product_id: int | None = None
+
+
+@app.post("/collectors/retry")
+def collectors_retry(body: RetryBody, user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Retry ONE source now (the 'Retry now' action on a stale/failed source)."""
+    from echolens.collectors.registry import SourceConfig, run_one
+    with session_scope() as session:
+        from echolens.db.models import CollectorState
+        prod = _scope(session, body.product_id, user)
+        st = session.scalars(select(CollectorState).where(
+            CollectorState.source == body.source,
+            CollectorState.identifier == body.identifier,
+            CollectorState.product_id == (prod.id if prod else None))).first()
+        if st is None:
+            raise HTTPException(404, "no such source")
+        res = run_one(session, SourceConfig(
+            st.source, st.identifier, st.product, st.product_id,
+            st.id, st.watermark))
+        return {"source": res.source, "identifier": res.identifier,
+                "inserted": res.inserted, "error": res.error}
+
+
+@app.get("/collectors")
+def collectors_health(product_id: int | None = None,
+                      user: dict = Depends(current_user)) -> dict:
+    from echolens.db.models import CollectorState
+    with session_scope() as session:
+        prod = _scope(session, product_id, user)
+        stmt = select(CollectorState)
+        if prod is not None:
+            stmt = stmt.where(CollectorState.product_id == prod.id)
+        rows = session.scalars(stmt).all()
+        return {"collectors": [
+            {"source": c.source, "identifier": c.identifier, "product": c.product,
+             "status": c.status, "watermark": c.watermark, "items_last_run": c.items_last_run,
+             "last_error": c.last_error,
+             "last_run_at": c.last_run_at.isoformat() if c.last_run_at else None,
+             "enabled": c.enabled} for c in rows]}
+
+
+def _data_notes(session, product_id: int | None = None) -> list[str]:
+    """Disclosure strings for any source that is stale RIGHT NOW, captured when an
+    investigation starts so its finding can say what was unavailable."""
+    from echolens.collectors.registry import source_health
+    from echolens.db.models import Product
+    product = session.get(Product, product_id) if product_id is not None else None
+    notes = []
+    for h in source_health(session, product=(product.name if product else None)):
+        if h["stale"]:
+            label = _SOURCE_META.get(h["source"], {}).get("label", h["source"])
+            when = f" since {h['stale_since']}" if h.get("stale_since") else ""
+            notes.append(f"{label} ({h['identifier']}) was unavailable{when} during this "
+                         f"investigation — conclusions may be incomplete.")
+    return notes
+
+
+def _onboard_bg(product: str, product_id: int | None = None) -> None:
+    """Hands-off backfill: pull every configured source once, then scan. Runs in
+    a thread so POST /onboard returns immediately and the wizard can poll."""
+    from echolens.collectors.registry import run_all
+    from echolens.detector.detect import scan
+    try:
+        with session_scope() as session:
+            run_all(session, limit=300, product_id=product_id,
+                    timeout_s=120)  # deeper first-run backfill, still bounded
+        with session_scope() as session:
+            scan(session, product=product, product_id=product_id)
+        log.info("onboard_backfill_done", product=product)
+    except Exception as err:  # never crash the worker; the source shows its error
+        log.error("onboard_backfill_failed", product=product, error=str(err))
+
+
+class OnboardBody(BaseModel):
+    play_store: str
+    github: str | None = None
+    # Keep the old API behaviour (issues + releases only) when this field is
+    # omitted. The onboarding UI sends all three when the user chooses "All".
+    github_sources: list[str] = Field(default_factory=lambda: ["github"], max_length=3)
+    product: str | None = None
+    app_store: str | None = None
+    chrome_web_store: str | None = None
+    hacker_news: str | None = None
+    stack_overflow: str | None = None
+
+
+@app.post("/onboard")
+def onboard(body: OnboardBody, user: dict = Depends(require_role("admin"))) -> dict:
+    """Add a real product in one shot: validate the inputs, register the sources,
+    and kick off a hands-off backfill. The wizard then polls /onboard/status.
+
+    Admin for the same reason as POST /products, which this is a superset of:
+    it also registers recurring collectors and starts a 90-day backfill.
+    """
+    from echolens.collectors.registry import add_source
+    from echolens.onboarding.validate import normalize_github_repo, validate_play_store_package
+
+    err = validate_play_store_package(body.play_store)
+    if err:
+        raise HTTPException(422, err)
+    repo, gerr = normalize_github_repo(body.github)
+    if gerr:
+        raise HTTPException(422, gerr)
+    allowed_github = {"github", "github_discussions", "github_activity"}
+    github_sources = list(dict.fromkeys(body.github_sources))
+    unknown_github = set(github_sources) - allowed_github
+    if unknown_github:
+        raise HTTPException(422, f"unknown GitHub source: {sorted(unknown_github)[0]}")
+    if repo and not github_sources:
+        raise HTTPException(422, "select at least one GitHub source")
+    product = (body.product or "").strip() or body.play_store.strip()
+    with session_scope() as session:
+        from echolens.db.models import Product
+        prod = session.scalars(select(Product).where(Product.name == product)).first()
+        if prod is None:
+            prod = Product(name=product, package_name=body.play_store.strip(), github_repo=repo)
+            session.add(prod)
+            session.flush()
+        pid = prod.id
+        add_source(session, "play_store", body.play_store.strip(), product, pid)
+        if repo:
+            for source in github_sources:
+                add_source(session, source, repo, product, pid)
+        additional = {
+            "app_store": body.app_store,
+            "chrome_web_store": body.chrome_web_store,
+            "hacker_news": body.hacker_news,
+            "stack_overflow": body.stack_overflow,
+        }
+        connected_additional = []
+        for source, identifier in additional.items():
+            if identifier and identifier.strip():
+                add_source(session, source, identifier.strip(), product, pid)
+                connected_additional.append(source)
+    threading.Thread(target=_onboard_bg, args=(product, pid), daemon=True).start()
+    return {"status": "backfilling", "product": product, "product_id": pid,
+            "play_store": body.play_store.strip(), "github": repo,
+            "github_sources": github_sources if repo else [],
+            "additional_sources": connected_additional}
+
+
+@app.get("/onboard/status")
+def onboard_status(product: str, user: dict = Depends(current_user)) -> dict:
+    """Live view for the onboarding wait screen: source health, whether the
+    backfill is still running, the health snapshot so far, and any anomalies
+    already surfaced."""
+    from echolens.collectors.registry import source_health
+    from echolens.db.models import Product
+    from echolens.onboarding.snapshot import health_snapshot
+    with session_scope() as session:
+        # This route is looked up by NAME, so it cannot use _scope (which takes
+        # an id). Check visibility explicitly: without it a demo visitor could
+        # confirm a real product exists and read its health snapshot by
+        # guessing the name. 404 rather than 403 — the same answer as a name
+        # that does not exist, so the response reveals nothing either way.
+        named = session.scalars(select(Product).where(Product.name == product)).first()
+        if named is not None and _guest_locked(user) and not named.is_demo:
+            raise HTTPException(404, "no such product")
+        health = source_health(session, product=product)
+        # "backfilling" until every source has at least completed one run
+        backfilling = any(h["status"] in ("idle", "running") and h["never_collected"]
+                          for h in health) or any(h["status"] == "running" for h in health)
+        snap = health_snapshot(session, product=product)
+        # Scoped to THIS product. Unscoped, the wizard showed another product's
+        # signals, and clicking through to the new product's feed found none of
+        # them — they were never its anomalies.
+        prod = session.scalars(select(Product).where(Product.name == product)).first()
+        a_stmt = select(AnomalyEvent).where(AnomalyEvent.status == "pending")
+        if prod is not None:
+            a_stmt = a_stmt.where(AnomalyEvent.product_id == prod.id)
+        anomalies = _anomaly_dicts(
+            session, session.scalars(a_stmt.order_by(AnomalyEvent.id)).all())
+        return {"product": product, "product_id": prod.id if prod else None,
+                "backfilling": backfilling, "sources": health,
+                "snapshot": snap, "anomalies": anomalies}
+
+
+# ── v12: the product-knowledge brain ────────────────────────────────────
+
+@app.get("/brain")
+def brain_view(product_id: int | None = None, include_retired: bool = False,
+               user: dict = Depends(current_user)) -> dict:
+    """The learned causal map: which subsystems, when changed, cause which
+    symptoms — with the confidence each belief has earned."""
+    from echolens.brain import edges
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        pid = p.id if p else None
+        return {"edges": edges(session, pid, include_retired=include_retired),
+                "retired": edges(session, pid, include_retired=True) if include_retired else None,
+                "product": p.name if p else None}
+
+
+@app.post("/brain/rebuild")
+def brain_rebuild(product_id: int | None = None,
+                  user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Re-mine edges from confirmed fixes and grade them against resolved cases."""
+    from echolens.brain import calibrate_from_history, edges, rebuild
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        pid = p.id if p else None
+        built = rebuild(session, pid)
+        graded = calibrate_from_history(session, pid)
+        return {**built, "calibration": graded, "edges_now": edges(session, pid)}
+
+
+class ReviewDoc(BaseModel):
+    text: str
+    product_id: int | None = None
+
+
+@app.post("/brain/review")
+@limiter.limit("20/minute")
+def brain_review(body: ReviewDoc, request: Request,
+                 user: dict = Depends(current_user)) -> dict:
+    """Design-doc / PR review: flag a proposed change against learned history
+    BEFORE it ships. Prevention, not detection."""
+    from echolens.brain import review_change
+    with session_scope() as session:
+        p = _scope(session, body.product_id, user)
+        return {**review_change(session, body.text, p.id if p else None),
+                "product": p.name if p else None}
+
+
+class BrainQuestion(BaseModel):
+    question: str
+    product_id: int | None = None
+
+
+@app.post("/brain/ask")
+@limiter.limit("20/minute")
+def brain_ask(body: BrainQuestion, request: Request,
+              user: dict = Depends(current_user)) -> dict:
+    """The onboarding oracle: 'what usually goes wrong here?', cited to real cases."""
+    from echolens.brain import ask
+    with session_scope() as session:
+        p = _scope(session, body.product_id, user)
+        return ask(session, body.question, p.id if p else None, p.name if p else None)
+
+
+# ── v11: the quality backlog ────────────────────────────────────────────
+
+@app.get("/backlog")
+def backlog_view(product_id: int | None = None,
+                 user: dict = Depends(current_user)) -> dict:
+    """Every open problem, ranked by impact-per-effort, each line defended."""
+    from echolens.backlog import backlog
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        return {**backlog(session, p.id if p else None), "product": p.name if p else None}
+
+
+@app.get("/backlog/plan")
+def backlog_plan_view(product_id: int | None = None,
+                      capacity_days: float | None = Query(None, gt=0, le=10000),
+                      user: dict = Depends(current_user)) -> dict:
+    """The proposed "what to fix next" draft, respecting the PM's own edits."""
+    from echolens.backlog import quarter_plan
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        return {**quarter_plan(session, p.id if p else None, capacity_days),
+                "product": p.name if p else None}
+
+
+class PlanBody(BaseModel):
+    included: list[int] = []
+    excluded: list[int] = []
+    notes: dict[str, str] | None = None
+    # Bounded: a negative capacity produced a plan the API reported back with a
+    # straight face (capacity_days: -50.0), and an unbounded one is meaningless.
+    capacity_days: float | None = Field(None, gt=0, le=10000)
+    product_id: int | None = None
+
+
+@app.put("/backlog/plan")
+def backlog_plan_save(body: PlanBody,
+                      user: dict = Depends(require_role("reviewer"))) -> dict:
+    """The PM edits and owns the plan; a later re-rank proposes around it."""
+    from echolens.backlog import quarter_plan, save_plan
+    with session_scope() as session:
+        p = _scope(session, body.product_id, user)
+        pid = p.id if p else None
+        save_plan(session, pid, included=body.included, excluded=body.excluded,
+                  notes=body.notes, capacity_days=body.capacity_days)
+        return {**quarter_plan(session, pid), "product": p.name if p else None}
+
+
+# ── v10: the unified feedback graph ─────────────────────────────────────
+
+@app.get("/graph")
+@limiter.limit("20/minute")  # builds an LLM client inline — cap runaway spend
+def feedback_graph(request: Request, product_id: int | None = None,
+                   days: int = Query(90, ge=1, le=365),
+                   limit: int = Query(10, ge=1, le=100),
+                   user: dict = Depends(current_user)) -> dict:
+    """Cross-channel problem nodes: one complaint, every voice.
+
+    Ranked by how INDEPENDENT the witnesses are, not how many there are — a
+    problem four channels agree on outranks a louder one only the store has seen.
+    """
+    from echolens.feedback_graph import build_graph
+    with session_scope() as session:
+        prod = _scope(session, product_id, user)
+        if prod is None:
+            return {"nodes": [], "product": None, "channels": []}
+        llm = (_metered_llm(session, "feedback_graph")
+               if settings.openai_api_key and _may_spend(user) else None)
+        out = build_graph(session, prod.name, llm=llm, days=days, limit=limit)
+        if llm is None and settings.openai_api_key:
+            out["llm_skipped"] = "sign in for LLM-grouped nodes"
+        return out
+
+
+@app.get("/graph/channels")
+def graph_channels(product_id: int | None = None,
+                   user: dict = Depends(current_user)) -> dict:
+    """Which channels this product has, and how much each contributes."""
+    from echolens.feedback import CHANNELS, channel_meta, collect_items, configured_channels
+    with session_scope() as session:
+        prod = _scope(session, product_id, user)
+        name = prod.name if prod else None
+        items = collect_items(session, name, negatives_only=False)
+        counts: dict[str, int] = {}
+        for i in items:
+            counts[i.channel] = counts.get(i.channel, 0) + 1
+        connected = configured_channels(session, name)
+        return {
+            "product": name,
+            "connected": [{"channel": c, **channel_meta(c), "items": counts.get(c, 0)}
+                          for c in connected],
+            "available": [{"channel": c, **meta} for c, meta in CHANNELS.items()
+                          if c not in connected],
+        }
+
+
+def _upload_text(raw: bytes, filename: str | None) -> str:
+    """An upload as CSV text, converting Excel first.
+
+    Both import routes take CSV text, so .xlsx is converted here rather than
+    given its own importer — the column-alias tolerance and dedup rules are
+    inherited, and the same data imports identically either way.
+
+    Detection is by content, not extension: latin-1 never raises, so an .xlsx
+    that reached the decode path below would silently become a page of binary
+    garbage that parses as a single junk row instead of erroring.
+    """
+    from echolens.importers.spreadsheet import looks_like_xlsx, xlsx_to_csv
+
+    if looks_like_xlsx(raw, filename):
+        try:
+            return xlsx_to_csv(raw)
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return raw.decode("latin-1", errors="replace")
+
+
+@app.post("/import/feedback")
+async def import_feedback(file: UploadFile = File(...), channel: str = "support",
+                          product: str = "",
+                          user: dict = Depends(require_role("admin"))) -> dict:
+    """Import support tickets / in-app feedback / forum threads from a CSV or
+    Excel workbook."""
+    from echolens.importers.feedback_csv import import_feedback_csv
+    # Bounded. `await file.read()` with no cap pulled the entire upload into
+    # memory (and csv.DictReader then held a second copy), so one large POST
+    # could OOM the single worker this deployment runs.
+    raw = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"file too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)")
+    text = _upload_text(raw, file.filename)
+    try:
+        with session_scope() as session:
+            return import_feedback_csv(session, text, channel=channel,
+                                       product=(product or None))
+    except ValueError as err:
+        raise HTTPException(422, str(err))
+
+
+@app.get("/feed/candidates")
+@limiter.limit("20/minute")  # builds an LLM client inline — cap runaway spend
+def feed_candidates(request: Request, product_id: int | None = None,
+                    limit: int = Query(6, ge=1, le=50),
+                    refresh: bool = False, user: dict = Depends(current_user)) -> dict:
+    """Themes worth investigating that are not yet anomalies.
+
+    A freshly-connected product often has no spike to detect — the detector needs
+    a baseline, and a mature app may simply be steadily bad rather than newly
+    bad. These come from clustering complaints by meaning, not from counting
+    n-grams, which is why they are sentences rather than words.
+    """
+    from echolens.orchestrator.queue import find_existing
+    from echolens.themes.discover import cached_themes
+
+    with session_scope() as session:
+        prod = _scope(session, product_id, user)
+        if prod is None:
+            return {"candidates": [], "product": None, "engine": "none"}
+        # A guest gets the cache or the deterministic fallback, never a fresh
+        # LLM call. `refresh` deliberately DEFEATS the cache, so it is the one
+        # knob an anonymous caller could use to force unlimited spend — it is
+        # honoured only for someone who could pay for it.
+        may_spend = _may_spend(user)
+        llm = _metered_llm(session, "themes") if settings.openai_api_key and may_spend else None
+        result = cached_themes(session, prod.name, llm=llm, limit=limit,
+                               package_name=prod.package_name,
+                               force=refresh and may_spend)
+        out = []
+        for th in result.get("themes", []):
+            slug = f"theme-p{prod.id}-{th['slug']}"
+            # Already queued or investigated? Say so and link, rather than
+            # offering a button that would quietly create a duplicate.
+            existing = find_existing(session, prod.id, slug)
+            out.append({
+                "slug": slug,
+                "statement": th["statement"],
+                "count": th["count"],
+                "verbatims": th["verbatims"],
+                "trend": th["trend"],
+                "label_source": th["label_source"],
+                "first_seen": th.get("first_seen"),
+                "existing": existing,
+            })
+        return {"candidates": out, "product": prod.name,
+                "engine": result.get("engine"), "cached": result.get("cached", False),
+                "reviews_considered": result.get("reviews_considered", 0),
+                "other": result.get("other", 0)}
+
+
+# ── v10: the investigation queue ────────────────────────────────────────
+
+class QueueThemes(BaseModel):
+    slugs: list[str] = Field(default_factory=list, max_length=100)
+    statements: dict[str, str] = Field(default_factory=dict, max_length=100)
+    tier: str = "quick"
+    product_id: int | None = None
+
+
+@app.post("/queue/themes")
+@limiter.limit("20/minute")
+def queue_themes(request: Request, body: QueueThemes,
+                 user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Queue selected themes. Batch by design: selecting three things should cost
+    one decision, not three clicks that each fight the daily budget."""
+    from echolens.orchestrator.queue import enqueue_theme, queue_view
+
+    with session_scope() as session:
+        prod = _scope(session, body.product_id, user)
+        pid = prod.id if prod else None
+        queued, already = [], []
+        for i, slug in enumerate(body.slugs):
+            res = enqueue_theme(session, product_id=pid, slug=slug,
+                                statement=body.statements.get(slug, ""),
+                                tier=body.tier, selection_order=i)
+            (already if res["status"] == "already" else queued).append(res)
+        limit = _daily_limit(session, pid)
+        view = queue_view(session, pid, limit)
+
+    if queued:
+        threading.Thread(target=_drain_queue_bg, args=(pid,), daemon=True).start()
+    deferred = len([q for q in view["queued"] if q["status"] == "deferred"])
+    parts = []
+    if queued:
+        parts.append(f"{len(queued)} queued")
+    if deferred:
+        parts.append(f"{deferred} waiting for tomorrow's budget")
+    if already:
+        parts.append(f"{len(already)} already under investigation")
+    return {"queued": queued, "already": already, "queue": view,
+            "summary": " · ".join(parts) or "nothing to queue"}
+
+
+@app.get("/queue")
+def queue_list(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    from echolens.orchestrator.queue import queue_view
+    with session_scope() as session:
+        prod = _scope(session, product_id, user)
+        pid = prod.id if prod else None
+        return queue_view(session, pid, _daily_limit(session, pid))
+
+
+@app.delete("/queue/{queue_id}")
+def queue_cancel(queue_id: int, product_id: int | None = None,
+                 user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.db.models import QueuedInvestigation
+    from echolens.orchestrator.queue import cancel
+    with session_scope() as session:
+        # Ownership check first. This took a bare id and cancelled it, so a
+        # reviewer scoped to one product could cancel ANOTHER product's queued
+        # work just by knowing the number.
+        p = _scope(session, product_id, user)
+        _owned(session, QueuedInvestigation, queue_id, p.id if p else None)
+        if not cancel(session, queue_id):
+            raise HTTPException(409, "that item is already running or finished")
+    return {"cancelled": queue_id}
+
+
+@app.post("/import/reviews")
+async def import_reviews(file: UploadFile = File(...), product: str = "", source: str = "csv",
+                        product_id: int | None = None,
+                        user: dict = Depends(require_role("admin"))) -> dict:
+    """Import reviews from any export (App Store, Zendesk, spreadsheet) as CSV
+    or Excel. Widens the evidence base beyond the live scrapers. Idempotent by
+    content hash.
+
+    product_id wins over the free-text `product`. Import is offered from a
+    per-product screen, but the form defaulted the name to "" and the importer
+    then wrote Review(product=None) — the rows landed attached to NO product and
+    were invisible to every scoped screen in the app.
+    """
+    from echolens.importers.csv_reviews import import_reviews_csv
+    # Bounded. `await file.read()` with no cap pulled the entire upload into
+    # memory (and csv.DictReader then held a second copy), so one large POST
+    # could OOM the single worker this deployment runs.
+    raw = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"file too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)")
+    text = _upload_text(raw, file.filename)
+    with session_scope() as session:
+        name = product or None
+        if product_id is not None:
+            prod = _scope(session, product_id, user)
+            if prod is not None:
+                name = prod.name
+        try:
+            result = import_reviews_csv(session, text, product=name, source=(source or "csv"))
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+    return result
+
+
+@app.get("/snapshot")
+def snapshot(product: str | None = None, product_id: int | None = None,
+             days: int = Query(90, ge=1, le=365),
+             user: dict = Depends(current_user)) -> dict:
+    """Health snapshot for a product (or the whole corpus) — powers the
+    'Investigate now on anything' entry point outside onboarding."""
+    from echolens.onboarding.snapshot import health_snapshot
+    with session_scope() as session:
+        if product is None:
+            p = _scope(session, product_id, user)
+            product = p.name if p else None
+        return health_snapshot(session, product=product, days=days)
+
+
+@app.post("/search/embed")
+def search_embed(product_id: int | None = None,
+                 user: dict = Depends(require_role("admin"))) -> dict:
+    """Backfill embeddings over the corpus so semantic search activates (v1.0)."""
+    from echolens.search.semantic import embed_corpus
+    with session_scope() as session:
+        prod = _scope(session, product_id, user)
+        return {"embedded": embed_corpus(session, product=(prod.name if prod else None))}
+
+
+@app.post("/anomalies/scan")
+def anomalies_scan(product_id: int | None = None,
+                   user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.detector.detect import scan
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        events = scan(session, product=(p.name if p else None), product_id=(p.id if p else None))
+        return {"detected": [e.slug for e in events], "product": p.name if p else None}
+
+
+@app.get("/anomalies")
+def list_anomalies(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        stmt = select(AnomalyEvent).where(AnomalyEvent.merged_into_id.is_(None))
+        if p is not None:
+            stmt = stmt.where(AnomalyEvent.product_id == p.id)
+        rows = session.scalars(stmt.order_by(AnomalyEvent.id)).all()
+        return {"anomalies": _anomaly_dicts(session, rows)}
+
+
+@app.get("/cases")
+def list_cases(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    """The unified case list — one lifecycle, one status vocabulary.
+
+    Replaces the three overlapping surfaces (feed / health / archive) that each
+    described the same case differently. Everything a card renders is decided
+    here so the same case cannot look like two different things on two screens.
+    """
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        return case_view(session, p.id if p else None)
+
+
+def _triage_summary(considered: int, already: int, started: int, run: bool) -> str:
+    """One line the reviewer can trust. The old wording said '0 new → investigating'
+    on a preview, which claimed work that never happened."""
+    if considered == 0:
+        return "Nothing pending — every anomaly already has a case or was dismissed."
+    n = f"{considered} anomaly" if considered == 1 else f"{considered} anomalies"
+    if not run:
+        return f"{n} reviewed — preview only, nothing started. Press Run triage to open cases."
+    if started == 0:
+        if already:
+            return f"{n}, already triaged — every one has a case; nothing new to open."
+        return f"{n}, none met the bar to investigate."
+    kept = f", {already} already triaged" if already else ""
+    return f"{n}{kept} → investigating {started}."
+
+
+@app.post("/anomalies/triage")
+@limiter.limit("10/minute")
+def anomalies_triage(request: Request, run: bool = False, product_id: int | None = None,
+                     user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.orchestrator.triage import Orchestrator
+    to_run: list[tuple[int, str]] = []
+    skipped_already_triaged = 0
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        pid = p.id if p else None
+        # A preview (run=false) must not consume the pending queue — see
+        # Orchestrator.triage(persist=...).
+        decisions = Orchestrator(session, daily_limit=_daily_limit(session, pid),
+                                 product_id=pid).triage(persist=run)
+        out = [{"anomaly": d.anomaly.slug, "decision": d.decision, "reason": d.reason,
+                "budget_tier": d.budget_tier,
+                "merge_into": d.merge_into.slug if d.merge_into else None} for d in decisions]
+        if run:
+            for d in decisions:
+                if d.decision != "investigate":
+                    continue
+                # Idempotency guard: never open a SECOND case for an anomaly that
+                # already has one (this is what caused duplicate cases on re-triage).
+                existing = session.scalars(select(Investigation).where(
+                    Investigation.anomaly_id == d.anomaly.id)).first()
+                if existing is not None:
+                    skipped_already_triaged += 1
+                    continue
+                tier = d.budget_tier or "standard"
+                inv = Investigation(anomaly_id=d.anomaly.id, status="running", opened_by="anomaly",
+                                    budget_tier=tier, budget_json={}, product_id=pid)
+                session.add(inv)
+                d.anomaly.status = "investigating"
+                session.flush()
+                to_run.append((inv.id, tier))
+    # Run the investigations in the background AFTER the triage commit — so the
+    # request returns immediately (no proxy timeout that left cases stuck as
+    # "pending triage") and the rows are visible to the worker sessions.
+    for inv_id, tier in to_run:
+        threading.Thread(target=_run_investigation_bg, args=(inv_id, tier), daemon=True).start()
+    return {
+        "decisions": out,
+        "started_investigations": [i for i, _ in to_run],
+        "skipped_already_triaged": skipped_already_triaged,
+        "summary": _triage_summary(len(out), skipped_already_triaged, len(to_run), run),
+    }
+
+
+class NewCase(BaseModel):
+    anomaly_slug: str | None = None
+    description: str | None = None
+    tier: str = "standard"
+    product_id: int | None = None
+
+
+@app.post("/investigations")
+@limiter.limit("6/minute")  # each run costs money — cap runaway spend (v1.0)
+def start_investigation(request: Request, body: NewCase,
+                        user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Start an investigation for an existing anomaly, or open a manual case
+    from a free-text description. Runs in the background; poll the trace."""
+    with session_scope() as session:
+        prod = _scope(session, body.product_id, user)
+        pid = prod.id if prod else None
+        opened_by = "anomaly"
+        if body.anomaly_slug:
+            anomaly_stmt = select(AnomalyEvent).where(
+                AnomalyEvent.slug == body.anomaly_slug)
+            if pid is not None:
+                anomaly_stmt = anomaly_stmt.where(AnomalyEvent.product_id == pid)
+            anomaly = session.scalars(anomaly_stmt).first()
+            if anomaly is None:
+                raise HTTPException(404, f"no anomaly '{body.anomaly_slug}'")
+            # Concurrency guard: don't spawn a second investigation for an anomaly
+            # that already has one running — return the in-flight one instead.
+            running = session.scalars(select(Investigation).where(
+                Investigation.anomaly_id == anomaly.id,
+                Investigation.status == "running")).first()
+            if running is not None:
+                return {"status": "already_running", "investigation_id": running.id,
+                        "anomaly_id": anomaly.id}
+            # Never adopt scope from a row found workspace-wide. With a scoped
+            # request, the query above proves the anomaly belongs to this
+            # product before either the duplicate guard or creation can expose
+            # another product's case id.
+        elif body.description:
+            opened_by = "manual"
+            anomaly = AnomalyEvent(
+                slug=f"manual-{int(time.time())}", type="manual",
+                metric="manual case", delta=0.0, z=0.0, window="n/a",
+                description=body.description.strip(), status="pending", product_id=pid)
+            session.add(anomaly)
+            session.flush()
+        else:
+            raise HTTPException(422, "provide anomaly_slug or description")
+        # Create the investigation row NOW so we can return its id and the UI can
+        # jump straight to the live trace; the loop itself runs in the background.
+        inv = Investigation(anomaly_id=anomaly.id, status="running",
+                            opened_by=opened_by, budget_tier=body.tier, budget_json={},
+                            data_notes=_data_notes(session, pid), product_id=pid)
+        session.add(inv)
+        anomaly.status = "investigating"
+        session.flush()
+        investigation_id, anomaly_id = inv.id, anomaly.id
+
+    threading.Thread(target=_run_investigation_bg,
+                     args=(investigation_id, body.tier), daemon=True).start()
+    return {"status": "started", "investigation_id": investigation_id, "anomaly_id": anomaly_id}
+
+
+@app.get("/investigations")
+def list_investigations(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    """Every investigation, plus anything still waiting to become one.
+
+    The frontend's work-watcher polls this and refreshes the screens when the
+    busy count falls. Queued items live in `queued_investigations` and have no
+    Investigation row until they are claimed, so returning only Investigation
+    rows made the watcher blind to them: it saw zero busy work, stopped polling,
+    and the queue only appeared to advance when the user reloaded the page.
+    """
+    from echolens.db.models import QueuedInvestigation
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        stmt = select(Investigation).order_by(Investigation.id.desc())
+        if p is not None:
+            stmt = stmt.where(Investigation.product_id == p.id)
+        rows = session.scalars(stmt).all()
+        out = [{"id": i.id, "status": i.status, "opened_by": i.opened_by,
+                "budget_tier": i.budget_tier, "anomaly_id": i.anomaly_id} for i in rows]
+
+        # Pending queue entries, as work the watcher can count. `investigation_id`
+        # is null until one is claimed, so an entry that already has one is
+        # skipped — it is the Investigation row above and must not count twice.
+        q_stmt = select(QueuedInvestigation).where(
+            QueuedInvestigation.status.in_(("queued", "running")),
+            QueuedInvestigation.investigation_id.is_(None))
+        if p is not None:
+            q_stmt = q_stmt.where(QueuedInvestigation.product_id == p.id)
+        for q in session.scalars(q_stmt.order_by(QueuedInvestigation.id.desc())).all():
+            out.append({"id": None, "queue_id": q.id, "status": q.status,
+                        "opened_by": q.source, "budget_tier": q.budget_tier,
+                        "anomaly_id": q.anomaly_id})
+        return {"investigations": out}
+
+
+@app.get("/investigations/{inv_id}")
+def get_investigation(inv_id: int, product_id: int | None = None,
+                      user: dict = Depends(current_user)) -> dict:
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        inv = _owned(session, Investigation, inv_id, p.id if p else None)
+        return _investigation_dict(session, inv)
+
+
+# ── v5.0 collaboration ──────────────────────────────────────────────────
+
+class CommentBody(BaseModel):
+    body: str
+    parent_id: int | None = None
+
+
+class ReviewRequestBody(BaseModel):
+    requested_of_id: int | None = None
+    note: str = ""
+
+
+class ResolveRequestBody(BaseModel):
+    status: str          # approved | changes_requested | cancelled
+
+
+@app.get("/investigations/{inv_id}/comments")
+def list_comments(inv_id: int, product_id: int | None = None,
+                  user: dict = Depends(current_user)) -> dict:
+    """The discussion on a case. Readable by anyone who can read the case,
+    guests included — reading a thread leaks nothing the case itself doesn't."""
+    from echolens.collab import comment_thread
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        inv = _owned(session, Investigation, inv_id, p.id if p else None)
+        return {"investigation_id": inv.id, "comments": comment_thread(session, inv.id)}
+
+
+@app.post("/investigations/{inv_id}/comments")
+def post_comment(inv_id: int, body: CommentBody, product_id: int | None = None,
+                 user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Post a comment. Reviewer or above: the GUEST principal has id None by
+    design, and an unattributed comment on a review thread is worse than none."""
+    from echolens.collab import add_comment, comment_thread
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        inv = _owned(session, Investigation, inv_id, p.id if p else None)
+        try:
+            comment = add_comment(session, inv.id, body.body, user.get("id"),
+                                  parent_id=body.parent_id)
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        return {"posted": comment.id,
+                "comments": comment_thread(session, inv.id)}
+
+
+@app.patch("/comments/{comment_id}")
+def patch_comment(comment_id: int, body: CommentBody, product_id: int | None = None,
+                  user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.collab import edit_comment
+    from echolens.db.models import Comment
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        comment = _owned(session, Comment, comment_id, p.id if p else None)
+        try:
+            edit_comment(session, comment, body.body, user.get("id"))
+        except PermissionError as err:
+            raise HTTPException(403, str(err))
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        return {"edited": comment.id}
+
+
+@app.delete("/comments/{comment_id}")
+def remove_comment(comment_id: int, product_id: int | None = None,
+                   user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.collab import delete_comment
+    from echolens.db.models import Comment
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        comment = _owned(session, Comment, comment_id, p.id if p else None)
+        try:
+            delete_comment(session, comment, user.get("id"),
+                           is_admin=(user.get("role") == "admin"))
+        except PermissionError as err:
+            raise HTTPException(403, str(err))
+        return {"deleted": comment.id}
+
+
+@app.get("/mentions")
+def list_mentions(product_id: int | None = None, unread_only: bool = True,
+                  limit: int = Query(50, ge=1, le=200),
+                  user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Your mention inbox. Always the CALLER's — a user id is never taken from
+    the query string, so one user cannot read another's inbox."""
+    from echolens.collab import inbox
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        uid = user.get("id")
+        if uid is None:
+            return {"mentions": [], "unread": 0}
+        rows = inbox(session, uid, product_id=(p.id if p else None),
+                     unread_only=unread_only, limit=limit)
+        return {"mentions": rows, "unread": sum(1 for r in rows if not r["read"])}
+
+
+@app.post("/mentions/read")
+def read_mentions(mention_ids: list[int] | None = None, product_id: int | None = None,
+                  user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.collab import mark_read
+    if mention_ids is not None and len(mention_ids) > 200:
+        raise HTTPException(422, "at most 200 mentions can be marked at once")
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        uid = user.get("id")
+        if uid is None:
+            return {"marked": 0}
+        return {"marked": mark_read(session, uid, mention_ids,
+                                    product_id=(p.id if p else None))}
+
+
+@app.post("/investigations/{inv_id}/review-request")
+def create_review_request(inv_id: int, body: ReviewRequestBody,
+                          product_id: int | None = None,
+                          user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.collab import request_review
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        inv = _owned(session, Investigation, inv_id, p.id if p else None)
+        try:
+            req = request_review(session, inv.id, user.get("id"),
+                                 requested_of_id=body.requested_of_id, note=body.note)
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        return {"request_id": req.id, "status": req.status}
+
+
+@app.post("/review-requests/{req_id}/resolve")
+def resolve_review_request(req_id: int, body: ResolveRequestBody,
+                           product_id: int | None = None,
+                           user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Close a review request. Deliberately does NOT move the finding's status —
+    approve/challenge remain the only paths to that, so a sign-off cannot
+    smuggle a conclusion past the evidence checks."""
+    from echolens.collab import resolve_request
+    from echolens.db.models import ReviewRequest
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        req = _owned(session, ReviewRequest, req_id, p.id if p else None)
+        try:
+            resolve_request(session, req, body.status)
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        return {"request_id": req.id, "status": req.status}
+
+
+@app.get("/team")
+def team_view(product_id: int | None = None,
+              user: dict = Depends(current_user)) -> dict:
+    """Team dashboard: what is awaiting review and who is discussing what."""
+    from echolens.collab import team_activity
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        if p is None:
+            return {"awaiting_review": [], "recent_comments": [],
+                    "contributors": [], "open_request_count": 0, "product": None}
+        return {**team_activity(session, p.id), "product": p.name}
+
+
+def _run_challenge_bg(inv_id: int, note: str) -> None:
+    """Run a challenge re-investigation (created synchronously by the review
+    endpoint) off the request path so the HTTP call returns immediately."""
+    from echolens.investigator.graph import Investigator
+    from echolens.recommender.recommend import recommend
+    with session_scope() as session:
+        inv_row = session.get(Investigation, inv_id)
+        if inv_row is None:
+            return
+        anomaly = session.get(AnomalyEvent, inv_row.anomaly_id)
+        inv = Investigator(session, anomaly, tier=inv_row.budget_tier, opened_by="challenge",
+                           context_note=note, reopens_investigation_id=inv_row.reopens_investigation_id,
+                           existing_investigation=inv_row).run()
+        finding = session.scalars(select(Finding).where(
+            Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
+        if finding is not None:
+            recommend(session, finding)
+            _try_notify(session, finding)
+
+
+def _resume_investigation_bg(inv_id: int) -> None:
+    from echolens.investigator.graph import Investigator
+    from echolens.recommender.recommend import recommend
+    with session_scope() as session:
+        inv = session.get(Investigation, inv_id)
+        if inv is None or inv.paused:
+            return
+        inv = Investigator.resume(session, inv)
+        finding = session.scalars(select(Finding).where(
+            Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
+        if finding is not None:
+            recommend(session, finding)
+            _try_notify(session, finding)
+
+
+@app.post("/investigations/{inv_id}/pause")
+def pause_investigation(inv_id: int, product_id: int | None = None,
+                       user: dict = Depends(require_role("reviewer"))) -> dict:
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        inv = _owned(session, Investigation, inv_id, p.id if p else None)
+        inv.paused = True
+        return {"status": "pausing", "id": inv_id}
+
+
+@app.post("/investigations/{inv_id}/resume")
+def resume_investigation(inv_id: int, product_id: int | None = None,
+                        user: dict = Depends(require_role("reviewer"))) -> dict:
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        inv = _owned(session, Investigation, inv_id, p.id if p else None)
+        if inv.status != "running":
+            raise HTTPException(422, f"cannot resume a {inv.status} investigation")
+        inv.paused = False
+    threading.Thread(target=_resume_investigation_bg, args=(inv_id,), daemon=True).start()
+    return {"status": "resuming", "id": inv_id}
+
+
+@app.post("/investigations/{inv_id}/escalate")
+def escalate_investigation(inv_id: int, product_id: int | None = None,
+                          user: dict = Depends(require_role("reviewer"))) -> dict:
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        inv = _owned(session, Investigation, inv_id, p.id if p else None)
+        inv.escalated = True
+        return {"status": "escalated", "id": inv_id, "by": user["email"]}
+
+
+@app.get("/investigations/{inv_id}/trace")
+def get_trace(inv_id: int, after: int = Query(0, ge=0, le=2_147_483_647),
+              product_id: int | None = None,
+              user: dict = Depends(current_user)) -> dict:
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        inv = _owned(session, Investigation, inv_id, p.id if p else None)
+        steps = session.scalars(select(TraceStep).where(
+            TraceStep.investigation_id == inv_id, TraceStep.seq > after
+        ).order_by(TraceStep.seq)).all()
+        return {"status": inv.status, "steps": [_trace_dict(t) for t in steps]}
+
+
+# An SSE tail must end. Without a ceiling the generator looped forever whenever
+# a case was stuck at "running" (which, before the _run_investigation_bg guard,
+# happened whenever a background thread died), pinning a threadpool worker and
+# opening a DB connection twice a second until the pool was exhausted.
+SSE_MAX_SECONDS = 15 * 60
+
+
+def _sse(event: str, payload: dict) -> str:
+    """One server-sent event. Kept as a helper so the wire format lives in one
+    place rather than being re-escaped at four call sites."""
+    return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+
+
+@app.get("/investigations/{inv_id}/trace/stream")
+async def stream_trace(inv_id: int, request: Request, product_id: int | None = None,
+                       token: str | None = None) -> StreamingResponse:
+    """SSE tail of the trace_steps table until the investigation stops running.
+
+    Auth accepts `?token=` as well as the Authorization header. EventSource
+    cannot set headers, so requiring one made this endpoint 401 in every
+    non-dev environment — the browser silently fell back to polling and the
+    "live trace" never worked in production at all. Same JWT; it is in the query
+    string because SSE leaves nowhere else to put it.
+    """
+    # This route authenticates by hand (EventSource cannot set headers, so the
+    # token may arrive in the query string), which means there is no `user`
+    # dependency to hand to _scope. Build the same principal shape those
+    # dependencies produce, so guest scoping applies here too.
+    user: dict = dict(GUEST)
+    if settings.auth_required:
+        header = request.headers.get("Authorization", "")
+        raw = header.split(" ", 1)[1] if header.startswith("Bearer ") else token
+        ok = False
+        if raw:
+            try:
+                claims = decode_token(raw)
+                int(claims["sub"])
+                user = {"id": int(claims["sub"]), "email": claims.get("email"),
+                        "role": claims.get("role", "viewer")}
+                ok = True
+            except Exception:
+                ok = False
+        # A guest may tail a demo product's trace, but only when guests are
+        # allowed at all; otherwise a token is still required.
+        if not ok and settings.allow_guest and not raw:
+            ok = True
+        if not ok:
+            raise HTTPException(401, "missing or invalid token")
+    else:
+        user = dict(DEV_ADMIN)
+
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        _owned(session, Investigation, inv_id, p.id if p else None)
+
+    async def gen():
+        sent = 0
+        started = time.monotonic()
+        while True:
+            # Stop when the client goes away. Nothing checked this, so closing
+            # the tab left the loop running server-side until the case settled.
+            if await request.is_disconnected():
+                return
+            if time.monotonic() - started > SSE_MAX_SECONDS:
+                yield _sse("done", {"status": "stream_timeout"})
+                return
+            with session_scope() as session:
+                inv = session.get(Investigation, inv_id)
+                if inv is None:
+                    yield _sse("error", {"error": "not found"})
+                    return
+                steps = session.scalars(select(TraceStep).where(
+                    TraceStep.investigation_id == inv_id, TraceStep.seq > sent
+                ).order_by(TraceStep.seq)).all()
+                for t in steps:
+                    sent = t.seq
+                    yield _sse("step", _trace_dict(t))
+                if inv.status != "running":
+                    yield _sse("done", {"status": inv.status})
+                    return
+            # await, not time.sleep: a blocking sleep held a threadpool worker
+            # hostage for the entire life of the stream.
+            await asyncio.sleep(0.5)
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+class ReviewBody(BaseModel):
+    action: str  # approve | challenge
+    note: str = ""
+    reason: str | None = None  # v5.0 structured challenge category
+
+
+@app.post("/findings/{finding_id}/review")
+def review_finding(finding_id: int, body: ReviewBody, product_id: int | None = None,
+                   user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens import review
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
+        if body.action == "approve":
+            review.approve(session, finding, body.note, user_id=user["id"])
+            return {"status": "approved", "finding_id": finding_id, "by": user["email"]}
+        if body.action == "challenge":
+            if not body.note.strip():
+                raise HTTPException(422, "challenge requires a note")
+            # Create the re-opened row synchronously, then run the loop in the
+            # background so the HTTP request returns immediately (a full
+            # investigation can take many minutes — it must not block the request).
+            reopened = review.record_challenge(session, finding, body.note,
+                                               reason=body.reason, user_id=user["id"])
+            reopened_id = reopened.id
+            note = body.note
+    if body.action == "challenge":
+        threading.Thread(target=_run_challenge_bg, args=(reopened_id, note), daemon=True).start()
+        return {"status": "challenged", "reopened_investigation_id": reopened_id, "by": user["email"]}
+    raise HTTPException(422, "action must be approve or challenge")
+
+
+@app.get("/calibration")
+def calibration_view(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    """v5.0 trust page: stated-confidence-vs-approval curve + known weak spots."""
+    from echolens.calibration import calibration, weak_spots
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        pid = p.id if p else None
+        return {**calibration(session, pid), "weak_spots": weak_spots(session, pid),
+                "product": p.name if p else None}
+
+
+@app.post("/findings/{finding_id}/recommend")
+@limiter.limit("10/minute")  # each call hits the LLM — cap runaway spend
+def recommend_finding(request: Request, finding_id: int, product_id: int | None = None,
+                      user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.recommender.recommend import recommend
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
+        recs = recommend(session, finding)
+        return {"recommendations": [
+            {"rank": r.rank, "action": r.action, "impact": r.impact, "effort": r.effort}
+            for r in recs]}
+
+
+# ── v4.0: actionable delivery (tickets, GitHub issues, Slack, alerts) ────
+
+def _metered_llm(session, agent_prefix: str):
+    """An OpenAIClient whose spend is RECORDED.
+
+    These call sites used `on_call=lambda *a: None`, so LLM work done outside an
+    investigation (theme discovery, the feedback graph) was invisible to every
+    cost report and counted against no budget. investigation_id is None because
+    there is no case to attribute it to — but the tokens and dollars are real and
+    now appear in the ledger.
+    """
+    from echolens.llm.openai_client import OpenAIClient
+
+    def _record(agent, model, tokens_in, tokens_out, cost, ms):
+        session.add(LLMCall(investigation_id=None, agent=f"{agent_prefix}.{agent}",
+                            model=model, tokens_in=tokens_in, tokens_out=tokens_out,
+                            cost=cost, ms=ms))
+
+    return OpenAIClient(on_call=_record)
+
+
+def _github_repo(session, product_id: int | None = None) -> str | None:
+    """The repo to file a finding's issue into — THIS product's repo.
+
+    This used to return a repo only when exactly one was connected workspace-wide
+    and otherwise fall back to GITHUB_DEFAULT_REPO. The moment a second product
+    was added, every finding from every product filed into the default repo:
+    verified by test, issues for product B landed in product A's tracker (or in
+    whatever GITHUB_DEFAULT_REPO named). Scoped first, global single-repo second,
+    configured default last.
+    """
+    from echolens.db.models import CollectorState
+    base = select(CollectorState).where(
+        CollectorState.source == "github", CollectorState.enabled == True)  # noqa: E712
+    if product_id is not None:
+        scoped = session.scalars(base.where(CollectorState.product_id == product_id)).all()
+        if len(scoped) == 1:
+            return scoped[0].identifier
+        if len(scoped) > 1:
+            return scoped[0].identifier  # deterministic: first configured wins
+    rows = session.scalars(base).all()
+    if len(rows) == 1:
+        return rows[0].identifier
+    return settings.github_default_repo or None
+
+
+@app.get("/findings/{finding_id}/issue")
+def finding_issue_markdown(finding_id: int, product_id: int | None = None,
+                          user: dict = Depends(current_user)) -> dict:
+    """Copy-to-clipboard, ticket-ready markdown for a finding."""
+    from echolens.exporting import finding_ticket
+    from echolens.notify import deep_link
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
+        repo = _github_repo(session, finding.product_id)
+        inv = session.get(Investigation, finding.investigation_id)
+        ticket = finding_ticket(session, finding, repo=repo,
+                                deep_link=deep_link(inv.id) if inv else None)
+        return {**ticket, "repo": repo}
+
+
+@app.post("/findings/{finding_id}/github-issue")
+def finding_github_issue(finding_id: int, product_id: int | None = None,
+                         user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Open a GitHub issue from a finding, evidence chain included."""
+    from echolens.exporting import finding_ticket
+    from echolens.integrations.github_issue import GitHubIssueError, create_issue
+    from echolens.notify import deep_link
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
+        repo = _github_repo(session)
+        if not repo:
+            raise HTTPException(422, "No GitHub repo connected. Connect a repo on Sources, or set GITHUB_DEFAULT_REPO.")
+        inv = session.get(Investigation, finding.investigation_id)
+        ticket = finding_ticket(session, finding, repo=repo,
+                                deep_link=deep_link(inv.id) if inv else None)
+        try:
+            issue = create_issue(repo, ticket["title"], ticket["body"])
+        except GitHubIssueError as err:
+            # Log the upstream body, return a generic message. GitHubIssueError
+            # embeds `resp.text[:200]` verbatim, which was echoed to any viewer.
+            log.warning("github_issue_failed", finding_id=finding_id, error=str(err))
+            raise HTTPException(422, "could not create the GitHub issue — see server logs")
+        from echolens.fixwatch import link_issue
+        if issue.get("number"):
+            link_issue(session, finding, repo, int(issue["number"]), issue.get("url", ""))
+        return {"repo": repo, **issue}
+
+
+@app.post("/findings/{finding_id}/notify")
+def finding_notify(finding_id: int, product_id: int | None = None,
+                   user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Send a finding's alert now (bypasses the severity gate)."""
+    from echolens.notify import notify_finding
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
+        return notify_finding(session, finding, force=True)
+
+
+def _slack_note(payload: dict) -> str:
+    """Pull the reviewer's note out of a Slack interactive payload's input
+    blocks (payload.state.values → first non-empty plain_text_input)."""
+    values = (payload.get("state") or {}).get("values") or {}
+    for block in values.values():
+        if not isinstance(block, dict):
+            continue
+        for field in block.values():
+            if isinstance(field, dict) and field.get("value"):
+                return str(field["value"]).strip()
+    return ""
+
+
+def _do_approve(finding_id: int, note: str) -> dict:
+    from echolens import review as review_mod
+    with session_scope() as session:
+        # No product scope here on purpose: this runs from a Slack button,
+        # which has no request context and is workspace-wide by design. The
+        # SLACK_ACTION_TOKEN is the authorisation boundary for this path.
+        finding = session.get(Finding, finding_id)
+        if finding is None:
+            raise HTTPException(404, "no such finding")
+        # user_id=None was written silently, so a Slack-originated approval left
+        # no attributable actor in the audit trail. There is no JWT on this path,
+        # so record the channel it came from rather than pretending it was nobody.
+        review_mod.approve(session, finding, f"[via Slack] {note}" if note else "[via Slack]")
+        result = {"status": "approved", "finding_id": finding.id}
+        if settings.auto_create_issue_on_approve:
+            result["issue"] = _auto_issue(session, finding)
+        return result
+
+
+def _do_challenge(finding_id: int, note: str) -> int:
+    from echolens import review as review_mod
+    with session_scope() as session:
+        # No product scope here on purpose: this runs from a Slack button,
+        # which has no request context and is workspace-wide by design. The
+        # SLACK_ACTION_TOKEN is the authorisation boundary for this path.
+        finding = session.get(Finding, finding_id)
+        if finding is None:
+            raise HTTPException(404, "no such finding")
+        return review_mod.challenge(session, finding, note).id
+
+
+def _slack_challenge_bg(finding_id: int, note: str) -> None:
+    try:
+        _do_challenge(finding_id, note)
+    except Exception as err:
+        log.error("slack_challenge_failed", finding_id=finding_id, error=str(err))
+
+
+@app.post("/integrations/slack/act")
+@limiter.limit("30/minute")  # a challenge here runs a FULL investigation
+async def slack_act(request: Request) -> dict:
+    """Reply-to-act from Slack: an approve/challenge button (or a simple JSON
+    body) maps to the review endpoint. No dashboard visit required.
+
+    Accepts either Slack's interactive `payload` form field or a JSON body
+    {token, action, finding_id, note}. Guarded by SLACK_ACTION_TOKEN.
+
+    The blocking review work runs off the event loop (a challenge re-runs a full
+    investigation): the JSON path awaits it in a worker thread; the Slack path
+    acknowledges immediately (within Slack's 3s window) and finishes in the
+    background."""
+    from echolens.notify import parse_action_value
+
+    ctype = request.headers.get("content-type", "")
+    is_slack = "application/json" not in ctype
+    action, finding_id, note, token = None, None, "", ""
+    if not is_slack:
+        body = await request.json()
+        token = body.get("token", "")
+        action = body.get("action")
+        finding_id = body.get("finding_id")
+        note = body.get("note", "") or ""
+    else:  # Slack interactivity: form-encoded `payload`
+        form = await request.form()
+        payload = json.loads(form.get("payload", "{}"))
+        token = form.get("token", "") or request.headers.get("x-echolens-token", "") or payload.get("token", "")
+        actions = payload.get("actions", [])
+        if actions:
+            try:
+                action, finding_id = parse_action_value(actions[0].get("value", ""))
+            except ValueError:
+                raise HTTPException(422, "unrecognized Slack action value")
+        note = _slack_note(payload)
+
+    expected = settings.slack_action_token
+    # compare_digest, not `!=`: a short-circuiting string compare leaks the
+    # token a character at a time to anyone who can time the response, and this
+    # endpoint carries full reviewer-equivalent power.
+    import hmac as _hmac
+    if not expected or not _hmac.compare_digest(str(token), str(expected)):
+        raise HTTPException(401, "invalid or missing slack action token")
+    if action not in ("approve", "challenge") or finding_id is None:
+        raise HTTPException(422, "provide action (approve|challenge) and finding_id")
+    finding_id = int(finding_id)
+
+    if action == "challenge":
+        if is_slack and not note.strip():
+            # a button carries no note; keep the challenge functional
+            note = "Challenged from Slack — please re-examine this finding."
+        if not note.strip():
+            raise HTTPException(422, "a challenge needs a note")
+        if is_slack:
+            threading.Thread(target=_slack_challenge_bg, args=(finding_id, note), daemon=True).start()
+            return {"status": "challenge_started", "finding_id": finding_id}
+        reopened = await run_in_threadpool(_do_challenge, finding_id, note)
+        return {"status": "challenged", "reopened_investigation_id": reopened}
+
+    return await run_in_threadpool(_do_approve, finding_id, note or "approved from Slack")
+
+
+def _auto_issue(session, finding) -> dict:
+    from echolens.exporting import finding_ticket
+    from echolens.integrations.github_issue import GitHubIssueError, create_issue
+    from echolens.notify import deep_link
+    repo = _github_repo(session, getattr(finding, "product_id", None))
+    if not repo:
+        return {"error": "no repo configured"}
+    inv = session.get(Investigation, finding.investigation_id)
+    ticket = finding_ticket(session, finding, repo=repo, deep_link=deep_link(inv.id) if inv else None)
+    try:
+        issue = create_issue(repo, ticket["title"], ticket["body"])
+    except GitHubIssueError as err:
+        return {"error": str(err)}
+    from echolens.fixwatch import link_issue
+    if issue.get("number"):
+        link_issue(session, finding, repo, int(issue["number"]), issue.get("url", ""))
+    return issue
+
+
+@app.post("/alerts/digest")
+def alerts_digest(hours: int = Query(24, ge=1, le=8760), product_id: int | None = None,
+                  user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Daily rollup: post one summary of findings drafted in the last `hours` to
+    Slack. Used by the scheduled GitHub Action so PMs get a quiet digest.
+
+    Product-scoped. This used to select every Finding in the workspace, so any
+    reviewer could blast findings from EVERY product to the single configured
+    webhook — cross-product disclosure triggered by a principal who may only be
+    meant to see one of them.
+    """
+    from datetime import timedelta
+    from echolens.impact import severity
+    from echolens.notify import _send_slack, deep_link
+    with session_scope() as session:
+        prod = _scope(session, product_id, user)
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        f_stmt = select(Finding).order_by(Finding.id.desc())
+        if prod is not None:
+            f_stmt = f_stmt.where(Finding.product_id == prod.id)
+        findings = [f for f in session.scalars(f_stmt).all()
+                    if f.created_at and aware_utc(f.created_at) >= since]
+        if not findings:
+            return {"sent": False, "reason": "no findings in window"}
+        lines = []
+        for f in findings[:20]:
+            fj = f.json or {}
+            sev = severity(float(fj.get("confidence", 0.0)), fj.get("impact", {}))
+            link = deep_link(f.investigation_id)
+            label = fj.get("summary") or "finding"
+            lines.append(f"• *{sev['band']}* — {label}" + (f" (<{link}|case #{f.investigation_id}>)" if link else ""))
+        payload = {"blocks": [
+            {"type": "header", "text": {"type": "plain_text", "text": f"EchoLens digest · {len(findings)} findings"}},
+            {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}},
+        ]}
+        ok = _send_slack(payload)
+        return {"sent": ok, "count": len(findings)}
+
+
+# ── v6.0: closed-loop verification (fix watch, patterns, product health) ─
+
+@app.post("/webhooks/github")
+async def github_webhook(request: Request) -> dict:
+    """GitHub issue events. When a finding's issue CLOSES, start a fix-watch on
+    the metric it was meant to fix (verified signature if a secret is set)."""
+    raw = await request.body()
+    secret = settings.github_webhook_secret
+    # Verification is MANDATORY. It used to be wrapped in `if secret:`, and the
+    # secret defaults to "" — so out of the box any unauthenticated caller could
+    # POST a forged issues/closed event, which starts a fix-watch, writes a
+    # fix_date and a baseline_rate, and fabricates "the fix shipped on date D".
+    # That then propagates into the brain and patterns as ground truth.
+    if not secret:
+        raise HTTPException(
+            503, "GITHUB_WEBHOOK_SECRET is not configured; refusing unverified webhooks")
+    import hashlib
+    import hmac
+    sig = request.headers.get("x-hub-signature-256", "")
+    expected = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        raise HTTPException(401, "invalid webhook signature")
+    event = request.headers.get("x-github-event", "")
+    try:
+        payload = json.loads(raw or b"{}")
+    except json.JSONDecodeError:
+        raise HTTPException(400, "invalid JSON")
+    if event == "issues" and payload.get("action") == "closed":
+        issue = payload.get("issue", {})
+        repo = (payload.get("repository") or {}).get("full_name", "")
+        closed_at = None
+        if issue.get("closed_at"):
+            try:
+                closed_at = datetime.fromisoformat(str(issue["closed_at"]).replace("Z", "+00:00"))
+            except ValueError:
+                pass
+        from echolens.fixwatch import on_issue_closed
+        with session_scope() as session:
+            try:
+                issue_number = int(issue.get("number", 0))
+            except (TypeError, ValueError):
+                raise HTTPException(400, "issue.number must be an integer")
+            watch = on_issue_closed(session, repo, issue_number, closed_at)
+            return {"ok": True, "watch_id": watch.id if watch else None,
+                    "status": watch.status if watch else "no_matching_finding"}
+    return {"ok": True, "ignored": event or "unknown"}
+
+
+@app.post("/fixwatch/evaluate")
+def fixwatch_evaluate(product_id: int | None = None,
+                      user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Advance every fix-watch: confirm fixes that worked, re-open the ones that
+    didn't, and catch regressions. Called by the scheduled job (unprompted)."""
+    from echolens.fixwatch import check_regressions, evaluate
+    with session_scope() as session:
+        prod = _scope(session, product_id, user)
+        pid = prod.id if prod else None
+        return {"evaluated": evaluate(session, product_id=pid),
+                "regressions": check_regressions(session, product_id=pid)}
+
+
+@app.get("/fixwatch")
+def fixwatch_list(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    from echolens.db.models import FixWatch
+    from echolens.fixwatch import TERMINAL_FIX_STATUSES
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        stmt = select(FixWatch).order_by(FixWatch.id.desc())
+        if p is not None:
+            stmt = stmt.where(FixWatch.product_id == p.id)
+        rows = session.scalars(stmt).all()
+        return {"watches": [
+            {"id": w.id, "finding_id": w.finding_id, "investigation_id": w.investigation_id,
+             "repo": w.repo, "issue_number": w.issue_number, "issue_url": w.issue_url,
+             "status": w.status, "metric": w.metric, "baseline_rate": w.baseline_rate,
+             "post_rate": w.post_rate,
+             # before_after() computes this and _confirm/_inconclusive/_reopen
+             # persist it, but nothing served it — so the chart existed in the
+             # DB and no caller could reach it. Only sent for terminal statuses,
+             # which is the only time it is non-null, so a long watch list does
+             # not carry a day-by-day series per row for nothing.
+             "chart": w.chart_json if w.status in TERMINAL_FIX_STATUSES else None,
+             "fix_date": w.fix_date.isoformat() if w.fix_date else None} for w in rows]}
+
+
+@app.get("/patterns")
+def patterns_view(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    """The validated pattern library — (trigger, cause, fix) proven by confirmed fixes."""
+    from echolens.patterns import patterns
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        return {"patterns": patterns(session, p.id if p else None),
+                "product": p.name if p else None}
+
+
+@app.get("/overview")
+def overview(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    """Outcome-oriented product-health dashboard (the PM's monthly review)."""
+    import statistics as _stats
+    from echolens.db.models import FixWatch
+    with session_scope() as session:
+        prod = _scope(session, product_id, user)
+        pid = prod.id if prod else None
+        w_stmt = select(FixWatch)
+        if pid is not None:
+            w_stmt = w_stmt.where(FixWatch.product_id == pid)
+        watches = session.scalars(w_stmt).all()
+        confirmed = [w for w in watches if w.status == "confirmed"]
+        in_verification = [w for w in watches if w.status in ("issue_open", "watching")]
+        regressed = [w for w in watches if w.status == "regressed"]
+        confirmed_inv = {w.investigation_id for w in confirmed}
+
+        q_start = _quarter_start(datetime.now(timezone.utc))
+        confirmed_q = [w for w in confirmed if w.confirmed_at and aware_utc(w.confirmed_at) >= q_start]
+
+        mttrs = []
+        watch_inv_ids = {w.investigation_id for w in confirmed}
+        watch_invs = ({inv.id: inv for inv in session.scalars(select(Investigation).where(
+            Investigation.id.in_(watch_inv_ids))).all()} if watch_inv_ids else {})
+        for w in confirmed:
+            inv = watch_invs.get(w.investigation_id)
+            if inv and inv.created_at and w.confirmed_at:
+                mttrs.append((aware_utc(w.confirmed_at) - aware_utc(inv.created_at)).days)
+        mttr = round(_stats.mean(mttrs), 1) if mttrs else None
+
+        # open problems = resolved cases not yet confirmed-fixed, ranked by impact
+        open_problems = []
+        op_stmt = select(Investigation).where(Investigation.status == "resolved")
+        if pid is not None:
+            op_stmt = op_stmt.where(Investigation.product_id == pid)
+        open_invs = session.scalars(op_stmt).all()
+        open_findings = _latest_findings(session, [inv.id for inv in open_invs])
+        for inv in open_invs:
+            if inv.id in confirmed_inv:
+                continue
+            finding = open_findings.get(inv.id)
+            if finding is None:
+                continue
+            impact = (finding.json or {}).get("impact", {})
+            open_problems.append({
+                "investigation_id": inv.id, "summary": finding.summary,
+                "impact_score": impact.get("impact_score", 0.0),
+                "affected_pct": impact.get("affected_pct", 0.0),
+            })
+        open_problems.sort(key=lambda p: -p["impact_score"])
+        from echolens.themes import theme_lifecycle
+        chronic = [t for t in theme_lifecycle(session, product_id=pid) if t["status"] == "chronic"]
+        return {
+            "open_problems": open_problems[:10],
+            "open_problem_count": len(open_problems),
+            "in_verification": len(in_verification),
+            "confirmed_fixes_total": len(confirmed),
+            "confirmed_fixes_quarter": len(confirmed_q),
+            "regressions": len(regressed),
+            "mean_days_to_confirmed_fix": mttr,
+            "chronic_themes": chronic,
+            "product": prod.name if prod else None,
+        }
+
+
+def _quarter_start(now: datetime) -> datetime:
+    q_month = 3 * ((now.month - 1) // 3) + 1
+    return now.replace(month=q_month, day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+# ── v7.0: conversational layer, weekly brief, theme lifecycle ────────────
+
+class ChatBody(BaseModel):
+    message: str
+    product_id: int | None = None
+    force_investigate: bool = False
+
+
+@app.post("/chat")
+@limiter.limit("20/minute")
+def chat_endpoint(body: ChatBody, request: Request,
+                  user: dict = Depends(current_user)) -> dict:
+    """Ask the verified knowledge anything. Returns a finding-cited answer, or —
+    for an investigate-intent question — launches a case that streams in-thread."""
+    from echolens import ask as ask_mod
+    from echolens import chat as chat_mod
+    with session_scope() as session:
+        prod = _scope(session, body.product_id, user)
+        pid = prod.id if prod else None
+        pname = prod.name if prod else None
+        decision = chat_mod.route(session, body.message, product_id=pid, product_name=pname)
+
+        if decision.get("type") == "launch" and not body.force_investigate:
+            existing = ask_mod.best_existing_answer(session, body.message, product_id=pid)
+            if existing is not None:
+                decision = {"type": "answer", "citations": [], "text": ""}
+
+        if decision.get("type") != "launch":
+            if (_may_spend(user) and settings.openai_api_key
+                    and ask_mod.has_anything_to_say(session, pid)):
+                try:
+                    llm = _metered_llm(session, "ask")
+                    result = ask_mod.answer(session, body.message, llm,
+                                            product_id=pid, product_name=pname)
+                    if result.text and (result.citations or result.tool_calls
+                                        or result.confident):
+                        return {"type": "answer", "text": result.text,
+                                "citations": result.citations,
+                                "tool_calls": result.tool_calls,
+                                "confident": result.confident,
+                                "can_investigate": True}
+                except Exception as err:
+                    log.warning("ask_agent_failed", error=f"{type(err).__name__}: {err}")
+            return decision
+        if user.get("role") not in ("reviewer", "admin"):
+            return {"type": "answer", "citations": [],
+                    "text": "I can look into that, but opening an investigation needs reviewer access."}
+        anomaly = AnomalyEvent(slug=f"chat-{int(time.time())}", type="manual", metric="chat question",
+                               delta=0.0, z=0.0, window="n/a",
+                               description=decision["description"], status="pending", product_id=pid)
+        session.add(anomaly)
+        session.flush()
+        inv = Investigation(anomaly_id=anomaly.id, status="running", opened_by="manual",
+                            budget_tier="standard", budget_json={}, data_notes=_data_notes(session, pid),
+                            product_id=pid)
+        session.add(inv)
+        anomaly.status = "investigating"
+        session.flush()
+        inv_id = inv.id
+    threading.Thread(target=_run_investigation_bg, args=(inv_id, "standard"), daemon=True).start()
+    return {"type": "investigation", "investigation_id": inv_id,
+            "text": f"Opening an investigation into that — case #{inv_id}. It's streaming now."}
+
+
+class FollowupBody(BaseModel):
+    question: str
+
+
+@app.post("/findings/{finding_id}/followup")
+@limiter.limit("20/minute")  # each follow-up is an LLM call
+def finding_followup(finding_id: int, body: FollowupBody, request: Request,
+                     product_id: int | None = None,
+                     user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Targeted follow-up on a finding (e.g. 'does this affect iOS too?') appended
+    as an addendum — no full re-investigation."""
+    from echolens.chat import followup
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
+        return followup(session, finding, body.question)
+
+
+@app.get("/brief")
+def brief_view(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    """Preview the weekly brief (also what the scheduled send composes)."""
+    from echolens.brief import weekly_brief
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        return {**weekly_brief(session, product_id=(p.id if p else None)),
+                "product": p.name if p else None}
+
+
+@app.post("/brief/send")
+def brief_send(user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Compose and deliver the weekly brief to Slack/email (scheduled, unprompted)."""
+    from echolens.brief import weekly_brief
+    from echolens.db.models import Product
+    from echolens.notify import _send_email, _send_slack, deep_link
+    with session_scope() as session:
+        # v9.0: own more than one product and this becomes ONE ranked email
+        # across all of them, not a per-product blast.
+        n_products = len(session.scalars(select(Product)).all())
+        if n_products > 1:
+            from echolens.portfolio import portfolio_brief
+            b = portfolio_brief(session)
+        else:
+            b = weekly_brief(session)
+
+    def _linkify(text: str) -> str:
+        import re
+        def repl(m):
+            cid = m.group(1)
+            link = deep_link(int(cid))
+            return f"<{link}|case #{cid}>" if link else f"case #{cid}"
+        return re.sub(r"case #(\d+)", repl, text)
+
+    title = ("EchoLens portfolio brief" if n_products > 1 else "EchoLens weekly brief")
+    body_md = "\n".join(_linkify(line) for line in b["lines"])
+    payload = {"blocks": [
+        {"type": "header", "text": {"type": "plain_text", "text": f"{title} · {b['generated']}"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": body_md}},
+    ]}
+    slack = _send_slack(payload)
+    email = _send_email(f"{title} · {b['generated']}", "\n".join(b["lines"]))
+    return {"sent": {"slack": slack, "email": email}, "brief": b}
+
+
+# ── v9.0 portfolio: one brain across every product ──────────────────────
+
+@app.get("/portfolio")
+def portfolio_view(user: dict = Depends(current_user)) -> dict:
+    """Ranked cross-product attention board. Deliberately NOT product-scoped —
+    this is the screen you open before you know which product to open."""
+    from echolens.portfolio import portfolio, transfer_stats
+    with session_scope() as session:
+        demo_only = _guest_locked(user)
+        return {**portfolio(session, demo_only=demo_only),
+                # Cross-product transfer learning compares real products, so it
+                # is withheld from a demo visitor rather than filtered to one.
+                "transfer": None if demo_only else transfer_stats(session)}
+
+
+@app.get("/portfolio/brief")
+def portfolio_brief_view(user: dict = Depends(current_user)) -> dict:
+    """The weekly brief for everything you own, ranked globally by impact."""
+    from echolens.portfolio import portfolio_brief
+    with session_scope() as session:
+        return portfolio_brief(session, demo_only=_guest_locked(user))
+
+
+@app.get("/portfolio/themes")
+def portfolio_themes(days: int = Query(30, ge=1, le=365),
+                     limit: int = Query(8, ge=1, le=50),
+                     user: dict = Depends(current_user)) -> dict:
+    """The same complaint theme measured across every product on one axis.
+
+    Rates are shares of each product's own negative reviews, so a big app and a
+    small one are genuinely comparable.
+    """
+    from echolens.db.models import Product
+    from echolens.vocab import FAMILIES, canonical_theme, compare_theme
+    with session_scope() as session:
+        products = _visible_products(session, user)
+        names = [p.name for p in products]
+        if not names:
+            return {"themes": [], "products": [], "days": days}
+
+        # themes actually seen on this portfolio's findings, then the shared
+        # families they map onto — emergent first, vocabulary second
+        seen: dict[str, dict] = {}
+        product_ids = [p.id for p in products]
+        rows = session.execute(select(Finding, AnomalyEvent).join(
+            Investigation, Investigation.id == Finding.investigation_id).join(
+            AnomalyEvent, AnomalyEvent.id == Investigation.anomaly_id).where(
+            Investigation.product_id.in_(product_ids))).all()
+        for f, anomaly in rows:
+            from echolens.vocab import theme_of
+            t = theme_of(anomaly, f.json or {})
+            if t["id"] != "other":
+                seen.setdefault(t["id"], t)
+        for fid in list(FAMILIES)[:6]:      # always show the common families too
+            seen.setdefault(fid, canonical_theme([fid.replace("-", " ")]))
+
+        rows = []
+        for t in list(seen.values())[:limit]:
+            per = compare_theme(session, t, names, days)
+            if not any(r["rate_pct"] > 0 for r in per):
+                continue
+            rows.append({"theme_id": t["id"], "label": t["label"],
+                         "is_family": t["is_family"], "products": per,
+                         "worst": per[0]["product"] if per else None})
+        rows.sort(key=lambda r: -(r["products"][0]["rate_pct"] if r["products"] else 0))
+        return {"themes": rows, "products": names, "days": days,
+                "note": "Rate = share of that product's negative reviews mentioning the theme."}
+
+
+@app.get("/portfolio/transfers")
+def portfolio_transfers(user: dict = Depends(current_user)) -> dict:
+    """Cases that started from another product's verified fix, and whether the
+    shortcut is measurable."""
+    from echolens.portfolio import recent_transfers, transfer_stats
+    with session_scope() as session:
+        # Transfers are inherently cross-product: every row names a real
+        # product a demo visitor must not see.
+        if _guest_locked(user):
+            return {"transfers": [], "stats": None}
+        return {"transfers": recent_transfers(session), "stats": transfer_stats(session)}
+
+
+@app.get("/themes")
+def themes_view(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    """Theme lifecycle: emergence → peak → resolved / chronic (>60d unresolved)."""
+    from echolens.themes import theme_lifecycle
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        return {"themes": theme_lifecycle(session, product_id=(p.id if p else None)),
+                "product": p.name if p else None}
+
+
+@app.get("/costs")
+def costs(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        calls = _product_llm_calls(session, p.id if p else None)
+        per_agent: dict[str, Any] = {}
+        for c in calls:
+            a = per_agent.setdefault(c.agent, {"calls": 0, "tokens": 0, "cost": 0.0, "ms": 0})
+            a["calls"] += 1
+            a["tokens"] += c.tokens_in + c.tokens_out
+            a["cost"] += c.cost
+            a["ms"] += c.ms
+        for a in per_agent.values():
+            a["cost"] = round(a["cost"], 4)
+            a["avg_ms"] = round(a["ms"] / a["calls"], 1) if a["calls"] else 0
+        return {
+            "total_cost_usd": round(sum(c.cost for c in calls), 4),
+            "total_tokens": sum(c.tokens_in + c.tokens_out for c in calls),
+            "per_agent": per_agent,
+        }
+
+
+# ── UI-facing aggregates (Milestone 3) ─────────────────────────────────
+
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024   # 25 MB is a very large review export
+
+_HUMAN_BY_STATUS = {"resolved": "Approved"}
+
+
+def _today() -> date:
+    """Real 'today' for spend/volume-per-day counters — investigations and
+    llm_calls are timestamped at real wall-clock time, so this must be now."""
+    return datetime.now(timezone.utc).date()
+
+
+def _limits(session, product_id: int | None = None) -> dict:
+    """Effective budget limits: per-product overrides > workspace overrides >
+    config defaults (v8.0 — each product keeps its own budgets)."""
+    from echolens.db.models import Product
+    row = session.get(Setting, "limits")
+    defaults = {
+        "daily_investigations": ORCHESTRATOR_DAILY_INVESTIGATIONS,
+        "per_case_budget": BUDGET_TIERS["standard"].max_cost_usd,
+        "per_case_wall_min": BUDGET_TIERS["standard"].max_wall_clock_s // 60,
+    }
+    merged = {**defaults, **(row.value if row else {})}
+    if product_id is not None:
+        p = session.get(Product, product_id)
+        if p is not None and p.limits_json:
+            merged = {**merged, **p.limits_json}
+    return merged
+
+
+def _daily_limit(session, product_id: int | None = None) -> int:
+    return int(_limits(session, product_id)["daily_investigations"])
+
+
+def _money(x: float) -> str:
+    """Costs are fractions of a cent per call — show enough precision to be real
+    (a $0.0031 case must not display as $0.00)."""
+    x = float(x or 0)
+    return f"${x:.4f}" if 0 < x < 1 else f"${x:.2f}"
+
+
+def _cost_by_investigation(session, product_id: int | None = None) -> dict[int, dict]:
+    """Per-case cost, aggregated in SQL and scoped to one product.
+
+    This pulled EVERY row of llm_calls and EVERY investigation into Python on
+    each call — unbounded, unscoped, and /costs/summary invoked it alongside
+    _product_llm_calls so the full history was loaded twice per request.
+    """
+    from sqlalchemy import func as _func
+
+    inv_stmt = select(Investigation)
+    if product_id is not None:
+        inv_stmt = inv_stmt.where(Investigation.product_id == product_id)
+    investigations = list(session.scalars(inv_stmt).all())
+    inv_ids = [i.id for i in investigations]
+
+    agg: dict[int, dict] = {}
+    if inv_ids:
+        totals = session.execute(
+            select(LLMCall.investigation_id,
+                   _func.sum(LLMCall.cost),
+                   _func.sum(LLMCall.tokens_in + LLMCall.tokens_out))
+            .where(LLMCall.investigation_id.in_(inv_ids))
+            .group_by(LLMCall.investigation_id)
+        ).all()
+        for inv_id, cost, tokens in totals:
+            agg[inv_id] = {"cost": float(cost or 0.0), "tokens": int(tokens or 0), "queries": 0}
+    for inv in investigations:
+        a = agg.setdefault(inv.id, {"cost": 0.0, "tokens": 0, "queries": 0})
+        a["queries"] = int(str(inv.budget_json.get("tool_calls", "0/0")).split("/")[0])
+        a["duration"], a["duration_flagged"] = _case_duration(inv)
+    return agg
+
+
+def _fmt_duration(seconds: float) -> str:
+    """Human duration: '45s', '1m 20s', '2h 5m'. Never a raw minute count."""
+    s = max(0, int(seconds))
+    if s < 60:
+        return f"{s}s"
+    m, sec = divmod(s, 60)
+    if m < 60:
+        return f"{m}m {sec}s" if sec else f"{m}m"
+    h, m = divmod(m, 60)
+    return f"{h}h {m}m" if m else f"{h}h"
+
+
+def _case_duration(inv: Investigation) -> tuple[str, bool]:
+    """(display, suspicious). A case's wall-clock can never exceed its tier cap —
+    if the stored timestamps say otherwise they're wrong (e.g. a row created at
+    seed time, resolved days later), so FLAG it instead of presenting it as fact."""
+    if not (inv.resolved_at and inv.created_at):
+        return "—", False
+    secs = (aware_utc(inv.resolved_at) - aware_utc(inv.created_at)).total_seconds()
+    tier = BUDGET_TIERS.get(inv.budget_tier or "standard", BUDGET_TIERS["standard"])
+    cap = tier.max_wall_clock_s * EXTENSION_FACTOR
+    if secs > cap:
+        return f"> {_fmt_duration(cap)}", True
+    return _fmt_duration(secs), False
+
+
+def _status_label(status: str) -> str:
+    return {
+        "resolved": "Resolved", "insufficient_evidence": "Insufficient evidence",
+        "needs_human": "Needs human", "budget_exhausted": "Budget exhausted",
+        "running": "Investigating",
+    }.get(status, status)
+
+
+def _product_investigations(session, product_id: int | None):
+    stmt = select(Investigation)
+    if product_id is not None:
+        stmt = stmt.where(Investigation.product_id == product_id)
+    return session.scalars(stmt).all()
+
+
+def _product_llm_calls(session, product_id: int | None):
+    """LLM calls scoped through their investigation's product."""
+    stmt = select(LLMCall)
+    if product_id is not None:
+        stmt = stmt.join(Investigation, Investigation.id == LLMCall.investigation_id).where(
+            Investigation.product_id == product_id)
+    return session.scalars(stmt).all()
+
+
+def _latest_findings(session, investigation_ids: list[int]) -> dict[int, Finding]:
+    out: dict[int, Finding] = {}
+    if not investigation_ids:
+        return out
+    for row in session.scalars(select(Finding).where(
+            Finding.investigation_id.in_(investigation_ids)).order_by(Finding.id)).all():
+        out[row.investigation_id] = row
+    return out
+
+
+@app.get("/feed/summary")
+def feed_summary(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        pid = p.id if p else None
+        today = _today()
+        invs = _product_investigations(session, pid)
+        n_today = [i for i in invs if i.created_at and i.created_at.date() == today]
+        spent = sum(c.cost for c in _product_llm_calls(session, pid)
+                    if c.created_at and c.created_at.date() == today)
+        return {"investigations_today": len(n_today),
+                "daily_limit": _daily_limit(session, pid),
+                "spent_today": round(spent, 4),
+                "product": p.name if p else None}
+
+
+@app.get("/archive")
+def archive(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        pid = p.id if p else None
+        costs = _cost_by_investigation(session, pid)
+        rows = []
+        resolved_approved = 0
+        stmt = select(Investigation).order_by(Investigation.id.desc())
+        if pid is not None:
+            stmt = stmt.where(Investigation.product_id == pid)
+        inv_rows = [inv for inv in session.scalars(stmt).all() if inv.status != "running"]
+        findings = _latest_findings(session, [inv.id for inv in inv_rows])
+        feedback: dict[int, ReviewFeedback] = {}
+        if inv_rows:
+            for fb, inv_id in session.execute(select(
+                    ReviewFeedback, Finding.investigation_id).join(
+                    Finding, Finding.id == ReviewFeedback.finding_id).where(
+                    Finding.investigation_id.in_([inv.id for inv in inv_rows])).order_by(
+                    ReviewFeedback.id)).all():
+                feedback[inv_id] = fb
+        for inv in inv_rows:
+            finding = findings.get(inv.id)
+            fb = feedback.get(inv.id)
+            human = "—"
+            if fb:
+                human = "Approved" if fb.action == "approve" else "Challenged"
+            if human == "Approved":
+                resolved_approved += 1
+            c = costs.get(inv.id, {})
+            rows.append({
+                "id": f"#{inv.id}",
+                "cause": finding.summary if finding else "(no finding)",
+                "status": _status_label(inv.status),
+                "conf": round(finding.confidence, 2) if finding else 0.0,
+                "human": human,
+                "cost": f"${c.get('cost', 0):.2f}",
+                "time": c.get("duration", "—"),
+                "summary": finding.json.get("prose", "") if finding else "",
+            })
+        total = len(rows)
+        return {
+            "rows": rows, "count": total,
+            "resolved_pct": round(100 * resolved_approved / total) if total else 0,
+        }
+
+
+_SOURCE_META = {
+    "play_store": {"icon": "▶", "label": "Google Play reviews"},
+    "app_store": {"icon": "⌘", "label": "App Store reviews"},
+    "github": {"icon": "⌥", "label": "GitHub issues + releases"},
+    "csv": {"icon": "⇪", "label": "Imported reviews (CSV)"},
+}
+
+
+@app.get("/sources")
+def sources(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    from echolens.collectors.registry import source_health
+    from echolens.db.models import CollectorState
+    with session_scope() as session:
+        prod = _scope(session, product_id, user)
+        s_stmt = select(CollectorState)
+        if prod is not None:
+            s_stmt = s_stmt.where(CollectorState.product_id == prod.id)
+        states = session.scalars(s_stmt).all()
+        health = {(h["source"], h["identifier"]): h for h in source_health(
+            session, product=(prod.name if prod else None))}
+        connected = []
+        for st in states:
+            if not st.enabled:
+                continue
+            meta = _SOURCE_META.get(st.source, {"icon": "•", "label": st.source})
+            if st.source in ("play_store", "app_store"):
+                vol = session.scalar(select(func.count(Review.id)).where(
+                    Review.product == st.product, Review.source == st.source)) or 0
+            elif st.source == "github":
+                vol = session.scalar(select(func.count(Issue.id)).where(Issue.product == st.product)) or 0
+            else:
+                vol = 0
+            h = health.get((st.source, st.identifier), {})
+            stale = bool(h.get("stale"))
+            status = {"healthy": "Healthy", "error": "Error", "running": "Syncing…"}.get(st.status, "Idle")
+            if stale and st.status != "error":
+                status = "Stale"
+            last_run = aware_utc(st.last_run_at)
+            why = None
+            if st.last_error:
+                when = last_run.strftime("%H:%M") if last_run else "last run"
+                why = f"collector failed at {when}: {st.last_error}"
+            elif stale and h.get("stale_since"):
+                why = f"no successful pull since {h['stale_since']}"
+            connected.append({
+                "icon": meta["icon"], "name": meta["label"], "detail": f"{st.identifier} · {st.product}",
+                "source": st.source, "identifier": st.identifier,
+                "status": "Error" if st.status == "error" else status,
+                "stale": stale, "staleSince": h.get("stale_since"), "why": why,
+                "lastSuccess": (last_run.isoformat() if (last_run and st.status != "error") else None),
+                "lastPull": (f"pulled {last_run.date().isoformat()}" if last_run else "not yet collected"),
+                "volume": f"{vol:,} items", "error": st.last_error,
+            })
+        # Imported (CSV) reviews aren't a pull collector, so surface them from the
+        # corpus directly whenever any exist (identified by the import ext_id prefix,
+        # regardless of the source label the user chose).
+        csv_stmt = select(func.count(Review.id)).where(Review.ext_id.like("csv_%"))
+        if prod is not None:
+            csv_stmt = csv_stmt.where(Review.product == prod.name)
+        n_csv = session.scalar(csv_stmt) or 0
+        if n_csv:
+            connected.append({
+                "icon": _SOURCE_META["csv"]["icon"], "name": _SOURCE_META["csv"]["label"],
+                "detail": "uploaded exports", "status": "Healthy", "stale": False, "staleSince": None,
+                "lastPull": "imported", "volume": f"{n_csv:,} items", "error": None})
+        # If nothing is configured, show the built-in demo corpus so the page
+        # is never blank (it's still real counts).
+        if not connected:
+            review_stmt = select(func.count(Review.id))
+            issue_stmt = select(func.count(Issue.id))
+            release_stmt = select(func.count(Release.id))
+            if prod is not None:
+                review_stmt = review_stmt.where(Review.product == prod.name)
+                issue_stmt = issue_stmt.where(Issue.product == prod.name)
+                release_stmt = release_stmt.where(Release.product == prod.name)
+            n_reviews = session.scalar(review_stmt) or 0
+            n_issues = session.scalar(issue_stmt) or 0
+            n_releases = session.scalar(release_stmt) or 0
+            if n_reviews or n_issues:
+                connected = [
+                    {"icon": "▶", "name": "Google Play reviews (demo)", "detail": "synthetic Lumo dataset",
+                     "status": "Healthy", "lastPull": "seeded", "volume": f"{n_reviews:,} items"},
+                    {"icon": "⌥", "name": "GitHub issues (demo)", "detail": "synthetic Lumo dataset",
+                     "status": "Healthy", "lastPull": "seeded", "volume": f"{n_issues + n_releases} items"},
+                ]
+        return {"connected": connected, "product": prod.name if prod else None,
+                "available": ["Zendesk export", "Discord community", "In-app feedback"]}
+
+
+@app.get("/costs/summary")
+def costs_summary(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        pid = p.id if p else None
+        calls = _product_llm_calls(session, pid)
+        invs = _product_investigations(session, pid)
+        costs = _cost_by_investigation(session, pid)
+        resolved = [i for i in invs if i.status == "resolved"]
+        dead = [i for i in invs if i.status in ("insufficient_evidence", "budget_exhausted")]
+        spent_today = sum(c.cost for c in calls if c.created_at and c.created_at.date() == _today())
+        total = round(sum(c.cost for c in calls), 4)
+        avg_resolved = (round(sum(costs.get(i.id, {}).get("cost", 0) for i in resolved) / len(resolved), 4)
+                        if resolved else 0.0)
+        dead_spend = round(sum(costs.get(i.id, {}).get("cost", 0) for i in dead), 4)
+        rows = []
+        row_stmt = select(Investigation).order_by(Investigation.id.desc())
+        if pid is not None:
+            row_stmt = row_stmt.where(Investigation.product_id == pid)
+        row_invs = session.scalars(row_stmt).all()
+        row_findings = _latest_findings(session, [inv.id for inv in row_invs])
+        for inv in row_invs:
+            finding = row_findings.get(inv.id)
+            c = costs.get(inv.id, {})
+            rows.append({
+                "id": f"#{inv.id}",
+                "outcome": f"{_status_label(inv.status)} — {finding.summary[:40] if finding else ''}",
+                "status": inv.status,
+                "tokens": f"{c.get('tokens', 0) / 1000:.1f}k",
+                "queries": c.get("queries", 0),
+                "time": c.get("duration", "—"),
+                "time_flagged": bool(c.get("duration_flagged")),
+                "cost": _money(c.get("cost", 0)),
+            })
+        return {
+            "stats": {
+                "spent_today": round(spent_today, 4),
+                "avg_per_resolved": avg_resolved,
+                "dead_end_spend": dead_spend,
+                "analyst_hours_saved": len(resolved) * 3,
+                "resolved_count": len(resolved),
+            },
+            "month_to_date": total,
+            "budget": 25.0,
+            "product": p.name if p else None,
+            "limits": _limits(session, pid),
+            "rows": rows,
+        }
+
+
+class LimitsBody(BaseModel):
+    daily_investigations: int | None = Field(None, ge=1, le=100)
+    per_case_budget: float | None = Field(None, ge=0.01, le=1000)
+    per_case_wall_min: int | None = Field(None, ge=1, le=1440)
+
+
+@app.put("/settings/limits")
+def set_limits(body: LimitsBody, product_id: int | None = None,
+               user: dict = Depends(require_role("admin"))) -> dict:
+    """Adjust budget limits (admin), for ONE product or for the workspace.
+
+    With a product_id this writes that product's override, which is what
+    _limits() reads back first. Without one it writes the workspace default.
+
+    The two must match or the screen lies: Settings READ through
+    /costs/summary, which is product-scoped and layers the per-product override
+    on top, but WROTE here unscoped — so on any product carrying an override the
+    save landed in a row the read ignored. The admin got a green "Limit saved."
+    toast and the number silently reverted to the old value.
+    """
+    from echolens.db.models import Product
+    with session_scope() as session:
+        prod = _scope(session, product_id, user) if product_id is not None else None
+        # Merge onto the EFFECTIVE limits for this scope, so a partial body
+        # (one field) does not blank the others.
+        current = _limits(session, prod.id if prod else None)
+        for k in ("daily_investigations", "per_case_budget", "per_case_wall_min"):
+            v = getattr(body, k)
+            if v is not None:
+                current[k] = v
+        if prod is not None:
+            prod.limits_json = dict(current)
+        else:
+            row = session.get(Setting, "limits")
+            if row is None:
+                row = Setting(key="limits", value={})
+                session.add(row)
+            row.value = current
+        session.flush()
+        return current

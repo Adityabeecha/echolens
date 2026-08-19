@@ -1,0 +1,261 @@
+"""Orchestrator agent (PRD §4.1): triages pending anomalies in one LLM call.
+
+Per anomaly it decides investigate(tier) / ignore(reason) / merge(into). It is
+an agent because "which anomalies are worth a costly investigation, which are
+noise, which duplicate an open case" is a runtime judgment — but a SMALL one:
+one call per batch, and the daily budget is enforced in code, not by the model.
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import or_, select
+from sqlalchemy.orm import Session
+
+from echolens.config import ORCHESTRATOR_DAILY_INVESTIGATIONS
+from echolens.db.models import AnomalyEvent, Investigation, LLMCall, TriageDecision
+from echolens.llm.client import LLMClient, LLMError
+
+TRIAGE_SYSTEM = """You are the EchoLens orchestrator. Detected anomalies arrive in batches; \
+your job is triage — decide what NOT to do as much as what to do. For each anomaly choose:
+- "investigate": worth a full agentic investigation. Assign a budget tier: "quick" (cheap, \
+narrow), "standard" (default), or "deep" (broad, expensive). Reserve "deep" for high-severity, \
+wide-open questions.
+- "merge": this anomaly is the SAME underlying signal as another one you are investigating in \
+this batch (same theme + same time window, e.g. a GitHub issue-velocity surge that mirrors a \
+review spike). Give its `merge_into` = the other anomaly's slug. Do not open a second case.
+- "ignore": within normal variance, no version/release correlation, or too vague to act on. \
+Give a concrete reason.
+
+Be economical — investigations cost money and you have a hard daily cap. Merge duplicates, \
+ignore noise, and spend the budget on the signals most likely to have an actionable root cause.
+Respond with JSON only."""
+
+TRIAGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "decisions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "anomaly": {"type": "string", "description": "the anomaly slug"},
+                    "decision": {"type": "string", "enum": ["investigate", "ignore", "merge"]},
+                    "reason": {"type": "string"},
+                    "budget_tier": {"type": "string", "enum": ["quick", "standard", "deep"]},
+                    "merge_into": {"type": "string", "description": "slug of the anomaly this duplicates"},
+                },
+                "required": ["anomaly", "decision", "reason"],
+            },
+        }
+    },
+    "required": ["decisions"],
+}
+
+
+@dataclass
+class Decision:
+    anomaly: AnomalyEvent
+    decision: str
+    reason: str
+    budget_tier: str | None = None
+    merge_into: AnomalyEvent | None = None
+
+
+_TIER_ORDER = ["quick", "standard", "deep"]
+
+
+def adaptive_tier(anomaly: AnomalyEvent, session: Session, proposed: str = "standard") -> str:
+    """Adjust the orchestrator's PROPOSED budget by anomaly complexity (v2.0).
+
+    The LLM's tier choice is the starting point (not discarded); a sharp
+    single-source spike nudges it cheaper, a multi-source/ambiguous signal nudges
+    it more expensive. Deterministic so the same inputs always give the same scope.
+    """
+    from echolens.db.models import Issue, Post
+
+    score = 0
+    if abs(anomaly.z) >= 3:              # very strong signal, easy to pin
+        score -= 1
+    if anomaly.type == "theme_volume_surge":
+        score += 1                       # themes are fuzzier than volume spikes
+    # is the same theme echoed in other sources? more sources = more to weigh
+    term = anomaly.metric.split()[0] if anomaly.metric else ""
+    if term:
+        if session.query(Issue).filter(Issue.title.contains(term)).first():
+            score += 1
+        if session.query(Post).filter(Post.text_snippet.contains(term)).first():
+            score += 1
+    if anomaly.type == "manual":         # free-text cases start wide
+        score += 1
+
+    base = _TIER_ORDER.index(proposed) if proposed in _TIER_ORDER else 1
+    if score <= -1:
+        base -= 1
+    elif score >= 2:
+        base += 1
+    return _TIER_ORDER[max(0, min(len(_TIER_ORDER) - 1, base))]
+
+
+class Orchestrator:
+    def __init__(self, session: Session, llm: LLMClient | None = None,
+                 daily_limit: int = ORCHESTRATOR_DAILY_INVESTIGATIONS,
+                 product_id: int | None = None):
+        self.session = session
+        self.daily_limit = daily_limit
+        self.product_id = product_id
+        if llm is None:
+            from echolens.llm.openai_client import OpenAIClient
+            llm = OpenAIClient(on_call=self._record_llm_call)
+        self.llm = llm
+
+    def _record_llm_call(self, agent, model, tokens_in, tokens_out, cost, ms):
+        self.session.add(LLMCall(
+            investigation_id=None, agent=agent, model=model,
+            tokens_in=tokens_in, tokens_out=tokens_out, cost=cost, ms=ms,
+        ))
+
+    def _investigations_today(self, as_of: datetime) -> int:
+        """Cases opened today for THIS product.
+
+        Delegates to the queue's implementation instead of keeping a second one.
+        The two disagreed on both axes that matter: this copy counted across
+        EVERY product (so with N products the shared cap was consumed N-fold and
+        one busy product starved the rest) and compared `r.created_at.date()`
+        without aware_utc, unlike the queue's version. Two implementations of one
+        cap can only ever agree by accident.
+        """
+        from echolens.orchestrator.queue import investigations_today
+        return investigations_today(self.session, self.product_id, as_of)
+
+    def triage(self, as_of: datetime | None = None, persist: bool = True) -> list[Decision]:
+        """`persist=False` makes this a true preview: decisions are returned but
+        no anomaly changes status. Persisting on a preview consumed the pending
+        queue without opening any case, so the anomalies could never be picked up
+        again — they just sat at "triaged" forever.
+
+        `as_of` resolves at CALL time. It used to default to the detector's
+        hardcoded AS_OF fallback, bound at import — so the daily cap compared
+        every run against a frozen date, counted zero investigations "today",
+        and never actually capped anything in production."""
+        as_of = as_of or datetime.now(timezone.utc)
+        # Only PENDING anomalies for this product that have no linked investigation
+        # yet — already-triaged ones are never re-triaged (duplicate-cases bug).
+        stmt = select(AnomalyEvent).where(
+            AnomalyEvent.status == "pending", AnomalyEvent.merged_into_id.is_(None))
+        if self.product_id is not None:
+            stmt = stmt.where(AnomalyEvent.product_id == self.product_id)
+        # One column, scoped to this product — not every Investigation row ever
+        # created, hydrated into full ORM objects, on every triage call. Only
+        # anomaly_id is read, and an anomaly can only be linked to a case in its
+        # own product, so the rest was pure waste that grew forever.
+        linked_stmt = select(Investigation.anomaly_id).where(
+            Investigation.anomaly_id.is_not(None))
+        if self.product_id is not None:
+            linked_stmt = linked_stmt.where(
+                or_(Investigation.product_id == self.product_id,
+                    Investigation.product_id.is_(None)))
+        linked = set(self.session.scalars(linked_stmt).all())
+        pending = [a for a in self.session.scalars(stmt).all() if a.id not in linked]
+        if not pending:
+            return []
+        open_invs = self.session.scalars(
+            select(Investigation).where(Investigation.status == "running")
+        ).all()
+
+        by_slug = {a.slug: a for a in pending}
+        prompt = (
+            f"REMAINING DAILY BUDGET: {self.daily_limit - self._investigations_today(as_of)} "
+            f"of {self.daily_limit} investigations.\n\n"
+            "PENDING ANOMALIES:\n" + json.dumps([
+                {"slug": a.slug, "type": a.type, "metric": a.metric,
+                 "delta": a.delta, "z": a.z, "window": a.window, "description": a.description}
+                for a in pending
+            ], indent=1) + "\n\nALREADY OPEN INVESTIGATIONS:\n" + json.dumps([
+                {"id": i.id, "anomaly_id": i.anomaly_id, "tier": i.budget_tier}
+                for i in open_invs
+            ])
+        )
+        try:
+            res = self.llm.complete_json(TRIAGE_SYSTEM, prompt, TRIAGE_SCHEMA, "orchestrator")
+            raw = res.parsed.get("decisions", [])
+        except LLMError:
+            raw = []
+
+        # Parse LLM proposals; anything unmentioned/invalid defaults to ignore.
+        decisions: dict[str, Decision] = {}
+        for d in raw:
+            a = by_slug.get(d.get("anomaly"))
+            if a is None:
+                continue
+            kind = d.get("decision", "ignore")
+            merge_into = by_slug.get(d.get("merge_into")) if kind == "merge" else None
+            if kind == "merge" and merge_into is None:
+                kind, d["reason"] = "ignore", "merge target not found; " + d.get("reason", "")
+            decisions[a.slug] = Decision(
+                anomaly=a, decision=kind, reason=d.get("reason", ""),
+                budget_tier=d.get("budget_tier", "standard") if kind == "investigate" else None,
+                merge_into=merge_into,
+            )
+        for a in pending:  # default for anything the model skipped
+            decisions.setdefault(a.slug, Decision(a, "ignore", "not selected by orchestrator"))
+
+        for d in decisions.values():  # v2.0: nudge the LLM's tier by complexity
+            if d.decision == "investigate":
+                d.budget_tier = adaptive_tier(d.anomaly, self.session, d.budget_tier or "standard")
+        self._enforce_daily_cap(list(decisions.values()), as_of)
+        if persist:
+            self._persist(list(decisions.values()))
+        return list(decisions.values())
+
+    def _enforce_daily_cap(self, decisions: list[Decision], as_of: datetime) -> None:
+        """Deterministic guard: never exceed the daily investigation cap.
+        Keep the highest-severity investigations; defer the rest to 'pending'."""
+        remaining = self.daily_limit - self._investigations_today(as_of)
+        investigate = sorted(
+            (d for d in decisions if d.decision == "investigate"),
+            key=lambda d: -abs(d.anomaly.z),
+        )
+        for d in investigate[max(remaining, 0):]:
+            # "defer", not "ignore". These were judged WORTH investigating and only
+            # lost on budget, so they must come back tomorrow. Marking them ignore
+            # wrote status="ignored", and every pending-anomaly query filters that
+            # out — the cap silently threw the work away instead of postponing it.
+            d.decision = "defer"
+            d.reason = f"daily investigation cap ({self.daily_limit}) reached — deferred. " + d.reason
+            d.budget_tier = None
+
+    def _persist(self, decisions: list[Decision]) -> None:
+        for d in decisions:
+            self.session.add(TriageDecision(
+                anomaly_id=d.anomaly.id, decision=d.decision, reason=d.reason,
+                budget_tier=d.budget_tier,
+                merge_into_anomaly_id=d.merge_into.id if d.merge_into else None,
+            ))
+            # A deferred anomaly stays pending: that is what makes the next cycle
+            # pick it up. An unknown decision must not silently become "ignored",
+            # so this maps explicitly and leaves anything else pending.
+            d.anomaly.status = {
+                "investigate": "triaged", "merge": "merged",
+                "ignore": "ignored", "defer": "pending",
+            }.get(d.decision, "pending")
+        self.session.flush()
+
+
+def run_triaged(session: Session, decisions: list[Decision], llm: LLMClient | None = None,
+                on_step=None) -> list[Investigation]:
+    """Spawn one Investigator per 'investigate' decision (PRD: orchestrator
+    spawns, one per investigation). Returns the investigations it ran."""
+    from echolens.investigator.graph import Investigator
+
+    investigations: list[Investigation] = []
+    for d in decisions:
+        if d.decision != "investigate":
+            continue
+        d.anomaly.status = "investigating"
+        inv = Investigator(session, d.anomaly, llm=llm, tier=d.budget_tier or "standard",
+                           opened_by="anomaly", on_step=on_step).run()
+        investigations.append(inv)
+    return investigations
