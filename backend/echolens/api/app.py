@@ -1082,7 +1082,7 @@ def _onboard_bg(product: str, product_id: int | None = None) -> None:
     try:
         with session_scope() as session:
             run_all(session, limit=300, product_id=product_id,
-                    timeout_s=120)  # deeper first-run backfill, still bounded
+                    timeout_s=ONBOARD_TIMEOUT_SECONDS)
         with session_scope() as session:
             scan(session, product=product, product_id=product_id)
         log.info("onboard_backfill_done", product=product)
@@ -1208,7 +1208,10 @@ def onboard_status(product: str, user: dict = Depends(current_user)) -> dict:
         checked_sources = sum(h["status"] in ("healthy", "error") for h in health)
         failed_sources = sum(h["status"] == "error" for h in health)
         timed_out_sources = sum(
-            h["status"] == "error" and h.get("last_error") == ONBOARD_TIMEOUT_ERROR
+            h["status"] == "error" and (
+                h.get("last_error") == ONBOARD_TIMEOUT_ERROR
+                or "timed out" in (h.get("last_error") or "").lower()
+            )
             for h in health
         )
         return {"product": product, "product_id": prod.id if prod else None,

@@ -89,7 +89,7 @@ TOOLS: dict[str, ToolSpec] = {
                 "type": "object",
                 "properties": {
                     "query": {"type": "string"},
-                    "state": {"type": "string", "enum": ["open", "closed"]},
+                    "state": {"type": "string", "enum": ["open", "closed", "all"]},
                     "since": _DATE, "limit": {"type": "integer"},
                 },
                 "required": ["query"],

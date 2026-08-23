@@ -286,6 +286,28 @@ class Investigator:
 
     def _apply_hypothesis_revision(self, state: InvState, proposed: list[dict]) -> list[dict]:
         existing = {h["id"]: h for h in state["hypotheses"]}
+        by_statement = {
+            (h.get("statement") or "").strip().lower(): h
+            for h in state["hypotheses"] if (h.get("statement") or "").strip()
+        }
+        relevant = [p for p in proposed if guards.hypothesis_relevant(p, state.get("trigger", {}))]
+        discarded = len(proposed) - len(relevant)
+        if discarded:
+            self._trace("CHECK", {
+                "text": (f"Discarded {discarded} off-topic hypothesis proposal(s): each hypothesis "
+                         "must stay connected to the detected customer problem."),
+            })
+        # A revision is meant to contain the full list, but model omissions and
+        # rejected off-topic replacements must never erase an accepted
+        # hypothesis (or its evidence) from loop state while leaving the DB row
+        # alive. Preserve existing rows unless a relevant proposal explicitly
+        # updates the same id or statement.
+        represented = {
+            (existing.get(p.get("id")) or
+             by_statement.get((p.get("statement") or "").strip().lower()) or {}).get("id")
+            for p in relevant
+        }
+        proposed = [h for h in state["hypotheses"] if h["id"] not in represented] + relevant
         merged: list[dict] = []
         active = 0
         # Fall back to matching on the STATEMENT when an id is new. The prompt
@@ -294,10 +316,6 @@ class Investigator:
         # dropped every accumulated evidence link. The evidence rows survived in
         # state and in the DB, but the hypothesis no longer cited them, so
         # two_source_rule saw zero items and it could never resolve.
-        by_statement = {
-            (h.get("statement") or "").strip().lower(): h
-            for h in state["hypotheses"] if (h.get("statement") or "").strip()
-        }
         for p in proposed:
             hid = p.get("id") or f"H{len(merged) + 1}"
             statement = p.get("statement", "")

@@ -18,7 +18,7 @@ def search_github_issues(
     stmt = select(Issue)
     if product:
         stmt = stmt.where(Issue.product == product)
-    if state:
+    if state and state != "all":
         stmt = stmt.where(Issue.state == state)
     if since:
         stmt = stmt.where(Issue.created_at >= parse_date(since))

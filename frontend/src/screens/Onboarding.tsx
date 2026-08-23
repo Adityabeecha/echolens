@@ -5,12 +5,19 @@ import { useDialog } from "../hooks";
 import { C, MEASURE, R, S, T, mono, sans } from "../theme";
 import { Button, Dot, Label } from "../ui";
 import { Icon } from "../components/Icon";
-import { backfillProgressView, emptyBackfillMessage, sourceProgressLabel } from "../onboardingProgress";
+import {
+  backfillProgressView,
+  emptyBackfillMessage,
+  progressActivityLabel,
+  sourceProgressLabel,
+  sourceRecoveryGuidance,
+} from "../onboardingProgress";
 
 interface Props {
   onDone: () => void; // land on Today for the new product
   /** Hand off to Cases → Signals, where triage actually happens. */
   onReviewSignals: () => void;
+  onManageSources: () => void;
   canSkip: boolean;
   onCancel: () => void;
   /** Dismiss the overlay. Always available — nobody is trapped here. */
@@ -30,7 +37,7 @@ interface Props {
  * Now the app stays visible behind it and it can always be closed.
  */
 export function Onboarding({
-  onDone, onReviewSignals, canSkip, onCancel, onClose, onProductCreated,
+  onDone, onReviewSignals, onManageSources, canSkip, onCancel, onClose, onProductCreated,
 }: Props) {
   const [phase, setPhase] = useState<"form" | "running">("form");
   const [product, setProduct] = useState("");
@@ -56,7 +63,8 @@ export function Onboarding({
             onCancel={onCancel}
           />
         ) : (
-          <Backfilling product={product} onDone={onDone} onReviewSignals={onReviewSignals} />
+          <Backfilling product={product} onDone={onDone}
+            onReviewSignals={onReviewSignals} onManageSources={onManageSources} />
         )}
       </>
     );
@@ -81,8 +89,8 @@ export function Onboarding({
           padding: S[6],
         }}
       >
-        <div className="el-onboarding-dossier" style={{
-          position: "relative", width: "100%", maxWidth: 760, margin: "auto",
+        <div className={`el-onboarding-dossier${phase === "running" ? " is-running" : ""}`} style={{
+          position: "relative", width: "100%", maxWidth: 860, margin: "auto",
           background: C.bg, border: `1px solid ${C.border3}`,
           borderRadius: R.overlay, boxShadow: "var(--el-e4)",
           padding: `${S[8]} ${S[8]} ${S[10]}`,
@@ -348,8 +356,9 @@ const inputStyle: React.CSSProperties = {
 
 // ── step 2: live backfill + snapshot ────────────────────────────────────
 
-function Backfilling({ product, onDone, onReviewSignals }: {
+function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
   product: string; onDone: () => void; onReviewSignals: () => void;
+  onManageSources: () => void;
 }) {
   const [status, setStatus] = useState<OnboardStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -357,7 +366,11 @@ function Backfilling({ product, onDone, onReviewSignals }: {
   const [pollingStopped, setPollingStopped] = useState(false);
   const [retrying, setRetrying] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [lastProgressAt, setLastProgressAt] = useState(() => Date.now());
   const openedAt = useRef(Date.now());
+  const progressSignature = status?.sources
+    .map((source) => `${source.source}:${source.status}:${source.items_last_run}:${source.last_error || ""}`)
+    .join("|") ?? "";
 
   useEffect(() => {
     let alive = true;
@@ -402,12 +415,20 @@ function Backfilling({ product, onDone, onReviewSignals }: {
     return () => window.clearInterval(clock);
   }, [status?.backfilling]);
 
+  useEffect(() => {
+    if (!progressSignature) return;
+    const changedAt = Date.now();
+    setLastProgressAt(changedAt);
+    setNow(changedAt);
+  }, [progressSignature]);
+
   const retrySource = async (source: string, identifier: string) => {
     const key = `${source}:${identifier}`;
     setRetrying(key);
     setErr(null);
     try {
-      await api.collectorsRetry(source, identifier);
+      const result = await api.collectorsRetry(source, identifier);
+      if (result.error) throw new Error(result.error);
       setPollAttempt((attempt) => attempt + 1);
     } catch (e) {
       setErr(String(e).replace("Error: ", ""));
@@ -427,7 +448,20 @@ function Backfilling({ product, onDone, onReviewSignals }: {
       </button>
     </div>
   );
-  if (!status) return <div style={{ color: C.dim, fontSize: T.md }}>Connecting…</div>;
+  if (!status) return (
+    <div className="el-onboarding-connecting" role="status">
+      <span className="el-onboarding-spinner" aria-hidden="true" />
+      <div>
+        <div style={{ color: C.text2, fontWeight: 600 }}>Checking source status…</div>
+        <div style={{ color: C.muted, fontSize: T.sm, marginTop: S[1] }}>
+          This normally takes only a moment.
+        </div>
+      </div>
+      <button onClick={onDone} className="el-btn" style={{ color: C.accent }}>
+        Continue to Today
+      </button>
+    </div>
+  );
 
   const snap = status.snapshot;
   const anomalies = status.anomalies.filter((a) => a.status === "pending");
@@ -457,23 +491,32 @@ function Backfilling({ product, onDone, onReviewSignals }: {
     started_at: new Date(openedAt.current).toISOString(),
   };
   const progressView = backfillProgressView(progress, now);
+  const activityLabel = progressActivityLabel(
+    progress,
+    Math.max(0, Math.floor((now - lastProgressAt) / 1000)),
+  );
+  const activeElapsed = progressView.elapsedLabel.replace(" elapsed", "");
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: S[5] }}>
+    <div className="el-onboarding-backfill" style={{ display: "flex", flexDirection: "column", gap: S[5] }}>
       {err && status && (
         <div role="alert" style={{ padding: `${S[2]} ${S[3]}`, border: `1px solid ${C.bad}55`,
                       background: `${C.bad}12`, borderRadius: R.control, color: C.text3,
                       fontSize: T.sm, lineHeight: "var(--el-lh-normal)" }}>
           <Icon name="warning" size={14} style={{ display: "inline", verticalAlign: "-2px" }} /> We couldn't refresh setup progress — {err}. The information below may be out of date.
-          {pollingStopped && (
+          <span className="el-onboarding-alert__actions">
             <button onClick={() => setPollAttempt((attempt) => attempt + 1)} className="el-btn"
-              style={{ marginLeft: S[2], color: C.accent, border: `1px solid var(--el-accent-line)`, borderRadius: R.control, padding: `${S[1]} ${S[2]}` }}>
-              Check again
+              style={{ color: C.accent, border: `1px solid var(--el-accent-line)`, borderRadius: R.control, padding: `${S[1]} ${S[2]}` }}>
+              {pollingStopped ? "Check again" : "Refresh now"}
             </button>
-          )}
+            <button onClick={onDone} className="el-btn" style={{ color: C.muted }}>
+              Continue to Today
+            </button>
+          </span>
         </div>
       )}
-      <section className="el-onboarding-progress" aria-label="Backfill progress">
+      <section className={`el-onboarding-progress${status.backfilling ? " is-active" : ""}`}
+        aria-label="Backfill progress">
         <div className="el-sr-only" role="status" aria-live="polite">
           {ready
             ? progress.failed_sources > 0
@@ -498,51 +541,84 @@ function Backfilling({ product, onDone, onReviewSignals }: {
                 : "Collection continues safely in the background if you leave this screen."}
             </div>
           </div>
-          <div className="el-onboarding-progress__count">{progressView.countLabel}</div>
+          <div className="el-onboarding-progress__measure">
+            <div className="el-onboarding-progress__count">{progressView.countLabel}</div>
+            <div className="el-onboarding-progress__timing">
+              <span>{progressView.elapsedLabel}</span>
+              <span>{progressView.expectedLabel}</span>
+            </div>
+          </div>
+          <div className="el-onboarding-progress__primary-action">
+            <button onClick={onDone} className="el-btn el-btn--primary"
+              style={{ borderRadius: R.control, padding: `${S[2]} ${S[4]}`, fontWeight: 600 }}>
+              {status.backfilling ? "Continue to Today" : "Go to Today"}
+            </button>
+            {status.backfilling && <span>Collection keeps running</span>}
+          </div>
         </div>
         <div className="el-onboarding-progress__track" role="progressbar"
           aria-label={progressView.countLabel} aria-valuemin={0}
           aria-valuemax={progress.total_sources} aria-valuenow={progress.checked_sources}>
           <span style={{ width: `${progressView.percent}%` }} />
         </div>
-        <div className="el-onboarding-progress__timing">
-          <span>{progressView.elapsedLabel}</span>
-          <span>{progressView.expectedLabel}</span>
+        <div className="el-onboarding-progress__activity">
+          <span className="el-onboarding-live-dot" aria-hidden="true" />
+          <span>{activityLabel}</span>
+          {status.backfilling && <span className="el-onboarding-progress__cutoff">
+            {progressView.cutoffLabel}
+          </span>}
         </div>
-        {status.backfilling && (
-          <div className="el-onboarding-progress__actions">
-            <button onClick={onDone} className="el-btn el-btn--primary"
-              style={{ borderRadius: R.control, padding: `${S[2]} ${S[4]}`, fontWeight: 600 }}>
-              Continue to Today
-            </button>
-            <span>Safe to leave — Today keeps filling in.</span>
-          </div>
-        )}
+        <details className="el-onboarding-progress__details">
+          <summary>How live collection works</summary>
+          <p>Sources run independently. Each card updates as soon as that source responds;
+            one slow or failed connection does not block the others.</p>
+        </details>
       </section>
       {/* source health */}
-      <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
+      <div className="el-onboarding-source-list" aria-label="Connected source activity">
         {status.sources.map((s) => {
           const color = s.status === "error" ? C.bad : s.status === "healthy" ? C.good : C.accent;
           const label = sourceProgressLabel(s);
           const retryKey = `${s.source}:${s.identifier}`;
+          const running = s.status !== "error" && s.status !== "healthy";
           return (
-            <div key={s.source + s.identifier} className="el-onboarding-source">
-              <Dot color={color} pulse={status.backfilling && s.status !== "error" && s.status !== "healthy"} />
+            <article key={s.source + s.identifier}
+              className={`el-onboarding-source el-onboarding-source--${s.status}`}>
               <div className="el-onboarding-source__identity">
-                <span style={{ fontSize: T.base, fontWeight: 500 }}>{SOURCE_LABELS[s.source] || s.source}</span>
-                <span style={{ fontFamily: mono, fontSize: T.xs, color: C.faint }}>{s.identifier}</span>
+                <div className="el-onboarding-source__header">
+                  <Dot color={color} pulse={status.backfilling && running} />
+                  <span style={{ fontSize: T.base, fontWeight: 600 }}>
+                    {SOURCE_LABELS[s.source] || s.source}
+                  </span>
+                </div>
+                <div className="el-onboarding-source__identifier" title={s.identifier}>
+                  {s.identifier}
+                </div>
               </div>
               <div className="el-onboarding-source__result">
-                <span style={{ fontSize: T.sm, color: s.status === "error" ? C.bad : C.muted }}>{label}</span>
+                <span style={{ fontSize: T.sm, color: s.status === "error" ? C.bad : C.text3 }}>
+                  {running ? `Fetching and processing · ${activeElapsed}` : label}
+                </span>
                 {s.status === "error" && (
-                  <button onClick={() => retrySource(s.source, s.identifier)}
-                    disabled={retrying === retryKey} className="el-btn"
-                    style={{ color: C.accent, border: `1px solid var(--el-accent-line)`, borderRadius: R.control, padding: `${S[1]} ${S[2]}`, whiteSpace: "nowrap" }}>
-                    {retrying === retryKey ? "Retrying…" : "Retry source"}
-                  </button>
+                  <>
+                    <span className="el-onboarding-source__guidance">
+                      {sourceRecoveryGuidance(s.last_error)}
+                    </span>
+                    <div className="el-onboarding-source__actions">
+                      <button onClick={() => retrySource(s.source, s.identifier)}
+                        disabled={retrying === retryKey} className="el-btn"
+                        style={{ color: C.accent, border: `1px solid var(--el-accent-line)`, borderRadius: R.control, padding: `${S[1]} ${S[2]}`, whiteSpace: "nowrap" }}>
+                        {retrying === retryKey ? "Retrying…" : "Retry source"}
+                      </button>
+                      <button onClick={onManageSources} className="el-btn"
+                        style={{ color: C.muted, padding: `${S[1]} ${S[2]}` }}>
+                        Review connection
+                      </button>
+                    </div>
+                  </>
                 )}
               </div>
-            </div>
+            </article>
           );
         })}
       </div>

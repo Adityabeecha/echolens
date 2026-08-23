@@ -41,6 +41,7 @@ export function backfillProgressView(progress: BackfillProgress, now = Date.now(
       : terminalFailure
         ? "Finished with errors"
         : `Usually under ${expectedMinutes} min`,
+    cutoffLabel: `Unresponsive sources stop after ${timeoutMinutes} min and unlock Retry.`,
     percent,
   };
 }
@@ -51,6 +52,38 @@ export function sourceProgressLabel(source: SourceProgress): string {
     return `${source.items_last_run.toLocaleString()} items pulled`;
   }
   return source.never_collected ? "Waiting to start" : "Checking now";
+}
+
+export function progressActivityLabel(
+  progress: BackfillProgress,
+  secondsSinceUpdate: number,
+): string {
+  if (progress.checked_sources >= progress.total_sources) return "All sources responded";
+  const freshness = secondsSinceUpdate <= 5
+    ? "updated just now"
+    : `updated ${compactDuration(secondsSinceUpdate).replace(/^0:/, "")}s ago`;
+  if (progress.checked_sources === 0) {
+    return `Waiting for the first source response · ${freshness}`;
+  }
+  const noun = progress.checked_sources === 1 ? "source" : "sources";
+  return `${progress.checked_sources} ${noun} finished · ${freshness}`;
+}
+
+export function sourceRecoveryGuidance(error: string | null): string {
+  const message = (error || "").toLowerCase();
+  if (/401|403|unauthori[sz]ed|forbidden|credential|token|permission/.test(message)) {
+    return "Check this source's access credentials, then retry it.";
+  }
+  if (/404|not found|does not exist|invalid (id|identifier|package|repo)/.test(message)) {
+    return "Check the source identifier and visibility, then retry it.";
+  }
+  if (/rate.?limit|too many requests|\b429\b/.test(message)) {
+    return "Wait a few minutes for the limit to reset, then retry it.";
+  }
+  if (/timeout|timed out|stopped responding|network|connection/.test(message)) {
+    return "The source did not respond. Retry it now; the other sources are unaffected.";
+  }
+  return "Retry this source. If it fails again, review its connection details.";
 }
 
 export function emptyBackfillMessage({

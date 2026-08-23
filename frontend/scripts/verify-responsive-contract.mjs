@@ -8,6 +8,7 @@ const today = readFileSync(new URL("../src/screens/Today.tsx", import.meta.url),
 const evidence = readFileSync(new URL("../src/components/EvidenceSheet.tsx", import.meta.url), "utf8");
 const newCase = readFileSync(new URL("../src/components/NewCaseModal.tsx", import.meta.url), "utf8");
 const deleteProduct = readFileSync(new URL("../src/components/DeleteProductModal.tsx", import.meta.url), "utf8");
+const onboarding = readFileSync(new URL("../src/screens/Onboarding.tsx", import.meta.url), "utf8");
 
 const requiredCss = [
   "HUMAN PRECISION UI",
@@ -40,5 +41,8 @@ assert.ok(evidence.includes('aria-label="Close evidence"'), "Evidence sheet clos
 assert.ok(newCase.includes("useDialog(onClose, true, !busy)"), "New Case must keep focus contained while busy");
 assert.ok(deleteProduct.includes("useDialog(onClose, true, !busy)"), "Delete Product must keep focus contained while busy");
 assert.ok(css.includes(".el-nav-brand > span:last-child"), "Compact navigation must collapse brand copy");
+assert.ok(onboarding.includes("el-onboarding-source-list"), "Onboarding must present sources as a vertical list");
+assert.ok(css.includes(".el-onboarding-source-list"), "Vertical onboarding source-list styles are required");
+assert.ok(!css.includes(".el-onboarding-source-strip"), "Onboarding must not use a horizontal source strip");
 
 console.log("Responsive UI contract verified.");

@@ -82,6 +82,85 @@ def test_rejecting_a_rival_boosts_the_dependent(session):
     assert h2["confidence"] > 0.6  # auto-boosted because its rival H1 was rejected
 
 
+def test_hypothesis_revision_discards_an_unrelated_product_problem(session):
+    """A password/autofill anomaly must not grow a generic battery hypothesis."""
+    anomaly = AnomalyEvent(
+        slug="autofill-missing", type="theme_volume_surge",
+        metric="autofill credentials complaints", delta=0.3, z=3.1, window="7d",
+        description="Browser autofill does not appear or fill saved passwords",
+        status="pending",
+    )
+    session.add(anomaly)
+    session.flush()
+    inv = Investigator(session, anomaly, llm=ScriptedLLM([]))
+    state = {
+        "trigger": {
+            "type": anomaly.type, "metric": anomaly.metric,
+            "description": anomaly.description,
+        },
+        "hypotheses": [], "evidence": [],
+    }
+    revised = inv._apply_hypothesis_revision(state, [
+        {"id": "H1", "statement": "Background activity drains the phone battery",
+         "confidence": 0.5, "status": "active", "next_test": "search battery reviews"},
+        {"id": "H2", "statement": "The browser extension fails to inject saved credentials",
+         "confidence": 0.5, "status": "active", "next_test": "search autofill reports"},
+    ])
+    assert [hypothesis["id"] for hypothesis in revised] == ["H2"]
+
+
+def test_aggregate_anomaly_does_not_lexically_reject_a_specific_cause():
+    trigger = {
+        "type": "negative_review_spike",
+        "metric": "daily 1-star review volume",
+        "description": "1-star reviews increased against the trailing baseline",
+    }
+    assert guards.hypothesis_relevant({
+        "statement": "The new login flow crashes when the app launches",
+        "next_test": "search crash-on-launch reviews",
+    }, trigger)
+
+
+def test_manual_complaint_still_rejects_an_unrelated_hypothesis():
+    trigger = {
+        "type": "manual",
+        "metric": "autofill credentials do not appear",
+        "description": "Password manager browser extension will not fill saved logins",
+    }
+    assert not guards.hypothesis_relevant({
+        "statement": "Background activity drains the phone battery",
+        "next_test": "search battery complaints",
+    }, trigger)
+
+
+def test_off_topic_revision_cannot_remove_an_existing_hypothesis(session):
+    anomaly = AnomalyEvent(
+        slug="autofill-existing", type="theme_volume_surge",
+        metric="autofill credential complaints", delta=0.3, z=3.1, window="7d",
+        description="Saved passwords do not fill in the browser", status="pending",
+    )
+    session.add(anomaly)
+    session.flush()
+    inv = Investigator(session, anomaly, llm=ScriptedLLM([]))
+    existing = {
+        "id": "H1", "statement": "Browser autofill fails to inject saved passwords",
+        "confidence": 0.65, "status": "active", "evidence_for": ["ev_001"],
+        "evidence_against": [], "next_test": "search autofill failures",
+        "boost_if_rejected": [],
+    }
+    state = {
+        "trigger": {"type": anomaly.type, "metric": anomaly.metric,
+                    "description": anomaly.description},
+        "hypotheses": [existing], "evidence": [],
+    }
+    revised = inv._apply_hypothesis_revision(state, [
+        {"id": "H2", "statement": "Background activity drains the phone battery",
+         "confidence": 0.5, "status": "active", "next_test": "search battery reviews"},
+    ])
+    assert [hypothesis["id"] for hypothesis in revised] == ["H1"]
+    assert revised[0]["evidence_for"] == ["ev_001"]
+
+
 # ── specialists ─────────────────────────────────────────────────────────
 
 def test_run_specialist_returns_analysis():

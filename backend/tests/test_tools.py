@@ -58,6 +58,15 @@ def test_github_search_finds_wakelock_issue(session):
     assert all(i["ref"].startswith("issue #") for i in res["issues"])
 
 
+def test_github_search_accepts_all_states_from_the_investigator(session):
+    """`all` means no state filter; it must not burn an investigation step."""
+    res = run_tool(session, "search_github_issues", {
+        "query": "background sync battery", "state": "all", "limit": 20,
+    })
+    assert res["issues"]
+    assert {issue["state"] for issue in res["issues"]} == {"open", "closed"}
+
+
 def test_release_notes_v32_mentions_sync(session):
     res = get_release_notes(session, version="3.2")
     assert res["returned"] == 1
