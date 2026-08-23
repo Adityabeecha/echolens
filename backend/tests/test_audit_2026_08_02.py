@@ -1,7 +1,7 @@
 """Regression coverage for the 2 Aug 2026 backend audit."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import time
 
 import pytest
@@ -57,6 +57,16 @@ def test_onboard_connects_selected_github_and_optional_sources(api_db, monkeypat
     import importlib
     api_module = importlib.import_module("echolens.api.app")
     monkeypatch.setattr(api_module, "_onboard_bg", lambda product, product_id: None)
+    with Session() as session:
+        existing = Product(name="Acme", package_name="com.acme.product")
+        session.add(existing)
+        session.flush()
+        session.add(CollectorState(
+            source="hacker_news", identifier="Old Acme", product="Acme",
+            product_id=existing.id, status="healthy",
+            last_run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        ))
+        session.commit()
 
     response = client.post("/onboard", json={
         "play_store": "com.acme.product",
@@ -73,11 +83,141 @@ def test_onboard_connects_selected_github_and_optional_sources(api_db, monkeypat
     assert response.json()["additional_sources"] == [
         "app_store", "chrome_web_store", "hacker_news", "stack_overflow"]
     with Session() as session:
-        sources = set(session.scalars(select(CollectorState.source)).all())
+        rows = session.scalars(select(CollectorState)).all()
+        sources = {row.source for row in rows}
     assert sources == {
         "play_store", "github", "github_discussions", "github_activity",
         "app_store", "chrome_web_store", "hacker_news", "stack_overflow",
     }
+    assert all(row.status == "running" for row in rows)
+    assert all(row.last_run_at is not None for row in rows)
+
+
+def test_onboarding_watchdog_expires_an_interrupted_backfill(api_db):
+    client, Session = api_db
+    import importlib
+    api_module = importlib.import_module("echolens.api.app")
+    with Session() as session:
+        product = Product(name="Interrupted", package_name="com.acme.interrupted")
+        session.add(product)
+        session.flush()
+        session.add(CollectorState(
+            source="play_store",
+            identifier="com.acme.interrupted",
+            product=product.name,
+            product_id=product.id,
+            status="running",
+            last_run_at=datetime.now(timezone.utc) - timedelta(minutes=4),
+        ))
+        session.commit()
+
+    with Session() as session:
+        changed = api_module._expire_stuck_onboarding_sources(
+            session, now=datetime.now(timezone.utc))
+        session.commit()
+
+    assert changed == 1
+
+    response = client.get("/onboard/status?product=Interrupted")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["backfilling"] is False
+    assert body["progress"] == {
+        "checked_sources": 1,
+        "failed_sources": 1,
+        "timed_out_sources": 1,
+        "total_sources": 1,
+        "expected_seconds": 120,
+        "timeout_seconds": 180,
+        "started_at": body["progress"]["started_at"],
+    }
+    assert body["sources"][0]["status"] == "error"
+    assert "stopped responding" in body["sources"][0]["last_error"].lower()
+    with Session() as session:
+        persisted = session.scalars(select(CollectorState)).one()
+        assert persisted.status == "error"
+
+
+def test_startup_recovery_expires_a_recent_interrupted_backfill(api_db):
+    client, Session = api_db
+    import importlib
+    api_module = importlib.import_module("echolens.api.app")
+    with Session() as session:
+        product = Product(name="Restarted Product")
+        session.add(product)
+        session.flush()
+        session.add(CollectorState(
+            source="github",
+            identifier="owner/repo",
+            product=product.name,
+            product_id=product.id,
+            status="running",
+            last_run_at=datetime.now(timezone.utc) - timedelta(seconds=30),
+        ))
+        session.commit()
+
+    with Session() as session:
+        changed = api_module._expire_stuck_onboarding_sources(
+            session, expire_all=True)
+        session.commit()
+
+    assert changed == 1
+    with Session() as session:
+        persisted = session.scalars(select(CollectorState)).one()
+        assert persisted.status == "error"
+        assert persisted.last_error == api_module.ONBOARD_INTERRUPTED_ERROR
+    status = client.get("/onboard/status?product=Restarted%20Product").json()
+    assert status["progress"]["failed_sources"] == 1
+    assert status["progress"]["timed_out_sources"] == 0
+
+
+def test_onboarding_watchdog_keeps_retrying_after_temporary_lock(
+        api_db, monkeypatch):
+    _client, _Session = api_db
+    import importlib
+    from contextlib import contextmanager
+    api_module = importlib.import_module("echolens.api.app")
+    attempts = 0
+
+    @contextmanager
+    def flaky_session_scope():
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 3:
+            raise RuntimeError("database is locked")
+        yield object()
+
+    monkeypatch.setattr(api_module, "session_scope", flaky_session_scope)
+    monkeypatch.setattr(api_module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        api_module, "_expire_stuck_onboarding_sources",
+        lambda _session, _product_id: 1,
+    )
+
+    api_module._onboard_watchdog(42)
+
+    assert attempts == 4
+
+
+def test_unknown_onboard_status_does_not_expire_unscoped_collectors(api_db):
+    client, Session = api_db
+    with Session() as session:
+        session.add(CollectorState(
+            source="play_store",
+            identifier="com.legacy.unscoped",
+            product="Legacy",
+            product_id=None,
+            status="running",
+            last_run_at=datetime.now(timezone.utc) - timedelta(minutes=4),
+        ))
+        session.commit()
+
+    client.get("/onboard/status?product=Missing")
+
+    with Session() as session:
+        state = session.scalars(select(CollectorState)).one()
+        assert state.status == "running"
 
 
 def test_onboard_rejects_unknown_or_empty_github_selection(api_db):
