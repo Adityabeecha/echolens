@@ -151,7 +151,7 @@ def followup(session: Session, finding: Finding, question: str) -> dict:
 
     inv = session.get(Investigation, finding.investigation_id)
     anomaly = None
-    if inv is not None:
+    if inv is not None and inv.anomaly_id is not None:
         from echolens.db.models import AnomalyEvent
         anomaly = session.get(AnomalyEvent, inv.anomaly_id)
     terms = theme_terms(anomaly, finding.json or {})
@@ -170,10 +170,18 @@ def followup(session: Session, finding: Finding, question: str) -> dict:
     res = compare_cohorts(session, term=query, dimension=dimension, product=product_name)
     top = res.get("highest_cohort")
     ratio = res.get("highest_vs_next_ratio")
+    cohorts = res.get("cohorts") or []
+    has_matches = any(c["term_share_of_negatives_pct"] > 0 for c in cohorts)
     if top and top != "unknown":
-        answer = (f"On the {dimension} split, “{query}” concentrates in {top}"
-                  + (f" ({ratio}× the next cohort)." if ratio else " (largely exclusive).")
-                  + " Other cohorts are comparatively clean.")
+        if not has_matches:
+            answer = f"No matching negative reviews for “{query}” in the available {dimension} cohorts."
+        elif res.get("only_in_top_cohort"):
+            answer = f"Matching complaints for “{query}” appear only in {top} among the observed {dimension} cohorts."
+        elif ratio is not None and ratio > 1:
+            answer = f"On the {dimension} split, “{query}” concentrates in {top} ({ratio}× the next cohort)."
+        else:
+            answer = (f"Matching complaints for “{query}” are present in {top}, but the available "
+                      f"{dimension} data does not establish a higher complaint rate than other cohorts.")
     else:
         answer = f"Not enough {dimension}-tagged data to split “{query}” across cohorts."
 

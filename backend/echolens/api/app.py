@@ -449,10 +449,10 @@ def auth_signup(body: SignupBody, request: Request) -> dict:
     with session_scope() as session:
         first_user = session.scalar(select(User).limit(1)) is None
         if first_user:
-            if settings.echolens_env == "production":
+            if settings.auth_required:
                 raise HTTPException(
                     403,
-                    "Open signup is disabled in production. Create the first admin via the "
+                    "Open signup is disabled when authentication is required. Create the first admin via the "
                     "BOOTSTRAP_ADMIN_EMAIL / BOOTSTRAP_ADMIN_PASSWORD environment variables.",
                 )
             role = "admin"  # dev bootstrap
@@ -1486,6 +1486,9 @@ def snapshot(product: str | None = None, product_id: int | None = None,
     'Investigate now on anything' entry point outside onboarding."""
     from echolens.onboarding.snapshot import health_snapshot
     with session_scope() as session:
+        if _guest_locked(user) and product is not None:
+            if product not in {p.name for p in _visible_products(session, user)}:
+                raise HTTPException(404, "no such product")
         if product is None:
             p = _scope(session, product_id, user)
             product = p.name if p else None
@@ -2117,8 +2120,9 @@ def _github_repo(session, product_id: int | None = None) -> str | None:
     and otherwise fall back to GITHUB_DEFAULT_REPO. The moment a second product
     was added, every finding from every product filed into the default repo:
     verified by test, issues for product B landed in product A's tracker (or in
-    whatever GITHUB_DEFAULT_REPO named). Scoped first, global single-repo second,
-    configured default last.
+    whatever GITHUB_DEFAULT_REPO named). Scoped requests use only that product's
+    sources or the explicitly configured default. Global single-repo inference
+    is reserved for unscoped requests.
     """
     from echolens.db.models import CollectorState
     base = select(CollectorState).where(
@@ -2129,6 +2133,7 @@ def _github_repo(session, product_id: int | None = None) -> str | None:
             return scoped[0].identifier
         if len(scoped) > 1:
             return scoped[0].identifier  # deterministic: first configured wins
+        return settings.github_default_repo or None
     rows = session.scalars(base).all()
     if len(rows) == 1:
         return rows[0].identifier
@@ -2161,7 +2166,7 @@ def finding_github_issue(finding_id: int, product_id: int | None = None,
     with session_scope() as session:
         p = _scope(session, product_id, user)
         finding = _owned_finding(session, finding_id, p.id if p else None)
-        repo = _github_repo(session)
+        repo = _github_repo(session, p.id if p else finding.product_id)
         if not repo:
             raise HTTPException(422, "No GitHub repo connected. Connect a repo on Sources, or set GITHUB_DEFAULT_REPO.")
         inv = session.get(Investigation, finding.investigation_id)
@@ -3065,8 +3070,13 @@ def costs_summary(product_id: int | None = None, user: dict = Depends(current_us
         costs = _cost_by_investigation(session, pid)
         resolved = [i for i in invs if i.status == "resolved"]
         dead = [i for i in invs if i.status in ("insufficient_evidence", "budget_exhausted")]
-        spent_today = sum(c.cost for c in calls if c.created_at and c.created_at.date() == _today())
-        total = round(sum(c.cost for c in calls), 4)
+        today = _today()
+        month_start = today.replace(day=1)
+        dated_costs = [(aware_utc(c.created_at).astimezone(timezone.utc).date(), c.cost)
+                       for c in calls if c.created_at]
+        spent_today = sum(cost for day, cost in dated_costs if day == today)
+        month_to_date = round(sum(cost for day, cost in dated_costs
+                                  if month_start <= day <= today), 4)
         avg_resolved = (round(sum(costs.get(i.id, {}).get("cost", 0) for i in resolved) / len(resolved), 4)
                         if resolved else 0.0)
         dead_spend = round(sum(costs.get(i.id, {}).get("cost", 0) for i in dead), 4)
@@ -3097,7 +3107,7 @@ def costs_summary(product_id: int | None = None, user: dict = Depends(current_us
                 "analyst_hours_saved": len(resolved) * 3,
                 "resolved_count": len(resolved),
             },
-            "month_to_date": total,
+            "month_to_date": month_to_date,
             "budget": 25.0,
             "product": p.name if p else None,
             "limits": _limits(session, pid),

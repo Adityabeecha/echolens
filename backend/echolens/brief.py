@@ -41,9 +41,8 @@ def _watches(session: Session, product_id: int | None):
 
 
 def _resolution_rate(session: Session, product_id: int | None = None) -> float:
-    resolved = _resolved_invs(session, product_id)
-    confirmed = [w for w in _watches(session, product_id) if w.status == "confirmed"]
-    return round(len(confirmed) / len(resolved), 3) if resolved else 0.0
+    from echolens.backlog import resolution_rate
+    return resolution_rate(session, product_id)
 
 
 def _fix_next(session: Session, resolution_rate: float, now, product_id: int | None = None) -> dict | None:

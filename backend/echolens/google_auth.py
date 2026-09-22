@@ -84,7 +84,7 @@ def verify_id_token(token: str) -> dict:
             jwks,
             algorithms=["RS256"],
             audience=settings.google_client_id,
-            issuer="https://accounts.google.com",
+            issuer=_ISSUERS,
             options={"verify_at_hash": False},
         )
 
@@ -121,8 +121,7 @@ def verify_id_token(token: str) -> dict:
         # Verification failing for ANY reason is a rejection, never a crash.
         raise GoogleAuthError(f"invalid Google token: {type(err).__name__}") from err
 
-    # `iss` is checked above only for the canonical form; Google also uses the
-    # bare hostname, so accept either and reject anything else.
+    # Keep the explicit issuer allowlist check alongside the email checks.
     if claims.get("iss") not in _ISSUERS:
         raise GoogleAuthError("unexpected token issuer")
 

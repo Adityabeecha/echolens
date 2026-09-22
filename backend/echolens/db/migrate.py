@@ -67,11 +67,14 @@ def backfill_products(session: Session) -> dict:
     # exists (that's where the pre-v8 data came from), else the first product.
     primary = demo or session.scalars(select(Product).order_by(Product.id)).first()
     if primary is not None:
-        for model in (AnomalyEvent, Investigation, Finding, FixWatch):
+        for model in (AnomalyEvent, Investigation, FixWatch):
             for row in session.scalars(select(model).where(model.product_id.is_(None))).all():
                 row.product_id = primary.id
     session.flush()
     backfill_finding_products(session)
+    if primary is not None:
+        for finding in session.scalars(select(Finding).where(Finding.product_id.is_(None))).all():
+            finding.product_id = primary.id
     dedupe_cases(session)
     return {"created": created, "products": len(by_name) or len(created)}
 
@@ -91,7 +94,7 @@ def dedupe_cases(session: Session) -> dict:
             continue
         keeper = invs[0]
         for dupe in invs[1:]:
-            if dupe.status == "running":     # don't disturb an in-flight case
+            if dupe.status in ("running", "merged_duplicate"):
                 continue
             notes = list(dupe.data_notes or [])
             notes.append(f"Merged duplicate of case #{keeper.id} (same anomaly).")

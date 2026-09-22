@@ -22,7 +22,7 @@ def get_release_notes(
     if date_from:
         stmt = stmt.where(Release.released_at >= parse_date(date_from))
     if date_to:
-        stmt = stmt.where(Release.released_at <= parse_date(date_to))
+        stmt = stmt.where(Release.released_at <= parse_date(date_to, end_of_day=True))
     rows = session.scalars(stmt).all()
     # Capped like every other tool. _util's docstring says "every tool truncates
     # its output before anything reaches LLM context"; this one did not, so a

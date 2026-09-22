@@ -87,13 +87,19 @@ class OpenAIClient:
         self._max_total_s = max_total_s
         self._supports_temperature = True
 
-    def _create_with_backoff(self, system: str, user: str, json_schema: dict):
+    def _create_with_backoff(self, system: str, user: str, json_schema: dict,
+                             deadline: float | None = None):
         attempt = 0
-        deadline = time.monotonic() + self._max_total_s
+        if deadline is None:
+            deadline = time.monotonic() + self._max_total_s
         while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise LLMServiceError("model call deadline exhausted")
             try:
                 kwargs: dict = {
                     "model": self.model,
+                    "timeout": min(REQUEST_TIMEOUT_S, remaining),
                     "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
@@ -130,10 +136,11 @@ class OpenAIClient:
     def complete_json(self, system: str, user: str, json_schema: dict, agent: str) -> LLMResult:
         last_err: Exception | None = None
         prompt = user
+        deadline = time.monotonic() + self._max_total_s
         for _attempt in range(2):  # one retry specifically for malformed JSON
             start = time.monotonic()
             try:
-                resp = self._create_with_backoff(system, prompt, json_schema)
+                resp = self._create_with_backoff(system, prompt, json_schema, deadline)
             except _TRANSIENT as err:
                 # Do not leak provider-specific 429/timeout/5xx exceptions into
                 # the investigator. Agent nodes can turn this stable exception

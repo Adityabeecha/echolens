@@ -73,8 +73,10 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
     );
   }
 
-  const inIds = plan.proposed.map((i) => i.investigation_id);
-  const outIds = plan.deferred.map((i) => i.investigation_id);
+  // Only explicit choices are overrides. Pinning every automatic proposal and
+  // excluding all overflow prevents the planner from refilling or resizing.
+  const inIds = plan.included ?? [];
+  const outIds = plan.excluded ?? [];
   const drop = (id: number) => commit(inIds.filter((x) => x !== id), [...outIds, id]);
   const add = (id: number) => commit([...inIds, id], outIds.filter((x) => x !== id));
 
@@ -112,7 +114,7 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
                 <input
                   aria-label="Capacity in engineer-days"
                   type="number" min={1} max={200} value={capacity}
-                  disabled={!reviewer}
+                  disabled={!reviewer || saving}
                   onChange={(e) => setCapacity(Number(e.target.value))}
                   // Clamp on commit. Number("") is 0 and Number("abc") is NaN,
                   // and min/max are not enforced by React — clearing the field

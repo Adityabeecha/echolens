@@ -182,7 +182,13 @@ class Orchestrator:
             res = self.llm.complete_json(TRIAGE_SYSTEM, prompt, TRIAGE_SCHEMA, "orchestrator")
             raw = res.parsed.get("decisions", [])
         except LLMError:
-            raw = []
+            # An unavailable model made no judgment: preserve the signals for
+            # retry rather than permanently recording them as ignored noise.
+            deferred = [Decision(a, "defer", "model service unavailable — retry later")
+                        for a in pending]
+            if persist:
+                self._persist(deferred)
+            return deferred
 
         # Parse LLM proposals; anything unmentioned/invalid defaults to ignore.
         decisions: dict[str, Decision] = {}
