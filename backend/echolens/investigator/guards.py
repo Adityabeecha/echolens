@@ -15,6 +15,15 @@ from echolens.config import (
     SUPPORT_CONFIDENCE,
 )
 from echolens.investigator.state import Budget
+from echolens.textkit import STOPWORDS, tokenize
+
+
+_GENERIC_ANOMALY_TERMS = {
+    "app", "application", "complaint", "complaints", "feedback", "issue", "issues",
+    "latest", "negative", "problem", "problems", "product", "recent", "report",
+    "reports", "review", "reviews", "spike", "surge", "theme", "update", "user",
+    "users", "volume",
+}
 
 CAUSAL_MARKERS = re.compile(
     r"\b(caus(?:e|es|ed|ing)|driv(?:es|en|ing)|because|due to|led to|leads to|"
@@ -35,6 +44,34 @@ CAUSAL_MARKERS = re.compile(
     re.IGNORECASE,
 )
 EVIDENCE_REF = re.compile(r"\bev_\d+\b")
+
+
+def hypothesis_relevant(hypothesis: dict, trigger: dict) -> bool:
+    """Keep causal guesses tied to the actual complaint being investigated.
+
+    Product names rarely describe what a product does, while the detected metric
+    and customer-language description do. When those fields contain specific
+    anchors, a proposed hypothesis (or its next test) must retain at least one.
+    Vague volume-only anomalies have no anchors and stay permissive.
+    """
+    # Aggregate detectors say only that ratings or negative volume moved; they
+    # deliberately do not name the underlying complaint. Lexically policing a
+    # cause against words such as "star", "daily" or "baseline" would reject
+    # every useful product-level explanation. Complaint-specific detectors do
+    # carry a customer-derived theme, so only those can support this guard.
+    if trigger.get("type") in {"negative_review_spike", "rating_drop"}:
+        return True
+    trigger_text = f"{trigger.get('metric', '')} {trigger.get('description', '')}"
+    anchors = {
+        term for term in tokenize(trigger_text)
+        if len(term) > 2 and term not in STOPWORDS and term not in _GENERIC_ANOMALY_TERMS
+    }
+    if not anchors:
+        return True
+    proposal = set(tokenize(
+        f"{hypothesis.get('statement', '')} {hypothesis.get('next_test', '')}"
+    ))
+    return bool(anchors & proposal)
 
 # Clause boundary for the claim-grounding scan.
 #

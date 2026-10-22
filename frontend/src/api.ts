@@ -403,6 +403,15 @@ export interface OnboardStatus {
   product: string;
   backfilling: boolean;
   sources: SourceHealth[];
+  progress?: {
+    checked_sources: number;
+    failed_sources: number;
+    timed_out_sources: number;
+    total_sources: number;
+    expected_seconds: number;
+    timeout_seconds: number;
+    started_at: string | null;
+  };
   snapshot: Snapshot;
   anomalies: Anomaly[];
 }

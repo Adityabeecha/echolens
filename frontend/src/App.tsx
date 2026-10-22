@@ -423,6 +423,7 @@ export default function App() {
               }}
               onDone={() => finishOnboarding("today")}
               onReviewSignals={() => finishOnboarding("cases", { signals: "1" })}
+              onManageSources={() => finishOnboarding("sources")}
             />
           )}
         </ErrorBoundary>

@@ -13,6 +13,10 @@ detective. You investigate one anomaly by forming competing hypotheses and testi
 with deterministic data tools. Rules you operate under (enforced in code — violating them \
 just wastes budget):
 - Max 4 active hypotheses. Always consider at least one alternative/decoy explanation.
+- Every hypothesis must explain THIS anomaly's metric or customer-language description. Repeat
+  at least one specific complaint behavior from the anomaly in the statement or next_test.
+  Never import a generic problem from another app or an example (for instance battery drain
+  when the anomaly is about password autofill). Off-topic proposals are discarded in code.
 - A hypothesis can only be confirmed with >=2 independent evidence items from >=2 distinct \
 sources (e.g. reviews + github). Design tool calls to satisfy or break that.
 - Every tool call must name which hypothesis it tests.
@@ -34,7 +38,8 @@ Your response MUST include the payload matching your action, or the step is wast
   confidence to prior plausibility (typically 0.3-0.6), never 0.
 - action="conclude"           -> include "conclusion": {{"status", "reason"}}
 
-Investigation craft: anchor on the timeline first (get_release_notes around the anomaly
+Investigation craft: first restate the observed customer problem in plain words, then anchor
+on the timeline (get_release_notes around the anomaly
 window), search the actual complaint text with likely user words (e.g. "battery", "crash",
 "slow" — not abstract words like "bug"), then use review_stats/compare_periods to turn
 anecdotes into rates.

@@ -1,7 +1,8 @@
 """Regression coverage for the 2 Aug 2026 backend audit."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import threading
 import time
 
 import pytest
@@ -57,6 +58,16 @@ def test_onboard_connects_selected_github_and_optional_sources(api_db, monkeypat
     import importlib
     api_module = importlib.import_module("echolens.api.app")
     monkeypatch.setattr(api_module, "_onboard_bg", lambda product, product_id: None)
+    with Session() as session:
+        existing = Product(name="Acme", package_name="com.acme.product")
+        session.add(existing)
+        session.flush()
+        session.add(CollectorState(
+            source="hacker_news", identifier="Old Acme", product="Acme",
+            product_id=existing.id, status="healthy",
+            last_run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        ))
+        session.commit()
 
     response = client.post("/onboard", json={
         "play_store": "com.acme.product",
@@ -73,11 +84,158 @@ def test_onboard_connects_selected_github_and_optional_sources(api_db, monkeypat
     assert response.json()["additional_sources"] == [
         "app_store", "chrome_web_store", "hacker_news", "stack_overflow"]
     with Session() as session:
-        sources = set(session.scalars(select(CollectorState.source)).all())
+        rows = session.scalars(select(CollectorState)).all()
+        sources = {row.source for row in rows}
     assert sources == {
         "play_store", "github", "github_discussions", "github_activity",
         "app_store", "chrome_web_store", "hacker_news", "stack_overflow",
     }
+    assert all(row.status == "running" for row in rows)
+    assert all(row.last_run_at is not None for row in rows)
+
+
+def test_onboarding_watchdog_expires_an_interrupted_backfill(api_db):
+    client, Session = api_db
+    import importlib
+    api_module = importlib.import_module("echolens.api.app")
+    with Session() as session:
+        product = Product(name="Interrupted", package_name="com.acme.interrupted")
+        session.add(product)
+        session.flush()
+        session.add(CollectorState(
+            source="play_store",
+            identifier="com.acme.interrupted",
+            product=product.name,
+            product_id=product.id,
+            status="running",
+            last_run_at=datetime.now(timezone.utc) - timedelta(minutes=4),
+        ))
+        session.commit()
+
+    with Session() as session:
+        changed = api_module._expire_stuck_onboarding_sources(
+            session, now=datetime.now(timezone.utc))
+        session.commit()
+
+    assert changed == 1
+
+    response = client.get("/onboard/status?product=Interrupted")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["backfilling"] is False
+    assert body["progress"] == {
+        "checked_sources": 1,
+        "failed_sources": 1,
+        "timed_out_sources": 1,
+        "total_sources": 1,
+        "expected_seconds": 120,
+        "timeout_seconds": 180,
+        "started_at": body["progress"]["started_at"],
+    }
+    assert body["sources"][0]["status"] == "error"
+    assert "stopped responding" in body["sources"][0]["last_error"].lower()
+    with Session() as session:
+        persisted = session.scalars(select(CollectorState)).one()
+        assert persisted.status == "error"
+
+
+def test_startup_recovery_expires_a_recent_interrupted_backfill(api_db):
+    client, Session = api_db
+    import importlib
+    api_module = importlib.import_module("echolens.api.app")
+    with Session() as session:
+        product = Product(name="Restarted Product")
+        session.add(product)
+        session.flush()
+        session.add(CollectorState(
+            source="github",
+            identifier="owner/repo",
+            product=product.name,
+            product_id=product.id,
+            status="running",
+            last_run_at=datetime.now(timezone.utc) - timedelta(seconds=30),
+        ))
+        session.commit()
+
+    with Session() as session:
+        changed = api_module._expire_stuck_onboarding_sources(
+            session, expire_all=True)
+        session.commit()
+
+    assert changed == 1
+    with Session() as session:
+        persisted = session.scalars(select(CollectorState)).one()
+        assert persisted.status == "error"
+        assert persisted.last_error == api_module.ONBOARD_INTERRUPTED_ERROR
+    status = client.get("/onboard/status?product=Restarted%20Product").json()
+    assert status["progress"]["failed_sources"] == 1
+    assert status["progress"]["timed_out_sources"] == 0
+
+
+def test_collector_deadline_is_reported_as_an_onboarding_timeout(api_db):
+    client, Session = api_db
+    with Session() as session:
+        product = Product(name="Collector Timeout")
+        session.add(product)
+        session.flush()
+        session.add(CollectorState(
+            source="github", identifier="owner/repo", product=product.name,
+            product_id=product.id, status="error", items_last_run=0,
+            last_error="timed out after 180s", last_run_at=datetime.now(timezone.utc),
+        ))
+        session.commit()
+
+    status = client.get("/onboard/status?product=Collector%20Timeout").json()
+    assert status["progress"]["timed_out_sources"] == 1
+
+
+def test_onboarding_watchdog_keeps_retrying_after_temporary_lock(
+        api_db, monkeypatch):
+    _client, _Session = api_db
+    import importlib
+    from contextlib import contextmanager
+    api_module = importlib.import_module("echolens.api.app")
+    attempts = 0
+
+    @contextmanager
+    def flaky_session_scope():
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 3:
+            raise RuntimeError("database is locked")
+        yield object()
+
+    monkeypatch.setattr(api_module, "session_scope", flaky_session_scope)
+    monkeypatch.setattr(api_module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        api_module, "_expire_stuck_onboarding_sources",
+        lambda _session, _product_id: 1,
+    )
+
+    api_module._onboard_watchdog(42)
+
+    assert attempts == 4
+
+
+def test_unknown_onboard_status_does_not_expire_unscoped_collectors(api_db):
+    client, Session = api_db
+    with Session() as session:
+        session.add(CollectorState(
+            source="play_store",
+            identifier="com.legacy.unscoped",
+            product="Legacy",
+            product_id=None,
+            status="running",
+            last_run_at=datetime.now(timezone.utc) - timedelta(minutes=4),
+        ))
+        session.commit()
+
+    client.get("/onboard/status?product=Missing")
+
+    with Session() as session:
+        state = session.scalars(select(CollectorState)).one()
+        assert state.status == "running"
 
 
 def test_onboard_rejects_unknown_or_empty_github_selection(api_db):
@@ -226,6 +384,117 @@ def test_collector_network_fetches_overlap_but_ingestion_stays_safe(
     elapsed = time.monotonic() - started
 
     assert elapsed < 0.65, "two 350ms fetches should overlap, not take 700ms"
+    assert all(result.error is None for result in results)
+
+
+def test_finished_source_is_visible_while_another_source_is_still_fetching(
+        tmp_path, monkeypatch):
+    """A missing intermediate commit makes onboarding look frozen."""
+    from echolens.collectors import registry
+
+    fast_fetched = threading.Event()
+    slow_started = threading.Event()
+    release_slow = threading.Event()
+
+    class Fast(Collector):
+        source = "live-fast"
+
+        def fetch(self, since, limit):
+            fast_fetched.set()
+            return []
+
+        def ingest_item(self, db, item):
+            return False, None
+
+    class Slow(Collector):
+        source = "live-slow"
+
+        def fetch(self, since, limit):
+            slow_started.set()
+            release_slow.wait(timeout=2)
+            return []
+
+        def ingest_item(self, db, item):
+            return False, None
+
+    monkeypatch.setitem(registry._BUILDERS, "live-fast", lambda i, p: Fast(i, p))
+    monkeypatch.setitem(registry._BUILDERS, "live-slow", lambda i, p: Slow(i, p))
+    engine = create_engine(f"sqlite:///{tmp_path / 'live-progress.db'}",
+                           connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, expire_on_commit=False)
+    with Session() as setup:
+        registry.add_source(setup, "live-fast", "fast", "Live")
+        registry.add_source(setup, "live-slow", "slow", "Live")
+        setup.commit()
+
+    worker_done = threading.Event()
+
+    def collect() -> None:
+        with Session() as worker:
+            registry.run_all(worker, timeout_s=2)
+        worker_done.set()
+
+    thread = threading.Thread(target=collect, daemon=True)
+    thread.start()
+    assert fast_fetched.wait(timeout=1)
+    assert slow_started.wait(timeout=1)
+    try:
+        deadline = time.monotonic() + 0.75
+        fast_status = "idle"
+        slow_status = "idle"
+        while time.monotonic() < deadline:
+            with Session() as observer:
+                states = {row.source: row.status for row in
+                          observer.scalars(select(CollectorState)).all()}
+            fast_status = states["live-fast"]
+            slow_status = states["live-slow"]
+            if fast_status == "healthy":
+                break
+            time.sleep(0.02)
+        assert fast_status == "healthy"
+        assert slow_status == "running"
+        assert not worker_done.is_set()
+    finally:
+        release_slow.set()
+        thread.join(timeout=3)
+
+
+def test_fetch_completed_before_deadline_is_not_timed_out_during_slow_ingestion(
+        session, monkeypatch):
+    """A queued fetch stays valid even if another source consumes the deadline ingesting."""
+    from echolens.collectors import registry
+
+    slow_ingesting = threading.Event()
+
+    class SlowIngest(Collector):
+        source = "slow-ingest"
+
+        def fetch(self, since, limit):
+            return [{"id": "slow"}]
+
+        def ingest_item(self, db, item):
+            slow_ingesting.set()
+            time.sleep(0.2)
+            return False, None
+
+    class AlreadyFetched(Collector):
+        source = "already-fetched"
+
+        def fetch(self, since, limit):
+            slow_ingesting.wait(timeout=1)
+            return []
+
+        def ingest_item(self, db, item):
+            return False, None
+
+    monkeypatch.setitem(registry._BUILDERS, "slow-ingest", lambda i, p: SlowIngest(i, p))
+    monkeypatch.setitem(registry._BUILDERS, "already-fetched", lambda i, p: AlreadyFetched(i, p))
+    registry.add_source(session, "slow-ingest", "a", "Deadline")
+    registry.add_source(session, "already-fetched", "b", "Deadline")
+
+    results = registry.run_all(session, timeout_s=0.1)
+
     assert all(result.error is None for result in results)
 
 

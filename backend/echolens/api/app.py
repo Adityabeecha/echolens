@@ -13,7 +13,7 @@ import time
 from typing import Any
 
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from echolens.cases import case_history, case_title, case_view, derive_status
 from echolens.config import (
@@ -60,6 +60,10 @@ async def lifespan(_app: FastAPI):
     if problems:
         raise RuntimeError("refusing to start in production: " + "; ".join(problems))
     init_db()
+    # A process restart kills onboarding workers but leaves their persisted
+    # source rows marked running. Recover those before exposing health views.
+    with session_scope() as session:
+        _expire_stuck_onboarding_sources(session, expire_all=True)
     _bootstrap()  # free-tier: seed + first admin from env, no shell needed
     # Resume interrupted work AFTER the app starts accepting requests. Recovery
     # used to run synchronously here, before ``yield``; a single 45-minute case
@@ -1014,6 +1018,74 @@ def _data_notes(session, product_id: int | None = None) -> list[str]:
     return notes
 
 
+ONBOARD_EXPECTED_SECONDS = 120
+ONBOARD_TIMEOUT_SECONDS = 180
+ONBOARD_TIMEOUT_ERROR = (
+    "Initial sync stopped responding after 3 minutes. Retry this source."
+)
+ONBOARD_INTERRUPTED_ERROR = (
+    "Sync was interrupted when EchoLens restarted. Retry this source."
+)
+
+
+def _expire_stuck_onboarding_sources(
+    session,
+    product_id: int | None = None,
+    now: datetime | None = None,
+    expire_all: bool = False,
+) -> int:
+    """Atomically finish abandoned source runs owned by the lifecycle.
+
+    The conditional UPDATE is the ownership check: a completed worker no
+    longer has ``status=running`` and a newer retry has a fresh ``last_run_at``,
+    so neither can be overwritten by an old watchdog.
+    """
+    from echolens.db.models import CollectorState
+
+    cutoff = (now or datetime.now(timezone.utc)) - timedelta(
+        seconds=ONBOARD_TIMEOUT_SECONDS)
+    conditions = [CollectorState.status == "running"]
+    if not expire_all:
+        conditions.extend([
+            CollectorState.last_run_at.is_not(None),
+            CollectorState.last_run_at <= cutoff,
+        ])
+    if product_id is not None:
+        conditions.append(CollectorState.product_id == product_id)
+    result = session.execute(
+        update(CollectorState)
+        .where(*conditions)
+        .values(
+            status="error",
+            last_error=(ONBOARD_INTERRUPTED_ERROR if expire_all
+                        else ONBOARD_TIMEOUT_ERROR),
+        )
+    )
+    return int(result.rowcount or 0)
+
+
+def _onboard_watchdog(product_id: int) -> None:
+    """Expire a worker that never reaches a terminal source state."""
+    time.sleep(ONBOARD_TIMEOUT_SECONDS)
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            with session_scope() as session:
+                changed = _expire_stuck_onboarding_sources(session, product_id)
+            if changed:
+                log.error("onboard_backfill_timed_out", product_id=product_id,
+                          sources=changed)
+            return
+        except Exception as err:
+            # SQLite can briefly hold the writer lock while ingestion commits.
+            # Keep retrying: a finite budget could strand a persisted running
+            # row after the worker releases its transaction lock.
+            log.warning("onboard_watchdog_retry", product_id=product_id,
+                        attempt=attempt, error=str(err))
+            time.sleep(5)
+
+
 def _onboard_bg(product: str, product_id: int | None = None) -> None:
     """Hands-off backfill: pull every configured source once, then scan. Runs in
     a thread so POST /onboard returns immediately and the wizard can poll."""
@@ -1022,7 +1094,7 @@ def _onboard_bg(product: str, product_id: int | None = None) -> None:
     try:
         with session_scope() as session:
             run_all(session, limit=300, product_id=product_id,
-                    timeout_s=120)  # deeper first-run backfill, still bounded
+                    timeout_s=ONBOARD_TIMEOUT_SECONDS)
         with session_scope() as session:
             scan(session, product=product, product_id=product_id)
         log.info("onboard_backfill_done", product=product)
@@ -1091,7 +1163,18 @@ def onboard(body: OnboardBody, user: dict = Depends(require_role("admin"))) -> d
             if identifier and identifier.strip():
                 add_source(session, source, identifier.strip(), product, pid)
                 connected_additional.append(source)
+        from echolens.db.models import CollectorState
+        connected_states = session.scalars(select(CollectorState).where(
+            CollectorState.product_id == pid,
+            CollectorState.enabled == True,  # noqa: E712
+        )).all()
+        started_at = datetime.now(timezone.utc)
+        for state in connected_states:
+            state.status = "running"
+            state.last_run_at = started_at
+            state.last_error = None
     threading.Thread(target=_onboard_bg, args=(product, pid), daemon=True).start()
+    threading.Thread(target=_onboard_watchdog, args=(pid,), daemon=True).start()
     return {"status": "backfilling", "product": product, "product_id": pid,
             "play_store": body.play_store.strip(), "github": repo,
             "github_sources": github_sources if repo else [],
@@ -1129,8 +1212,31 @@ def onboard_status(product: str, user: dict = Depends(current_user)) -> dict:
             a_stmt = a_stmt.where(AnomalyEvent.product_id == prod.id)
         anomalies = _anomaly_dicts(
             session, session.scalars(a_stmt.order_by(AnomalyEvent.id)).all())
+        started_values = [
+            datetime.fromisoformat(h["last_run_at"])
+            for h in health if h["last_run_at"] is not None
+        ]
+        started_at = min(started_values) if started_values else None
+        checked_sources = sum(h["status"] in ("healthy", "error") for h in health)
+        failed_sources = sum(h["status"] == "error" for h in health)
+        timed_out_sources = sum(
+            h["status"] == "error" and (
+                h.get("last_error") == ONBOARD_TIMEOUT_ERROR
+                or "timed out" in (h.get("last_error") or "").lower()
+            )
+            for h in health
+        )
         return {"product": product, "product_id": prod.id if prod else None,
                 "backfilling": backfilling, "sources": health,
+                "progress": {
+                    "checked_sources": checked_sources,
+                    "failed_sources": failed_sources,
+                    "timed_out_sources": timed_out_sources,
+                    "total_sources": len(health),
+                    "expected_seconds": ONBOARD_EXPECTED_SECONDS,
+                    "timeout_seconds": ONBOARD_TIMEOUT_SECONDS,
+                    "started_at": started_at.isoformat() if started_at else None,
+                },
                 "snapshot": snap, "anomalies": anomalies}
 
 

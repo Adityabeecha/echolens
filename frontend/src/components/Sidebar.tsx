@@ -242,7 +242,7 @@ export function Sidebar({
           aria-expanded={!collapsed}
           aria-controls="el-sidebar-navigation"
         >
-          <Icon name={collapsed ? "chevronRight" : "chevronLeft"} size={16} />
+          <Icon name={collapsed ? "chevronRight" : "chevronLeft"} size={13} />
         </button>
       </div>
 

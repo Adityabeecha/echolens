@@ -11,6 +11,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from queue import Empty, Queue
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -152,12 +153,15 @@ def _run_configs(session: Session, configs: list[SourceConfig], limit: int,
         if state is not None:
             state.status = "running"
             state.last_run_at = started
-    session.flush()
+    # This is user-visible lifecycle state. Persist it before any network wait
+    # so status polling never keeps showing the previous idle snapshot.
+    session.commit()
 
     slots = threading.Semaphore(max(1, min(MAX_PARALLEL_FETCHES, len(configs))))
     cancelled = threading.Event()
-    lock = threading.Lock()
-    fetched: dict[int, tuple[Collector | None, list[dict] | None, str | None, float]] = {}
+    completed: Queue[
+        tuple[int, tuple[Collector | None, list[dict] | None, str | None, float, float]]
+    ] = Queue()
     batch_started = time.monotonic()
 
     def fetch_one(index: int, cfg: SourceConfig) -> None:
@@ -168,12 +172,14 @@ def _run_configs(session: Session, configs: list[SourceConfig], limit: int,
             try:
                 collector = cfg.build()
                 rows = collector.fetch(since=cfg.watermark, limit=limit)
-                payload = (collector, rows, None, time.monotonic() - source_started)
+                completed_at = time.monotonic()
+                payload = (collector, rows, None,
+                           completed_at - source_started, completed_at)
             except Exception as err:
+                completed_at = time.monotonic()
                 payload = (None, None, f"{type(err).__name__}: {err}",
-                           time.monotonic() - source_started)
-            with lock:
-                fetched[index] = payload
+                           completed_at - source_started, completed_at)
+            completed.put((index, payload))
 
     threads = [threading.Thread(
         target=fetch_one, args=(index, cfg), daemon=True,
@@ -182,13 +188,11 @@ def _run_configs(session: Session, configs: list[SourceConfig], limit: int,
     for thread in threads:
         thread.start()
     deadline = batch_started + timeout_s
-    for thread in threads:
-        thread.join(max(0.0, deadline - time.monotonic()))
-    cancelled.set()
+    pending = set(range(len(configs)))
+    results: dict[int, CollectResult] = {}
 
-    results: list[CollectResult] = []
-    for index, cfg in enumerate(configs):
-        payload = fetched.get(index)
+    def finish(index: int, payload) -> None:
+        cfg = configs[index]
         if payload is None:
             error = f"timed out after {timeout_s:g}s"
             log.error("collector_timeout", source=cfg.source, id=cfg.identifier,
@@ -196,7 +200,7 @@ def _run_configs(session: Session, configs: list[SourceConfig], limit: int,
             result = CollectResult(source=cfg.source, identifier=cfg.identifier,
                                    error=error, duration_s=round(timeout_s, 3))
         else:
-            collector, rows, error, fetch_duration = payload
+            collector, rows, error, fetch_duration, _completed_at = payload
             if error is not None or collector is None or rows is None:
                 result = CollectResult(source=cfg.source, identifier=cfg.identifier,
                                        error=error or "collector fetch failed",
@@ -215,9 +219,34 @@ def _run_configs(session: Session, configs: list[SourceConfig], limit: int,
                 state.status = "error"
                 state.last_error = result.error
                 state.items_last_run = 0
-        results.append(result)
-    session.flush()
-    return results
+        results[index] = result
+        # Make each terminal source visible immediately. A slow or hung source
+        # must not hide work already completed by the others.
+        session.commit()
+
+    while pending:
+        try:
+            # Drain already-fetched payloads first. Ingestion is intentionally
+            # serial and may itself cross the wall-clock deadline; that must not
+            # discard fetches that were safely queued before the cutoff.
+            index, payload = completed.get_nowait()
+        except Empty:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                index, payload = completed.get(timeout=remaining)
+            except Empty:
+                break
+        if index not in pending:
+            continue
+        finish(index, payload if payload[-1] <= deadline else None)
+        pending.remove(index)
+
+    cancelled.set()
+    for index in sorted(pending):
+        finish(index, None)
+    return [results[index] for index in range(len(configs))]
 
 
 def run_all(session: Session, limit: int = 100,
