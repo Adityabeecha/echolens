@@ -32,7 +32,8 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  const submit = async () => {
+  const submit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     if (!email.trim() || !password) return;
     setBusy(true);
     setError(null);
@@ -152,7 +153,8 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
             first paint) rather than as the column. */}
         {googleId && (
           <div style={{ width: "100%", maxWidth: 360, marginTop: S[4] }}>
-            <GoogleButton clientId={googleId} onCredential={signInWithGoogle} disabled={busy} />
+            <GoogleButton clientId={googleId} onCredential={signInWithGoogle} disabled={busy}
+              onUnavailable={() => setShowPassword(true)} />
           </div>
         )}
 
@@ -169,16 +171,17 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
           </button>
         )}
 
-        <div hidden={!!googleId && mode === "login" && !showPassword}
-             style={{ display: "flex", flexDirection: "column", gap: S[3],
+        <form onSubmit={submit}
+             style={{ display: googleId && mode === "login" && !showPassword ? "none" : "flex", flexDirection: "column", gap: S[3],
                       marginTop: S[5], maxWidth: 360 }}>
           <Field label="Email">
             <input
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@company.com"
-              autoComplete="username"
-              onKeyDown={(e) => e.key === "Enter" && submit()}
+              type="email"
+              name="email"
+              autoComplete="email"
               className="el-input"
             />
           </Field>
@@ -186,10 +189,10 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
             <input
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
+              placeholder="Your password"
               type="password"
+              name="password"
               autoComplete={mode === "login" ? "current-password" : "new-password"}
-              onKeyDown={(e) => e.key === "Enter" && submit()}
               className="el-input"
             />
           </Field>
@@ -203,14 +206,14 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
           )}
 
           <button
-            onClick={submit}
+            type="submit"
             disabled={busy || !email.trim() || !password}
             className={`el-btn el-btn--primary${busy ? " el-btn--loading" : ""}`}
             style={{ marginTop: S[1], padding: `${S[3]} 0`, fontSize: T.md }}
           >
             {mode === "login" ? "Sign in" : "Create account & sign in"}
           </button>
-        </div>
+        </form>
 
         <div style={{ marginTop: S[5], fontSize: T.sm, color: C.dim, maxWidth: 360 }}>
           {mode === "login" ? "First time setting this up? " : "Already have an account? "}

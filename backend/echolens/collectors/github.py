@@ -94,7 +94,8 @@ class GitHubCollector(Collector):
         # cannot advance the cursor past an older failed one.
         items.sort(key=lambda item: iso(_dt(item.get("updated_at")))
                    if _dt(item.get("updated_at")) else "")
-        for rel in data.get("releases", []):
+        releases = data.get("releases", [])
+        for rel in (releases[:limit] if limit else releases):  # limit applies to releases too
             items.append({"kind": "release", **rel})
         return items
 

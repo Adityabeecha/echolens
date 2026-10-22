@@ -7,6 +7,25 @@ from echolens.db.models import Release
 from echolens.tools._util import cap_items, parse_date, snippet
 
 
+# Values a model sends when it means "any version". "*" went straight into
+# LIKE '*%' and matched nothing, costing the case one of its few iterations.
+_ANY_VERSION = {"", "*", "%", "any", "all", "latest", "none", "null"}
+
+
+def _normalize_version(version: str | None) -> str | None:
+    """'v3.2' -> '3.2'; wildcards -> None. LIKE metacharacters are stripped so
+    a stray '%' or '_' cannot widen the match."""
+    if version is None:
+        return None
+    v = str(version).strip().strip("*%").strip()
+    if v.lower() in _ANY_VERSION:
+        return None
+    if v[:1] in ("v", "V") and v[1:2].isdigit():
+        v = v[1:]
+    v = v.replace("%", "").replace("_", "")
+    return v or None
+
+
 def get_release_notes(
     session: Session,
     version: str | None = None,
@@ -17,6 +36,7 @@ def get_release_notes(
     stmt = select(Release).order_by(Release.released_at)
     if product:
         stmt = stmt.where(Release.product == product)
+    version = _normalize_version(version)
     if version:
         stmt = stmt.where(Release.version.like(f"{version}%"))
     if date_from:

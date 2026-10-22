@@ -55,6 +55,6 @@ def test_manual_case_validation(client):
 
 def test_first_signup_becomes_admin(client):
     # the very first account is bootstrapped as admin regardless of requested role
-    r = client.post("/auth/signup", json={"email": "first@x.com", "password": "pw", "role": "viewer"})
+    r = client.post("/auth/signup", json={"email": "first@x.com", "password": "long-enough-pw", "role": "viewer"})
     assert r.status_code == 200
     assert r.json()["role"] == "admin"

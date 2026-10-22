@@ -389,11 +389,12 @@ export default function App() {
           {screen === "plan" && (
             <Backlog key={key} onOpenInvestigation={openCase} onBack={back}
                      onGoCases={() => go("cases")}
-                     backLabel={backTarget?.label ?? "Today"} />
+                     backLabel={backTarget?.label ?? "Cases"} />
           )}
           {screen === "memory" && (
             <Brain key={key} onOpenInvestigation={openCase} onBack={back}
                    onGoCases={() => go("cases")}
+                   onGoPatterns={() => go("patterns")}
                    backLabel={backTarget?.label ?? "Patterns"} />
           )}
 

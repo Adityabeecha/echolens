@@ -51,6 +51,12 @@ def _is_temperature_refusal(err: Exception) -> bool:
 
 _warned_pricing: set[str] = set()
 
+# Models that have refused `temperature`, remembered for the life of the
+# process. Every flow builds its own client, so a per-instance flag re-learned
+# the refusal on the first call of EVERY investigation, triage and chat turn —
+# one wasted 400 round-trip each time.
+_NO_TEMPERATURE_MODELS: set[str] = set()
+
 
 def compute_cost(model: str, tokens_in: int, tokens_out: int) -> float:
     price = MODEL_PRICING.get(model)
@@ -85,7 +91,7 @@ class OpenAIClient:
         self._base_delay = base_delay
         self._sleep = sleep  # injectable so tests don't actually wait
         self._max_total_s = max_total_s
-        self._supports_temperature = True
+        self._supports_temperature = self.model not in _NO_TEMPERATURE_MODELS
 
     def _create_with_backoff(self, system: str, user: str, json_schema: dict,
                              deadline: float | None = None):
@@ -117,6 +123,7 @@ class OpenAIClient:
                 if self._supports_temperature and _is_temperature_refusal(err):
                     log.warning("llm_temperature_unsupported", model=self.model)
                     self._supports_temperature = False
+                    _NO_TEMPERATURE_MODELS.add(self.model)
                     continue
                 raise
             except _TRANSIENT as err:

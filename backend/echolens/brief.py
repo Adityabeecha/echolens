@@ -118,10 +118,14 @@ def weekly_brief(session: Session, as_of: datetime | None = None,
     # reads as a failing grade the data cannot support. Say so instead.
     resolved_total = len(_resolved_invs(session, product_id))
     headline = (f"This week: {_n(len(new_problems), 'new problem')}, "
-                f"{_n(len(fixes_verified), 'fix')} verified, "
+                f"{_n(len(fixes_verified), 'fix', 'fixes')} verified, "
                 f"{_n(len(regressions), 'regression')}.")
-    if resolved_total:
+    # Nor is "0% … verified" a week after the first case resolved: no fix
+    # could have shipped and been measured yet, so the line read as failure.
+    if rate > 0:
         headline += f" {int(rate * 100)}% of resolved cases have a verified fix."
+    elif resolved_total >= 3:
+        headline += f" None of {resolved_total} resolved cases has a verified fix yet."
     lines = [headline]
     for p in new_problems[:2]:
         lines.append(f"• New: {p['summary']} (case #{p['investigation_id']}).")

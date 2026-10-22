@@ -78,6 +78,27 @@ def _open_problems(session: Session, product_id: int | None = None) -> list[tupl
     return rows
 
 
+def _top_signals(session: Session, product_id: int | None = None, k: int = 3):
+    """Strongest pending, unmerged signals for the product, by z."""
+    from sqlalchemy import select
+
+    from echolens.db.models import AnomalyEvent
+    stmt = select(AnomalyEvent).where(AnomalyEvent.status == "pending",
+                                      AnomalyEvent.merged_into_id.is_(None))
+    if product_id is not None:
+        stmt = stmt.where(AnomalyEvent.product_id == product_id)
+    from echolens.cases import _headline
+    rows = list(session.scalars(stmt).all())
+    rows.sort(key=lambda a: -(a.z or 0.0))
+    seen, out = set(), []
+    for a in rows:  # the same headline twice is one signal to a reader
+        key = _headline(a).strip().lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(a)
+    return out[:k]
+
+
 def _cite(f: Finding, inv: Investigation) -> dict:
     impact = (f.json or {}).get("impact", {})
     return {"investigation_id": inv.id, "finding_id": f.id, "summary": f.summary,
@@ -94,6 +115,22 @@ def route(session: Session, message: str, product_id: int | None = None,
     label = f" for {product_name}" if product_name else ""
     if not msg:
         return {"type": "answer", "text": "Ask me about a complaint, a cause, or what to fix next.", "citations": []}
+
+    # A ranking question with nothing investigated yet used to fall through to
+    # "No investigations yet" — or, via the ask agent, five model calls and
+    # "I couldn't work that out" — while the product had strong signals
+    # waiting. Answer from the signals instead, labelled as uninvestigated.
+    if any(m in msg for m in RANK_MARKERS) and not _open_problems(session, product_id):
+        signals = _top_signals(session, product_id)
+        if signals:
+            from echolens.cases import _headline
+            top = signals[0]
+            rest = " and ".join(f"“{_headline(a)}”" for a in signals[1:3])
+            return {"type": "answer", "citations": [], "grounded": True,
+                    "text": (f"Nothing{label} has been investigated yet, so I can't name a cause. "
+                             f"The strongest signal waiting is “{_headline(top)}”"
+                             + (f", followed by {rest}" if rest else "") +
+                             ". Ask me to investigate it and I'll open a case.")}
 
     # nothing investigated yet in this product — say so explicitly
     if not _knowledge(session, product_id) and not any(m in msg for m in INVESTIGATE_MARKERS):

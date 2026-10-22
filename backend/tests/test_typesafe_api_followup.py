@@ -62,13 +62,13 @@ def test_manual_issue_never_infers_another_products_repo(client, monkeypatch, fa
 @pytest.mark.parametrize('issuer', ['accounts.google.com', 'https://accounts.google.com'])
 def test_google_accepts_both_verified_issuer_forms(monkeypatch, issuer):
     from cryptography.hazmat.primitives.asymmetric import rsa
-    from jose import jwt
+    import jwt
+    from jwt.algorithms import RSAAlgorithm
     from echolens import google_auth
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     monkeypatch.setattr(settings, 'google_client_id', 'test-client')
     # Supply a local public key at the network boundary; signature/claims remain real.
-    from jose import jwk
-    public = jwk.construct(key.public_key(), 'RS256').to_dict()
+    public = RSAAlgorithm.to_jwk(key.public_key(), as_dict=True)
     public['kid'] = 'local-key'
     monkeypatch.setattr(google_auth, '_keys', lambda force=False: {'keys': [public]})
     token = jwt.encode({'iss': issuer, 'aud': 'test-client', 'exp': int(time.time()) + 60,

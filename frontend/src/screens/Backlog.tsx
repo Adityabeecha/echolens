@@ -1,10 +1,26 @@
 import { useEffect, useRef, useState } from "react";
 import { BacklogItem, QuarterPlan, api, canReview } from "../api";
+import { age, plural } from "../format";
 import { C, MEASURE, R, S, T, mono, sans } from "../theme";
 import { Bar, Centered, EmptyState, ErrorState, Label, ScreenHeader } from "../ui";
 import { Icon } from "../components/Icon";
 
 const BAND: Record<string, string> = { high: C.bad, medium: C.accent, low: C.dim };
+
+/** Rebuilt from the structured fields: the server's sentence carries raw floats. */
+function defenceLine(i: BacklogItem): string {
+  const bits = [`${i.severity.band} severity (${i.severity.score.toFixed(2)})`];
+  if (i.volume) bits.push(`${i.volume} affected ${plural(i.volume, "review")}`);
+  bits.push(`open · ${age(i.persistence_days)}`);
+  if (i.projected.confident) bits.push(`~${i.projected.stars.toFixed(2)}★ recoverable`);
+  bits.push(effortLabel(i));
+  bits.push(`${i.evidence_count} cited evidence ${plural(i.evidence_count, "item")}`);
+  return bits.join(" · ");
+}
+
+function effortLabel(i: BacklogItem): string {
+  return i.effort.known ? `${i.effort.days}d effort (${i.effort.basis})` : `est. ${i.effort.days}d (default)`;
+}
 
 interface Props {
   onOpenInvestigation: (id: number, status?: string) => void;
@@ -141,6 +157,7 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
                      height={7} />
               </div>
               <Stat label="PROJECTED RECOVERY"
+                    hint="Estimated rating gain if every item in this plan is fixed, based on each finding's share of recent negative reviews."
                     value={plan.projected_stars > 0 ? `+${plan.projected_stars.toFixed(2)}★` : "—"}
                     color={plan.projected_stars > 0 ? C.good : C.muted} />
               <Stat label="RESOLUTION RATE"
@@ -155,8 +172,9 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
                             border: `1px solid ${C.border3}`, background: C.card2,
                             borderRadius: R.control, fontSize: T.sm, color: C.muted, lineHeight: "var(--el-lh-normal)" }}>
                 {plan.unknown_effort} item{plan.unknown_effort === 1 ? " has" : "s have"} no
-                effort signal yet — no linked issue labels and no fix history to learn from. They're
-                ranked on impact alone rather than on a guessed estimate.
+                effort signal yet — no linked issue labels and no fix history to learn from. They
+                use a default estimate of {plan.proposed.concat(plan.deferred).find((i) => !i.effort.known)?.effort.days ?? 5}d,
+                which counts toward your capacity — treat their rank as provisional.
               </div>
             )}
 
@@ -202,11 +220,17 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
   );
 }
 
-function Stat({ label, value, color }: { label: string; value: string; color: string }) {
+function Stat({ label, value, color, hint }: { label: string; value: string; color: string; hint?: string }) {
   return (
-    <div>
+    <div title={hint}>
       <div style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".1em", color: C.faint }}>{label}</div>
       <div style={{ fontSize: T.xl, fontWeight: 700, fontFamily: mono, color, marginTop: S[1] }}>{value}</div>
+      {hint && (
+        <div style={{ fontSize: T.micro, color: C.dim, marginTop: S[1], maxWidth: 200,
+                      lineHeight: "var(--el-lh-snug)" }}>
+          Rating gain if the whole plan ships
+        </div>
+      )}
     </div>
   );
 }
@@ -239,12 +263,12 @@ function Row({ item, inPlan, busy, canEdit, onToggle, onOpen, note }: {
           </button>
           <span style={{ fontFamily: mono, fontSize: T.micro, padding: `0 ${S[2]}`, borderRadius: R.card,
                          background: `${band}1a`, border: `1px solid ${band}55`, color: band }}>
-            {item.effort.days}d
+            {item.effort.known ? `${item.effort.days}d` : `est. ${item.effort.days}d (default)`}
           </span>
         </div>
 
         <div style={{ fontSize: T.sm, color: C.muted, marginTop: S[1], lineHeight: "var(--el-lh-normal)" }}>
-          {item.defence}
+          {defenceLine(item)}
         </div>
 
         {note && (
