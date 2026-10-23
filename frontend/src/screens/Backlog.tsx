@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { BacklogItem, QuarterPlan, api, canReview } from "../api";
+import { BacklogItem, PlanOverride, PlanSegment, QuarterPlan, api, canReview } from "../api";
 import { age, plural } from "../format";
 import { C, MEASURE, R, S, T, mono, sans } from "../theme";
 import { Bar, Centered, EmptyState, ErrorState, Label, ScreenHeader } from "../ui";
@@ -14,11 +14,14 @@ function defenceLine(i: BacklogItem): string {
   bits.push(`open · ${age(i.persistence_days)}`);
   if (i.projected.confident) bits.push(`~${i.projected.stars.toFixed(2)}★ recoverable`);
   bits.push(effortLabel(i));
+  if (i.impact?.overridden) bits.push(`impact ×${i.impact.factor} (set by you)`);
+  if (i.segment) bits.push(`×${i.segment.factor} ${i.segment.label.toLowerCase()} (set by you)`);
   bits.push(`${i.evidence_count} cited evidence ${plural(i.evidence_count, "item")}`);
   return bits.join(" · ");
 }
 
 function effortLabel(i: BacklogItem): string {
+  if (i.effort.overridden) return `${i.effort.days}d effort (set by you)`;
   return i.effort.known ? `${i.effort.days}d effort (${i.effort.basis})` : `est. ${i.effort.days}d (default)`;
 }
 
@@ -60,7 +63,8 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
 
   useEffect(() => load(), []);
 
-  const commit = async (included: number[], excluded: number[], days = capacity) => {
+  const commit = async (included: number[], excluded: number[], days = capacity,
+                        overrides?: Record<string, PlanOverride>) => {
     // `saving` only disables the buttons on the NEXT render, so two fast clicks
     // both read the same pre-mutation plan and the second overwrote the first —
     // one dropped item silently reappeared with no explanation. This ref is set
@@ -69,7 +73,7 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
     savingRef.current = true;
     setSaving(true);
     try {
-      setPlan(await api.saveBacklogPlan({ included, excluded, capacity_days: days }));
+      setPlan(await api.saveBacklogPlan({ included, excluded, capacity_days: days, overrides }));
       setError(null);
     } catch (e) {
       setError(String(e).replace("Error: ", ""));
@@ -95,6 +99,20 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
   const outIds = plan.excluded ?? [];
   const drop = (id: number) => commit(inIds.filter((x) => x !== id), [...outIds, id]);
   const add = (id: number) => commit([...inIds, id], outIds.filter((x) => x !== id));
+
+  // One item's estimate changed: send the WHOLE override map (the server
+  // replaces it wholesale), with this item's entry merged or removed.
+  const setOverride = (id: number, patch: PlanOverride | null) => {
+    const all = { ...(plan.overrides ?? {}) };
+    const key = String(id);
+    const merged = patch == null ? {} : { ...(all[key] ?? {}), ...patch };
+    const clean = Object.fromEntries(
+      Object.entries(merged).filter(([, v]) => v != null)) as PlanOverride;
+    if (Object.keys(clean).length) all[key] = clean;
+    else delete all[key];
+    commit(inIds, outIds, capacity, all);
+  };
+  const segments = plan.segments ?? [];
 
   const empty = plan.proposed.length === 0 && plan.deferred.length === 0;
 
@@ -189,13 +207,14 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
             </Label>
             <p style={{ fontSize: T.sm, color: C.dim, margin: "0 0 12px", lineHeight: "var(--el-lh-normal)" }}>
               Ranked by value per engineer-day. EchoLens proposes; you decide — drop anything and
-              the plan re-fills around your choice.
+              the plan re-fills around your choice.{reviewer && " Adjust effort, impact or segment on any item and the ranking updates at once."}
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: S[2], maxWidth: MEASURE }}>
               {plan.proposed.map((i) => (
                 <Row key={i.investigation_id} item={i} inPlan busy={saving}
                      canEdit={reviewer} onToggle={() => drop(i.investigation_id)}
-                     onOpen={onOpenInvestigation} note={plan.notes[String(i.investigation_id)]} />
+                     onOpen={onOpenInvestigation} note={plan.notes[String(i.investigation_id)]}
+                     segments={segments} onOverride={(p) => setOverride(i.investigation_id, p)} />
               ))}
             </div>
 
@@ -208,7 +227,8 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
                   {plan.deferred.map((i) => (
                     <Row key={i.investigation_id} item={i} inPlan={false} busy={saving}
                          canEdit={reviewer} onToggle={() => add(i.investigation_id)}
-                         onOpen={onOpenInvestigation} note={plan.notes[String(i.investigation_id)]} />
+                         onOpen={onOpenInvestigation} note={plan.notes[String(i.investigation_id)]}
+                     segments={segments} onOverride={(p) => setOverride(i.investigation_id, p)} />
                   ))}
                 </div>
               </>
@@ -235,7 +255,7 @@ function Stat({ label, value, color, hint }: { label: string; value: string; col
   );
 }
 
-function Row({ item, inPlan, busy, canEdit, onToggle, onOpen, note }: {
+function Row({ item, inPlan, busy, canEdit, onToggle, onOpen, note, segments, onOverride }: {
   item: BacklogItem;
   inPlan: boolean;
   busy: boolean;
@@ -243,6 +263,8 @@ function Row({ item, inPlan, busy, canEdit, onToggle, onOpen, note }: {
   onToggle: () => void;
   onOpen: (id: number, status?: string) => void;
   note?: string;
+  segments: PlanSegment[];
+  onOverride: (patch: PlanOverride | null) => void;
 }) {
   const [open, setOpen] = useState(false);
   const band = BAND[item.severity.band] ?? C.dim;
@@ -263,8 +285,10 @@ function Row({ item, inPlan, busy, canEdit, onToggle, onOpen, note }: {
           </button>
           <span style={{ fontFamily: mono, fontSize: T.micro, padding: `0 ${S[2]}`, borderRadius: R.card,
                          background: `${band}1a`, border: `1px solid ${band}55`, color: band }}>
-            {item.effort.known ? `${item.effort.days}d` : `est. ${item.effort.days}d (default)`}
+            {item.effort.overridden ? `${item.effort.days}d · set by you`
+              : item.effort.known ? `${item.effort.days}d` : `est. ${item.effort.days}d (default)`}
           </span>
+          {item.segment && <SegmentPill segment={item.segment} />}
         </div>
 
         <div style={{ fontSize: T.sm, color: C.muted, marginTop: S[1], lineHeight: "var(--el-lh-normal)" }}>
@@ -290,6 +314,9 @@ function Row({ item, inPlan, busy, canEdit, onToggle, onOpen, note }: {
           )}
         </div>
 
+        <Estimates item={item} canEdit={canEdit} busy={busy} segments={segments}
+                   onOverride={onOverride} />
+
         {open && (
           <div style={{ marginTop: S[2], paddingLeft: 10, borderLeft: `2px solid ${C.border3}`,
                         display: "flex", flexDirection: "column", gap: S[1] }}>
@@ -310,6 +337,107 @@ function Row({ item, inPlan, busy, canEdit, onToggle, onOpen, note }: {
                    borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.sm, fontFamily: sans,
                    cursor: busy ? "wait" : "pointer", flex: "none", alignSelf: "center" }}>
           {inPlan ? "Drop" : "Add"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** A reviewer-set priority segment. The tooltip says what it does to value. */
+function SegmentPill({ segment }: { segment: PlanSegment }) {
+  return (
+    <span title={segment.why}
+      style={{ fontFamily: mono, fontSize: T.micro, padding: `0 ${S[2]}`, borderRadius: R.pill,
+               background: C.accentBg, border: `1px solid ${C.accentLine}`, color: C.accent,
+               cursor: "help" }}>
+      {segment.label} · ×{segment.factor}
+    </span>
+  );
+}
+
+const IMPACT_LABEL: Record<number, string> = {
+  1: "1 · minimal", 2: "2 · low", 3: "3 · medium", 4: "4 · high", 5: "5 · critical",
+};
+
+function SetByYou() {
+  return <span style={{ fontFamily: mono, fontSize: T.micro, color: C.accent }}>set by you</span>;
+}
+
+const ctl = {
+  background: C.bgRaised, border: `1px solid ${C.border3}`, borderRadius: R.control,
+  color: C.text, fontFamily: sans, fontSize: T.sm, padding: `2px ${S[2]}`,
+} as const;
+
+/**
+ * Inline estimate overrides for a reviewer: effort (engineer-days), impact
+ * (1–5) and a manual priority segment. Each change saves with the plan and the
+ * server re-ranks immediately; overridden values are marked "set by you".
+ */
+function Estimates({ item, canEdit, busy, segments, onOverride }: {
+  item: BacklogItem;
+  canEdit: boolean;
+  busy: boolean;
+  segments: PlanSegment[];
+  onOverride: (patch: PlanOverride | null) => void;
+}) {
+  if (!canEdit) return null;
+  const days = item.effort.days;
+  const step = days <= 2 ? 0.5 : 1;
+  const bump = (dir: 1 | -1) => {
+    const next = Math.round(Math.max(0.5, Math.min(365, days + dir * step)) * 2) / 2;
+    if (next !== days) onOverride({ effort_days: next });
+  };
+  const impact = item.impact;
+  const touched = item.effort.overridden || impact?.overridden || item.segment != null;
+  const estimated = item.effort.estimated;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: S[4], alignItems: "center", marginTop: S[2],
+                  fontSize: T.sm, color: C.dim }}>
+      <div style={{ display: "flex", alignItems: "center", gap: S[1] }}
+           title={estimated ? `EchoLens estimated ${estimated.days}d (${estimated.basis})` : item.effort.basis}>
+        <span style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".08em" }}>EFFORT</span>
+        <button className="el-btn" style={ctl} disabled={busy || days <= 0.5}
+          aria-label="Decrease effort" onClick={() => bump(-1)}>−</button>
+        <span style={{ fontFamily: mono, color: C.text, minWidth: 34, textAlign: "center" }}>{days}d</span>
+        <button className="el-btn" style={ctl} disabled={busy || days >= 365}
+          aria-label="Increase effort" onClick={() => bump(1)}>+</button>
+        {item.effort.overridden && <SetByYou />}
+      </div>
+      {impact && (
+        <label style={{ display: "flex", alignItems: "center", gap: S[1] }}
+               title="Impact on a 1–5 scale. Each step doubles or halves value; the default comes from severity.">
+          <span style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".08em" }}>IMPACT</span>
+          <select value={impact.level} disabled={busy} style={ctl}
+            onChange={(e) => {
+              const lvl = Number(e.target.value);
+              onOverride({ impact: lvl === impact.default ? null : lvl });
+            }}>
+            {[1, 2, 3, 4, 5].map((n) => (
+              <option key={n} value={n}>
+                {IMPACT_LABEL[n]}{n === impact.default ? " (measured)" : ""}
+              </option>
+            ))}
+          </select>
+          {impact.overridden && <SetByYou />}
+        </label>
+      )}
+      {segments.length > 0 && (
+        <label style={{ display: "flex", alignItems: "center", gap: S[1] }}
+               title={item.segment?.why ?? "EchoLens has no data on who pays. Flag an item that hits a priority segment to multiply its value."}>
+          <span style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".08em" }}>SEGMENT</span>
+          <select value={item.segment?.key ?? ""} disabled={busy} style={ctl}
+            onChange={(e) => onOverride({ segment: e.target.value || null })}>
+            <option value="">None</option>
+            {segments.map((s) => (
+              <option key={s.key} value={s.key}>{s.label} (×{s.factor})</option>
+            ))}
+          </select>
+        </label>
+      )}
+      {touched && (
+        <button className="el-btn" disabled={busy} onClick={() => onOverride(null)}
+          style={{ fontFamily: mono, fontSize: T.micro, color: C.dim }}>
+          <Icon name="retry" size={10} /> reset to EchoLens's estimate
         </button>
       )}
     </div>
