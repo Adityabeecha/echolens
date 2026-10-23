@@ -324,7 +324,13 @@ def _finding_extras(session, finding, recs, status: str) -> dict:
     if watch is not None:
         fix = {"status": watch.status, "issue_number": watch.issue_number,
                "issue_url": watch.issue_url, "chart": watch.chart_json,
-               "baseline_rate": watch.baseline_rate, "post_rate": watch.post_rate}
+               "baseline_rate": watch.baseline_rate, "post_rate": watch.post_rate,
+               "fixed_in_version": watch.fixed_in_version}
+        if watch.status in ("issue_open", "watching") and not watch.fixed_in_version:
+            fix["version_hint"] = True   # UI nudges: set the version so the window starts at release
+        if watch.fixed_in_version and watch.status in ("issue_open", "waiting_for_release"):
+            from echolens.fixwatch import release_state
+            fix["release"] = release_state(session, watch)
     # v10: how broadly this finding's own cited evidence is corroborated. The
     # two-source rule proves at least two channels agree; this reports the actual
     # spread, so "proven across reviews, GitHub and support" is a fact the finding
@@ -3045,7 +3051,11 @@ async def github_webhook(request: Request) -> dict:
                 issue_number = int(issue.get("number", 0))
             except (TypeError, ValueError):
                 raise HTTPException(400, "issue.number must be an integer")
-            watch = on_issue_closed(session, repo, issue_number, closed_at)
+            # The closing text may say which version carries the fix.
+            watch = on_issue_closed(session, repo, issue_number, closed_at,
+                                    payload_text=" ".join(str(x) for x in (
+                                        issue.get("title"), issue.get("body"),
+                                        (payload.get("comment") or {}).get("body")) if x))
             return {"ok": True, "watch_id": watch.id if watch else None,
                     "status": watch.status if watch else "no_matching_finding"}
     return {"ok": True, "ignored": event or "unknown"}
@@ -3062,6 +3072,62 @@ def fixwatch_evaluate(product_id: int | None = None,
         pid = prod.id if prod else None
         return {"evaluated": evaluate(session, product_id=pid),
                 "regressions": check_regressions(session, product_id=pid)}
+
+
+class FixedVersionBody(BaseModel):
+    version: str | None = Field(default=None, max_length=32)   # empty/None clears it
+
+
+@app.put("/findings/{finding_id}/fixed-version")
+def finding_fixed_version(finding_id: int, body: FixedVersionBody, product_id: int | None = None,
+                          user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Set which app version carries the fix. The post-fix window then opens at
+    the first review on that version instead of when the issue closed."""
+    from echolens.db.models import FixWatch
+    from echolens.fixwatch import set_fixed_version
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
+        watch = session.scalars(select(FixWatch).where(
+            FixWatch.finding_id == finding.id).order_by(FixWatch.id.desc())).first()
+        if watch is None:
+            raise HTTPException(409, "No issue is linked to this finding yet — file one first.")
+        try:
+            release = set_fixed_version(session, watch, body.version)
+        except ValueError:
+            raise HTTPException(422, "That doesn't look like a version number (try 3.2.1).")
+        return {"status": watch.status, "fixed_in_version": watch.fixed_in_version,
+                "release": release}
+
+
+@app.get("/findings/{finding_id}/reply-drafts")
+def finding_reply_drafts(finding_id: int, product_id: int | None = None,
+                         user: dict = Depends(current_user)) -> dict:
+    """DRAFT replies for the reviewers a resolved finding affected. Nothing is
+    posted anywhere; the team copies them into the store console."""
+    from echolens.replies import reply_drafts
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
+        inv = session.get(Investigation, finding.investigation_id)
+        if inv is None or inv.status != "resolved":
+            raise HTTPException(409, "Reply drafts are only available once the case is resolved.")
+        return reply_drafts(session, finding)
+
+
+@app.get("/findings/{finding_id}/followup-questions")
+def finding_followup_questions(finding_id: int, product_id: int | None = None,
+                               user: dict = Depends(current_user)) -> dict:
+    """1-3 questions to ask affected users when a case ended on thin evidence."""
+    from echolens.replies import followup_questions
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
+        inv = session.get(Investigation, finding.investigation_id)
+        if inv is None or inv.status not in ("insufficient_evidence", "needs_human", "budget_exhausted"):
+            return {"finding_id": finding.id, "case_status": inv.status if inv else None,
+                    "questions": [], "draft_only": True}
+        return followup_questions(session, finding, inv)
 
 
 @app.get("/fixwatch")
@@ -3111,7 +3177,8 @@ def overview(product_id: int | None = None, user: dict = Depends(current_user)) 
             w_stmt = w_stmt.where(FixWatch.product_id == pid)
         watches = session.scalars(w_stmt).all()
         confirmed = [w for w in watches if w.status == "confirmed"]
-        in_verification = [w for w in watches if w.status in ("issue_open", "watching")]
+        in_verification = [w for w in watches
+                           if w.status in ("issue_open", "watching", "waiting_for_release")]
         regressed = [w for w in watches if w.status == "regressed"]
         confirmed_inv = {w.investigation_id for w in confirmed}
 

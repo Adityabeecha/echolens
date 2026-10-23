@@ -291,7 +291,7 @@ class FixWatch(Base):
     """v6.0 closed-loop verification: links a finding's GitHub issue to the metric
     it should fix, then watches whether the fix actually worked.
 
-    Lifecycle: issue_open → (issue closes) watching → confirmed | persists_reopened,
+    Lifecycle: issue_open → (issue closes) [waiting_for_release →] watching → confirmed | persists_reopened,
     and later possibly → regressed if the fixed theme re-spikes."""
     __tablename__ = "fix_watches"
 
@@ -311,6 +311,11 @@ class FixWatch(Base):
     confirmed_at: Mapped[datetime | None] = mapped_column(nullable=True)
     chart_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # before/after series
     product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    # Version-aware verification: the app version carrying the fix. When set, the
+    # post-fix window opens at the first review on that version (release_seen_at)
+    # rather than at issue close, because a mobile release takes days to reach users.
+    fixed_in_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    release_seen_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 

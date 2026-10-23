@@ -4,11 +4,17 @@ When a finding's GitHub issue closes, we open a monitoring window on the exact
 complaint theme the finding was about and measure whether it actually went away.
 Deterministic counting over the corpus; no LLM.
 
-Lifecycle: link_issue → on_issue_closed → evaluate → (confirmed | reopened),
-then check_regressions can later flip a confirmed fix back to regressed.
+Lifecycle: link_issue → on_issue_closed → [waiting_for_release →] evaluate →
+(confirmed | reopened), then check_regressions can later flip a confirmed fix
+back to regressed.
+
+Version-aware: a mobile fix reaches users days after the issue closes, so when a
+watch carries a `fixed_in_version` the post-fix window opens at the first review
+on that version (or a later one), not at issue close.
 """
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -18,6 +24,7 @@ from sqlalchemy.orm import Session
 from echolens.db.models import AnomalyEvent, Finding, FixWatch, Investigation, Review
 from echolens.detector.detect import reference_now
 from echolens.impact import theme_terms
+from echolens.textkit import parse_version
 from echolens.timeutil import aware_utc
 from echolens.tools._util import match_score
 
@@ -25,6 +32,25 @@ CONFIRM_DROP = 0.4    # post-fix rate ≤ 40% of baseline → the fix worked
 PERSIST_KEEP = 0.6    # post-fix rate ≥ 60% of baseline at window end → it didn't
 REGRESS_BACK = 0.8    # a confirmed theme back to ≥80% of baseline → regression
 REGRESS_WINDOW = 7    # a regression is a RECENT re-spike, measured tight so it isn't diluted
+
+WAITING = "waiting_for_release"
+RELEASE_MIN_REVIEWS = 10   # reviews on the fixed version before the window opens...
+RELEASE_MIN_DAYS = 7       # ...or this many days after its first sighting
+
+_FIXED_IN_RE = re.compile(
+    r"\b(?:fixed|released|shipped|resolved|landed)\s+(?:in|with|by|on)\s+"
+    r"(?:app\s+)?(?:version\s+|release\s+)?v?(\d+(?:\.\d+){1,2})", re.I)
+
+
+def parse_fixed_version(*texts: str | None) -> str | None:
+    """'fixed in v3.2.1' / 'released in 3.2' in an issue title/body/comment →
+    '3.2.1'. First match wins; None when nothing says which version carries the fix."""
+    for t in texts:
+        m = _FIXED_IN_RE.search(t or "")
+        if m:
+            return m.group(1)
+    return None
+
 
 # The statuses a watch stops at, and the only ones that have a chart: _confirm,
 # _inconclusive and _reopen each write chart_json, and nothing else does.
@@ -147,21 +173,105 @@ def link_issue(session: Session, finding: Finding, repo: str, issue_number: int,
 
 
 def on_issue_closed(session: Session, repo: str, issue_number: int,
-                    closed_at: datetime | None = None) -> FixWatch | None:
+                    closed_at: datetime | None = None,
+                    payload_text: str = "") -> FixWatch | None:
     """A GitHub issue closed → start the monitoring window and record the pre-fix
-    baseline complaint rate."""
+    baseline complaint rate. If the closing text names the fixed version
+    ('fixed in v3.2.1') and none was set by hand, the watch waits for that
+    version to reach users before the window opens."""
     watch = session.scalars(select(FixWatch).where(
         FixWatch.repo == repo, FixWatch.issue_number == issue_number)).first()
     if watch is None or watch.status not in ("issue_open",):
         return watch
     product = product_name_of(session, watch.product_id)
     fix_date = aware_utc(closed_at) or reference_now(session, product)
+    if not watch.fixed_in_version:
+        watch.fixed_in_version = parse_fixed_version(payload_text)
     watch.fix_date = fix_date
+    if watch.fixed_in_version:
+        watch.status = WAITING
+        session.flush()
+        _advance_waiting(session, watch, fix_date)   # it may already be live
+        return watch
     watch.status = "watching"
     watch.baseline_rate = _rate(session, watch.terms,
                                 fix_date - timedelta(days=watch.window_days), fix_date, product)
     session.flush()
     return watch
+
+
+def release_state(session: Session, watch: FixWatch, now: datetime | None = None) -> dict:
+    """Has the fixed version reached users? Counts reviews on that version or a
+    later one (textkit.parse_version ordering), scoped to the watch's product.
+
+    state: 'none' (no version set) | 'not_seen' | 'rolling_out' (seen, not yet
+    enough) | 'live' (>= RELEASE_MIN_REVIEWS reviews, or RELEASE_MIN_DAYS since
+    first sighting)."""
+    target = parse_version(watch.fixed_in_version)
+    base = {"fixed_in_version": watch.fixed_in_version, "state": "none", "first_seen": None,
+            "review_count": 0, "needed_reviews": RELEASE_MIN_REVIEWS,
+            "needed_days": RELEASE_MIN_DAYS}
+    if target is None:
+        return base
+    product = product_name_of(session, watch.product_id)
+    stmt = select(Review.version, Review.created_at).where(Review.version.is_not(None))
+    if product:
+        stmt = stmt.where(Review.product == product)
+    seen = []
+    for ver, at in session.execute(stmt).all():
+        pv = parse_version(ver)
+        if pv is not None and pv >= target:
+            seen.append(aware_utc(at))
+    if not seen:
+        return {**base, "state": "not_seen"}
+    first = min(seen)
+    now = aware_utc(now) or reference_now(session, product)
+    live = len(seen) >= RELEASE_MIN_REVIEWS or (now - first) >= timedelta(days=RELEASE_MIN_DAYS)
+    return {**base, "state": "live" if live else "rolling_out",
+            "first_seen": first.isoformat(), "review_count": len(seen)}
+
+
+def _advance_waiting(session: Session, watch: FixWatch, now: datetime | None = None) -> dict:
+    """Open the post-fix window if the fixed version is live; otherwise stay waiting."""
+    info = release_state(session, watch, now)
+    if info["state"] == "live":
+        first = aware_utc(datetime.fromisoformat(info["first_seen"]))
+        product = product_name_of(session, watch.product_id)
+        watch.fix_date = first
+        watch.release_seen_at = first
+        watch.status = "watching"
+        watch.post_rate = None
+        watch.baseline_rate = _rate(session, watch.terms,
+                                    first - timedelta(days=watch.window_days), first, product)
+        session.flush()
+    return info
+
+
+def set_fixed_version(session: Session, watch: FixWatch, version: str | None) -> dict:
+    """Reviewer sets (or clears) the version that carries the fix. Raises
+    ValueError on an unparseable version. A watch still in progress is re-keyed
+    to the release; a finished one only records the version (its verdict stands)."""
+    version = (version or "").strip().lstrip("vV") or None
+    if version is not None and parse_version(version) is None:
+        raise ValueError("not a version number")
+    watch.fixed_in_version = version
+    if watch.status in ("watching", WAITING):
+        watch.release_seen_at = None
+        watch.post_rate = None
+        if version:
+            watch.status = WAITING
+            session.flush()
+            _advance_waiting(session, watch)
+        elif watch.status == WAITING:
+            # Back to the plain issue-close window.
+            product = product_name_of(session, watch.product_id)
+            watch.status = "watching"
+            fix = aware_utc(watch.fix_date)
+            if fix is not None:
+                watch.baseline_rate = _rate(session, watch.terms,
+                                            fix - timedelta(days=watch.window_days), fix, product)
+    session.flush()
+    return release_state(session, watch)
 
 
 def before_after(session: Session, watch: FixWatch) -> dict:
@@ -179,6 +289,9 @@ def before_after(session: Session, watch: FixWatch) -> dict:
         "before": pre, "after": post,
         "before_rate": watch.baseline_rate, "after_rate": watch.post_rate,
         "metric": watch.metric, "terms": watch.terms,
+        # Why the window starts where it does: a release sighting, or issue close.
+        "fixed_in_version": watch.fixed_in_version,
+        "window_start": "first_review_on_fixed_version" if watch.release_seen_at else "issue_closed",
     }
 
 
@@ -187,6 +300,16 @@ def evaluate(session: Session, as_of: datetime | None = None,
     """Advance every watching fix. Confirms fixes that worked and re-opens the
     ones that didn't — unprompted (this is what the scheduled job calls)."""
     out = []
+    w_stmt = select(FixWatch).where(FixWatch.status == WAITING)
+    if product_id is not None:
+        w_stmt = w_stmt.where(FixWatch.product_id == product_id)
+    for watch in session.scalars(w_stmt).all():
+        info = _advance_waiting(session, watch, as_of)
+        if watch.status == WAITING:
+            out.append({"watch_id": watch.id, "finding_id": watch.finding_id,
+                        "status": WAITING, "fixed_in_version": watch.fixed_in_version,
+                        "why": f"waiting for v{watch.fixed_in_version} to reach users "
+                               f"({info['review_count']}/{RELEASE_MIN_REVIEWS} reviews)"})
     stmt = select(FixWatch).where(FixWatch.status == "watching")
     if product_id is not None:
         stmt = stmt.where(FixWatch.product_id == product_id)

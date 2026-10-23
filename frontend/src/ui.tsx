@@ -214,6 +214,8 @@ export interface FixChartData {
   fix_date?: string;
   window_days?: number;
   metric?: string;
+  fixed_in_version?: string | null;
+  window_start?: "first_review_on_fixed_version" | "issue_closed";
 }
 
 // Did the fix work? Complaint volume either side of the ship date.
@@ -264,7 +266,10 @@ export function BeforeAfterChart({
     <figure style={{ margin: `${S[3]} 0 0` }} role="img" aria-label={summary}>
       {!compact && (
         <figcaption style={{ fontSize: T.sm, color: C.muted, marginBottom: S[2] }}>
-          Complaint volume for “{chart.terms.join(", ")}” around the fix.
+          Complaint volume for “{chart.terms.join(", ")}” around the fix
+          {chart.window_start === "first_review_on_fixed_version" && chart.fixed_in_version
+            ? ` — the after window starts at the first review on v${chart.fixed_in_version}.`
+            : "."}
         </figcaption>
       )}
       <div style={{ display: "flex", gap: S[4], alignItems: "stretch" }}>

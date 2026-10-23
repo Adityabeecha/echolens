@@ -309,13 +309,61 @@ export interface FixChartPoint {
   date: string;
   count: number;
 }
+export interface ReleaseState {
+  fixed_in_version: string | null;
+  state: "none" | "not_seen" | "rolling_out" | "live";
+  first_seen: string | null;
+  review_count: number;
+  needed_reviews: number;
+  needed_days: number;
+}
+export interface ReplyDraft {
+  review_id: number;
+  ext_id: string;
+  rating: number;
+  version: string | null;
+  created_at: string | null;
+  excerpt: string;
+  language: "en" | "non_english";
+  draft: string | null;
+  note: string | null;
+}
+export interface ReplyDrafts {
+  finding_id: number;
+  mode: "fixed" | "shipped" | "investigating";
+  fixed_in_version: string | null;
+  fix_confirmed: boolean;
+  topic: string;
+  total: number;
+  shown: number;
+  skipped_on_fixed_version: number;
+  drafts: ReplyDraft[];
+  translation_note: string;
+  draft_only: true;
+  store: "play_store" | "app_store" | null;
+  console_name: string | null;
+  console_url: string | null;
+  listing_url?: string;
+}
+export interface FollowupQuestions {
+  finding_id: number;
+  case_status: string | null;
+  questions: { question: string; source: string; why: string }[];
+}
 export interface FixStatus {
-  status: string; // issue_open | watching | confirmed | persists_reopened | regressed
+  status: string; // issue_open | waiting_for_release | watching | confirmed | persists_reopened | regressed
   issue_number: number;
   issue_url: string;
   baseline_rate: number | null;
   post_rate: number | null;
+  /** The app version carrying the fix; the watch window opens when it reaches users. */
+  fixed_in_version?: string | null;
+  /** True while no version is set, so the UI can suggest setting one. */
+  version_hint?: boolean;
+  release?: ReleaseState;
   chart: {
+    fixed_in_version?: string | null;
+    window_start?: "first_review_on_fixed_version" | "issue_closed";
     fix_date: string;
     window_days: number;
     before: FixChartPoint[];
@@ -1208,6 +1256,13 @@ export const api = {
     get<{ title: string; body: string; repo: string | null }>(scoped(`/findings/${findingId}/issue`)),
   createGithubIssue: (findingId: number) =>
     post<{ repo: string; number: number; url: string }>(scoped(`/findings/${findingId}/github-issue`)),
+  setFixedVersion: (findingId: number, version: string | null) =>
+    put<{ status: string; fixed_in_version: string | null; release: ReleaseState }>(
+      scoped(`/findings/${findingId}/fixed-version`), { version }),
+  replyDrafts: (findingId: number) =>
+    get<ReplyDrafts>(scoped(`/findings/${findingId}/reply-drafts`)),
+  followupQuestions: (findingId: number) =>
+    get<FollowupQuestions>(scoped(`/findings/${findingId}/followup-questions`)),
   notifyFinding: (findingId: number) =>
     post<{ routed: string; sent?: string[] }>(scoped(`/findings/${findingId}/notify`)),
   costsSummary: () => get<CostsSummary>(scoped("/costs/summary")),
