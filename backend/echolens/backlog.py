@@ -17,10 +17,15 @@ Three commitments shape it:
 * **The system proposes, the human disposes.** The plan is a draft the PM edits
   and owns; their include/exclude decisions persist and are never silently
   overwritten by a re-rank.
+
+v16: the plan also covers what users ASK for. Feature-request themes
+(themes/requests.py) become plan items keyed by their public slug, ranked by
+demand per engineer-day, with the same effort/impact/segment overrides as bugs.
 """
 from __future__ import annotations
 
 import math
+import re
 import statistics
 from datetime import datetime, timedelta, timezone
 
@@ -80,16 +85,46 @@ PRIORITY_SEGMENTS: dict[str, dict] = {
 }
 
 
+# ── feature requests on the plan ────────────────────────────────────────
+# A request item is keyed by the slug /feed/candidates already gives it, so the
+# plan, the overrides and the Cases screen all name the same thing.
+REQUEST_KEY_RE = re.compile(r"^request-p\d+-[a-z0-9-]{1,48}$")
+PLAN_KINDS = ("bugs", "requests", "all")
+REQUEST_LIMIT = 8
+# Demand = distinct requesting reviews + HAPPY_WEIGHT per 4-5★ requester. A
+# happy user asking for something is telling you what keeps them; a 3★ asker
+# is already lukewarm. Half a review extra, not double: the count still leads.
+HAPPY_WEIGHT = 0.5
+REQUEST_IMPACT_DEFAULT = 3
+
+
+def plan_key(raw) -> int | str | None:
+    """A plan item id: an investigation id (int) or a request slug (str)."""
+    if isinstance(raw, str) and REQUEST_KEY_RE.match(raw):
+        return raw
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _clean_keys(raw) -> list[int | str]:
+    keys = {k for k in (plan_key(x) for x in raw or []) if k is not None}
+    return (sorted(k for k in keys if isinstance(k, int))
+            + sorted(k for k in keys if isinstance(k, str)))
+
+
 def clean_overrides(raw: dict | None) -> dict[str, dict]:
-    """Validate PM overrides into {"<investigation_id>": {effort_days, impact,
-    segment}}. Unknown keys, out-of-range values and empty entries are dropped
-    rather than stored, so a bad client can never poison the ranking."""
+    """Validate PM overrides into {"<investigation_id or request slug>":
+    {effort_days, impact, segment}}. Unknown keys, out-of-range values and empty
+    entries are dropped rather than stored, so a bad client can never poison
+    the ranking."""
     out: dict[str, dict] = {}
     for key, val in (raw or {}).items():
-        try:
-            iid = str(int(key))
-        except (TypeError, ValueError):
+        k = plan_key(key)
+        if k is None:
             continue
+        iid = str(k)
         if not isinstance(val, dict):
             continue
         entry: dict = {}
@@ -316,6 +351,8 @@ def backlog(session: Session, product_id: int | None = None,
         anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv.anomaly_id else None
 
         items.append({
+            "kind": "bug",
+            "key": inv.id,
             "investigation_id": inv.id,
             "finding_id": finding.id,
             "summary": finding.summary,
@@ -389,8 +426,8 @@ def _plan_key(product_id: int | None) -> str:
 def load_plan(session: Session, product_id: int | None) -> dict:
     row = session.get(Setting, _plan_key(product_id))
     value = row.value if row and isinstance(row.value, dict) else {}
-    return {"included": list(value.get("included", [])),
-            "excluded": list(value.get("excluded", [])),
+    return {"included": _clean_keys(value.get("included", [])),
+            "excluded": _clean_keys(value.get("excluded", [])),
             "notes": dict(value.get("notes", {})),
             "overrides": clean_overrides(value.get("overrides")),
             "capacity_days": value.get("capacity_days", QUARTER_CAPACITY_DAYS),
@@ -398,8 +435,8 @@ def load_plan(session: Session, product_id: int | None) -> dict:
             "updated": value.get("updated")}
 
 
-def save_plan(session: Session, product_id: int | None, *, included: list[int],
-              excluded: list[int], notes: dict | None = None,
+def save_plan(session: Session, product_id: int | None, *, included: list[int | str],
+              excluded: list[int | str], notes: dict | None = None,
               capacity_days: float | None = None,
               overrides: dict | None = None) -> dict:
     """Persist the PM's edits. Once saved the plan is theirs: a later re-rank
@@ -410,8 +447,8 @@ def save_plan(session: Session, product_id: int | None, *, included: list[int],
     dict replaces them wholesale (send {} to clear)."""
     prior = load_plan(session, product_id)
     value = {
-        "included": sorted(set(int(x) for x in included)),
-        "excluded": sorted(set(int(x) for x in excluded)),
+        "included": _clean_keys(included),
+        "excluded": _clean_keys(excluded),
         "notes": {str(k): v for k, v in (notes if notes is not None else prior["notes"]).items()},
         "overrides": (clean_overrides(overrides) if overrides is not None
                       else prior["overrides"]),
@@ -430,35 +467,209 @@ def save_plan(session: Session, product_id: int | None, *, included: list[int],
     return value
 
 
+def request_themes(session: Session, product_id: int | None,
+                   as_of: datetime | None = None) -> list[dict]:
+    """This product's request themes with their member reviews.
+
+    The same grouping /feed/candidates runs (themes/requests.py), re-derived
+    rather than read from its cache because the plan needs every member review
+    — distinct requesters and their ratings are the demand — and the cache
+    keeps only three quotes. Names are the deterministic phrase plus anyone's
+    rename; merges pool their reviews and mutes drop out, as on Cases.
+    """
+    from echolens.db.models import Product
+    from echolens.detector.detect import reference_now
+    from echolens.themes.discover import WINDOW_DAYS, banned_terms
+    from echolens.themes.overrides import _resolve, get_overrides
+    from echolens.themes.requests import _candidates, _slug, _statement, group_requests
+
+    prod = session.get(Product, product_id) if product_id is not None else None
+    if prod is None:
+        return []
+    now = as_of or reference_now(session, prod.name)
+    rows = _candidates(session, prod.name, WINDOW_DAYS, now)
+    groups = group_requests([r.text or "" for r in rows],
+                            banned_terms(prod.name, prod.package_name))[:REQUEST_LIMIT]
+    themes: list[dict] = []
+    for i, g in enumerate(groups):
+        reviews = []
+        for m in g["members"]:
+            r = rows[m]
+            day = aware_utc(r.created_at)
+            reviews.append({"id": r.id, "ext_id": r.ext_id, "source": r.source,
+                            "rating": r.rating, "text": " ".join((r.text or "").split()),
+                            "date": day.date().isoformat() if day else None})
+        themes.append({"slug": f"request-p{prod.id}-{_slug(g['phrase']) or f'request-{i + 1}'}",
+                       "phrase": g["phrase"], "statement": _statement(g["phrase"]),
+                       "reviews": reviews})
+
+    overrides = get_overrides(session, prod.id)
+    by_slug = {t["slug"]: t for t in themes}
+    for t in themes:
+        o = overrides.get(t["slug"])
+        if o is not None and o.label:
+            t["statement"], t["renamed"] = o.label, True
+    dropped: set[str] = set()
+    for t in themes:
+        target = by_slug.get(_resolve(t["slug"], overrides))
+        if target is None or target is t:
+            continue
+        seen = {r["id"] for r in target["reviews"]}
+        target["reviews"] += [r for r in t["reviews"] if r["id"] not in seen]
+        dropped.add(t["slug"])
+    muted = {s for s, o in overrides.items() if o.muted}
+    return [t for t in themes if t["slug"] not in dropped and t["slug"] not in muted
+            and _resolve(t["slug"], overrides) not in muted]
+
+
+def request_demand(reviews: list[dict]) -> dict:
+    """Distinct requesting reviews, how many of them are 4-5★, and the weighted
+    demand those make."""
+    n = len({r["id"] for r in reviews})
+    happy = len({r["id"] for r in reviews if (r.get("rating") or 0) >= 4})
+    return {"requesters": n, "happy": happy, "value": n + HAPPY_WEIGHT * happy}
+
+
+def request_items(session: Session, product_id: int | None, overrides: dict,
+                  as_of: datetime | None = None) -> list[dict]:
+    """Request themes as plan items, ranked by demand per engineer-day.
+
+    Effort works exactly as for bugs: EchoLens has no signal for how big a
+    feature is, so it is DEFAULT_EFFORT marked unknown until a reviewer sets it.
+    Unlike bugs the division always happens — the plan says "demand per
+    engineer-day", and every unknown request divides by the same default, so
+    their relative order is unchanged by it.
+    """
+    from echolens.intent import count_intents
+
+    items = []
+    for t in request_themes(session, product_id, as_of):
+        reviews = t["reviews"]
+        demand = request_demand(reviews)
+        ov = overrides.get(t["slug"], {})
+        effort = {"days": DEFAULT_EFFORT, "basis": "no effort signal yet", "known": False}
+        if "effort_days" in ov:
+            effort = {"days": ov["effort_days"], "basis": "set by you", "known": True,
+                      "overridden": True, "estimated": effort}
+        else:
+            effort = {**effort, "overridden": False}
+        level = ov.get("impact", REQUEST_IMPACT_DEFAULT)
+        impact_factor = IMPACT_FACTOR[level] / IMPACT_FACTOR[REQUEST_IMPACT_DEFAULT]
+        seg_key = ov.get("segment")
+        seg = PRIORITY_SEGMENTS.get(seg_key) if seg_key else None
+        seg_factor = seg["factor"] if seg else 1.0
+        value = demand["value"] * impact_factor * seg_factor
+        ratings = [r["rating"] for r in reviews if r.get("rating")]
+        quotes: list[str] = []
+        for r in reviews:
+            if r["text"] and not any(r["text"][:60].lower() == q[:60].lower() for q in quotes):
+                quotes.append(r["text"])
+            if len(quotes) >= 2:
+                break
+        dates = sorted(r["date"] for r in reviews if r.get("date"))
+        items.append({
+            "kind": "request",
+            "key": t["slug"],
+            "slug": t["slug"],
+            "summary": t["statement"],
+            "phrase": t["phrase"],
+            "count": demand["requesters"],
+            "happy_count": demand["happy"],
+            "demand": round(demand["value"], 2),
+            "avg_rating": round(sum(ratings) / len(ratings), 1) if ratings else None,
+            "verbatims": quotes,
+            "intents": count_intents((r["text"], r["rating"]) for r in reviews),
+            "first_seen": dates[0] if dates else None,
+            "last_seen": dates[-1] if dates else None,
+            "effort": effort,
+            "value_per_day": round(value / max(0.5, effort["days"]), 2),
+            "impact": {"level": level, "default": REQUEST_IMPACT_DEFAULT,
+                       "overridden": "impact" in ov, "factor": round(impact_factor, 3)},
+            "segment": ({"key": seg_key, "label": seg["label"], "factor": seg["factor"],
+                         "why": seg["why"]} if seg else None),
+            # Nothing measured to recover: a wish is not a rating drop.
+            "projected": {"stars": 0.0, "basis": "a request has no measured rating drop",
+                          "confident": False},
+            "defence": _request_defence(demand, effort, impact_factor if "impact" in ov else None,
+                                        seg),
+        })
+    items.sort(key=lambda i: (-i["value_per_day"], i["slug"]))
+    for rank, item in enumerate(items, start=1):
+        item["rank"] = rank
+    return items
+
+
+def _request_defence(demand: dict, effort: dict, impact_factor: float | None,
+                     segment: dict | None) -> str:
+    bits = [f"{demand['requesters']} requesting review(s)"]
+    if demand["happy"]:
+        bits.append(f"+{HAPPY_WEIGHT:g} each for {demand['happy']} at 4-5★")
+    bits.append(f"{effort['days']:g}d effort ({effort['basis']})")
+    if impact_factor is not None:
+        bits.append(f"impact x{impact_factor:g} (set by you)")
+    if segment:
+        bits.append(f"x{segment['factor']:g} {segment['label'].lower()} (set by you)")
+    return " · ".join(bits)
+
+
+def _rank_mixed(bugs: list[dict], requests: list[dict]) -> list[dict]:
+    """One list from two scales. Bug value (severity x volume x age) and request
+    demand (requesting reviews) are different units, so each is expressed as a
+    share of its own kind's best item before they are interleaved. Ties go to
+    the bug: a broken thing outranks an equally-wanted new one."""
+    def rel(items):
+        top = max((i["value_per_day"] for i in items), default=0.0) or 1.0
+        return [{**i, "relative_value": round(i["value_per_day"] / top, 3)} for i in items]
+    merged = sorted(rel(bugs) + rel(requests),
+                    key=lambda i: (-i["relative_value"], i["kind"] != "bug"))
+    for rank, item in enumerate(merged, start=1):
+        item["rank"] = rank
+    return merged
+
+
 def quarter_plan(session: Session, product_id: int | None = None,
                  capacity_days: float | None = None,
-                 as_of: datetime | None = None) -> dict:
+                 as_of: datetime | None = None, kind: str = "bugs") -> dict:
     """A draft "what to fix next" that fits the capacity — the PM's to edit.
 
     Proposals fill capacity by value-per-day. Anything the PM has explicitly
     excluded stays out; anything they have explicitly included stays in even if
     the ranking would not have chosen it. That asymmetry is the point: the
     system proposes, the human disposes.
+
+    `kind` picks what competes for the capacity: bug findings (the default and
+    the original plan), request themes, or both. The saved picks are shared;
+    a pick of the other kind is simply not in play in this view.
     """
+    if kind not in PLAN_KINDS:
+        kind = "bugs"
     board = backlog(session, product_id, as_of)
     saved = load_plan(session, product_id)
     capacity = float(capacity_days if capacity_days is not None else saved["capacity_days"])
+    requests = request_items(session, product_id, saved["overrides"])
 
-    by_id = {i["investigation_id"]: i for i in board["items"]}
+    if kind == "bugs":
+        items = board["items"]
+    elif kind == "requests":
+        items = requests
+    else:
+        items = _rank_mixed(board["items"], requests)
+
+    by_id = {i["key"]: i for i in items}
     excluded = set(saved["excluded"])
     # v15: a "fix now" product decision is an inclusion made on the case
     # itself; it goes in first, after the PM's own picks, unless excluded here.
-    fix_now = [i["investigation_id"] for i in board["items"]
+    fix_now = [i["key"] for i in items
                if (i.get("decision") or {}).get("decision") == "fix_now"
-               and i["investigation_id"] not in excluded]
+               and i["key"] not in excluded]
     included_ids = [i for i in saved["included"] if i in by_id]
     included_ids += [i for i in fix_now if i not in included_ids]
 
     chosen = [by_id[i] for i in included_ids]
     used = sum(i["effort"]["days"] for i in chosen)
 
-    for item in board["items"]:
-        iid = item["investigation_id"]
+    for item in items:
+        iid = item["key"]
         if iid in excluded or iid in included_ids:
             continue
         cost = item["effort"]["days"]
@@ -467,13 +678,16 @@ def quarter_plan(session: Session, product_id: int | None = None,
         chosen.append(item)
         used += cost
 
-    chosen_ids = {i["investigation_id"] for i in chosen}
-    deferred = [i for i in board["items"] if i["investigation_id"] not in chosen_ids]
+    chosen_ids = {i["key"] for i in chosen}
+    deferred = [i for i in items if i["key"] not in chosen_ids]
 
     return {
+        "kind": kind,
+        "kinds": list(PLAN_KINDS),
+        "counts": {"bugs": len(board["items"]), "requests": len(requests)},
         "proposed": chosen,
         "deferred": deferred,
-        "set_aside": board["set_aside"],
+        "set_aside": board["set_aside"] if kind != "requests" else [],
         "included": saved["included"],
         "excluded": saved["excluded"],
         "capacity_days": capacity,
@@ -486,8 +700,11 @@ def quarter_plan(session: Session, product_id: int | None = None,
         # What the override controls mean, so the UI never hardcodes a factor.
         "segments": [{"key": k, **v} for k, v in PRIORITY_SEGMENTS.items()],
         "impact_scale": {str(k): v for k, v in IMPACT_FACTOR.items()},
+        "request_weight": {"happy": HAPPY_WEIGHT,
+                           "why": f"Each requesting review counts 1, plus {HAPPY_WEIGHT:g} "
+                                  "if it rates the app 4-5★."},
         "resolution_rate": board["resolution_rate"],
         "median_fix_days": board["median_fix_days"],
-        "unknown_effort": board["unknown_effort"],
+        "unknown_effort": len([i for i in items if not i["effort"]["known"]]),
         "generated": board["generated"],
     }

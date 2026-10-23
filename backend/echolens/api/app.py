@@ -1467,12 +1467,14 @@ def backlog_view(product_id: int | None = None,
 @app.get("/backlog/plan")
 def backlog_plan_view(product_id: int | None = None,
                       capacity_days: float | None = Query(None, gt=0, le=10000),
+                      kind: str = Query("bugs", pattern="^(bugs|requests|all)$"),
                       user: dict = Depends(current_user)) -> dict:
-    """The proposed "what to fix next" draft, respecting the PM's own edits."""
+    """The proposed "what to fix next" draft, respecting the PM's own edits.
+    `kind` picks bug findings, user requests, or both."""
     from echolens.backlog import quarter_plan
     with session_scope() as session:
         p = _scope(session, product_id, user)
-        return {**quarter_plan(session, p.id if p else None, capacity_days),
+        return {**quarter_plan(session, p.id if p else None, capacity_days, kind=kind),
                 "product": p.name if p else None}
 
 
@@ -1484,15 +1486,18 @@ class PlanOverride(BaseModel):
 
 
 class PlanBody(BaseModel):
-    included: list[int] = []
-    excluded: list[int] = []
+    # Investigation ids, or request slugs (request-p{id}-…) for user requests.
+    included: list[int | str] = Field(default_factory=list, max_length=500)
+    excluded: list[int | str] = Field(default_factory=list, max_length=500)
     notes: dict[str, str] | None = None
-    # Keyed by investigation id. Omitted keeps the saved overrides (like notes).
+    # Keyed by investigation id or request slug. Omitted keeps the saved
+    # overrides (like notes).
     overrides: dict[str, PlanOverride] | None = None
     # Bounded: a negative capacity produced a plan the API reported back with a
     # straight face (capacity_days: -50.0), and an unbounded one is meaningless.
     capacity_days: float | None = Field(None, gt=0, le=10000)
     product_id: int | None = None
+    kind: str = Field("bugs", pattern="^(bugs|requests|all)$")   # the view to answer with
 
 
 @app.put("/backlog/plan")
@@ -1513,7 +1518,60 @@ def backlog_plan_save(body: PlanBody,
         save_plan(session, pid, included=body.included, excluded=body.excluded,
                   notes=body.notes, capacity_days=body.capacity_days,
                   overrides=overrides)
-        return {**quarter_plan(session, pid), "product": p.name if p else None}
+        return {**quarter_plan(session, pid, kind=body.kind), "product": p.name if p else None}
+
+
+# ── v16: specs from user requests ───────────────────────────────────────
+
+def _request_spec(session, p, slug: str, user: dict | None) -> dict:
+    """The spec for one of THIS product's requests, or 404. A live model only
+    rewrites the stories/criteria when a key is set and the caller may spend."""
+    from echolens.prd import get_spec
+    if p is None:
+        raise HTTPException(404, "no such request")
+    llm = (_metered_llm(session, "spec", p.id)
+           if settings.openai_api_key and _may_spend(user) else None)
+    spec = get_spec(session, p.id, p.name, slug, llm=llm)
+    if spec is None:
+        raise HTTPException(404, "no such request")
+    return spec
+
+
+@app.get("/requests/{slug}/spec")
+@limiter.limit("20/minute")  # may build an LLM client inline
+def request_spec(request: Request, slug: str, product_id: int | None = None,
+                 user: dict = Depends(current_user)) -> dict:
+    """A Markdown PRD for a feature request: problem, who asks, stories,
+    acceptance criteria, scope, open questions and the quoted evidence."""
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        return {**_request_spec(session, p, slug, user), "product": p.name if p else None}
+
+
+@app.post("/requests/{slug}/ticket")
+def request_ticket_create(slug: str, tracker: str = "github", product_id: int | None = None,
+                          user: dict = Depends(require_role("reviewer"))) -> dict:
+    """File a request's spec to GitHub, Linear or Jira — the same body the
+    spec modal shows. Not linked for fix-watch: there is no fix to verify."""
+    from echolens.integrations.trackers import TRACKERS, TrackerError, configured_trackers
+    from echolens.prd import file_spec
+    if tracker not in TRACKERS:
+        raise HTTPException(422, f"unknown tracker '{tracker}' — use github, linear or jira")
+    if not configured_trackers()[tracker]:
+        raise HTTPException(422, f"{tracker.capitalize()} is not configured on this deployment.")
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        spec = _request_spec(session, p, slug, user)
+        repo = _github_repo(session, p.id)
+        if tracker == "github" and not repo:
+            raise HTTPException(422, "No GitHub repo connected. Connect a repo on Sources, or set GITHUB_DEFAULT_REPO.")
+        try:
+            issue = file_spec(tracker, spec, repo=repo)
+        except TrackerError as err:
+            # Upstream bodies can carry account details; log them, return a generic line.
+            log.warning("ticket_failed", tracker=tracker, request=slug, error=str(err))
+            raise HTTPException(422, f"could not create the {tracker} issue — see server logs")
+        return {"tracker": tracker, "repo": repo if tracker == "github" else None, **issue}
 
 
 # ── v10: the unified feedback graph ─────────────────────────────────────

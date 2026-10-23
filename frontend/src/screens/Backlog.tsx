@@ -1,11 +1,33 @@
 import { useEffect, useRef, useState } from "react";
-import { BacklogItem, PlanOverride, PlanSegment, QuarterPlan, api, canReview } from "../api";
+import {
+  BacklogItem, PlanItem, PlanKind, PlanOverride, PlanSegment, QuarterPlan, RequestPlanItem,
+  api, canReview,
+} from "../api";
 import { age, plural } from "../format";
 import { C, MEASURE, R, S, T, mono, sans } from "../theme";
 import { Bar, Centered, EmptyState, ErrorState, Label, ScreenHeader } from "../ui";
 import { Icon } from "../components/Icon";
+import { SubTabs } from "../components/SubTabs";
 
 const BAND: Record<string, string> = { high: C.bad, medium: C.accent, low: C.dim };
+
+const isRequest = (i: PlanItem): i is RequestPlanItem => i.kind === "request";
+/** What the plan stores for an item: investigation id, or request slug. */
+const keyOf = (i: PlanItem): number | string => (isRequest(i) ? i.slug : i.investigation_id);
+
+const KINDS: { key: PlanKind; label: string }[] = [
+  { key: "bugs", label: "Bugs to fix" },
+  { key: "requests", label: "Users are asking for" },
+  { key: "all", label: "All" },
+];
+const SUBTITLE: Record<PlanKind, string> = {
+  bugs: "Open problems, ranked by value per engineer-day",
+  requests: "What users ask for, ranked by demand per engineer-day",
+  all: "Bugs and requests in one plan, each scored against the best of its kind",
+};
+
+/** The spec modal, loaded on first use. */
+type SpecModalType = typeof import("../components/SpecModal").SpecModal;
 
 /** Rebuilt from the structured fields: the server's sentence carries raw floats. */
 function defenceLine(i: BacklogItem): string {
@@ -20,7 +42,7 @@ function defenceLine(i: BacklogItem): string {
   return bits.join(" · ");
 }
 
-function effortLabel(i: BacklogItem): string {
+function effortLabel(i: PlanItem): string {
   if (i.effort.overridden) return `${i.effort.days}d effort (set by you)`;
   return i.effort.known ? `${i.effort.days}d effort (${i.effort.basis})` : `est. ${i.effort.days}d (default)`;
 }
@@ -46,12 +68,14 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [capacity, setCapacity] = useState<number>(20);
+  const [kind, setKind] = useState<PlanKind>("bugs");
+  const [spec, setSpec] = useState<{ slug: string; title: string; Modal: SpecModalType } | null>(null);
   const reviewer = canReview();
 
   const load = (days?: number) => {
     setLoading(true);
     api
-      .backlogPlan(days)
+      .backlogPlan(days, kind)
       .then((p) => {
         setPlan(p);
         setCapacity(p.capacity_days);
@@ -61,9 +85,17 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => load(), []);
+  useEffect(() => load(), [kind]);
 
-  const commit = async (included: number[], excluded: number[], days = capacity,
+  // Imported on click so the modal (and its tracker calls) stays out of Plan's
+  // first paint; a second open reuses the loaded module.
+  const openSpec = (item: RequestPlanItem) => {
+    import("../components/SpecModal")
+      .then((m) => setSpec({ slug: item.slug, title: item.summary, Modal: m.SpecModal }))
+      .catch((e) => setError(String(e).replace("Error: ", "")));
+  };
+
+  const commit = async (included: (number | string)[], excluded: (number | string)[], days = capacity,
                         overrides?: Record<string, PlanOverride>) => {
     // `saving` only disables the buttons on the NEXT render, so two fast clicks
     // both read the same pre-mutation plan and the second overwrote the first —
@@ -73,7 +105,7 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
     savingRef.current = true;
     setSaving(true);
     try {
-      setPlan(await api.saveBacklogPlan({ included, excluded, capacity_days: days, overrides }));
+      setPlan(await api.saveBacklogPlan({ included, excluded, capacity_days: days, overrides }, kind));
       setError(null);
     } catch (e) {
       setError(String(e).replace("Error: ", ""));
@@ -97,12 +129,12 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
   // excluding all overflow prevents the planner from refilling or resizing.
   const inIds = plan.included ?? [];
   const outIds = plan.excluded ?? [];
-  const drop = (id: number) => commit(inIds.filter((x) => x !== id), [...outIds, id]);
-  const add = (id: number) => commit([...inIds, id], outIds.filter((x) => x !== id));
+  const drop = (id: number | string) => commit(inIds.filter((x) => x !== id), [...outIds, id]);
+  const add = (id: number | string) => commit([...inIds, id], outIds.filter((x) => x !== id));
 
   // One item's estimate changed: send the WHOLE override map (the server
   // replaces it wholesale), with this item's entry merged or removed.
-  const setOverride = (id: number, patch: PlanOverride | null) => {
+  const setOverride = (id: number | string, patch: PlanOverride | null) => {
     const all = { ...(plan.overrides ?? {}) };
     const key = String(id);
     const merged = patch == null ? {} : { ...(all[key] ?? {}), ...patch };
@@ -115,13 +147,30 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
   const segments = plan.segments ?? [];
 
   const empty = plan.proposed.length === 0 && plan.deferred.length === 0;
+  const counts = plan.counts;
+  const tabs = KINDS.map((k) => ({
+    key: k.key,
+    label: counts && k.key !== "all" ? `${k.label} · ${counts[k.key]}` : k.label,
+  }));
+  const row = (i: PlanItem, inPlan: boolean) => {
+    const id = keyOf(i);
+    const common = {
+      inPlan, busy: saving, canEdit: reviewer, segments,
+      onToggle: () => (inPlan ? drop(id) : add(id)),
+      onOverride: (p: PlanOverride | null) => setOverride(id, p),
+      note: plan.notes[String(id)],
+    };
+    return isRequest(i)
+      ? <RequestRow key={i.slug} item={i} onSpec={() => openSpec(i)} {...common} />
+      : <Row key={i.investigation_id} item={i} onOpen={onOpenInvestigation} {...common} />;
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <ScreenHeader
         title="Plan"
         product={plan.product}
-        subtitle="Open problems, ranked by value per engineer-day"
+        subtitle={SUBTITLE[kind]}
         back={{ label: backLabel, onClick: onBack }}
         right={
           <span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>
@@ -129,11 +178,15 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
           </span>
         }
       />
+      <SubTabs tabs={tabs} active={kind} onChange={setKind} label="What to plan" />
       <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>
         {empty ? (
           <EmptyState
-            title={`Nothing to plan yet for ${plan.product || "this product"}`}
-            body="A problem enters the plan once a case resolves with a finding and no verified fix. Investigate something and it shows up here, ranked by what each engineer-day buys you."
+            title={kind === "requests" ? `No repeated requests from ${plan.product || "this product"} users yet`
+              : `Nothing to plan yet for ${plan.product || "this product"}`}
+            body={kind === "requests"
+              ? "Requests come from 3–5★ reviews that ask for something (“please add…”, “I wish…”). Once two or more ask for the same thing it shows up here, ranked by demand per engineer-day."
+              : "A problem enters the plan once a case resolves with a finding and no verified fix. Investigate something and it shows up here, ranked by what each engineer-day buys you."}
             action="Go to Cases"
             onAction={onGoCases}
           />
@@ -178,9 +231,11 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
                     hint="Estimated rating gain if every item in this plan is fixed, based on each finding's share of recent negative reviews."
                     value={plan.projected_stars > 0 ? `+${plan.projected_stars.toFixed(2)}★` : "—"}
                     color={plan.projected_stars > 0 ? C.good : C.muted} />
-              <Stat label="RESOLUTION RATE"
-                    value={`${Math.round(plan.resolution_rate * 100)}%`} color={C.text} />
-              {plan.median_fix_days != null && (
+              {kind !== "requests" && (
+                <Stat label="RESOLUTION RATE"
+                      value={`${Math.round(plan.resolution_rate * 100)}%`} color={C.text} />
+              )}
+              {kind !== "requests" && plan.median_fix_days != null && (
                 <Stat label="MEDIAN FIX" value={`${plan.median_fix_days}d`} color={C.muted} />
               )}
             </div>
@@ -190,7 +245,8 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
                             border: `1px solid ${C.border3}`, background: C.card2,
                             borderRadius: R.control, fontSize: T.sm, color: C.muted, lineHeight: "var(--el-lh-normal)" }}>
                 {plan.unknown_effort} item{plan.unknown_effort === 1 ? " has" : "s have"} no
-                effort signal yet — no linked issue labels and no fix history to learn from. They
+                effort signal yet — {kind === "bugs" ? "no linked issue labels and no fix history to learn from"
+                  : "nothing says how big a request is until you set it"}. They
                 use a default estimate of {plan.proposed.concat(plan.deferred).find((i) => !i.effort.known)?.effort.days ?? 5}d,
                 which counts toward your capacity — treat their rank as provisional.
               </div>
@@ -206,16 +262,14 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
               THIS QUARTER · {plan.proposed.length}
             </Label>
             <p style={{ fontSize: T.sm, color: C.dim, margin: "0 0 12px", lineHeight: "var(--el-lh-normal)" }}>
-              Ranked by value per engineer-day. EchoLens proposes; you decide — drop anything and
+              {kind === "bugs" ? "Ranked by value per engineer-day."
+                : kind === "requests" ? `Ranked by demand per engineer-day. ${plan.request_weight?.why ?? ""}`
+                : "Bugs and requests are measured differently, so each is scored as a share of the best of its kind."}
+              {" "}EchoLens proposes; you decide — drop anything and
               the plan re-fills around your choice.{reviewer && " Adjust effort, impact or segment on any item and the ranking updates at once."}
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: S[2], maxWidth: MEASURE }}>
-              {plan.proposed.map((i) => (
-                <Row key={i.investigation_id} item={i} inPlan busy={saving}
-                     canEdit={reviewer} onToggle={() => drop(i.investigation_id)}
-                     onOpen={onOpenInvestigation} note={plan.notes[String(i.investigation_id)]}
-                     segments={segments} onOverride={(p) => setOverride(i.investigation_id, p)} />
-              ))}
+              {plan.proposed.map((i) => row(i, true))}
             </div>
 
             {plan.deferred.length > 0 && (
@@ -224,18 +278,14 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
                   DIDN'T FIT · {plan.deferred.length}
                 </Label>
                 <div style={{ display: "flex", flexDirection: "column", gap: S[2], maxWidth: MEASURE }}>
-                  {plan.deferred.map((i) => (
-                    <Row key={i.investigation_id} item={i} inPlan={false} busy={saving}
-                         canEdit={reviewer} onToggle={() => add(i.investigation_id)}
-                         onOpen={onOpenInvestigation} note={plan.notes[String(i.investigation_id)]}
-                     segments={segments} onOverride={(p) => setOverride(i.investigation_id, p)} />
-                  ))}
+                  {plan.deferred.map((i) => row(i, false))}
                 </div>
               </>
             )}
           </>
         )}
       </div>
+      {spec && <spec.Modal slug={spec.slug} title={spec.title} onClose={() => setSpec(null)} />}
     </div>
   );
 }
@@ -343,6 +393,88 @@ function Row({ item, inPlan, busy, canEdit, onToggle, onOpen, note, segments, on
   );
 }
 
+/** Rebuilt from the structured fields, like defenceLine for bugs. */
+function requestLine(i: RequestPlanItem): string {
+  const bits = [`${i.count} requesting ${plural(i.count, "review")}`];
+  if (i.avg_rating != null) bits.push(`avg ${i.avg_rating}★`);
+  if (i.happy_count) bits.push(`${i.happy_count} at 4–5★ count extra`);
+  bits.push(effortLabel(i));
+  if (i.impact?.overridden) bits.push(`impact ×${i.impact.factor} (set by you)`);
+  if (i.segment) bits.push(`×${i.segment.factor} ${i.segment.label.toLowerCase()} (set by you)`);
+  return bits.join(" · ");
+}
+
+/** A feature-request theme on the plan: demand, quotes, and a spec to hand off. */
+function RequestRow({ item, inPlan, busy, canEdit, onToggle, onSpec, note, segments, onOverride }: {
+  item: RequestPlanItem;
+  inPlan: boolean;
+  busy: boolean;
+  canEdit: boolean;
+  onToggle: () => void;
+  onSpec: () => void;
+  note?: string;
+  segments: PlanSegment[];
+  onOverride: (patch: PlanOverride | null) => void;
+}) {
+  return (
+    <div className="el-card" style={{ display: "flex", gap: S[3], padding: `${S[3]} ${S[4]}`,
+                                      opacity: inPlan ? 1 : 0.74 }}>
+      <div style={{ width: 3, borderRadius: R.sm, background: C.good, flex: "none" }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: S[2], flexWrap: "wrap" }}>
+          <span style={{ fontFamily: mono, fontSize: T.xs, color: C.faint }}>#{item.rank}</span>
+          <span style={{ fontSize: T.md, fontWeight: 600, color: C.text, flex: 1, minWidth: 0,
+                         overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {item.summary}
+          </span>
+          <span style={{ fontFamily: mono, fontSize: T.micro, padding: `0 ${S[2]}`, borderRadius: R.card,
+                         background: `${C.good}1a`, border: `1px solid ${C.good}55`, color: C.good }}>
+            REQUEST · {item.effort.overridden ? `${item.effort.days}d · set by you`
+              : item.effort.known ? `${item.effort.days}d` : `est. ${item.effort.days}d (default)`}
+          </span>
+          {item.segment && <SegmentPill segment={item.segment} />}
+        </div>
+
+        <div style={{ fontSize: T.sm, color: C.muted, marginTop: S[1], lineHeight: "var(--el-lh-normal)" }}>
+          {requestLine(item)}
+        </div>
+
+        {item.verbatims.map((q) => (
+          <div key={q} title={q}
+               style={{ fontSize: T.sm, color: C.text3, marginTop: S[1], fontStyle: "italic",
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            “{q}”
+          </div>
+        ))}
+
+        {note && (
+          <div style={{ fontSize: T.sm, color: C.text3, marginTop: S[1] }}>Note: {note}</div>
+        )}
+
+        <div style={{ display: "flex", gap: S[3], marginTop: S[2], flexWrap: "wrap" }}>
+          <button onClick={onSpec} className="el-btn"
+            style={{ fontFamily: mono, fontSize: T.micro, color: C.accent }}>
+            <Icon name="external" size={11} /> Write spec
+          </button>
+        </div>
+
+        <Estimates item={item} canEdit={canEdit} busy={busy} segments={segments}
+                   onOverride={onOverride} />
+      </div>
+
+      {canEdit && (
+        <button onClick={onToggle} disabled={busy} className="el-btn"
+          style={{ background: "transparent", color: inPlan ? C.dim : C.accent,
+                   border: `1px solid ${inPlan ? C.border3 : "var(--el-accent-line)"}`,
+                   borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.sm, fontFamily: sans,
+                   cursor: busy ? "wait" : "pointer", flex: "none", alignSelf: "center" }}>
+          {inPlan ? "Drop" : "Add"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** A reviewer-set priority segment. The tooltip says what it does to value. */
 function SegmentPill({ segment }: { segment: PlanSegment }) {
   return (
@@ -374,7 +506,7 @@ const ctl = {
  * server re-ranks immediately; overridden values are marked "set by you".
  */
 function Estimates({ item, canEdit, busy, segments, onOverride }: {
-  item: BacklogItem;
+  item: PlanItem;
   canEdit: boolean;
   busy: boolean;
   segments: PlanSegment[];
