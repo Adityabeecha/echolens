@@ -905,6 +905,9 @@ export interface ChangeReview {
 
 // v11: the quality backlog
 export interface BacklogItem {
+  /** v16: absent on older servers; every item without it is a bug finding. */
+  kind?: "bug";
+  key?: number;
   rank: number;
   investigation_id: number;
   finding_id: number;
@@ -930,19 +933,53 @@ export interface BacklogItem {
   evidence_count: number;
   theme: string | null;
   defence: string;
+  /** Share of the best item of its own kind; only in the "all" view. */
+  relative_value?: number;
 }
+/** v16: a feature-request theme on the plan, keyed by its request slug. */
+export interface RequestPlanItem {
+  kind: "request";
+  key: string;
+  slug: string;
+  rank: number;
+  summary: string;
+  phrase: string;
+  /** Distinct requesting reviews, and how many of them rate the app 4–5★. */
+  count: number;
+  happy_count: number;
+  demand: number;
+  avg_rating: number | null;
+  verbatims: string[];
+  intents: Record<string, number>;
+  first_seen: string | null;
+  last_seen: string | null;
+  effort: BacklogItem["effort"];
+  impact?: BacklogItem["impact"];
+  segment?: PlanSegment | null;
+  value_per_day: number;
+  projected: { stars: number; basis: string; confident: boolean };
+  defence: string;
+  relative_value?: number;
+}
+export type PlanItem = BacklogItem | RequestPlanItem;
+export type PlanKind = "bugs" | "requests" | "all";
+
 export interface QuarterPlan {
-  included?: number[];
-  excluded?: number[];
-  proposed: BacklogItem[];
-  deferred: BacklogItem[];
+  /** Investigation ids and request slugs the PM pinned or dropped. */
+  included?: (number | string)[];
+  excluded?: (number | string)[];
+  kind?: PlanKind;
+  counts?: { bugs: number; requests: number };
+  request_weight?: { happy: number; why: string };
+  proposed: PlanItem[];
+  deferred: PlanItem[];
   capacity_days: number;
   committed_days: number;
   remaining_days: number;
   projected_stars: number;
   owned: boolean;
   notes: Record<string, string>;
-  /** Reviewer overrides keyed by investigation id. */
+  /** Reviewer overrides keyed by investigation id or request slug. */
   overrides?: Record<string, PlanOverride>;
   /** The priority segments a reviewer can pick, with their documented factors. */
   segments?: PlanSegment[];
@@ -952,6 +989,20 @@ export interface QuarterPlan {
   median_fix_days: number | null;
   unknown_effort: number;
   generated: string;
+  product?: string | null;
+}
+
+/** v16: a Markdown spec (PRD) written from a request theme. */
+export interface RequestSpec {
+  slug: string;
+  title: string;
+  markdown: string;
+  /** "model" when a validated LLM rewrite of stories/criteria was used. */
+  engine: "template" | "model";
+  /** Why a model rewrite was refused (the template is shown instead). */
+  rejected: string | null;
+  evidence_count: number;
+  cached?: boolean;
   product?: string | null;
 }
 
@@ -1224,15 +1275,24 @@ export const api = {
   brainAsk: (question: string) =>
     post<{ answer: string; edges: BrainEdge[]; grounded: boolean }>(
       "/brain/ask", { question, product_id: getActiveProduct() }),
-  backlogPlan: (capacityDays?: number) =>
-    get<QuarterPlan>(scoped(`/backlog/plan${capacityDays ? `?capacity_days=${capacityDays}` : ""}`)),
+  backlogPlan: (capacityDays?: number, kind: PlanKind = "bugs") => {
+    const qs = [capacityDays ? `capacity_days=${capacityDays}` : "", kind !== "bugs" ? `kind=${kind}` : ""]
+      .filter(Boolean).join("&");
+    return get<QuarterPlan>(scoped(`/backlog/plan${qs ? `?${qs}` : ""}`));
+  },
   // `overrides` omitted keeps the saved ones (a Drop/Add never wipes estimates);
-  // send the whole map to change them.
+  // send the whole map to change them. `kind` is the view the reply ranks.
   saveBacklogPlan: (body: {
-    included: number[]; excluded: number[]; capacity_days?: number;
+    included: (number | string)[]; excluded: (number | string)[]; capacity_days?: number;
     overrides?: Record<string, PlanOverride>;
-  }) =>
-    put<QuarterPlan>("/backlog/plan", { ...body, product_id: getActiveProduct() }),
+  }, kind: PlanKind = "bugs") =>
+    put<QuarterPlan>("/backlog/plan", { ...body, kind, product_id: getActiveProduct() }),
+  /** A Markdown spec for one request theme (template, or a checked LLM rewrite). */
+  requestSpec: (slug: string) =>
+    get<RequestSpec>(scoped(`/requests/${encodeURIComponent(slug)}/spec`)),
+  /** File a request's spec to GitHub, Linear or Jira — the body the modal shows. */
+  createRequestTicket: (slug: string, tracker: TrackerId) =>
+    post<TicketResult>(scoped(`/requests/${encodeURIComponent(slug)}/ticket?tracker=${tracker}`)),
   portfolio: () => get<Portfolio>("/portfolio"),
   portfolioBrief: () => get<PortfolioBrief>("/portfolio/brief"),
   portfolioThemes: () =>

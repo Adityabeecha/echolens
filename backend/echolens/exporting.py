@@ -188,3 +188,18 @@ def share_brief(session: Session, finding: Finding, link: str | None = None) -> 
 
     return {"headline": headline, "impact": how_bad, "why": why, "quotes": quotes,
             "actions": actions, "markdown": "\n".join(md)}
+
+
+# ── v16: a feature-request spec as a ticket ─────────────────────────────
+
+
+def request_ticket(spec: dict, deep_link: str | None = None) -> dict:
+    """{title, body} for a spec from prd.build_spec. The body is the spec as the
+    PM read it, minus its H1 — the title already says it."""
+    lines = (spec.get("markdown") or "").splitlines()
+    if lines and lines[0].startswith("# "):
+        lines = lines[1:]
+    body = "\n".join(lines).strip()
+    if deep_link:
+        body += f"\n\n_Filed from EchoLens: {deep_link}_"
+    return {"title": f"[EchoLens] Spec: {spec.get('title') or 'Feature request'}", "body": body}
