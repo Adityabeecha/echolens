@@ -55,6 +55,68 @@ PERSISTENCE_HALF_LIFE = 30.0
 QUARTER_CAPACITY_DAYS = 20.0   # a sane default sprint-ish capacity; caller overrides
 PLAN_KEY = "backlog_plan"
 
+# ── PM overrides (set by a reviewer, persisted with the plan) ───────────
+# Impact on a 1–5 scale. The measured default comes from the severity band; an
+# override scales value by IMPACT_FACTOR[override] / IMPACT_FACTOR[default], so
+# moving a "medium" (3) item to 5 makes it 4x as valuable, and back to 3 is a
+# no-op. Doubling per step keeps the scale legible: each notch is "twice that".
+IMPACT_FACTOR = {1: 0.25, 2: 0.5, 3: 1.0, 4: 2.0, 5: 4.0}
+IMPACT_FROM_BAND = {"low": 2, "medium": 3, "high": 4}
+EFFORT_OVERRIDE_RANGE = (0.5, 365.0)
+
+# A manual priority segment. EchoLens has no data on who pays or where in the
+# funnel a complaint sits, so the PM says so and value is multiplied by a fixed,
+# documented factor. One segment per item — they do not stack, so a single
+# item cannot be inflated 4x by ticking every box.
+PRIORITY_SEGMENTS: dict[str, dict] = {
+    "paying_users": {
+        "label": "Affects paying users", "factor": 2.0,
+        "why": "Set by you: hurts revenue directly, so value counts double (x2).",
+    },
+    "checkout_onboarding": {
+        "label": "Affects checkout/onboarding", "factor": 1.5,
+        "why": "Set by you: blocks the path to activation or purchase, so value counts x1.5.",
+    },
+}
+
+
+def clean_overrides(raw: dict | None) -> dict[str, dict]:
+    """Validate PM overrides into {"<investigation_id>": {effort_days, impact,
+    segment}}. Unknown keys, out-of-range values and empty entries are dropped
+    rather than stored, so a bad client can never poison the ranking."""
+    out: dict[str, dict] = {}
+    for key, val in (raw or {}).items():
+        try:
+            iid = str(int(key))
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(val, dict):
+            continue
+        entry: dict = {}
+        days = val.get("effort_days")
+        if days is not None:
+            try:
+                d = float(days)
+                lo, hi = EFFORT_OVERRIDE_RANGE
+                if lo <= d <= hi:
+                    entry["effort_days"] = round(d, 1)
+            except (TypeError, ValueError):
+                pass
+        impact = val.get("impact")
+        if impact is not None:
+            try:
+                lvl = int(impact)
+                if lvl in IMPACT_FACTOR:
+                    entry["impact"] = lvl
+            except (TypeError, ValueError):
+                pass
+        seg = val.get("segment")
+        if seg in PRIORITY_SEGMENTS:
+            entry["segment"] = seg
+        if entry:
+            out[iid] = entry
+    return out
+
 
 # ── effort ──────────────────────────────────────────────────────────────
 
@@ -179,6 +241,7 @@ def backlog(session: Session, product_id: int | None = None,
     now = as_of or datetime.now(timezone.utc)
     rate = resolution_rate(session, product_id)
     history = historical_fix_days(session, product_id)
+    overrides = load_plan(session, product_id)["overrides"]
 
     w_stmt = select(FixWatch)
     if product_id is not None:
@@ -232,6 +295,21 @@ def backlog(session: Session, product_id: int | None = None,
         score = sev["score"] * (volume + 1) * persistence * (1 - rate)
 
         effort = estimate_effort(session, finding, product_id, history)
+        ov = overrides.get(str(inv.id), {})
+        if "effort_days" in ov:
+            # The PM's number wins and counts as known: dividing by it is the
+            # whole point of supplying it. The estimate stays visible beside it.
+            effort = {"days": ov["effort_days"], "basis": "set by you", "known": True,
+                      "overridden": True, "estimated": effort}
+        else:
+            effort = {**effort, "overridden": False}
+        default_level = IMPACT_FROM_BAND.get(sev["band"], 3)
+        level = ov.get("impact", default_level)
+        impact_factor = IMPACT_FACTOR[level] / IMPACT_FACTOR[default_level]
+        seg_key = ov.get("segment")
+        seg = PRIORITY_SEGMENTS.get(seg_key) if seg_key else None
+        seg_factor = seg["factor"] if seg else 1.0
+        value = score * impact_factor * seg_factor
         recovery = rating_recovery(impact, conf)
         evidence = [e.ref for e in session.scalars(select(EvidenceRow).where(
             EvidenceRow.investigation_id == inv.id)).all()]
@@ -253,13 +331,19 @@ def backlog(session: Session, product_id: int | None = None,
             # the docstring always promised that, but the default was applied
             # unconditionally and silently reordered the backlog on a number
             # nobody supplied.
+            # Impact and segment overrides scale the score before the division.
             "value_per_day": round(
-                score / max(0.5, effort["days"]) if effort.get("known") else score, 2),
+                value / max(0.5, effort["days"]) if effort.get("known") else value, 2),
+            "impact": {"level": level, "default": default_level,
+                       "overridden": "impact" in ov, "factor": round(impact_factor, 3)},
+            "segment": ({"key": seg_key, "label": seg["label"], "factor": seg["factor"],
+                         "why": seg["why"]} if seg else None),
             "projected": recovery,
             "evidence_refs": evidence,
             "evidence_count": len(evidence),
             "theme": (anomaly.metric if anomaly else None),
-            "defence": _defence(sev, volume, persistence, rate, effort, recovery, len(evidence)),
+            "defence": _defence(sev, volume, persistence, rate, effort, recovery, len(evidence),
+                                impact_factor if "impact" in ov else None, seg),
             "decision": decision_dict(decision, now),
         })
 
@@ -276,8 +360,10 @@ def backlog(session: Session, product_id: int | None = None,
     }
 
 
-def _defence(sev, volume, persistence, rate, effort, recovery, n_evidence) -> str:
-    """The one line that justifies this item's place in the ranking."""
+def _defence(sev, volume, persistence, rate, effort, recovery, n_evidence,
+             impact_factor: float | None = None, segment: dict | None = None) -> str:
+    """The one line that justifies this item's place in the ranking. Anything a
+    PM overrode is named as theirs, so the arithmetic stays auditable."""
     bits = [f"{sev['band']} severity ({sev['score']:.2f})"]
     if volume:
         bits.append(f"{volume} affected reviews")
@@ -285,6 +371,10 @@ def _defence(sev, volume, persistence, rate, effort, recovery, n_evidence) -> st
     if recovery["confident"]:
         bits.append(f"~{recovery['stars']:.2f}★ recoverable")
     bits.append(f"{effort['days']:g}d effort ({effort['basis']})")
+    if impact_factor is not None:
+        bits.append(f"impact x{impact_factor:g} (set by you)")
+    if segment:
+        bits.append(f"x{segment['factor']:g} {segment['label'].lower()} (set by you)")
     bits.append(f"{n_evidence} cited evidence item(s)")
     return " · ".join(bits)
 
@@ -302,6 +392,7 @@ def load_plan(session: Session, product_id: int | None) -> dict:
     return {"included": list(value.get("included", [])),
             "excluded": list(value.get("excluded", [])),
             "notes": dict(value.get("notes", {})),
+            "overrides": clean_overrides(value.get("overrides")),
             "capacity_days": value.get("capacity_days", QUARTER_CAPACITY_DAYS),
             "owned": bool(value.get("owned", False)),
             "updated": value.get("updated")}
@@ -309,14 +400,21 @@ def load_plan(session: Session, product_id: int | None) -> dict:
 
 def save_plan(session: Session, product_id: int | None, *, included: list[int],
               excluded: list[int], notes: dict | None = None,
-              capacity_days: float | None = None) -> dict:
+              capacity_days: float | None = None,
+              overrides: dict | None = None) -> dict:
     """Persist the PM's edits. Once saved the plan is theirs: a later re-rank
-    proposes around their decisions rather than reversing them."""
+    proposes around their decisions rather than reversing them.
+
+    `overrides` follows the same rule as `notes`: omitted (None) keeps what was
+    saved, so a plain include/exclude save never wipes the PM's estimates; a
+    dict replaces them wholesale (send {} to clear)."""
     prior = load_plan(session, product_id)
     value = {
         "included": sorted(set(int(x) for x in included)),
         "excluded": sorted(set(int(x) for x in excluded)),
         "notes": {str(k): v for k, v in (notes if notes is not None else prior["notes"]).items()},
+        "overrides": (clean_overrides(overrides) if overrides is not None
+                      else prior["overrides"]),
         "capacity_days": float(capacity_days if capacity_days is not None
                                else prior["capacity_days"]),
         "owned": True,
@@ -384,6 +482,10 @@ def quarter_plan(session: Session, product_id: int | None = None,
         "projected_stars": round(sum(i["projected"]["stars"] for i in chosen), 2),
         "owned": saved["owned"],
         "notes": saved["notes"],
+        "overrides": saved["overrides"],
+        # What the override controls mean, so the UI never hardcodes a factor.
+        "segments": [{"key": k, **v} for k, v in PRIORITY_SEGMENTS.items()],
+        "impact_scale": {str(k): v for k, v in IMPACT_FACTOR.items()},
         "resolution_rate": board["resolution_rate"],
         "median_fix_days": board["median_fix_days"],
         "unknown_effort": board["unknown_effort"],

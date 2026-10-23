@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { ChatCitation, ChatToolCall, api } from "../api";
+import {
+  ChatBasis, ChatCitation, ChatNextStep, ChatResponse, ChatStep, ChatToolCall, api, canReview
+} from "../api";
 import { C, MEASURE, R, S, T, mono, sans } from "../theme";
-import { Label, ScreenHeader } from "../ui";
+import { Dot, Label, ScreenHeader } from "../ui";
 import { Icon } from "../components/Icon";
 
 interface Turn {
@@ -14,6 +16,11 @@ interface Turn {
   canInvestigate?: boolean;
   question?: string;
   error?: boolean;
+  basis?: ChatBasis;
+  nextStep?: ChatNextStep | null;
+  /** Set on an answer whose "Start an investigation" card was used. */
+  launchedId?: number;
+  launchError?: string;
 }
 
 const SUGGESTIONS = [
@@ -22,14 +29,17 @@ const SUGGESTIONS = [
   "Why did ratings dip last week?",
 ];
 
-// Ask the verified knowledge anything. Answers cite the case they came from;
-// an investigate-intent question launches a case that streams in the same thread.
+// Ask the verified knowledge anything. Answers say where they came from (a
+// verified case, a raw feedback search, or a waiting signal); an
+// investigate-intent question launches a case that streams in the same thread.
 export function Chat({ onOpenInvestigation, productName }: {
   onOpenInvestigation: (id: number) => void; productName: string | null;
 }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  // Live progress for the in-flight question, from POST /chat/stream.
+  const [steps, setSteps] = useState<ChatStep[]>([]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // Chat is keyed on the product, so switching products unmounts it mid-flight.
   // The reply belonged to the OLD product's scope, so applying it after the
@@ -46,7 +56,30 @@ export function Chat({ onOpenInvestigation, productName }: {
     return () => { alive.current = false; };
   }, []);
 
-  const send = async (msg?: string, force = false) => {
+  const scrollDown = () => requestAnimationFrame(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  });
+
+  // Stream first; fall back to the blocking POST /chat when the stream is
+  // unavailable (older backend, a proxy that buffers SSE, a network blip). A
+  // forced launch only falls back if the stream failed before any step arrived,
+  // so a mid-stream failure can never open the same investigation twice.
+  const ask = async (message: string, force: boolean): Promise<ChatResponse> => {
+    let seen = 0;
+    try {
+      return await api.chatStream(message, (s) => {
+        seen += 1;
+        if (!alive.current) return;
+        setSteps((prev) => [...prev, s]);
+        scrollDown();
+      }, force);
+    } catch (e) {
+      if (force && seen > 0) throw e;
+      return api.chat(message, force);
+    }
+  };
+
+  const send = async (msg?: string, force = false, fromTurn?: number) => {
     const message = (msg ?? input).trim();
     if (!message || busy) return;
     if (!force) {
@@ -54,18 +87,35 @@ export function Chat({ onOpenInvestigation, productName }: {
       setTurns((t) => [...t, { role: "you", text: message }]);
     }
     setBusy(true);
+    setSteps([]);
+    scrollDown();
     try {
-      const r = await api.chat(message, force);
+      const r = await ask(message, force);
       if (!alive.current) return;
-      setTurns((t) => [...t, {
-        role: "echolens", text: r.text, citations: r.citations,
-        investigationId: r.type === "investigation" ? r.investigation_id : undefined,
-        toolCalls: r.tool_calls, confident: r.confident,
-        canInvestigate: r.can_investigate, question: message
-      }]);
+      const launched = r.type === "investigation" ? r.investigation_id : undefined;
+      setTurns((t) => {
+        const next = fromTurn != null && launched != null
+          ? t.map((x, i) => (i === fromTurn ? { ...x, launchedId: launched } : x))
+          : t;
+        return [...next, {
+          role: "echolens", text: r.text, citations: r.citations,
+          investigationId: launched,
+          toolCalls: r.tool_calls, confident: r.confident,
+          canInvestigate: r.can_investigate, question: message,
+          basis: r.basis, nextStep: r.next_step
+        }];
+      });
     } catch (e) {
       if (!alive.current) return;
       const raw = String(e).replace("Error: ", "");
+      if (force && fromTurn != null) {
+        // Keep the failure on the card the user pressed, with the reason.
+        const reason = /403/.test(raw)
+          ? "You need reviewer access to start an investigation."
+          : "Couldn't start the investigation. Please try again.";
+        setTurns((t) => t.map((x, i) => (i === fromTurn ? { ...x, launchError: reason } : x)));
+        return;
+      }
       const text = /404/.test(raw)
         ? "Chat isn't available on this server yet — the backend is still deploying the latest version. Try again in a minute."
         : "I couldn't reach EchoLens just now. Please try your question again.";
@@ -74,9 +124,8 @@ export function Chat({ onOpenInvestigation, productName }: {
     } finally {
       if (!alive.current) return;
       setBusy(false);
-      requestAnimationFrame(() => {
-        if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-      });
+      setSteps([]);
+      scrollDown();
     }
   };
 
@@ -88,8 +137,9 @@ export function Chat({ onOpenInvestigation, productName }: {
         {turns.length === 0 && (
           <div style={{ maxWidth: 720 }}>
             <p style={{ fontSize: T.md, color: C.muted, lineHeight: "var(--el-lh-normal)" }}>
-              Ask about a complaint, a cause, or what to fix next. Every answer cites the case it came from — and if I
-              haven't looked into something, I'll say so (and offer to investigate).
+              Ask about a complaint, a cause, or what to fix next. Every answer says where it came from — a verified
+              case, a raw feedback search, or a signal nobody has investigated yet — and if I haven't looked into
+              something, you can start an investigation from the answer.
             </p>
             <Label style={{ margin: "18px 0 10px" }}>TRY</Label>
             <div style={{ display: "flex", flexDirection: "column", gap: S[2], alignItems: "flex-start" }}>
@@ -106,9 +156,9 @@ export function Chat({ onOpenInvestigation, productName }: {
         <div style={{ display: "flex", flexDirection: "column", gap: S[4], maxWidth: 720 }}>
           {turns.map((t, i) => (
             <Bubble key={i} turn={t} onOpenInvestigation={onOpenInvestigation}
-              onInvestigate={(q) => send(q, true)} onRetry={(q) => send(q)} busy={busy} />
+              onInvestigate={(q) => send(q, true, i)} onRetry={(q) => send(q)} busy={busy} />
           ))}
-          {busy && <div style={{ fontSize: T.base, color: C.dim, fontFamily: mono }}>EchoLens is thinking…</div>}
+          {busy && <Progress steps={steps} />}
         </div>
       </div>
 
@@ -130,6 +180,107 @@ export function Chat({ onOpenInvestigation, productName }: {
   );
 }
 
+/** What Ask is doing right now — one line per step, the newest one pulsing. */
+function Progress({ steps }: { steps: ChatStep[] }) {
+  if (steps.length === 0) {
+    return <div style={{ fontSize: T.base, color: C.dim, fontFamily: mono }}>EchoLens is thinking…</div>;
+  }
+  return (
+    <div role="status" aria-live="polite"
+      style={{ display: "flex", flexDirection: "column", gap: S[1], paddingLeft: S[3],
+               borderLeft: `2px solid ${C.border3}` }}>
+      {steps.map((s, i) => {
+        const live = i === steps.length - 1;
+        return (
+          <div key={i} style={{ display: "flex", alignItems: "baseline", gap: S[2],
+                                fontSize: T.sm, color: live ? C.text3 : C.faint }}>
+            <Dot color={live ? C.accent : C.border4} pulse={live} />
+            <span>
+              {s.text}
+              {s.tool && (
+                <span style={{ fontFamily: mono, fontSize: T.micro, color: C.dim, marginLeft: S[2] }}>
+                  {s.tool}
+                </span>
+              )}
+              {s.why && (
+                <span style={{ display: "block", fontSize: T.xs, color: C.dim }}>why: {s.why}</span>
+              )}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const BASIS_TONE: Record<ChatBasis["kind"], { color: string; bg: string; line: string }> = {
+  investigation: { color: C.good, bg: C.goodBg, line: C.goodLine },
+  investigation_started: { color: C.info, bg: C.infoBg, line: C.infoLine },
+  raw_search: { color: C.info, bg: C.infoBg, line: C.infoLine },
+  signals: { color: C.accent, bg: C.accentBg, line: C.accentLine },
+  none: { color: C.dim, bg: C.bgRaised, line: C.border3 },
+};
+
+/** Where this answer came from, as a pill (and a link when it names a case). */
+function BasisBadge({ basis, onOpen }: { basis: ChatBasis; onOpen: (id: number) => void }) {
+  const tone = BASIS_TONE[basis.kind] ?? BASIS_TONE.none;
+  const style = {
+    display: "inline-flex", alignItems: "center", gap: S[1],
+    fontFamily: mono, fontSize: T.micro, letterSpacing: ".04em",
+    color: tone.color, background: tone.bg, border: `1px solid ${tone.line}`,
+    borderRadius: R.pill, padding: `2px ${S[2]}`,
+  } as const;
+  const icon = basis.kind === "investigation" ? "check" : basis.kind === "none" ? "info" : "search";
+  if (basis.case_id != null) {
+    return (
+      <button className="el-btn" onClick={() => onOpen(basis.case_id!)} style={style}
+        title={`Open case #${basis.case_id}`}>
+        <Icon name={icon} size={10} /> {basis.label}
+      </button>
+    );
+  }
+  return <span style={style}><Icon name={icon} size={10} /> {basis.label}</span>;
+}
+
+/** The next step for an answer no case backs: start one, or see why you can't. */
+function InvestigateCard({ step, launchedId, launchError, busy, onStart, onOpen }: {
+  step: ChatNextStep;
+  launchedId?: number;
+  launchError?: string;
+  busy: boolean;
+  onStart: () => void;
+  onOpen: (id: number) => void;
+}) {
+  return (
+    <div style={{ marginTop: S[2], maxWidth: 560, padding: `${S[3]} ${S[4]}`, borderRadius: R.card,
+                  background: C.card, border: `1px dashed ${C.border4}`,
+                  display: "flex", flexDirection: "column", gap: S[2] }}>
+      <div style={{ fontSize: T.sm, color: C.text3, lineHeight: "var(--el-lh-normal)" }}>
+        Start an investigation into “{step.question}”
+      </div>
+      {launchedId != null ? (
+        <button onClick={() => onOpen(launchedId)} className="el-btn el-btn--ghost"
+          style={{ alignSelf: "flex-start", fontSize: T.sm }}>
+          <Icon name="play" size={12} /> Case #{launchedId} is running — watch it live
+        </button>
+      ) : step.allowed ? (
+        <button onClick={onStart} disabled={busy} className="el-btn el-btn--primary"
+          style={{ alignSelf: "flex-start", borderRadius: R.control, padding: `${S[2]} ${S[3]}`,
+                   fontSize: T.sm, fontWeight: 600, cursor: busy ? "wait" : "pointer" }}>
+          <Icon name="search" size={12} /> {busy ? "Starting…" : "Start investigation"}
+        </button>
+      ) : (
+        <div style={{ display: "flex", gap: S[2], alignItems: "baseline", fontSize: T.sm, color: C.muted }}>
+          <Icon name="info" size={12} /> {step.reason ?? "You can't start investigations from this account."}
+        </div>
+      )}
+      {launchError && (
+        <div role="alert" style={{ fontSize: T.sm, color: C.bad }}>{launchError}</div>
+      )}
+    </div>
+  );
+}
+
 function Bubble({ turn, onOpenInvestigation, onInvestigate, onRetry, busy }: {
   turn: Turn;
   onOpenInvestigation: (id: number) => void;
@@ -146,6 +297,17 @@ function Bubble({ turn, onOpenInvestigation, onInvestigate, onRetry, busy }: {
       <div style={{ maxWidth: 560, padding: `${S[3]} ${S[4]}`, borderRadius: R.card, background: you ? C.accent : C.card, color: you ? C.onAccent : C.text2, border: you ? "none" : `1px solid ${C.border2}`, fontSize: T.md, lineHeight: "var(--el-lh-normal)" }}>
         {turn.text}
       </div>
+      {!you && turn.basis && (
+        <div style={{ marginTop: S[2], display: "flex", flexDirection: "column", gap: S[1], maxWidth: 560 }}>
+          <div><BasisBadge basis={turn.basis} onOpen={onOpenInvestigation} /></div>
+          {turn.basis.caution && (
+            <div style={{ display: "flex", gap: S[1], alignItems: "baseline", fontSize: T.sm,
+                          color: C.muted, lineHeight: "var(--el-lh-normal)" }}>
+              <Icon name="warning" size={11} /> {turn.basis.caution}
+            </div>
+          )}
+        </div>
+      )}
       {turn.toolCalls && turn.toolCalls.length > 0 && (
         <div style={{ marginTop: S[2], fontSize: T.sm, color: C.faint,
                       display: "flex", flexWrap: "wrap", gap: S[2], alignItems: "center" }}>
@@ -167,19 +329,30 @@ function Bubble({ turn, onOpenInvestigation, onInvestigate, onRetry, busy }: {
           <Icon name="play" size={12} /> Watch case #{turn.investigationId} stream
         </button>
       )}
-      {!you && turn.canInvestigate && turn.question && onInvestigate && (
-        <button onClick={() => onInvestigate(turn.question!)} disabled={busy}
-          className="el-btn el-btn--ghost"
-          style={{ marginTop: S[2], fontSize: T.sm }}>
-          <Icon name="search" size={12} />
-          {turn.confident === false ? "Investigate this properly" : "Investigate again anyway"}
-        </button>
+      {!you && turn.nextStep && turn.question && onInvestigate && (
+        <InvestigateCard step={turn.nextStep} launchedId={turn.launchedId}
+          launchError={turn.launchError} busy={busy}
+          onStart={() => onInvestigate(turn.question!)} onOpen={onOpenInvestigation} />
+      )}
+      {!you && !turn.nextStep && turn.canInvestigate && canReview() && turn.question && onInvestigate && (
+        turn.launchedId != null ? (
+          <button onClick={() => onOpenInvestigation(turn.launchedId!)} className="el-btn el-btn--ghost"
+            style={{ marginTop: S[2], fontSize: T.sm }}>
+            <Icon name="play" size={12} /> Case #{turn.launchedId} is running — watch it live
+          </button>
+        ) : (
+          <button onClick={() => onInvestigate(turn.question!)} disabled={busy}
+            className="el-btn el-btn--ghost"
+            style={{ marginTop: S[2], fontSize: T.sm }}>
+            <Icon name="search" size={12} /> Investigate again anyway
+          </button>
+        )
       )}
       {!you && turn.error && turn.question && (
         <button onClick={() => onRetry(turn.question!)} disabled={busy}
           className="el-btn el-btn--ghost"
           style={{ marginTop: S[2], fontSize: T.sm }}>
-          <Icon name="refresh" size={12} /> {busy ? "Retryingâ€¦" : "Try again"}
+          <Icon name="retry" size={12} /> {busy ? "Retrying…" : "Try again"}
         </button>
       )}
       {turn.citations && turn.citations.length > 0 && (

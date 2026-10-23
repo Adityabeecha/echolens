@@ -105,16 +105,90 @@ def _cite(f: Finding, inv: Investigation) -> dict:
             "affected_pct": impact.get("affected_pct")}
 
 
+# ── provenance: where an answer came from ───────────────────────────────
+# Every Ask answer carries a `basis` so the reader can tell a verified cause
+# from a keyword count. The kinds, strongest first:
+#   investigation — a resolved/approved case backs it (cites case #N)
+#   signals       — matches something EchoLens detected but never investigated
+#   raw_search    — the agent queried the raw feedback; numbers, not causes
+#   none          — nothing on record backs it
+RAW_CAUTION = ("Raw feedback search, not an investigation — these are counts and quotes, "
+               "not a verified cause.")
+SIGNAL_CAUTION = ("Signals are patterns EchoLens detected, not explanations. "
+                  "Investigate to find the cause.")
+NONE_CAUTION = "Nothing on record backs this — treat it as unverified."
+
+
+def basis_investigation(case_id: int) -> dict:
+    return {"kind": "investigation", "case_id": case_id,
+            "label": f"From verified investigation (case #{case_id})", "caution": None}
+
+
+def basis_raw_search() -> dict:
+    return {"kind": "raw_search", "case_id": None,
+            "label": "From raw feedback search (not investigated)", "caution": RAW_CAUTION}
+
+
+def basis_signals() -> dict:
+    return {"kind": "signals", "case_id": None,
+            "label": "From waiting signals (not investigated)", "caution": SIGNAL_CAUTION}
+
+
+def basis_none(caution: str | None = None) -> dict:
+    return {"kind": "none", "case_id": None, "label": "Not investigated yet",
+            "caution": caution}
+
+
+def basis_for_citations(citations: list[dict] | None) -> dict | None:
+    """Investigation basis when the answer cites at least one case."""
+    if citations:
+        return basis_investigation(int(citations[0]["investigation_id"]))
+    return None
+
+
+def matching_signals(session: Session, message: str, product_id: int | None = None,
+                     k: int = 3) -> list[dict]:
+    """Waiting (detected, never investigated, not dismissed) signals whose
+    headline shares words with the question, best match first."""
+    from echolens.cases import signal_rows
+
+    terms = set(tokenize(message))
+    if not terms:
+        return []
+    scored = []
+    for i, row in enumerate(signal_rows(session, product_id)):
+        if row.get("dismissed"):
+            continue
+        toks = set(tokenize(f"{row.get('title') or ''} {row.get('metric') or ''}"))
+        overlap = len(terms & toks)
+        if overlap:
+            scored.append((overlap, i, row))
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    return [row for _, _, row in scored[:k]]
+
+
+def _signals_answer(hits: list[dict], prefix: str = "") -> dict:
+    lead = hits[0]
+    more = f" (+{len(hits) - 1} related)" if len(hits) > 1 else ""
+    # grounded: built from the product's own signals, so the endpoint answers
+    # with it directly instead of spending a model call.
+    return {"type": "answer", "citations": [], "signals": hits, "basis": basis_signals(),
+            "grounded": True,
+            "text": f"{prefix}EchoLens noticed “{lead['title']}”{more}, but hasn't "
+                    "investigated it — so there's no verified cause yet."}
+
+
 def route(session: Session, message: str, product_id: int | None = None,
           product_name: str | None = None) -> dict:
     """Decide how to answer, using ONLY the active product's cases. Returns:
-      {"type": "answer", "text", "citations": [...]}
+      {"type": "answer", "text", "citations": [...], "basis": {...}}
       {"type": "launch", "description": <what to investigate>}
     The endpoint executes a launch (creates the anomaly + investigation)."""
     msg = (message or "").lower().strip()
     label = f" for {product_name}" if product_name else ""
     if not msg:
-        return {"type": "answer", "text": "Ask me about a complaint, a cause, or what to fix next.", "citations": []}
+        return {"type": "answer", "text": "Ask me about a complaint, a cause, or what to fix next.",
+                "citations": [], "basis": basis_none()}
 
     # A ranking question with nothing investigated yet used to fall through to
     # "No investigations yet" — or, via the ask agent, five model calls and
@@ -127,14 +201,19 @@ def route(session: Session, message: str, product_id: int | None = None,
             top = signals[0]
             rest = " and ".join(f"“{_headline(a)}”" for a in signals[1:3])
             return {"type": "answer", "citations": [], "grounded": True,
+                    "basis": basis_signals(),
                     "text": (f"Nothing{label} has been investigated yet, so I can't name a cause. "
                              f"The strongest signal waiting is “{_headline(top)}”"
                              + (f", followed by {rest}" if rest else "") +
                              ". Ask me to investigate it and I'll open a case.")}
 
-    # nothing investigated yet in this product — say so explicitly
+    # nothing investigated yet in this product — say so explicitly, but still
+    # surface a detected signal on the topic if there is one
     if not _knowledge(session, product_id) and not any(m in msg for m in INVESTIGATE_MARKERS):
-        return {"type": "answer", "citations": [],
+        sig = matching_signals(session, message, product_id)
+        if sig:
+            return _signals_answer(sig, prefix=f"No investigations{label} yet. ")
+        return {"type": "answer", "citations": [], "basis": basis_none(),
                 "text": f"No investigations{label} yet. Ask me to \"investigate …\" and I'll open the first case."}
 
     # 1) ranking / aggregate view → answer from open problems by impact
@@ -143,7 +222,9 @@ def route(session: Session, message: str, product_id: int | None = None,
         if not probs:
             return {"type": "answer",
                     "text": f"No open problems{label} — every resolved case is fixed or in verification.",
-                    "citations": []}
+                    "citations": [],
+                    "basis": {"kind": "investigation", "case_id": None,
+                              "label": "From your case records", "caution": None}}
         f, inv = probs[0]
         cites = [_cite(f, inv) for f, inv in probs[:3]]
         top = cites[0]
@@ -151,7 +232,7 @@ def route(session: Session, message: str, product_id: int | None = None,
         return {"type": "answer",
                 "text": f"Your biggest unresolved problem is “{top['summary']}”{pct} — case #{top['investigation_id']}. "
                         + (f"{len(cites)-1} more open below." if len(cites) > 1 else ""),
-                "citations": cites}
+                "citations": cites, "basis": basis_investigation(top["investigation_id"])}
 
     # 2) explicit ask to investigate something → launch
     if any(m in msg for m in INVESTIGATE_MARKERS):
@@ -171,10 +252,15 @@ def route(session: Session, message: str, product_id: int | None = None,
         stem = f"{headline} — case #{lead[1].id}." if headline else f"See case #{lead[1].id}."
         return {"type": "answer",
                 "text": stem + (f" (+{len(cites)-1} related)" if len(cites) > 1 else ""),
-                "citations": cites}
+                "citations": cites, "basis": basis_investigation(lead[1].id)}
 
-    # 4) nothing on record — honest, and offer to investigate
-    return {"type": "answer",
+    # 4) not investigated, but EchoLens may have noticed it
+    sig = matching_signals(session, message, product_id)
+    if sig:
+        return _signals_answer(sig)
+
+    # 5) nothing on record — honest, and offer to investigate
+    return {"type": "answer", "basis": basis_none(),
             "text": "I haven't investigated that yet. Ask me to \"investigate …\" and I'll open a case.",
             "citations": []}
 

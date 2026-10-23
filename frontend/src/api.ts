@@ -878,7 +878,16 @@ export interface BacklogItem {
   score: number;
   volume: number;
   persistence_days: number;
-  effort: { days: number; basis: string; known: boolean };
+  effort: {
+    days: number; basis: string; known: boolean;
+    /** True when a reviewer set the number; `estimated` is what EchoLens guessed. */
+    overridden?: boolean;
+    estimated?: { days: number; basis: string; known: boolean };
+  };
+  /** Impact on a 1–5 scale; `default` comes from the severity band. */
+  impact?: { level: number; default: number; overridden: boolean; factor: number };
+  /** A manual priority segment set by a reviewer, or null. */
+  segment?: PlanSegment | null;
   value_per_day: number;
   projected: { stars: number; basis: string; confident: boolean };
   evidence_refs: string[];
@@ -897,11 +906,29 @@ export interface QuarterPlan {
   projected_stars: number;
   owned: boolean;
   notes: Record<string, string>;
+  /** Reviewer overrides keyed by investigation id. */
+  overrides?: Record<string, PlanOverride>;
+  /** The priority segments a reviewer can pick, with their documented factors. */
+  segments?: PlanSegment[];
+  /** Impact level → value multiplier ("1".."5"). */
+  impact_scale?: Record<string, number>;
   resolution_rate: number;
   median_fix_days: number | null;
   unknown_effort: number;
   generated: string;
   product?: string | null;
+}
+
+export interface PlanSegment {
+  key: string;
+  label: string;
+  factor: number;
+  why: string;
+}
+export interface PlanOverride {
+  effort_days?: number | null;
+  impact?: number | null;
+  segment?: string | null;
 }
 
 export interface Pattern {
@@ -992,6 +1019,28 @@ export interface ChatToolCall {
   args: Record<string, unknown>;
   why?: string;
 }
+/** Where an Ask answer came from. */
+export interface ChatBasis {
+  kind: "investigation" | "raw_search" | "signals" | "none" | "investigation_started";
+  label: string;
+  case_id: number | null;
+  /** Shown under answers that are not a verified cause. */
+  caution: string | null;
+}
+/** The inline "Start an investigation into …" card. */
+export interface ChatNextStep {
+  kind: "investigate";
+  question: string;
+  allowed: boolean;
+  reason: string | null;
+}
+/** One live progress line while Ask works ("Searching reviews for 'paywall'…"). */
+export interface ChatStep {
+  kind: string;
+  text: string;
+  tool?: string;
+  why?: string;
+}
 export interface ChatResponse {
   type: "answer" | "investigation";
   text: string;
@@ -1000,6 +1049,8 @@ export interface ChatResponse {
   tool_calls?: ChatToolCall[];
   confident?: boolean;
   can_investigate?: boolean;
+  basis?: ChatBasis;
+  next_step?: ChatNextStep | null;
 }
 export interface WeeklyBrief {
   generated: string;
@@ -1137,12 +1188,65 @@ export const api = {
       "/brain/ask", { question, product_id: getActiveProduct() }),
   backlogPlan: (capacityDays?: number) =>
     get<QuarterPlan>(scoped(`/backlog/plan${capacityDays ? `?capacity_days=${capacityDays}` : ""}`)),
-  saveBacklogPlan: (body: { included: number[]; excluded: number[]; capacity_days?: number }) =>
+  // `overrides` omitted keeps the saved ones (a Drop/Add never wipes estimates);
+  // send the whole map to change them.
+  saveBacklogPlan: (body: {
+    included: number[]; excluded: number[]; capacity_days?: number;
+    overrides?: Record<string, PlanOverride>;
+  }) =>
     put<QuarterPlan>("/backlog/plan", { ...body, product_id: getActiveProduct() }),
   portfolio: () => get<Portfolio>("/portfolio"),
   portfolioBrief: () => get<PortfolioBrief>("/portfolio/brief"),
   portfolioThemes: () =>
     get<{ themes: PortfolioTheme[]; products: string[]; days: number; note: string }>("/portfolio/themes"),
+  /**
+   * POST /chat/stream: the same answer as `chat`, but `onStep` is called with
+   * each progress line as it happens. Read with fetch (not EventSource) so the
+   * token goes in the Authorization header, never the URL. Rejects on any
+   * failure — the caller falls back to `chat`.
+   */
+  chatStream: async (message: string, onStep: (s: ChatStep) => void,
+                     forceInvestigate = false): Promise<ChatResponse> => {
+    const r = await fetch(BASE + "/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream", ...authHeaders() },
+      body: JSON.stringify({ message, product_id: getActiveProduct(), force_investigate: forceInvestigate }),
+    });
+    if (!r.ok || !r.body) {
+      handle(r.status);
+      throw new Error(`/chat/stream → ${r.status}`);
+    }
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+      let cut: number;
+      while ((cut = buf.indexOf("\n\n")) >= 0) {
+        const block = buf.slice(0, cut);
+        buf = buf.slice(cut + 2);
+        let event = "message";
+        let data = "";
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) data += line.slice(5).trim();
+        }
+        if (!data) continue;
+        const payload = JSON.parse(data);
+        if (event === "step") onStep(payload as ChatStep);
+        else if (event === "answer") {
+          reader.cancel().catch(() => undefined);
+          return payload as ChatResponse;
+        } else if (event === "error") {
+          reader.cancel().catch(() => undefined);
+          throw new Error(payload?.error || "Ask failed");
+        }
+      }
+    }
+    throw new Error("The answer stream ended early");
+  },
   chat: (message: string, forceInvestigate = false) =>
     post<ChatResponse>("/chat", {
       message, product_id: getActiveProduct(), force_investigate: forceInvestigate
