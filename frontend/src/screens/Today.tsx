@@ -1,8 +1,9 @@
 import { ReactNode, useState } from "react";
 import {
-  CaseRow, Freshness, PortfolioProduct, RatingBreakdown, ReleaseMarker, api, canReview,
-  getActiveProduct, isAdmin, isGuest
+  CaseRow, ConfirmedFix, Freshness, PortfolioProduct, RatingBreakdown, ReleaseMarker, api,
+  canReview, getActiveProduct, isAdmin, isGuest
 } from "../api";
+import { formatRoute } from "../nav";
 import { CaseCard } from "../components/CaseCard";
 import { withToast } from "../components/Toast";
 import { ago, plural } from "../format";
@@ -56,6 +57,8 @@ export function Today({
   const overview = useAsync(() => api.overview(), [reloadKey]);
   const [cancelling, setCancelling] = useState<number | null>(null);
   const [collecting, setCollecting] = useState(false);
+  // Dismissed this session; the server remembers it for next time.
+  const [dismissedFixes, setDismissedFixes] = useState<number[]>([]);
 
   const rows = cases.data?.cases ?? [];
   const product = productName ?? cases.data?.product ?? null;
@@ -81,9 +84,14 @@ export function Today({
   // Only terminal-confirmed watches carry a chart, and only those are shown —
   // a watch still in its observation window has nothing to report yet.
   const VERIFIED_LIMIT = 3;
+  // Recently confirmed fixes get their own card (below), so they are left out
+  // of the longer-running list rather than shown twice.
+  const confirmedFixes = (overview.data?.confirmed_fixes ?? [])
+    .filter((f) => !dismissedFixes.includes(f.watch_id));
+  const celebrated = new Set(confirmedFixes.map((f) => f.watch_id));
   const verifiedCases = new Set<number>();
   const verifiedFixes = (fixwatch.data?.watches ?? [])
-    .filter((w) => w.status === "confirmed" && w.chart)
+    .filter((w) => w.status === "confirmed" && w.chart && !celebrated.has(w.id))
     .filter((w) => {
       if (verifiedCases.has(w.investigation_id)) return false;
       verifiedCases.add(w.investigation_id);
@@ -341,6 +349,21 @@ export function Today({
                 </div>
               )}
             </Section>
+
+            {/* ── fixes confirmed in the last two weeks ─────────────── */}
+            {/* Rendered only when one exists; a dismissed card stays gone. */}
+            {confirmedFixes.length > 0 && (
+              <Section title="Fix confirmed" count={confirmedFixes.length} color={C.good}>
+                <div style={{ display: "flex", flexDirection: "column", gap: S[3],
+                              maxWidth: MEASURE }}>
+                  {confirmedFixes.map((f) => (
+                    <FixConfirmedCard key={`confirmed-${f.watch_id}`} fix={f}
+                      onOpenCase={onOpenCase}
+                      onDismissed={() => setDismissedFixes((d) => [...d, f.watch_id])} />
+                  ))}
+                </div>
+              </Section>
+            )}
 
             {/* ── d. what actually worked ───────────────────────────── */}
             {/* Rendered only when there is something proven. An empty state
@@ -762,6 +785,58 @@ function Section({ title, count, color, action, emphasis, children }: {
       </div>
       {children}
     </section>
+  );
+}
+
+/**
+ * A fix that verification just confirmed. Calm, not confetti: what dropped,
+ * the before/after when there is one, and the obvious next step — telling the
+ * people who complained.
+ */
+function FixConfirmedCard({ fix, onOpenCase, onDismissed }: {
+  fix: ConfirmedFix;
+  onOpenCase: (id: number, status?: string) => void;
+  onDismissed: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  // The reply drafts live on the case's Engineering tab.
+  const reply = () => {
+    window.location.hash = formatRoute({ screen: "case", id: fix.investigation_id,
+                                         tab: "engineering", productId: getActiveProduct() });
+  };
+  const dismiss = async () => {
+    setBusy(true);
+    const r = await withToast(() => api.dismissFix(fix.watch_id), {
+      success: "Dismissed. It won't come back on your Today.",
+      failure: "Couldn't dismiss that card",
+    });
+    setBusy(false);
+    if (r) onDismissed();
+  };
+  return (
+    <div className="el-card" style={{ padding: `${S[3]} ${S[4]}`, borderColor: C.goodLine }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: S[2], flexWrap: "wrap" }}>
+        <Icon name="check" size={14} style={{ color: C.good, flex: "none" }} />
+        <button onClick={() => onOpenCase(fix.investigation_id, "resolved")} className="el-btn"
+          style={{ fontSize: T.md, fontWeight: 600, color: C.text, textAlign: "left" }}>
+          {fix.headline}
+        </button>
+        <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint }}>
+          case #{fix.investigation_id}
+        </span>
+      </div>
+      {fix.chart && <BeforeAfterChart chart={fix.chart} compact />}
+      <div style={{ display: "flex", gap: S[2], flexWrap: "wrap", marginTop: S[3] }}>
+        {fix.reply_count > 0 && (
+          <Button size="sm" variant="primary" icon="reply" onClick={reply}>
+            Reply to affected reviewers ({fix.reply_count})
+          </Button>
+        )}
+        {canReview() && (
+          <Button size="sm" variant="ghost" loading={busy} onClick={dismiss}>Dismiss</Button>
+        )}
+      </div>
+    </div>
   );
 }
 
