@@ -28,7 +28,6 @@ import { persistSidebarCollapsed, resolveSidebarCollapsed } from "./sidebarState
 // rest load on first visit. A chunk that fails to load (a redeploy replaced
 // it) throws inside the ErrorBoundary below, which offers a way back.
 const Sources = lazy(() => import("./screens/Sources").then((m) => ({ default: m.Sources })));
-const Costs = lazy(() => import("./screens/Costs").then((m) => ({ default: m.Costs })));
 const Settings = lazy(() => import("./screens/Settings").then((m) => ({ default: m.Settings })));
 const Onboarding = lazy(() => import("./screens/Onboarding").then((m) => ({ default: m.Onboarding })));
 const Portfolio = lazy(() => import("./screens/Portfolio").then((m) => ({ default: m.Portfolio })));
@@ -407,16 +406,12 @@ export default function App() {
             </ScreenChunk>
           )}
 
-          {screen === "costs" && (
-            <ScreenChunk><Costs key={key} onGoSettings={() => go("settings")} /></ScreenChunk>
-          )}
-
           {screen === "settings" && (
             <ScreenChunk>
               <Settings
                 key={key}
                 product={activeProduct}
-                onGoCosts={() => go("costs")}
+                onGoCosts={() => setParams({ section: "costs" })}
                 onGoSources={() => go("sources")}
                 onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
                 onDeleteProduct={setDeleting}

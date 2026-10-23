@@ -9,6 +9,7 @@ import { Bar, Centered, ErrorState, Label, ScreenHeader } from "../ui";
 import { Icon } from "../components/Icon";
 import { SubTabs } from "../components/SubTabs";
 import { Calibration } from "./Calibration";
+import { Costs } from "./Costs";
 
 interface Props {
   product: ProductRow | null;
@@ -24,6 +25,7 @@ interface Props {
 
 const SECTIONS: { key: SettingsSection; label: string }[] = [
   { key: "general", label: "Budgets & product" },
+  { key: "costs", label: "Costs" },
   { key: "calibration", label: "Calibration" },
 ];
 
@@ -61,6 +63,9 @@ export function Settings({
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         {section === "calibration" ? (
           <Calibration embedded onGoCases={() => onGoReview?.()} />
+        ) : section === "costs" ? (
+          // The per-case ledger was its own System screen; #/costs links land here.
+          <Costs embedded />
         ) : (
           <GeneralSection product={product} onGoCosts={onGoCosts} onGoSources={onGoSources}
                           onAddProduct={onAddProduct} onDeleteProduct={onDeleteProduct} />

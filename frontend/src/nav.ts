@@ -2,17 +2,22 @@
 // state — so refresh restores your place, the browser back button works, and a
 // case (or a filtered view of the case list) can be linked to a colleague.
 //
-// Hash-based on purpose: it needs no server rewrite rules, so the same build
-// works on Vercel, a static bucket, or file://.
+// Clean history paths. vercel.json (and the Vite dev server) serve index.html
+// for any path that is not a file, so a deep link or a refresh lands here.
 //
-//   #/p/12/today                 product 12's home
-//   #/p/12/cases?tab=running     the case list, filtered — shareable
-//   #/p/12/cases/34              case 34 (finding tab by default)
-//   #/p/12/cases/34/trace        case 34's investigation trace
-//   #/p/12/memory?view=fixes     learned patterns, proven-fixes tab
-//   #/p/12/settings?section=calibration
-//   #/portfolio                  cross-product, deliberately unscoped
-//   #/onboarding                 the add-product wizard
+//   /p/12/today                  product 12's home
+//   /p/12/cases?tab=running      the case list, filtered — shareable
+//   /p/12/cases/34               case 34 (finding tab by default)
+//   /p/12/cases/34/trace         case 34's investigation trace
+//   /p/12/memory?view=fixes      learned patterns, proven-fixes tab
+//   /p/12/settings?section=costs
+//   /portfolio                   cross-product, deliberately unscoped
+//   /onboarding                  the add-product wizard
+//   /share/<token>               a public brief (outside the app; see main.tsx)
+//
+// Older builds used hash routes (/#/p/12/today, /#/share/<token>). Those links
+// live on in notifications, Slack and bookmarks, so they still parse, and
+// main.tsx rewrites them to the clean path on load.
 
 export type Screen =
   | "today"
@@ -101,13 +106,13 @@ function qs(params?: Record<string, string>): string {
 /**
  * Patterns and Product memory were two screens about one thing — what EchoLens
  * has learned — so they are now two tabs of "Learned patterns" (`memory`).
- * Calibration is a section of Settings. The old screen names stay in the
+ * Calibration and Costs are sections of Settings. The old screen names stay in the
  * union so existing `go("patterns")` / `go("calibration")` callers and old
  * links keep working; they are rewritten here, in one place.
  */
 export const LEARNED_VIEWS = ["map", "fixes"] as const;
 export type LearnedView = (typeof LEARNED_VIEWS)[number];
-export const SETTINGS_SECTIONS = ["general", "calibration"] as const;
+export const SETTINGS_SECTIONS = ["general", "costs", "calibration"] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 export function canonicalRoute(r: Route): Route {
@@ -117,18 +122,21 @@ export function canonicalRoute(r: Route): Route {
   if (r.screen === "calibration") {
     return { ...r, screen: "settings", params: { ...r.params, section: "calibration" } };
   }
+  if (r.screen === "costs") {
+    return { ...r, screen: "settings", params: { ...r.params, section: "costs" } };
+  }
   return r;
 }
 
 export function formatRoute(route: Route): string {
   const r = canonicalRoute(route);
-  if (GLOBAL_SCREENS.includes(r.screen)) return `#/${r.screen}${qs(r.params)}`;
+  if (GLOBAL_SCREENS.includes(r.screen)) return `/${r.screen}${qs(r.params)}`;
   const p = r.productId != null ? `/p/${r.productId}` : "";
   if (r.screen === "case") {
     const tab = r.tab && r.tab !== "finding" ? `/${r.tab}` : "";
-    return `#${p}/cases/${r.id}${tab}${qs(r.params)}`;
+    return `${p}/cases/${r.id}${tab}${qs(r.params)}`;
   }
-  return `#${p}/${r.screen}${qs(r.params)}`;
+  return `${p}/${r.screen}${qs(r.params)}`;
 }
 
 function parseQuery(raw: string): Record<string, string> | undefined {
@@ -142,8 +150,12 @@ function parseQuery(raw: string): Record<string, string> | undefined {
   return Object.keys(out).length ? out : undefined;
 }
 
-export function parseRoute(hash: string): Route | null {
-  const [rawPath, rawQuery] = hash.replace(/^#\/?/, "").split("?");
+/**
+ * A route from a clean path ("/p/12/cases?tab=running") or a legacy hash
+ * ("#/p/12/cases?tab=running", "#case/34"). Null when it names no screen.
+ */
+export function parseRoute(location: string): Route | null {
+  const [rawPath, rawQuery] = location.replace(/^#?\/?/, "").split("?");
   const path = rawPath.replace(/\/$/, "");
   const params = parseQuery(rawQuery ?? "");
   if (!path) return null;
@@ -194,13 +206,35 @@ export function parseRoute(hash: string): Route | null {
 }
 
 /**
- * The token of a public, read-only share link (#/share/<token>), or null.
+ * The token of a public, read-only share link (/share/<token>, or the legacy
+ * #/share/<token>), or null.
  *
  * Deliberately outside `Route`: a shared brief is not a place in the app. It is
  * rendered before login and without a product, so it must never reach the
  * router, the boot sequence, or any authenticated request.
  */
-export function shareTokenFromHash(hash: string): string | null {
-  const m = hash.match(/^#\/?share\/([A-Za-z0-9_-]{16,64})\/?$/);
+export function shareToken(location: string): string | null {
+  const m = location.match(/^#?\/?share\/([A-Za-z0-9_-]{16,64})\/?$/);
   return m ? m[1] : null;
+}
+
+/** Kept for callers that only ever had the hash. */
+export const shareTokenFromHash = shareToken;
+
+/** Where the app is now: the path and query (the hash is legacy-only). */
+export function currentLocation(): string {
+  return window.location.pathname + window.location.search;
+}
+
+/**
+ * The clean path an old hash URL stands for ("/#/p/2/today" -> "/p/2/today",
+ * "/#/share/<t>" -> "/share/<t>"), or null when the hash is not a route. Used
+ * once on load so bookmarks and links from older builds keep working.
+ */
+export function legacyHashTarget(hash: string): string | null {
+  if (!hash || hash === "#" || hash === "#/") return null;
+  const token = shareToken(hash);
+  if (token) return `/share/${token}`;
+  const route = parseRoute(hash);
+  return route ? formatRoute(route) : null;
 }

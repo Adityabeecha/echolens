@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, TraceStep } from "./api";
+import { isAbortError, withSignal } from "./requestState";
 
 /** Live `window.matchMedia(query).matches`, re-rendering when it flips. */
 export function useMediaQuery(query: string): boolean {
@@ -17,6 +18,12 @@ export function useMediaQuery(query: string): boolean {
 }
 
 // Simple async loader with loading/error/reload.
+//
+// Every read the loader starts is cancelled when its deps change or the
+// component unmounts (screen or product switched), and is timed out by the
+// api layer — so `loading` always ends, in data or in an error the screen's
+// ErrorState can offer a Retry for. A read cancelled by a product switch while
+// this loader is still mounted (the sidebar, say) is simply asked again.
 export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []): {
   data: T | null;
   error: string | null;
@@ -36,15 +43,30 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []): {
     let alive = true;
     const mine = ++seq.current;
     const current = () => alive && seq.current === mine;
+    const ctl = new AbortController();
     setLoading(true);
-    fn()
+    let again = false;
+    Promise.resolve()
+      .then(() => withSignal(ctl.signal, fn))
       .then((d) => current() && (setData(d), setError(null)))
-      .catch((e) => current() && setError(
-        e instanceof Error ? e.message : String(e),
-      ))
-      .finally(() => current() && setLoading(false));
+      .catch((e) => {
+        if (!current()) return;
+        if (isAbortError(e)) {
+          // Not our own cancellation (that only happens once we are stale),
+          // so a product switch cut it off: ask again for the new product.
+          again = !ctl.signal.aborted;
+          return;
+        }
+        setError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        if (!current()) return;
+        if (again) setTick((t) => t + 1);
+        else setLoading(false);
+      });
     return () => {
       alive = false;
+      ctl.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, tick]);
