@@ -1,5 +1,5 @@
 import { Evidence, Investigation } from "../../api";
-import { plural } from "../../format";
+import { plural, sourceLabel } from "../../format";
 import { C, MEASURE, R, S, T, mono } from "../../theme";
 import { EmptyState, Label } from "../../ui";
 
@@ -41,7 +41,7 @@ export function EvidenceTab({ inv, onOpenEvidence }: {
               <span key={src} style={{ fontFamily: mono, fontSize: T.micro, padding: `${S[1]} ${S[2]}`,
                                        borderRadius: R.pill, background: C.hover,
                                        border: `1px solid ${C.border3}`, color: C.muted }}>
-                {src.replace(/_/g, " ")} · {n}
+                {sourceLabel(src)} · {n}
               </span>
             ))}
           </div>
@@ -68,8 +68,7 @@ export function EvidenceTab({ inv, onOpenEvidence }: {
               style={{ display: "grid", gridTemplateColumns: COLS, gap: S[3], padding: `${S[3]} ${S[4]}`,
                        borderBottom: `1px solid ${C.border}`, cursor: "pointer", background: C.card }}>
               <span style={{ fontFamily: mono, fontSize: T.xs, color: C.accent }}>{e.id}</span>
-              <span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted,
-                             textTransform: "uppercase" }}>{e.source}</span>
+              <span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>{sourceLabel(e.source)}</span>
               <span style={{ fontSize: T.sm, color: C.text3, lineHeight: "var(--el-lh-snug)" }}>
                 “{e.snippet}”
               </span>

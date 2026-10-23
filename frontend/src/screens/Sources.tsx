@@ -170,7 +170,10 @@ export function Sources({ onAddProduct, productName }: {
           })}
         </div>
 
-        <Label style={{ margin: "28px 0 12px" }}>AVAILABLE SOON</Label>
+        <Label style={{ margin: "28px 0 4px" }}>Not yet supported</Label>
+        <p style={{ fontSize: T.sm, color: C.dim, margin: `0 0 ${S[3]}`, maxWidth: MEASURE }}>
+          These can't be connected directly today. Import their data as a CSV instead.
+        </p>
         <div style={{ display: "flex", gap: S[2], flexWrap: "wrap", maxWidth: MEASURE }}>
           {data?.available.map((a) => (
             <div key={a} style={{ display: "flex", alignItems: "center", gap: S[2], padding: `${S[2]} ${S[4]}`, border: `1px dashed ${C.border4}`, borderRadius: R.control, color: C.muted, fontSize: T.base }}>

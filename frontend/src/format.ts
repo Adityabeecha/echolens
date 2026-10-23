@@ -8,6 +8,7 @@
 export function money(x: number | null | undefined): string {
   const v = Number(x ?? 0);
   if (!Number.isFinite(v)) return "—";
+  if (v > 0 && v < 0.0001) return "<$0.0001";
   if (v > 0 && v < 1) return `$${v.toFixed(4)}`;
   return `$${v.toFixed(2)}`;
 }
@@ -66,12 +67,43 @@ export function count(n: number | null | undefined): string {
   return Number(n).toLocaleString();
 }
 
-/** "~9% of negative reviews" — the impact line, worded the same everywhere. */
+/** "~9% of recent negative reviews" — the impact line, worded the same everywhere. */
 export function impactLine(impact?: { affected_pct: number; affected_volume: number } | null): string | null {
   if (!impact || !impact.affected_volume) return null;
-  return `~${pct(impact.affected_pct)} of negative reviews`;
+  return `~${pct(impact.affected_pct)} of recent negative reviews`;
 }
 
 export function plural(n: number, one: string, many = `${one}s`): string {
   return n === 1 ? one : many;
+}
+
+/** Human names for evidence/finding sources. Never show PLAY_STORE to a reader. */
+const SOURCE_LABELS: Record<string, string> = {
+  play_store: "Play Store",
+  app_store: "App Store",
+  release_notes: "Release notes",
+  github: "GitHub",
+  github_issues: "GitHub issues",
+  github_prs: "GitHub PRs",
+  reddit: "Reddit",
+  zendesk: "Zendesk",
+  discord: "Discord",
+  csv: "CSV import",
+  csv_reviews: "CSV import",
+  in_app: "In-app feedback",
+};
+
+export function sourceLabel(raw: string | null | undefined): string {
+  if (!raw) return "Unknown source";
+  const key = String(raw).trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (SOURCE_LABELS[key]) return SOURCE_LABELS[key];
+  const words = key.replace(/_/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** "Based on ev_001, ev_001, ev_002" -> "Based on ev_001, ev_002". */
+export function dedupeEvidenceIds(text: string | null | undefined): string {
+  if (!text) return "";
+  return text.replace(/ev_\d+(?:\s*,\s*ev_\d+)+/g, (run) =>
+    Array.from(new Set(run.split(/\s*,\s*/))).join(", "));
 }

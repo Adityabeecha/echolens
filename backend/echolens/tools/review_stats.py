@@ -26,7 +26,7 @@ def review_stats(
     if date_from:
         stmt = stmt.where(Review.created_at >= parse_date(date_from))
     if date_to:
-        stmt = stmt.where(Review.created_at <= parse_date(date_to))
+        stmt = stmt.where(Review.created_at <= parse_date(date_to, end_of_day=True))
     if version_prefix:
         stmt = stmt.where(Review.version.like(f"{version_prefix}%"))
     if os_version:

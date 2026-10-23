@@ -91,6 +91,9 @@ export function Onboarding({
       >
         <div className={`el-onboarding-dossier${phase === "running" ? " is-running" : ""}`} style={{
           position: "relative", width: "100%", maxWidth: 860, margin: "auto",
+          // Scroll inside the viewport so a 720px-tall screen never pushes the
+          // primary action (sticky footer below) off the bottom.
+          maxHeight: "calc(100dvh - 48px)", overflowY: "auto",
           background: C.bg, border: `1px solid ${C.border3}`,
           borderRadius: R.overlay, boxShadow: "var(--el-e4)",
           padding: `${S[8]} ${S[8]} ${S[10]}`,
@@ -205,9 +208,10 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const admin = isAdmin();
 
   const submit = async () => {
-    if (!pkg.trim()) return;
+    if (!pkg.trim() || !admin) return;
     const selectedGithub = githubMode === "all"
       ? GITHUB_OPTIONS.map((option) => option.source)
       : githubSources;
@@ -239,14 +243,14 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: S[4] }}>
       <Field label="Play Store package" hint="Required — copy it from the store URL (id=…)">
-        <input autoFocus value={pkg} onChange={(e) => setPkg(e.target.value)} placeholder="com.spotify.music"
+        <input autoFocus value={pkg} onChange={(e) => setPkg(e.target.value)} placeholder="e.g. com.spotify.music"
           onKeyDown={(e) => e.key === "Enter" && submit()} style={inputStyle} />
       </Field>
       <Field label="GitHub repo" hint="Optional — issues and releases sharpen the investigation">
-        <input value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="signalapp/Signal-Android"
+        <input value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="e.g. signalapp/Signal-Android"
           onKeyDown={(e) => e.key === "Enter" && submit()} style={inputStyle} />
       </Field>
-      <fieldset disabled={!repo.trim()} style={{ margin: 0, padding: `${S[3]} ${S[4]}`, border: `1px solid ${C.border2}`, borderRadius: R.control, opacity: repo.trim() ? 1 : 0.55 }}>
+      <fieldset disabled={!repo.trim()} style={{ margin: 0, padding: `${S[3]} ${S[4]}`, border: `1px solid ${C.border2}`, borderRadius: R.control, opacity: repo.trim() ? 1 : 0.6 }}>
         <legend style={{ padding: `0 ${S[2]}`, color: C.text2, fontSize: T.sm, fontWeight: 600 }}>GitHub data</legend>
         <div style={{ display: "flex", flexWrap: "wrap", gap: `${S[2]} ${S[5]}` }}>
           <Choice checked={githubMode === "all"} type="radio" name="github-mode" label="All GitHub data" onChange={() => setGithubMode("all")} />
@@ -262,7 +266,9 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
             ))}
           </div>
         )}
-        <div style={{ color: C.faint, fontSize: T.xs, marginTop: S[2] }}>Discussions requires a configured GitHub token.</div>
+        <div style={{ color: C.faint, fontSize: T.xs, marginTop: S[2] }}>
+          {repo.trim() ? "Discussions requires a configured GitHub token." : "Enter a GitHub repo above to choose what to pull."}
+        </div>
       </fieldset>
 
       <button type="button" onClick={() => setShowAdditional((open) => !open)} aria-expanded={showAdditional}
@@ -271,15 +277,15 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
       </button>
       {showAdditional && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: S[4], padding: S[4], background: C.card, border: `1px solid ${C.border2}`, borderRadius: R.card }}>
-          <AdditionalField label="App Store app ID" placeholder="324684580" value={additional.app_store} onChange={(value) => setAdditional((current) => ({ ...current, app_store: value }))} />
-          <AdditionalField label="Chrome extension ID" placeholder="aapbdbdomjkkjkaonfhkkikfgjllcleb" value={additional.chrome_web_store} onChange={(value) => setAdditional((current) => ({ ...current, chrome_web_store: value }))} />
-          <AdditionalField label="Hacker News search" placeholder="product or company name" value={additional.hacker_news} onChange={(value) => setAdditional((current) => ({ ...current, hacker_news: value }))} />
-          <AdditionalField label="Stack Overflow tag" placeholder="your-product" value={additional.stack_overflow} onChange={(value) => setAdditional((current) => ({ ...current, stack_overflow: value }))} />
+          <AdditionalField label="App Store app ID" placeholder="e.g. 324684580" value={additional.app_store} onChange={(value) => setAdditional((current) => ({ ...current, app_store: value }))} />
+          <AdditionalField label="Chrome extension ID" placeholder="e.g. aapbdbdomjkkjkaonfhkkikfgjllcleb" value={additional.chrome_web_store} onChange={(value) => setAdditional((current) => ({ ...current, chrome_web_store: value }))} />
+          <AdditionalField label="Hacker News search" placeholder="e.g. your product or company name" value={additional.hacker_news} onChange={(value) => setAdditional((current) => ({ ...current, hacker_news: value }))} />
+          <AdditionalField label="Stack Overflow tag" placeholder="e.g. your-product" value={additional.stack_overflow} onChange={(value) => setAdditional((current) => ({ ...current, stack_overflow: value }))} />
           <div style={{ gridColumn: "1 / -1", color: C.faint, fontSize: T.sm }}>All additional sources are optional.</div>
         </div>
       )}
       <Field label="Display name" hint="Optional — defaults to the package name">
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Spotify"
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Spotify"
           onKeyDown={(e) => e.key === "Enter" && submit()} style={inputStyle} />
       </Field>
 
@@ -289,9 +295,13 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
         </div>
       )}
 
-      <div style={{ display: "flex", alignItems: "center", gap: S[3], marginTop: S[1] }}>
-        <button onClick={submit} disabled={!pkg.trim() || busy} className="el-btn el-btn--primary"
-          style={{ borderRadius: R.control, padding: `${S[3]} ${S[6]}`, fontWeight: 600, fontSize: T.md, fontFamily: sans, cursor: pkg.trim() && !busy ? "pointer" : "not-allowed", opacity: pkg.trim() && !busy ? 1 : 0.5 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: S[3], marginTop: S[1],
+                    position: "sticky", bottom: 0, background: C.bg, zIndex: 1,
+                    padding: `${S[3]} 0`, borderTop: `1px solid ${C.border}`, flexWrap: "wrap" }}>
+        <button onClick={submit} disabled={!pkg.trim() || busy || !admin}
+          title={admin ? undefined : "You need admin access to connect a product."}
+          className="el-btn el-btn--primary"
+          style={{ borderRadius: R.control, padding: `${S[3]} ${S[6]}`, fontWeight: 600, fontSize: T.md, fontFamily: sans, cursor: pkg.trim() && !busy && admin ? "pointer" : "not-allowed", opacity: pkg.trim() && !busy && admin ? 1 : 0.5 }}>
           {busy ? "Starting backfill…" : "Start backfill"}
         </button>
         {canSkip && (
@@ -300,7 +310,9 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
             Cancel
           </button>
         )}
-        <span style={{ fontSize: T.sm, color: C.faint }}>You need admin access to connect a product.</span>
+        {!admin && (
+          <span style={{ fontSize: T.sm, color: C.faint }}>You need admin access to connect a product.</span>
+        )}
       </div>
     </div>
   );
@@ -310,7 +322,7 @@ function Choice({ checked, type, name, label, onChange }: {
   checked: boolean; type: "radio" | "checkbox"; name?: string; label: string; onChange: () => void;
 }) {
   return (
-    <label style={{ display: "inline-flex", alignItems: "center", gap: S[2], color: C.text3, fontSize: T.sm, cursor: "pointer" }}>
+    <label style={{ display: "inline-flex", alignItems: "center", gap: S[2], color: C.text2, fontSize: T.sm, cursor: "pointer" }}>
       <input type={type} name={name} checked={checked} onChange={onChange} style={{ accentColor: C.accent }} />
       {label}
     </label>

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session
@@ -10,6 +11,8 @@ from echolens.llm.client import LLMClient, LLMError
 from echolens.tools.registry import TOOLS, run_tool
 
 MAX_STEPS = 4
+# Seconds a single chat turn may spend before it must answer.
+MAX_WALL_S = 25.0
 MAX_TOOL_CALLS = 3
 MAX_FINDINGS_IN_PROMPT = 12
 MAX_RESULT_CHARS = 1800
@@ -115,9 +118,14 @@ def answer(session: Session, message: str, llm: LLMClient,
     transcript: list[str] = []
     tool_calls: list[dict] = []
     steps = 0
+    # A wall-clock budget: a chat turn took ~50s across five model calls and
+    # then gave up. Past the budget, tools are off and the next step must answer.
+    deadline = time.monotonic() + MAX_WALL_S
 
-    for _ in range(MAX_STEPS):
+    for step in range(MAX_STEPS):
         steps += 1
+        out_of_time = time.monotonic() > deadline
+        last_step = step == MAX_STEPS - 1 or out_of_time
         prompt = "\n\n".join([
             f"PRODUCT: {product_name or 'this product'}",
             _findings_block(rows),
@@ -126,8 +134,9 @@ def answer(session: Session, message: str, llm: LLMClient,
             f"QUESTION: {message}",
             (f"You have used {len(tool_calls)} of {MAX_TOOL_CALLS} tool calls."
              if tool_calls else ""),
-            ("You have no tool calls left — answer from what you have."
-             if len(tool_calls) >= MAX_TOOL_CALLS else ""),
+            ("You have no tool calls left — answer NOW from what you have, even if "
+             "the answer is partial; say what is uncertain."
+             if len(tool_calls) >= MAX_TOOL_CALLS or last_step else ""),
         ]).strip()
 
         try:
@@ -136,7 +145,8 @@ def answer(session: Session, message: str, llm: LLMClient,
         except LLMError:
             break
 
-        if parsed.get("action") == "tool" and len(tool_calls) < MAX_TOOL_CALLS:
+        if (parsed.get("action") == "tool" and len(tool_calls) < MAX_TOOL_CALLS
+                and not last_step):
             spec = parsed.get("tool") or {}
             name = spec.get("name", "")
             args = spec.get("args") or {}

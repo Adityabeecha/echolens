@@ -145,7 +145,14 @@ class Settings(BaseSettings):
     # does not show the button rather than showing one that fails.
     google_client_id: str = ""
     # Role granted to a verified Google account that is not on the admin list.
-    google_default_role: str = "reviewer"
+    # `viewer`, not `reviewer`: a reviewer can start paid investigations, and
+    # any Google account on the internet passing verification got that power.
+    google_default_role: str = "viewer"
+    # Comma-separated email domains allowed to sign in with Google (e.g.
+    # "acme.com"). Empty = only GOOGLE_ADMIN_EMAILS and accounts that already
+    # exist in `users`. A verified Google email proves who someone is, not that
+    # they belong in this workspace.
+    google_allowed_domains: str = ""
     # Comma-separated emails that get `admin` on Google sign-in. Everyone else
     # gets `google_default_role`, so destructive actions stay with the owner.
     google_admin_emails: str = ""
@@ -162,6 +169,14 @@ class Settings(BaseSettings):
         # A known signing key is fatal wherever auth is real, not just in
         # production: staging enforces logins too, so shipping the public default
         # there means anyone can mint an admin token for it.
+        # ECHOLENS_ENV defaults to "dev", which turns auth OFF and makes every
+        # anonymous caller an admin. A deployment that simply forgot the
+        # variable was therefore wide open. Dev is only accepted implicitly for
+        # a local SQLite database; anything else must say which mode it is.
+        if (self.echolens_env == "dev" and "echolens_env" not in self.model_fields_set
+                and not self.echolens_db_url.startswith("sqlite")):
+            problems.append("ECHOLENS_ENV is not set — set it explicitly (production, staging, "
+                            "or dev for a local-only install); dev disables authentication")
         if self.echolens_env in ("production", "staging"):
             if self.jwt_secret in self._INSECURE_SECRETS:
                 problems.append("JWT_SECRET is unset or the insecure default — set a strong random value")
@@ -191,6 +206,10 @@ class Settings(BaseSettings):
     slack_webhook_url: str = ""
     # Shared secret guarding the reply-to-act endpoint (Slack → review).
     slack_action_token: str = ""
+    # Slack app "Signing Secret". When set, Slack button clicks are verified by
+    # Slack's request signature (X-Slack-Signature) — the method Slack
+    # supports today — instead of the deprecated verification token.
+    slack_signing_secret: str = ""
     # On a Slack "approve", also open a GitHub issue automatically.
     auto_create_issue_on_approve: bool = False
     # Fallback repo for issue creation when a product has no GitHub source.
@@ -212,6 +231,10 @@ class Settings(BaseSettings):
     @property
     def auth_required(self) -> bool:
         return self.echolens_env != "dev"
+
+    @property
+    def google_domain_list(self) -> list[str]:
+        return [d.strip().lower().lstrip("@") for d in self.google_allowed_domains.split(",") if d.strip()]
 
     @property
     def google_admin_list(self) -> list[str]:

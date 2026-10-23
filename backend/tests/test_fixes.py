@@ -78,7 +78,7 @@ def test_sources_reflect_connected_state(client):
 
 def test_open_signup_blocked_in_production(client, monkeypatch):
     monkeypatch.setattr(settings, "echolens_env", "production")
-    r = client.post("/auth/signup", json={"email": "x@y.com", "password": "pw"})
+    r = client.post("/auth/signup", json={"email": "x@y.com", "password": "long-enough-pw"})
     assert r.status_code == 403  # first admin must come from bootstrap env
 
 

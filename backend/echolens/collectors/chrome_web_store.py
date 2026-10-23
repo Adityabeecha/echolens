@@ -53,12 +53,16 @@ def _parse_batch(text: str) -> list[dict]:
     try:
         outer = json.loads(body)
         inner = json.loads(outer[0][2])
-    except (ValueError, IndexError, TypeError) as err:
+        if not isinstance(inner, list):
+            raise ValueError("expected a review envelope")
+        rows = inner[0] if inner else []
+        if not isinstance(rows, list) or any(not isinstance(r, list) for r in rows):
+            raise ValueError("expected positional review rows")
+    except (ValueError, IndexError, KeyError, TypeError) as err:
         raise RuntimeError(
             f"Chrome Web Store: unrecognised response shape ({type(err).__name__}). "
             "The undocumented endpoint likely changed.") from err
-    rows = inner[0] if inner and isinstance(inner[0], list) else []
-    return [r for r in rows if isinstance(r, list)]
+    return rows
 
 
 class ChromeWebStoreCollector(Collector):

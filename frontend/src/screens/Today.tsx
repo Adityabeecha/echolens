@@ -70,6 +70,9 @@ export function Today({
   ) ?? null;
 
   const staleSources = (sources.data?.connected ?? []).filter((s) => s.stale || s.error);
+  // Detected but not yet triaged. Today used to say "Nothing needs you" while
+  // Cases, on the same data, said "17 signals waiting for you".
+  const untriaged = me?.untriaged ?? 0;
   const needsYou = rows.filter((r) => statusMeta(r.status).needsYou);
   const running = rows.filter((r) => r.status === "running");
   const queued = rows.filter((r) => r.status === "queued");
@@ -182,6 +185,8 @@ export function Today({
                 <h2 id="attention-brief-title">
                   {loading
                     ? "Reading today's signals…"
+                    : needsYou.length + staleSources.length === 0 && untriaged > 0
+                    ? `${untriaged} ${plural(untriaged, "signal")} waiting for triage`
                     : needsYou.length + staleSources.length === 0
                     ? "Everything important is moving"
                     : `${needsYou.length + staleSources.length} ${plural(needsYou.length + staleSources.length, "decision")} waiting`}
@@ -189,6 +194,8 @@ export function Today({
                 <p>
                   {loading
                     ? "Checking decisions, source health, and active investigations."
+                    : needsYou.length + staleSources.length === 0 && untriaged > 0
+                    ? "No finding needs a decision yet. Pick which signals become investigations."
                     : needsYou.length + staleSources.length === 0
                     ? `No finding or feedback source needs a decision${product ? ` for ${product}` : ""}.`
                     : "Review the evidence that changed enough to need a human call."}
@@ -212,14 +219,24 @@ export function Today({
             {/* ── a. what needs you ─────────────────────────────────── */}
             <Section
               title="Needs you"
-              count={needsYou.length + staleSources.length}
+              count={needsYou.length + staleSources.length
+                     || (untriaged > 0 ? 1 : 0)}
               color={C.accent}
               emphasis
             >
               {loading ? (
                 <Skeleton rows={2} height={62} />
               ) : needsYou.length === 0 && staleSources.length === 0 ? (
-                <Reassurance running={running.length} queued={queued.length} product={product} />
+                untriaged > 0 ? (
+                  <ActionRow
+                    title={`${untriaged} ${plural(untriaged, "signal")} detected, not yet investigated`}
+                    detail="Spikes and rising complaints EchoLens noticed. Choose which become cases."
+                    action="Review signals"
+                    onAction={() => onGoCases("all")}
+                  />
+                ) : (
+                  <Reassurance running={running.length} queued={queued.length} product={product} />
+                )
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: S[2], maxWidth: MEASURE }}>
                   {staleSources.length > 0 && (
@@ -285,7 +302,10 @@ export function Today({
               // AFTER slice(0,5), so 30 open problems rendered as
               // "TOP OPEN PROBLEMS · 5" — a count the user had no reason to
               // doubt and no way to correct.
-              count={allOpenProblems.length}
+              // Open problems already shown under "Needs you" count too; a
+              // HIGH-severity finding above sat beside "Top open problems · 0".
+              count={allOpenProblems.length + needsYou.filter((r) =>
+                ["resolved", "needs_review", "needs_human", "regressed"].includes(r.status)).length}
               action={{ label: "Plan the quarter", onClick: onGoPlan }}
             >
               {openProblems.length === 0 ? (
@@ -471,7 +491,9 @@ function ScoreStrip({
                     background: band.color }} />
 
       <div style={{ flex: "none" }}>
-        <Label>Health · higher is better</Label>
+        <span title="0–100. Higher is healthier: 100 minus the attention score, which open problems, regressions, waiting signals and worsening sentiment add to.">
+          <Label>Health · higher is better</Label>
+        </span>
         <div style={{ display: "flex", alignItems: "baseline", gap: S[3], marginTop: S[2] }}>
           <span className="el-num"
             title={`Health ${Math.round(me.health)} of 100 — 100 minus the attention score`}
