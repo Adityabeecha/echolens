@@ -1,5 +1,10 @@
 # Weekly brief (v7.0). Sends EchoLens's Monday-morning brief to Slack/email
 # unprompted. Uses the same secrets as the collector workflow.
+#
+# SECURITY: use a dedicated, low-privilege REVIEWER account for automation (not
+# an admin and not a personal login), with a unique password stored only in
+# these secrets. Rotate it if it ever leaks. The password is only read from the
+# environment and never echoed; do not add `set -x` to these scripts.
 name: EchoLens weekly brief
 
 on:

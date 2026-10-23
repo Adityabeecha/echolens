@@ -187,7 +187,11 @@ def product_snapshot(session: Session, product: Product, now: datetime) -> dict:
         "negative_rate_pct": round(100 * recent, 1) if recent is not None else None,
         "negative_rate_delta_pct": round(100 * delta, 1) if has_rate else None,
         "confirmed_fixes": len(confirmed_inv),
-        "has_data": bool(sources) or bool(recent),
+        # Whether ANY feedback exists, not whether the last 7 days had some: the
+        # old test (`bool(recent)`) told a product with 3,000 older reviews
+        # "No feedback has been collected" beside a 12-week rating chart.
+        "has_data": bool(sources) or session.scalar(
+            select(Review.id).where(Review.product == product.name).limit(1)) is not None,
     }
 
 

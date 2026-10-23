@@ -223,9 +223,8 @@ def calibrate_from_history(session: Session, product_id: int | None = None,
     if not edges:
         return {"tested": 0, "hits": 0, "misses": 0}
 
-    inv_stmt = select(Investigation).where(Investigation.status == "resolved")
-    if product_id is not None:
-        inv_stmt = inv_stmt.where(Investigation.product_id == product_id)
+    inv_stmt = select(Investigation).where(
+        Investigation.status == "resolved", Investigation.product_id == product_id)
 
     hits = misses = tested = 0
     for inv in session.scalars(inv_stmt).all():

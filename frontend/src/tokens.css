@@ -2077,7 +2077,7 @@ body { background: var(--el-canvas-warm); }
   .el-shell nav.el-sidebar > *:not(.el-mobile-task-nav) { display: none !important; }
   .el-mobile-task-nav {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0,1fr));
+    grid-template-columns: repeat(5, minmax(0,1fr));
     height: 72px;
   }
   .el-mobile-task-nav button {

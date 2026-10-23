@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Investigation, api, canReview } from "../../api";
+import { Investigation, api, canReview, getActiveProduct } from "../../api";
+import { useAsync } from "../../hooks";
 import { withToast } from "../../components/Toast";
 import { when } from "../../format";
 import { C, MEASURE, R, S, T, mono } from "../../theme";
@@ -47,6 +48,12 @@ const FIX_META: Record<string, { label: string; color: string; body: string }> =
 export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const f = inv.finding;
+  // Is a GitHub repo connected to this product? Only a clearly-known "no"
+  // disables the button; while loading or on error we leave it to the server.
+  const prods = useAsync(() => api.products(), []);
+  const activeId = getActiveProduct() ?? prods.data?.active_product_id ?? null;
+  const activeProduct = prods.data?.products.find((p) => p.id === activeId);
+  const noRepo = !!activeProduct && !activeProduct.github_repo;
 
   if (!f) {
     return (
@@ -128,11 +135,18 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
                 {busy === "copy" ? "Copying…" : "Copy as issue"}
               </button>
               {canCreate && (
-                <button onClick={createIssue} disabled={!!busy} className="el-btn el-btn--primary"
+                <button onClick={createIssue} disabled={!!busy || noRepo}
+                  title={noRepo ? "No GitHub repo is connected to this product. Connect one in Sources first." : undefined}
+                  className="el-btn el-btn--primary"
                   style={{ background: C.accent, color: C.onAccent, border: "none",
                            borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base, fontWeight: 600 }}>
                   {busy === "create" ? "Creating…" : "Create GitHub issue"}
                 </button>
+              )}
+              {canCreate && noRepo && (
+                <span style={{ fontSize: T.xs, color: C.dim }}>
+                  Connect a GitHub repo in Sources to file issues from here.
+                </span>
               )}
               {canReview() && (
                 <button onClick={notify} disabled={!!busy} className="el-btn" style={ghost}>

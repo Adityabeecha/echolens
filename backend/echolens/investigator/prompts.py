@@ -179,6 +179,12 @@ deterministic scanner rejects findings with uncited causal claims.
 - If the outcome is insufficient_evidence or budget_exhausted: make NO causal claims. \
 State plainly what was checked and what evidence would settle the question.
 - If the outcome is needs_human: describe the conflict or uncertainty precisely.
+- Write for a product manager. `summary` is a plain headline of the problem and its \
+cause: never start it with a hypothesis label ("H1 supported:") and never mention \
+hypothesis ids, the two-source rule, guards or confidence thresholds in `prose`.
+- Name the most SPECIFIC mechanism the cited evidence supports (e.g. "background photo \
+sync, on by default in v3.2.0" rather than "the v3.2 release"). Do not invent feature \
+flags, setting names or code identifiers that do not appear in the evidence.
 Respond with JSON only."""
 
 FINDING_SCHEMA = {

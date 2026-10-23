@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CaseRow, SignalRow, ThemeCandidate, api, canReview } from "../api";
 import { CaseCard } from "../components/CaseCard";
 import { withToast } from "../components/Toast";
-import { age, plural } from "../format";
+import { plural, when } from "../format";
 import { useAsync } from "../hooks";
 import { CASE_TABS, SEVERITY } from "../status";
 import { C, MEASURE, R, S, T, mono, sans } from "../theme";
@@ -126,7 +126,19 @@ export function Cases({
   // Signals and themes are the same decision — "is this worth a case?" — so they
   // share one selection and one commit, instead of two lists with two buttons.
   const signals = view.data?.signals ?? [];
-  const liveSignals = signals.filter((s) => !s.dismissed);
+  const SEV_RANK: Record<string, number> = { high: 3, medium: 2, low: 1 };
+  // Strongest first: severity band, then how far past normal (z).
+  // Two signals with the same title read as one signal listed twice (the demo
+  // seeds a 1-star spike the detector also finds), so keep only the strongest.
+  const seenTitles = new Set<string>();
+  const liveSignals = signals.filter((s) => !s.dismissed).sort((a, b) =>
+    (SEV_RANK[signalSeverity(b)] ?? 0) - (SEV_RANK[signalSeverity(a)] ?? 0) || b.z - a.z)
+    .filter((s) => {
+      const key = s.title.trim().toLowerCase();
+      if (seenTitles.has(key)) return false;
+      seenTitles.add(key);
+      return true;
+    });
   const dismissedSignals = signals.filter((s) => s.dismissed);
   const themes = (candidates.data?.candidates ?? []).filter((c) => !c.existing);
   const takenThemes = (candidates.data?.candidates ?? []).filter((c) => c.existing);
@@ -153,7 +165,8 @@ export function Cases({
     if (result) {
       setSelected({});
       bumpReload();
-      setParams({ tab: "queued" });
+      // A selected item can start immediately; land where it actually is.
+      setParams({ tab: (result.queue?.running?.length ?? 0) > 0 ? "running" : "queued" });
     }
   };
 
@@ -224,13 +237,13 @@ export function Cases({
           })}
         </div>
         <div style={{ flex: 1 }} />
-        <Select value={sev} onChange={(v) => setParams({ sev: v })}
+        <Select label="Severity" value={sev} onChange={(v) => setParams({ sev: v })}
                 options={[["", "Any severity"], ...Object.entries(SEVERITY).map(
-                  ([k, m]) => [k, `${m.label} severity`] as [string, string])]} />
-        <Select value={source} onChange={(v) => setParams({ source: v })}
+                  ([k, m]) => [k, k === "unknown" ? "Severity unknown" : `${m.label} severity`] as [string, string])]} />
+        <Select label="Source" value={source} onChange={(v) => setParams({ source: v })}
                 options={[["", "Any source"], ...sources.map(
                   (s) => [s, sourceLabel(s)] as [string, string])]} />
-        <Select value={range} onChange={(v) => setParams({ range: v })}
+        <Select label="Time range" value={range} onChange={(v) => setParams({ range: v })}
                 options={RANGES.map((r) => [r.key, r.label] as [string, string])} />
         <input
           value={search}
@@ -469,6 +482,19 @@ function emptyBody(tab: string, filtered: boolean, product: string | null, signa
   }
 }
 
+/** Signals carry no severity field; derive a band from z so the sort is meaningful. */
+function signalSeverity(s: SignalRow): string {
+  const z = Math.abs(s.z);
+  return z >= 3 ? "high" : z >= 2 ? "medium" : "low";
+}
+
+function detectedOn(ageDays: number | null): string | null {
+  if (ageDays == null || !Number.isFinite(ageDays)) return null;
+  const d = new Date();
+  d.setDate(d.getDate() - Math.max(0, Math.round(ageDays)));
+  return when(d.toISOString());
+}
+
 function SignalCard({ signal, selected, onToggle }: {
   signal: SignalRow; selected: boolean; onToggle: () => void;
 }) {
@@ -485,8 +511,8 @@ function SignalCard({ signal, selected, onToggle }: {
                       fontFamily: mono, fontSize: T.micro, color: C.faint }}>
           <span>{sourceLabel(signal.type)}</span>
           <span>z {signal.z.toFixed(1)}</span>
-          <span>{signal.window}</span>
-          <span>{age(signal.age_days)}</span>
+          <span>{signal.window} window</span>
+          {detectedOn(signal.age_days) && <span>detected {detectedOn(signal.age_days)}</span>}
         </div>
       </div>
     </label>
@@ -516,7 +542,7 @@ function ThemeCard({ theme, selected, onToggle }: {
             </span>
             {trend && (
               <span style={{ fontFamily: mono, fontSize: T.micro, color: trend.c }}>
-                <Icon name={trend.s} size={11} /> {theme.trend}
+                · <Icon name={trend.s} size={11} /> {theme.trend === "up" ? "rising" : "falling"}
               </span>
             )}
             {theme.label_source === "verbatim" && (
@@ -531,7 +557,7 @@ function ThemeCard({ theme, selected, onToggle }: {
                 aria-expanded={open}
                 style={{ fontFamily: mono, fontSize: T.micro, color: C.dim, padding: `0 ${S[1]}` }}>
                 <Icon name={open ? "chevronDown" : "chevronRight"} size={11} />
-                {open ? "hide reviews" : `${theme.verbatims.length} reviews`}
+                {open ? "hide examples" : `show ${theme.verbatims.length} example reviews`}
               </button>
             )}
           </div>
@@ -549,12 +575,12 @@ function ThemeCard({ theme, selected, onToggle }: {
   );
 }
 
-function Select({ value, onChange, options }: {
-  value: string; onChange: (v: string) => void; options: [string, string][];
+function Select({ label, value, onChange, options }: {
+  label: string; value: string; onChange: (v: string) => void; options: [string, string][];
 }) {
   return (
     <select
-      aria-label="Filter cases"
+      aria-label={label}
       value={value}
       onChange={(e) => onChange(e.target.value || "")}
       style={{ background: C.card, border: `1px solid ${C.border3}`, borderRadius: R.control,

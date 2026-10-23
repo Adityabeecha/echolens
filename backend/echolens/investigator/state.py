@@ -27,8 +27,11 @@ class Budget:
         return self.prior_elapsed_s + live
 
     @classmethod
-    def for_tier(cls, name: str) -> "Budget":
-        return cls(tier=BUDGET_TIERS[name])
+    def for_tier(cls, name: str | None) -> "Budget":
+        # An unknown tier ("Quick", "deep ", a stale value from a resumed row)
+        # raised KeyError mid-request. Normalise, and fall back to standard.
+        key = (name or "standard").strip().lower()
+        return cls(tier=BUDGET_TIERS.get(key, BUDGET_TIERS["standard"]))
 
     def as_dict(self) -> dict:
         f = self.extension_factor
