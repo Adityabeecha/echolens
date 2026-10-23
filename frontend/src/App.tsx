@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Evidence, ProductRow, api, getToken, isAdmin, isGuest, onAuthError, setActiveProduct, setGuest, setRole, setToken } from "./api";
-import { CaseTab, GLOBAL_SCREENS, Screen, caseTabFor } from "./nav";
+import { CaseTab, GLOBAL_SCREENS, LEARNED_VIEWS, LearnedView, SETTINGS_SECTIONS, Screen,
+         SettingsSection, caseTabFor } from "./nav";
 import { useRouter } from "./router";
 import { useWorkWatcher } from "./hooks";
 import { C, T, sans } from "./theme";
@@ -18,13 +19,13 @@ import { Costs } from "./screens/Costs";
 import { Settings } from "./screens/Settings";
 import { Login } from "./screens/Login";
 import { Onboarding } from "./screens/Onboarding";
-import { Calibration } from "./screens/Calibration";
-import { Patterns } from "./screens/Patterns";
 import { Portfolio } from "./screens/Portfolio";
 import { Chat } from "./screens/Chat";
 import { Backlog } from "./screens/Backlog";
-import { Brain } from "./screens/Brain";
+import { LearnedPatterns } from "./screens/LearnedPatterns";
 import { ThemeToggle } from "./components/ThemeToggle";
+import { FirstRunTour } from "./components/FirstRunTour";
+import { markTourSeen, tourSeen } from "./tourState";
 import { ThemeMode, applyTheme, persistTheme, resolveTheme } from "./themeMode";
 import { persistSidebarCollapsed, resolveSidebarCollapsed } from "./sidebarState";
 
@@ -44,6 +45,9 @@ export default function App() {
   const [products, setProducts] = useState<ProductRow[]>([]);
   const [booted, setBooted] = useState(false);
   const [deleting, setDeleting] = useState<ProductRow | null>(null);
+  // The first-run tour opens once, when the first product is added.
+  const [tourOpen, setTourOpen] = useState(false);
+  const closeTour = useCallback(() => { markTourSeen(); setTourOpen(false); }, []);
 
   useEffect(() => {
     applyTheme(theme);
@@ -362,15 +366,6 @@ export default function App() {
                      onAddProduct={() => navigate({ screen: "onboarding", productId: null })} />
           )}
 
-          {screen === "patterns" && (
-            <Patterns key={key} onGoMemory={() => go("memory")}
-                      onGoCases={() => go("cases")} />
-          )}
-
-          {screen === "calibration" && (
-            <Calibration key={key} onGoCases={() => go("cases", { tab: "needs-review" })} />
-          )}
-
           {screen === "costs" && <Costs key={key} onGoSettings={() => go("settings")} />}
 
           {screen === "settings" && (
@@ -381,6 +376,10 @@ export default function App() {
               onGoSources={() => go("sources")}
               onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
               onDeleteProduct={setDeleting}
+              section={SETTINGS_SECTIONS.includes(params.section as SettingsSection)
+                ? params.section as SettingsSection : "general"}
+              onSection={(section) => setParams({ section: section === "general" ? null : section })}
+              onGoReview={() => go("cases", { tab: "needs-review" })}
             />
           )}
 
@@ -391,11 +390,16 @@ export default function App() {
                      onGoCases={() => go("cases")}
                      backLabel={backTarget?.label ?? "Cases"} />
           )}
+          {/* Patterns and Product memory, as two tabs of one screen. */}
           {screen === "memory" && (
-            <Brain key={key} onOpenInvestigation={openCase} onBack={back}
-                   onGoCases={() => go("cases")}
-                   onGoPatterns={() => go("patterns")}
-                   backLabel={backTarget?.label ?? "Patterns"} />
+            <LearnedPatterns
+              key={key}
+              productName={productName}
+              view={LEARNED_VIEWS.includes(params.view as LearnedView) ? params.view as LearnedView : "map"}
+              onView={(view) => setParams({ view: view === "map" ? null : view })}
+              onOpenInvestigation={openCase}
+              onGoCases={() => go("cases")}
+            />
           )}
 
           {screen === "portfolio" && (
@@ -463,6 +467,7 @@ export default function App() {
         />
       )}
       <Toasts />
+      {tourOpen && !onboarding && <FirstRunTour onClose={closeTour} />}
     </div>
   );
 
@@ -480,6 +485,7 @@ export default function App() {
       api.activateProduct(newest.id).catch(() => {});
       bumpReload();
       navigate({ screen: target, productId: newest.id, params: extra }, { replace: true });
+      if (r.products.length === 1 && !tourSeen()) setTourOpen(true);
     }).catch(() => {
       // Without this the wizard sat on its completed state forever with no
       // feedback if the refresh failed.

@@ -175,13 +175,15 @@ const PRIMARY: NavItem[] = [
   { key: "ask", icon: "ask", label: "Ask", hint: "Ask about your feedback" },
 ];
 
+// Four, not six. Patterns and Product memory were two halves of one answer —
+// "what has EchoLens learned?" — so they are tabs of Learned patterns now, and
+// Calibration ("is it right as often as it claims?") is a section of Settings.
+// Old links to either are rewritten in nav.ts, so nothing 404s.
 const SYSTEM: NavItem[] = [
   { key: "sources", icon: "sources", label: "Sources", hint: "Where the feedback comes from" },
-  { key: "patterns", icon: "patterns", label: "Patterns", hint: "Fixes proven to work" },
-  { key: "memory", icon: "diamond", label: "Product memory", hint: "What EchoLens has learned about this product" },
-  { key: "calibration", icon: "calibration", label: "Calibration", hint: "How accurate EchoLens has been" },
+  { key: "memory", icon: "patterns", label: "Learned patterns", hint: "How this product breaks, and fixes proven to work" },
   { key: "costs", icon: "costs", label: "Costs", hint: "What each case cost to run" },
-  { key: "settings", icon: "settings", label: "Settings", hint: "Budgets, limits and this product" },
+  { key: "settings", icon: "settings", label: "Settings", hint: "Budgets, limits, calibration and trackers" },
 ];
 
 const SYSTEM_KEYS = SYSTEM.map((n) => n.key);
@@ -330,7 +332,7 @@ export function Sidebar({
         <button
           onClick={() => setSystemOpen((o) => !o)}
           className="el-btn el-btn--sm el-nav-system-toggle"
-          title="Sources, patterns, memory, calibration, costs and settings"
+          title="Sources, learned patterns, costs and settings"
           aria-expanded={showSystem}
           style={{ display: "flex", alignItems: "center", gap: S[2],
                    padding: `${S[1]} ${S[2]}`, width: "100%", justifyContent: "flex-start",
@@ -373,6 +375,7 @@ export function Sidebar({
           <button
             key={`mobile-${item.key}`}
             type="button"
+            data-tour={item.key}
             onClick={() => go(item.key)}
             className={isActive(item.key) ? "is-active" : ""}
             aria-current={isActive(item.key) ? "page" : undefined}
@@ -401,6 +404,7 @@ function NavRow({ item, active, onClick, small }: {
   return (
     <button
       onClick={onClick}
+      data-tour={item.key}
       className={`el-btn el-nav-item${small ? " el-nav-item--small" : ""}${active ? " el-nav-item--active" : ""}`}
       title={item.hint}
       aria-current={active ? "page" : undefined}

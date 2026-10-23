@@ -7,11 +7,13 @@ import { Icon } from "../components/Icon";
 interface Props {
   onGoMemory: () => void;
   onGoCases: () => void;
+  /** Rendered as a tab of Learned patterns, which owns the header. */
+  embedded?: boolean;
 }
 
 // The validated pattern library: (trigger → cause → fix) proven by confirmed
 // fixes. Earned, not asserted — each pattern is backed by fixes that worked.
-export function Patterns({ onGoMemory, onGoCases }: Props) {
+export function Patterns({ onGoMemory, onGoCases, embedded }: Props) {
   const { data, loading, error, reload } = useAsync(() => api.patterns(), []);
   if (loading && !data) return <Centered>Loading patterns…</Centered>;
   if (error || !data) {
@@ -24,17 +26,19 @@ export function Patterns({ onGoMemory, onGoCases }: Props) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <ScreenHeader
-        title="Patterns"
-        product={data.product}
-        subtitle="Fixes that were proven to work"
-        right={
-          <button onClick={onGoMemory} className="el-btn"
-            style={{ fontSize: T.sm, color: C.dim }}>
-            What else this product has taught EchoLens →
-          </button>
-        }
-      />
+      {!embedded && (
+        <ScreenHeader
+          title="Patterns"
+          product={data.product}
+          subtitle="Fixes that were proven to work"
+          right={
+            <button onClick={onGoMemory} className="el-btn"
+              style={{ fontSize: T.sm, color: C.dim }}>
+              What else this product has taught EchoLens →
+            </button>
+          }
+        />
+      )}
       <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>
         <p style={{ fontSize: T.base, color: C.muted, maxWidth: 720, lineHeight: "var(--el-lh-normal)", marginTop: 0 }}>
           Every pattern below is built from a fix that was <span style={{ color: C.good }}>verified to work</span>. The
@@ -52,7 +56,7 @@ export function Patterns({ onGoMemory, onGoCases }: Props) {
               <div style={{ marginTop: S[3], fontSize: T.sm, color: C.dim }}>
                 Want what EchoLens suspects before any fix is proven?{" "}
                 <button onClick={onGoMemory} className="el-btn"
-                  style={{ color: C.accent, fontSize: T.sm }}>See Product memory →</button>
+                  style={{ color: C.accent, fontSize: T.sm }}>See how it breaks →</button>
               </div>
             </>}
             action="Open resolved cases"
