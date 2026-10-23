@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  CaseRow, Incident, IntentCounts, SignalRow, ThemeCandidate, ThemeOverride, api, canReview,
+  CASE_VIEW_FILTERS, CaseRow, CaseViewParams, Incident, IntentCounts, SavedView, SignalRow,
+  ThemeCandidate, ThemeOverride, api, canReview, errorMessage, isGuest,
 } from "../api";
 import { CaseCard } from "../components/CaseCard";
 import { withToast } from "../components/Toast";
@@ -13,6 +14,7 @@ import { Icon } from "../components/Icon";
 
 interface Props {
   productName: string | null;
+  productId?: number | null;
   params: Record<string, string>;
   setParams: (next: Record<string, string | null>) => void;
   onOpenCase: (id: number, status?: string) => void;
@@ -56,7 +58,7 @@ const sourceLabel = (s: string) => SOURCE_LABEL[s] ?? s.replace(/_/g, " ");
  * top, which is what made the old feed unreadable.
  */
 export function Cases({
-  productName, params, setParams, onOpenCase, onNewCase, reloadKey, bumpReload,
+  productName, productId = null, params, setParams, onOpenCase, onNewCase, reloadKey, bumpReload,
 }: Props) {
   const view = useAsync(() => api.cases(), [reloadKey]);
   const candidates = useAsync(() => api.feedCandidates(), [reloadKey]);
@@ -248,6 +250,9 @@ export function Cases({
           ) : undefined
         }
       />
+
+      <SavedViewsBar key={productId ?? "none"} productId={productId} params={{ ...params, q: search }}
+        onApply={(next) => { setSearch(next.q ?? ""); setParams(next); }} />
 
       {/* filter bar — every value here is in the URL */}
       <div className="el-case-filters" style={{ flex: "none", borderBottom: `1px solid ${C.border}`,
@@ -1074,5 +1079,101 @@ function SmallButton({ children, onClick, disabled }: {
                cursor: disabled ? "wait" : "pointer" }}>
       {children}
     </button>
+  );
+}
+
+
+/** Personal filter presets. Applying one clears every filter it did not save. */
+export function SavedViewsBar({ productId, params, onApply }: {
+  productId: number | null;
+  params: Record<string, string>;
+  onApply: (params: Record<string, string | null>) => void;
+}) {
+  const views = useAsync(() => api.savedViews(productId), [productId]);
+  const [editing, setEditing] = useState<SavedView | null | undefined>(undefined);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  if (productId == null) return null;
+  const guest = isGuest(), canManage = guest || canReview();
+  const rows = views.data?.views ?? [];
+  const current: CaseViewParams = {};
+  for (const key of CASE_VIEW_FILTERS) if (params[key]) current[key] = params[key];
+  const begin = (view: SavedView | null) => {
+    setEditing(view); setName(view?.name ?? ""); setError(null);
+  };
+  const mutate = async (operation: () => Promise<unknown>) => {
+    setBusy(true); setError(null);
+    try {
+      await operation();
+      if (!alive.current) return;
+      setEditing(undefined);
+      views.reload();
+    } catch (e) {
+      if (alive.current) setError(errorMessage(e));
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  };
+  return (
+    <div aria-label="Saved Cases views" style={{ flex: "none", padding: `${S[2]} ${S[6]}`,
+      borderBottom: `1px solid ${C.border}`, display: "flex", flexDirection: "column", gap: S[2] }}>
+      <div style={{ display: "flex", alignItems: "center", gap: S[2], flexWrap: "wrap" }}>
+        {rows.map((view) => {
+          const active = CASE_VIEW_FILTERS.every(k => (view.params[k] ?? "") === (current[k] ?? ""));
+          return (
+            <div key={view.id} style={{ display: "inline-flex", alignItems: "center", borderRadius: R.pill,
+              border: `1px solid ${active ? C.accentLine : C.border3}`, background: active ? C.accentBg : C.card }}>
+              <button className="el-btn el-btn--sm" aria-pressed={active} title={view.name}
+                disabled={busy} onClick={() => onApply(Object.fromEntries(
+                  CASE_VIEW_FILTERS.map(k => [k, view.params[k] || null])))}
+                style={{ color: active ? C.accent : C.text3, padding: `${S[1]} ${S[3]}`, maxWidth: 180 }}>
+                <span className="el-truncate">{view.name}</span>
+              </button>
+              {canManage && <>
+                <button className="el-btn el-btn--sm" aria-label={`Rename ${view.name}`} disabled={busy}
+                  onClick={() => begin(view)} style={{ color: C.dim, fontSize: T.micro }}>Rename</button>
+                <button className="el-btn el-btn--sm" aria-label={`Delete ${view.name}`} disabled={busy}
+                  onClick={() => mutate(() => api.deleteSavedView(view.id, productId))} style={{ color: C.dim }}>
+                  <Icon name="close" size={12} />
+                </button>
+              </>}
+            </div>
+          );
+        })}
+        {canManage && <button className="el-btn el-btn--ghost el-btn--sm" onClick={() => begin(null)}
+          disabled={busy || views.loading || !!views.error || rows.length >= 20}
+          title={rows.length >= 20 ? "You can save up to 20 views per product" : "Save these Cases filters"}>
+          Save view
+        </button>}
+        <span style={{ fontSize: T.micro, color: C.faint }}>
+          {guest ? "Saved on this browser" : !canManage ? "Reviewer access required to save views" :
+            `${rows.length} saved ${plural(rows.length, "view")}`}
+        </span>
+      </div>
+      {editing !== undefined && <form onSubmit={(e) => {
+        e.preventDefault();
+        if (!name.trim() || busy) return;
+        return mutate(() => editing
+          ? api.updateSavedView(editing.id, name, editing.params, productId)
+          : api.createSavedView(name, current, productId));
+      }} style={{ display: "flex", alignItems: "center", gap: S[2], flexWrap: "wrap" }}>
+        <input aria-label="View name" placeholder="Name this view" value={name} maxLength={80} required autoFocus
+          disabled={busy} onChange={(e) => setName(e.target.value)}
+          style={{ minWidth: 0, width: 220, padding: `${S[2]} ${S[3]}`, borderRadius: R.control,
+            border: `1px solid ${C.border3}`, background: C.card, color: C.text, fontSize: T.sm }} />
+        <button className="el-btn el-btn--primary el-btn--sm" type="submit" disabled={busy || !name.trim()}>
+          {busy ? "Saving..." : editing ? "Rename view" : "Save"}
+        </button>
+        <button className="el-btn el-btn--ghost el-btn--sm" type="button" disabled={busy}
+          onClick={() => { setEditing(undefined); setError(null); }}>Cancel</button>
+      </form>}
+      {views.error && <div role="alert" style={{ fontSize: T.sm, color: C.bad }}>
+        Couldn't load saved views. <button className="el-btn el-btn--sm" onClick={views.reload}>Retry</button>
+      </div>}
+      {error && <div role="alert" style={{ fontSize: T.sm, color: C.bad }}>{error}</div>}
+    </div>
   );
 }

@@ -1,4 +1,4 @@
-import { ReactNode, Suspense, lazy, useCallback, useEffect, useState } from "react";
+import { ReactNode, Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { ProductRow, api, endSession, isAdmin, isAuthed, isGuest, onAuthError, setActiveProduct, setGuest, setRole } from "./api";
 import { CaseTab, GLOBAL_SCREENS, LEARNED_VIEWS, LearnedView, SETTINGS_SECTIONS, Screen,
          SettingsSection, caseTabFor } from "./nav";
@@ -6,6 +6,8 @@ import { useRouter } from "./router";
 import { useWorkWatcher } from "./hooks";
 import { C, T, sans } from "./theme";
 import { Sidebar } from "./components/Sidebar";
+import { AskDrawer, isAskShortcut } from "./components/AskDrawer";
+import { Chat } from "./screens/Chat";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { NewCaseModal } from "./components/NewCaseModal";
 import { DeleteProductModal } from "./components/DeleteProductModal";
@@ -30,7 +32,6 @@ const Costs = lazy(() => import("./screens/Costs").then((m) => ({ default: m.Cos
 const Settings = lazy(() => import("./screens/Settings").then((m) => ({ default: m.Settings })));
 const Onboarding = lazy(() => import("./screens/Onboarding").then((m) => ({ default: m.Onboarding })));
 const Portfolio = lazy(() => import("./screens/Portfolio").then((m) => ({ default: m.Portfolio })));
-const Chat = lazy(() => import("./screens/Chat").then((m) => ({ default: m.Chat })));
 const Backlog = lazy(() => import("./screens/Backlog").then((m) => ({ default: m.Backlog })));
 const LearnedPatterns = lazy(() => import("./screens/LearnedPatterns").then((m) => ({ default: m.LearnedPatterns })));
 
@@ -48,6 +49,15 @@ export default function App() {
   // everything the detector has ever noticed.
   const { route, navigate, back, backTarget, setParams } =
     useRouter({ screen: "today", productId: null });
+  const [askOpen, setAskOpen] = useState(false);
+  const askReturnFocus = useRef<HTMLElement | null>(null);
+  const closeAsk = useCallback(() => setAskOpen(false), []);
+  const openAsk = useCallback(() => {
+    if (askOpen) return;
+    // Capture before making the background inert, which may blur the opener.
+    askReturnFocus.current = document.activeElement as HTMLElement | null;
+    setAskOpen(true);
+  }, [askOpen]);
   const [newCaseOpen, setNewCaseOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   // "In the app" is either a real session or an accepted guest visit. A guest
@@ -87,6 +97,17 @@ export default function App() {
   useEffect(() => {
     setActiveProduct(activeId);
   }, [activeId]);
+
+  useEffect(() => {
+    if (!authed) { setAskOpen(false); return; }
+    const onKey = (event: KeyboardEvent) => {
+      if (!isAskShortcut(event)) return;
+      event.preventDefault();
+      openAsk();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [authed, openAsk]);
 
   // Boot: the server decides which products exist and which was last active.
   // The URL wins when it already names one, so a deep link isn't overridden.
@@ -222,6 +243,7 @@ export default function App() {
   useWorkWatcher(activeId, reloadKey, bumpReload, 4000, announceStarted);
 
   const logout = () => {
+    closeAsk();
     endSession();
     // Drop the cached role too. Leaving "admin" behind is what let a stale
     // value from an earlier session decide the next one's UI.
@@ -264,7 +286,9 @@ export default function App() {
   const key = activeId ?? "none";
 
   return (
+    <>
     <div
+      inert={askOpen ? true : undefined}
       className="el-shell"
       style={{
         display: "flex",
@@ -289,6 +313,8 @@ export default function App() {
           screen={screen}
           go={go}
           onLogout={logout}
+          onAsk={openAsk}
+          askShortcut={/Mac|iPhone|iPad|iPod/.test(navigator.platform) ? "\u2318 K" : "Ctrl K"}
           products={products}
           activeId={activeId}
           onSwitchProduct={switchProduct}
@@ -341,6 +367,7 @@ export default function App() {
             <Cases
               key={key}
               productName={productName}
+              productId={activeId}
               params={params}
               setParams={setParams}
               onOpenCase={openCase}
@@ -368,7 +395,7 @@ export default function App() {
 
           {screen === "ask" && (
             <ScreenChunk>
-              <Chat key={key} productName={productName}
+              <Chat key={key} productName={productName} productId={activeId}
                     onOpenInvestigation={(id) => openCase(id, "resolved")} />
             </ScreenChunk>
           )}
@@ -494,6 +521,10 @@ export default function App() {
       <Toasts />
       {tourOpen && !onboarding && <FirstRunTour onClose={closeTour} />}
     </div>
+    {askOpen && <AskDrawer productId={activeId} productName={productName} onClose={closeAsk}
+      returnFocus={askReturnFocus.current}
+      onOpenInvestigation={(id) => { closeAsk(); openCase(id); }} />}
+    </>
   );
 
   /** Leaving the wizard: adopt the new product, then land where asked. */

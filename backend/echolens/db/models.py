@@ -199,6 +199,21 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class SavedView(Base):
+    """A user's named Cases filters, private to one product."""
+    __tablename__ = "saved_views"
+    __table_args__ = (UniqueConstraint("user_id", "product_id", "name",
+                                       name="uq_saved_views_owner_product_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Like other author ids, this also supports the synthetic dev principal (0).
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    params: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 # ── investigation state ────────────────────────────────────────────────
 
 

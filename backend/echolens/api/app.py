@@ -19,7 +19,7 @@ from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Respo
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -925,7 +925,7 @@ def delete_product(product_id: int, confirm: str = "",
         FixWatch, HypothesisRow, Investigation, Issue, KnowledgeEdge, LLMCall, Mention,
         Post, Product, QueuedInvestigation, Recommendation, Release, Review,
         ReviewFeedback, ReviewRequest, TraceStep, TriageDecision, User,
-        FindingDecision, ShareLink)
+        FindingDecision, ShareLink, SavedView)
     with session_scope() as session:
         p = session.get(Product, product_id)
         if p is None:
@@ -971,7 +971,7 @@ def delete_product(product_id: int, confirm: str = "",
         _purge(ReviewRequest, ReviewRequest.investigation_id, inv_ids)
         _purge(QueuedInvestigation, QueuedInvestigation.investigation_id, inv_ids)
         for model in (FixWatch, Finding, Investigation, AnomalyEvent, CollectorState,
-                      QueuedInvestigation, KnowledgeEdge, Comment, Mention, ReviewRequest):
+                      QueuedInvestigation, KnowledgeEdge, Comment, Mention, ReviewRequest, SavedView):
             for row in session.scalars(select(model).where(model.product_id == product_id)).all():
                 session.delete(row)
         # Older collector rows were created before product_id was populated.
@@ -1976,6 +1976,111 @@ def list_cases(product_id: int | None = None, user: dict = Depends(current_user)
                 row["estimate"] = item.get("estimate")
         view["daily_limit"] = limit
         return view
+
+
+# Named Cases filters. Personal view writes use the same reviewer/CSRF guard
+# as other app mutations; guests keep their views in the browser instead.
+class SavedViewBody(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    params: dict[str, str] = Field(default_factory=dict, max_length=6)
+
+    @field_validator("name")
+    @classmethod
+    def clean_name(cls, value):
+        if not value.strip():
+            raise ValueError("Give the view a name")
+        return value.strip()
+
+    @field_validator("params")
+    @classmethod
+    def case_filters(cls, value):
+        if set(value) - {"tab", "sev", "source", "range", "intent", "q"}:
+            raise ValueError("Only Cases filters can be saved")
+        if any(len(v) > 500 for v in value.values()):
+            raise ValueError("Filter values must be 500 characters or fewer")
+        return {k: v for k, v in value.items() if v}
+
+
+def _view_query(session, user, product_id):
+    from echolens.db.models import SavedView
+    if user.get("guest") or user.get("id") is None:
+        raise HTTPException(403, "Sign in to store views on the server")
+    _scope(session, product_id, user)
+    return select(SavedView).where(SavedView.user_id == user["id"],
+                                   SavedView.product_id == product_id)
+
+
+def _saved_view_dict(row):
+    return {"id": row.id, "product_id": row.product_id, "name": row.name,
+            "params": row.params, "created_at": aware_utc(row.created_at).isoformat()}
+
+
+def _flush_view(session):
+    from sqlalchemy.exc import IntegrityError
+    try:
+        session.flush()
+    except IntegrityError:
+        raise HTTPException(409, "A view with that name already exists")
+
+
+@app.get("/views")
+def list_saved_views(product_id: int = Query(gt=0), user: dict = Depends(current_user)) -> dict:
+    from echolens.db.models import SavedView
+    with session_scope() as session:
+        stmt = _view_query(session, user, product_id)
+        return {"views": [_saved_view_dict(v) for v in session.scalars(
+            stmt.order_by(SavedView.created_at, SavedView.id)).all()]}
+
+
+@app.post("/views", status_code=201)
+def create_saved_view(body: SavedViewBody, product_id: int = Query(gt=0),
+                      user: dict = Depends(require_role("reviewer"))) -> dict:
+    from sqlalchemy import JSON, insert, literal
+    from sqlalchemy.exc import IntegrityError
+    from echolens.db.models import Product, SavedView
+    with session_scope() as session:
+        stmt = _view_query(session, user, product_id)
+        # Postgres serializes creations for this product. SQLite ignores FOR
+        # UPDATE, so keep its cap check inside the atomic INSERT as well.
+        session.execute(select(Product.id).where(Product.id == product_id).with_for_update())
+        count = select(func.count()).select_from(stmt.subquery()).scalar_subquery()
+        values = select(literal(user["id"]), literal(product_id), literal(body.name),
+                        literal(body.params, type_=JSON), literal(datetime.now(timezone.utc)))
+        create = insert(SavedView).from_select(
+            ["user_id", "product_id", "name", "params", "created_at"],
+            values.where(count < 20)).returning(SavedView)
+        try:
+            row = session.scalars(create).one_or_none()
+        except IntegrityError:
+            raise HTTPException(409, "A view with that name already exists")
+        if row is None:
+            raise HTTPException(409, "You can save up to 20 views per product")
+        return _saved_view_dict(row)
+
+
+@app.put("/views/{view_id}")
+def update_saved_view(view_id: int, body: SavedViewBody, product_id: int = Query(gt=0),
+                      user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.db.models import SavedView
+    with session_scope() as session:
+        row = session.scalar(_view_query(session, user, product_id).where(SavedView.id == view_id))
+        if row is None:
+            raise HTTPException(404, "No saved view with that id")
+        row.name, row.params = body.name, body.params
+        _flush_view(session)
+        return _saved_view_dict(row)
+
+
+@app.delete("/views/{view_id}")
+def delete_saved_view(view_id: int, product_id: int = Query(gt=0),
+                      user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.db.models import SavedView
+    with session_scope() as session:
+        row = session.scalar(_view_query(session, user, product_id).where(SavedView.id == view_id))
+        if row is None:
+            raise HTTPException(404, "No saved view with that id")
+        session.delete(row)
+        return {"deleted": view_id}
 
 
 def _triage_summary(considered: int, already: int, started: int, run: bool) -> str:
