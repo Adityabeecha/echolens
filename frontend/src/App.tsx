@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { ReactNode, Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { ProductRow, api, endSession, isAdmin, isAuthed, isGuest, onAuthError, setActiveProduct, setGuest, setRole } from "./api";
 import { CaseTab, GLOBAL_SCREENS, LEARNED_VIEWS, LearnedView, SETTINGS_SECTIONS, Screen,
          SettingsSection, caseTabFor } from "./nav";
@@ -13,20 +13,33 @@ import { Toasts, clearToasts, toast } from "./components/Toast";
 import { Today } from "./screens/Today";
 import { Cases } from "./screens/Cases";
 import { CaseDetail } from "./screens/CaseDetail";
-import { Sources } from "./screens/Sources";
-import { Costs } from "./screens/Costs";
-import { Settings } from "./screens/Settings";
 import { Login } from "./screens/Login";
-import { Onboarding } from "./screens/Onboarding";
-import { Portfolio } from "./screens/Portfolio";
-import { Chat } from "./screens/Chat";
-import { Backlog } from "./screens/Backlog";
-import { LearnedPatterns } from "./screens/LearnedPatterns";
+import { Centered } from "./ui";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { FirstRunTour } from "./components/FirstRunTour";
 import { markTourSeen, tourSeen } from "./tourState";
 import { ThemeMode, applyTheme, persistTheme, resolveTheme } from "./themeMode";
 import { persistSidebarCollapsed, resolveSidebarCollapsed } from "./sidebarState";
+
+// Route-level code splitting. Today, Cases and the case detail are where
+// nearly every visit starts and stays, so they ship in the main bundle; the
+// rest load on first visit. A chunk that fails to load (a redeploy replaced
+// it) throws inside the ErrorBoundary below, which offers a way back.
+const Sources = lazy(() => import("./screens/Sources").then((m) => ({ default: m.Sources })));
+const Costs = lazy(() => import("./screens/Costs").then((m) => ({ default: m.Costs })));
+const Settings = lazy(() => import("./screens/Settings").then((m) => ({ default: m.Settings })));
+const Onboarding = lazy(() => import("./screens/Onboarding").then((m) => ({ default: m.Onboarding })));
+const Portfolio = lazy(() => import("./screens/Portfolio").then((m) => ({ default: m.Portfolio })));
+const Chat = lazy(() => import("./screens/Chat").then((m) => ({ default: m.Chat })));
+const Backlog = lazy(() => import("./screens/Backlog").then((m) => ({ default: m.Backlog })));
+const LearnedPatterns = lazy(() => import("./screens/LearnedPatterns").then((m) => ({ default: m.LearnedPatterns })));
+
+/** The wait while a lazily loaded screen's chunk arrives. */
+function ScreenChunk({ children, fallback = <Centered>Loading…</Centered> }: {
+  children: ReactNode; fallback?: ReactNode;
+}) {
+  return <Suspense fallback={fallback}>{children}</Suspense>;
+}
 
 export default function App() {
   const [theme, setTheme] = useState<ThemeMode>(() => resolveTheme());
@@ -354,78 +367,94 @@ export default function App() {
           )}
 
           {screen === "ask" && (
-            <Chat key={key} productName={productName}
-                  onOpenInvestigation={(id) => openCase(id, "resolved")} />
+            <ScreenChunk>
+              <Chat key={key} productName={productName}
+                    onOpenInvestigation={(id) => openCase(id, "resolved")} />
+            </ScreenChunk>
           )}
 
           {screen === "sources" && (
-            <Sources key={key} productName={productName}
-                     onAddProduct={() => navigate({ screen: "onboarding", productId: null })} />
+            <ScreenChunk>
+              <Sources key={key} productName={productName}
+                       onAddProduct={() => navigate({ screen: "onboarding", productId: null })} />
+            </ScreenChunk>
           )}
 
-          {screen === "costs" && <Costs key={key} onGoSettings={() => go("settings")} />}
+          {screen === "costs" && (
+            <ScreenChunk><Costs key={key} onGoSettings={() => go("settings")} /></ScreenChunk>
+          )}
 
           {screen === "settings" && (
-            <Settings
-              key={key}
-              product={activeProduct}
-              onGoCosts={() => go("costs")}
-              onGoSources={() => go("sources")}
-              onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
-              onDeleteProduct={setDeleting}
-              section={SETTINGS_SECTIONS.includes(params.section as SettingsSection)
-                ? params.section as SettingsSection : "general"}
-              onSection={(section) => setParams({ section: section === "general" ? null : section })}
-              onGoReview={() => go("cases", { tab: "needs-review" })}
-            />
+            <ScreenChunk>
+              <Settings
+                key={key}
+                product={activeProduct}
+                onGoCosts={() => go("costs")}
+                onGoSources={() => go("sources")}
+                onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
+                onDeleteProduct={setDeleting}
+                section={SETTINGS_SECTIONS.includes(params.section as SettingsSection)
+                  ? params.section as SettingsSection : "general"}
+                onSection={(section) => setParams({ section: section === "general" ? null : section })}
+                onGoReview={() => go("cases", { tab: "needs-review" })}
+              />
+            </ScreenChunk>
           )}
 
           {/* Reached from within another screen rather than from the nav, so
               they carry a named Back instead of a nav highlight. */}
           {screen === "plan" && (
-            <Backlog key={key} onOpenInvestigation={openCase} onBack={back}
-                     onGoCases={() => go("cases")}
-                     backLabel={backTarget?.label ?? "Cases"} />
+            <ScreenChunk>
+              <Backlog key={key} onOpenInvestigation={openCase} onBack={back}
+                       onGoCases={() => go("cases")}
+                       backLabel={backTarget?.label ?? "Cases"} />
+            </ScreenChunk>
           )}
           {/* Patterns and Product memory, as two tabs of one screen. */}
           {screen === "memory" && (
-            <LearnedPatterns
-              key={key}
-              productName={productName}
-              view={LEARNED_VIEWS.includes(params.view as LearnedView) ? params.view as LearnedView : "map"}
-              onView={(view) => setParams({ view: view === "map" ? null : view })}
-              onOpenInvestigation={openCase}
-              onGoCases={() => go("cases")}
-            />
+            <ScreenChunk>
+              <LearnedPatterns
+                key={key}
+                productName={productName}
+                view={LEARNED_VIEWS.includes(params.view as LearnedView) ? params.view as LearnedView : "map"}
+                onView={(view) => setParams({ view: view === "map" ? null : view })}
+                onOpenInvestigation={openCase}
+                onGoCases={() => go("cases")}
+              />
+            </ScreenChunk>
           )}
 
           {screen === "portfolio" && (
-            <Portfolio
-              onOpenProduct={switchProduct}
-              onOpenInvestigation={(id) => openCase(id, "resolved")}
-              onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
-            />
+            <ScreenChunk>
+              <Portfolio
+                onOpenProduct={switchProduct}
+                onOpenInvestigation={(id) => openCase(id, "resolved")}
+                onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
+              />
+            </ScreenChunk>
           )}
 
           {onboarding && (
-            <Onboarding
-              // Always dismissible. "Can I skip this?" is not the same question
-              // as "does a product exist yet?" — the answer is always yes.
-              canSkip
-              onClose={closeOnboarding}
-              onProductCreated={(id) => {
-                // Scope everything to the new product straight away.
-                setActiveProduct(id);
-                api.products().then((r) => setProducts(r.products)).catch(() => {});
-                api.activateProduct(id).catch(() => {});
-              }}
-              onCancel={() => {
-                closeOnboarding();
-              }}
-              onDone={() => finishOnboarding("today")}
-              onReviewSignals={() => finishOnboarding("cases", { signals: "1" })}
-              onManageSources={() => finishOnboarding("sources")}
-            />
+            <ScreenChunk fallback={null}>
+              <Onboarding
+                // Always dismissible. "Can I skip this?" is not the same question
+                // as "does a product exist yet?" — the answer is always yes.
+                canSkip
+                onClose={closeOnboarding}
+                onProductCreated={(id) => {
+                  // Scope everything to the new product straight away.
+                  setActiveProduct(id);
+                  api.products().then((r) => setProducts(r.products)).catch(() => {});
+                  api.activateProduct(id).catch(() => {});
+                }}
+                onCancel={() => {
+                  closeOnboarding();
+                }}
+                onDone={() => finishOnboarding("today")}
+                onReviewSignals={() => finishOnboarding("cases", { signals: "1" })}
+                onManageSources={() => finishOnboarding("sources")}
+              />
+            </ScreenChunk>
           )}
         </ErrorBoundary>
       </div>

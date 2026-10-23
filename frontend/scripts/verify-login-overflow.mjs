@@ -1,6 +1,19 @@
 const endpoint = process.env.ECHOLENS_CDP || "http://127.0.0.1:9223";
 const appUrl = process.env.ECHOLENS_APP_URL || "http://127.0.0.1:5173/";
 
+// Drives a real Chrome over the DevTools Protocol. Start Chrome with
+// --remote-debugging-port=9223 first (or point ECHOLENS_CDP elsewhere), and run
+// the dev server at ECHOLENS_APP_URL. Without a browser this is a SKIP, not a
+// crash, so it can sit in a "run every script" loop.
+console.log(`verify-login-overflow: needs Chrome DevTools at ${endpoint} — start Chrome with --remote-debugging-port=9223 first.`);
+try {
+  const probe = await fetch(`${endpoint}/json/version`, { signal: AbortSignal.timeout(2000) });
+  if (!probe.ok) throw new Error(`HTTP ${probe.status}`);
+} catch (error) {
+  console.log(`SKIP login overflow check: nothing is listening at ${endpoint} (${error.cause?.code ?? error.message}).`);
+  process.exit(0);
+}
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function openTarget(url) {
