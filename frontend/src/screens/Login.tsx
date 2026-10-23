@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, setGuest, setRole, setToken } from "../api";
+import { api, endSession, setGuest, setRole, startSession } from "../api";
 import { useAsync } from "../hooks";
 import { C, R, S, T, mono, sans } from "../theme";
 import { GoogleButton } from "../components/GoogleButton";
@@ -42,7 +42,7 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
         ? await api.login(email.trim(), password)
         : await api.signup(email.trim(), password);
       setGuest(false);
-      setToken(r.token);
+      startSession(r.csrf_token);
       setRole(r.role);
       onAuthed();
     } catch (e) {
@@ -62,7 +62,7 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
     try {
       const r = await api.google(credential);
       setGuest(false);
-      setToken(r.token);
+      startSession(r.csrf_token);
       setRole(r.role);
       onAuthed();
     } catch (e) {
@@ -74,7 +74,7 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
 
   const browseAsGuest = () => {
     setGuest(true);
-    setToken(null);
+    endSession();
     // Explicitly viewer: a browser holding "admin" from a previous session
     // would otherwise carry it into the guest visit and unlock UI the server
     // will refuse. Boot re-confirms this against /auth/me anyway.

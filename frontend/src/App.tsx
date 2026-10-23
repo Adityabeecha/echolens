@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Evidence, ProductRow, api, getToken, isAdmin, isGuest, onAuthError, setActiveProduct, setGuest, setRole, setToken } from "./api";
+import { Evidence, ProductRow, api, endSession, isAdmin, isAuthed, isGuest, onAuthError, setActiveProduct, setGuest, setRole } from "./api";
 import { CaseTab, GLOBAL_SCREENS, Screen, caseTabFor } from "./nav";
 import { useRouter } from "./router";
 import { useWorkWatcher } from "./hooks";
@@ -40,7 +40,7 @@ export default function App() {
   const [reloadKey, setReloadKey] = useState(0);
   // "In the app" is either a real session or an accepted guest visit. A guest
   // has no token, so `authed` alone would bounce them straight back to Login.
-  const [authed, setAuthed] = useState<boolean>(!!getToken() || isGuest());
+  const [authed, setAuthed] = useState<boolean>(isAuthed() || isGuest());
   const [products, setProducts] = useState<ProductRow[]>([]);
   const [booted, setBooted] = useState(false);
   const [deleting, setDeleting] = useState<ProductRow | null>(null);
@@ -207,7 +207,7 @@ export default function App() {
   useWorkWatcher(activeId, reloadKey, bumpReload, 4000, announceStarted);
 
   const logout = () => {
-    setToken(null);
+    endSession();
     // Drop the cached role too. Leaving "admin" behind is what let a stale
     // value from an earlier session decide the next one's UI.
     setRole("viewer");

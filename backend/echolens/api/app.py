@@ -15,7 +15,7 @@ from typing import Any
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -129,18 +129,59 @@ log = get_logger("api")
 
 # CORS: explicit allowlist in prod; permissive in dev for localhost tooling.
 _cors_origins = settings.cors_list or (["*"] if settings.echolens_env == "dev" else [])
+
+
+def cors_allows_credentials(origins: list[str]) -> bool:
+    """Credentialed CORS only for an explicit list. A "*" anywhere in it — e.g.
+    CORS_ORIGINS="*" set by hand — keeps credentials off rather than letting
+    Starlette reflect every origin with the visitor's session cookie."""
+    return bool(origins) and "*" not in origins
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_credentials=False,  # auth is via Authorization bearer header, not cookies
+    # The browser session is a cookie, so a split-origin frontend needs
+    # credentialed CORS — but ONLY with an explicit origin list. With "*"
+    # Starlette would reflect any origin while allowing credentials, letting
+    # every website read responses with the visitor's session. Dev's "*" (auth
+    # off, Vite proxies same-origin anyway) therefore stays uncredentialed.
+    allow_credentials=cors_allows_credentials(_cors_origins),
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    """Baseline hardening on every API response. The API serves JSON and SSE,
+    never a page meant to be framed or sniffed into HTML."""
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    return response
+
+
 # ── serializers ────────────────────────────────────────────────────────
 
-def _anomaly_headline(session, a: AnomalyEvent) -> str:
+def _top_theme_surges(session, anomalies: list[AnomalyEvent]) -> dict:
+    """product_id -> its loudest theme surge, for every product that has a
+    negative-review spike in `anomalies`. One query instead of one per spike."""
+    pids = {a.product_id for a in anomalies if a.type == "negative_review_spike"}
+    if not pids:
+        return {}
+    out: dict = {}
+    stmt = select(AnomalyEvent).where(AnomalyEvent.type == "theme_volume_surge")
+    if None not in pids:
+        stmt = stmt.where(AnomalyEvent.product_id.in_(pids))
+    for t in session.scalars(stmt.order_by(AnomalyEvent.z.desc(), AnomalyEvent.id)).all():
+        out.setdefault(t.product_id, t)
+        out.setdefault(None, t)  # an unscoped spike takes the workspace's loudest
+    return out
+
+
+def _anomaly_headline(session, a: AnomalyEvent, top_themes: dict | None = None) -> str:
     """A PM-readable problem statement, not a metric name. The metric + z stay as
     secondary metadata on the card."""
     metric = (a.metric or "").strip()
@@ -160,10 +201,13 @@ def _anomaly_headline(session, a: AnomalyEvent) -> str:
         return "Average rating falling"
     if a.type == "negative_review_spike":
         # name the theme driving it when a matching theme surge was detected
-        stmt = select(AnomalyEvent).where(AnomalyEvent.type == "theme_volume_surge")
-        if a.product_id is not None:
-            stmt = stmt.where(AnomalyEvent.product_id == a.product_id)
-        theme = session.scalars(stmt.order_by(AnomalyEvent.z.desc())).first()
+        if top_themes is not None:
+            theme = top_themes.get(a.product_id)
+        else:
+            stmt = select(AnomalyEvent).where(AnomalyEvent.type == "theme_volume_surge")
+            if a.product_id is not None:
+                stmt = stmt.where(AnomalyEvent.product_id == a.product_id)
+            theme = session.scalars(stmt.order_by(AnomalyEvent.z.desc())).first()
         if theme is not None:
             label = (theme.metric or "").split(" share of")[0].strip()
             if label:
@@ -172,11 +216,11 @@ def _anomaly_headline(session, a: AnomalyEvent) -> str:
     return metric or "Signal detected"
 
 
-def _anomaly_dict(session, a: AnomalyEvent, td=None, inv=None) -> dict:
+def _anomaly_dict(session, a: AnomalyEvent, td=None, inv=None, top_themes=None) -> dict:
     return {
         "slug": a.slug, "type": a.type, "metric": a.metric, "delta": a.delta,
         "z": a.z, "window": a.window, "description": a.description, "status": a.status,
-        "headline": _anomaly_headline(session, a), "product_id": a.product_id,
+        "headline": _anomaly_headline(session, a, top_themes), "product_id": a.product_id,
         "triage": None if td is None else {
             "decision": td.decision, "reason": td.reason, "budget_tier": td.budget_tier,
             "merge_into_anomaly_id": td.merge_into_anomaly_id,
@@ -198,7 +242,8 @@ def _anomaly_dicts(session, anomalies: list[AnomalyEvent]) -> list[dict]:
     for row in session.scalars(select(Investigation).where(
             Investigation.anomaly_id.in_(ids)).order_by(Investigation.id)).all():
         investigations[row.anomaly_id] = row
-    return [_anomaly_dict(session, a, decisions.get(a.id), investigations.get(a.id))
+    top_themes = _top_theme_surges(session, anomalies)
+    return [_anomaly_dict(session, a, decisions.get(a.id), investigations.get(a.id), top_themes)
             for a in anomalies]
 
 
@@ -428,8 +473,9 @@ def _run_investigation_bg(investigation_id: int, tier: str) -> None:
 # ── endpoints ──────────────────────────────────────────────────────────
 
 from echolens.auth import (
-    DEV_ADMIN, GUEST, authenticate, create_token, create_user, current_user,
-    decode_token, require_role)
+    CSRF_COOKIE, DEV_ADMIN, GUEST, SESSION_COOKIE, authenticate, clear_session_cookies,
+    create_token, create_user, current_user, new_csrf_token, principal_from_token,
+    require_role, session_token, set_session_cookies)
 
 
 class SignupBody(BaseModel):
@@ -445,7 +491,7 @@ class LoginBody(BaseModel):
 
 @app.post("/auth/signup")
 @limiter.limit("5/minute")  # bcrypt per call; unthrottled it was a cheap DoS
-def auth_signup(body: SignupBody, request: Request) -> dict:
+def auth_signup(body: SignupBody, request: Request, response: Response) -> dict:
     """User creation. In production the FIRST admin must come from the
     BOOTSTRAP_ADMIN_* env (not open self-service) — otherwise a stranger could
     claim admin by being first to hit this endpoint. After an admin exists, only
@@ -474,21 +520,55 @@ def auth_signup(body: SignupBody, request: Request) -> dict:
             user = create_user(session, body.email, body.password, role)
         except ValueError as err:
             raise HTTPException(422, str(err))
-        return {"id": user.id, "email": user.email, "role": user.role,
-                "token": create_token(user)}
+        token = create_token(user)
+        out = {"id": user.id, "email": user.email, "role": user.role, "token": token}
+        # Only a self-service signup becomes the browser's session. An admin
+        # creating a colleague must stay signed in as themselves, not be
+        # silently switched into the new account.
+        if first_user:
+            out["csrf_token"] = set_session_cookies(response, token)
+        return out
 
 
 @app.post("/auth/login")
 @limiter.limit("10/minute")
-def auth_login(body: LoginBody, request: Request) -> dict:
+def auth_login(body: LoginBody, request: Request, response: Response) -> dict:
     """Rate-limited: bcrypt is slow per attempt, which protects the password but
     makes an unthrottled endpoint a cheap way to burn every worker thread. The
-    cap bounds both credential-stuffing and that DoS."""
+    cap bounds both credential-stuffing and that DoS.
+
+    Sets the HttpOnly session cookie for browsers. `token` stays in the body for
+    non-browser clients (GitHub Actions, CLI) that send it as a Bearer header;
+    the SPA ignores it and never stores it."""
     with session_scope() as session:
         user = authenticate(session, body.email, body.password)
         if user is None:
             raise HTTPException(401, "invalid credentials")
-        return {"token": create_token(user), "role": user.role}
+        token = create_token(user)
+        return {"token": token, "role": user.role,
+                "csrf_token": set_session_cookies(response, token)}
+
+
+@app.post("/auth/logout")
+def auth_logout(response: Response) -> dict:
+    """Clear the browser session. Unauthenticated on purpose: it must work with
+    an expired cookie, and the worst a forged call can do is sign someone out."""
+    clear_session_cookies(response)
+    return {"ok": True}
+
+
+@app.get("/auth/csrf")
+def auth_csrf(request: Request, response: Response) -> dict:
+    """The CSRF token for the current cookie session, so a reloaded SPA can
+    recover it. A frontend on another origin cannot read the API's cookie via
+    document.cookie; credentialed CORS (explicit origins only) is what keeps
+    this response unreadable to any other site."""
+    if not request.cookies.get(SESSION_COOKIE):
+        return {"csrf_token": None}
+    csrf = request.cookies.get(CSRF_COOKIE)
+    if not csrf:
+        csrf = set_session_cookies(response, request.cookies[SESSION_COOKIE], new_csrf_token())
+    return {"csrf_token": csrf}
 
 
 class GoogleBody(BaseModel):
@@ -497,7 +577,7 @@ class GoogleBody(BaseModel):
 
 @app.post("/auth/google")
 @limiter.limit("20/minute")
-def auth_google(body: GoogleBody, request: Request) -> dict:
+def auth_google(body: GoogleBody, request: Request, response: Response) -> dict:
     """Exchange a Google ID token for an EchoLens token.
 
     The ID token is verified against Google's published keys (signature,
@@ -523,7 +603,9 @@ def auth_google(body: GoogleBody, request: Request) -> dict:
             raise HTTPException(
                 403, "This Google account isn't part of this workspace. Ask an admin to invite you.")
         user = upsert_google_user(session, claims["email"], role_for(claims["email"]))
-        return {"token": create_token(user), "role": user.role, "email": user.email}
+        token = create_token(user)
+        return {"token": token, "role": user.role, "email": user.email,
+                "csrf_token": set_session_cookies(response, token)}
 
 
 @app.get("/auth/config")
@@ -2086,28 +2168,29 @@ async def stream_trace(inv_id: int, request: Request, product_id: int | None = N
                        token: str | None = None) -> StreamingResponse:
     """SSE tail of the trace_steps table until the investigation stops running.
 
-    Auth accepts `?token=` as well as the Authorization header. EventSource
-    cannot set headers, so requiring one made this endpoint 401 in every
-    non-dev environment — the browser silently fell back to polling and the
-    "live trace" never worked in production at all. Same JWT; it is in the query
-    string because SSE leaves nowhere else to put it.
+    Auth: the Authorization header, else the session cookie (the browser opens
+    the stream with `new EventSource(url, {withCredentials: true})`, which sends
+    it), else — DEPRECATED, for one release — `?token=`. A JWT in the query
+    string lands in proxy and access logs and browser history, so the frontend
+    no longer sends one; any caller still doing so is logged.
     """
-    # This route authenticates by hand (EventSource cannot set headers, so the
-    # token may arrive in the query string), which means there is no `user`
-    # dependency to hand to _scope. Build the same principal shape those
-    # dependencies produce, so guest scoping applies here too.
+    # This route authenticates by hand (the token may still arrive in the query
+    # string), so there is no `user` dependency to hand to _scope. Build the
+    # same principal shape those dependencies produce, so guest scoping and the
+    # role-from-DB lookup apply here too.
     user: dict = dict(GUEST)
     if settings.auth_required:
-        header = request.headers.get("Authorization", "")
-        raw = header.split(" ", 1)[1] if header.startswith("Bearer ") else token
+        raw, _via_cookie = session_token(request)
+        if raw is None and token:
+            log.warning("deprecated_query_token", route="trace/stream",
+                        detail="?token= is deprecated; use the session cookie or a Bearer header")
+            raw = token
         ok = False
         if raw:
             try:
-                from echolens.auth import principal_for
-                claims = decode_token(raw)
-                user = principal_for(int(claims["sub"]), claims)
+                user = principal_from_token(raw)
                 ok = True
-            except Exception:
+            except HTTPException:
                 ok = False
         # A guest may tail a demo product's trace, but only when guests are
         # allowed at all; otherwise a token is still required.
@@ -2840,7 +2923,7 @@ def portfolio_themes(days: int = Query(30, ge=1, le=365),
     small one are genuinely comparable.
     """
     from echolens.db.models import Product
-    from echolens.vocab import FAMILIES, canonical_theme, compare_theme
+    from echolens.vocab import FAMILIES, canonical_theme, compare_theme, negative_corpus
     with session_scope() as session:
         products = _visible_products(session, user)
         names = [p.name for p in products]
@@ -2863,9 +2946,11 @@ def portfolio_themes(days: int = Query(30, ge=1, le=365),
         for fid in list(FAMILIES)[:6]:      # always show the common families too
             seen.setdefault(fid, canonical_theme([fid.replace("-", " ")]))
 
+        # Every product's negative reviews read once, not per theme per product.
+        corpus = negative_corpus(session, names, days)
         rows = []
         for t in list(seen.values())[:limit]:
-            per = compare_theme(session, t, names, days)
+            per = compare_theme(session, t, names, days, corpus=corpus)
             if not any(r["rate_pct"] > 0 for r in per):
                 continue
             rows.append({"theme_id": t["id"], "label": t["label"],

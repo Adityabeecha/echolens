@@ -41,6 +41,7 @@ Keep the database region close to the backend region. Do not expose the connecti
 | `OPENAI_API_KEY` | Secret OpenAI key |
 | `JWT_SECRET` | Unique generated secret |
 | `CORS_ORIGINS` | Exact Vercel origin; add after the frontend is created |
+| `SESSION_COOKIE_SAMESITE` | `none` when the frontend and API are on different sites (Vercel + Northflank); see [Browser sessions](#browser-sessions-cookies-and-csrf) |
 | `ECHOLENS_LOG_JSON` | `1` |
 
 Add integrations from [ENV_SETUP.md](ENV_SETUP.md) only when those features are used. Keep one application worker: investigations and scheduled collection use in-process coordination.
@@ -63,7 +64,9 @@ The endpoint must return HTTP `200` before connecting the frontend.
 6. Add `VITE_API_BASE` with the Northflank origin and no trailing slash.
 7. Deploy and record the canonical Vercel origin.
 
-`frontend/vercel.json` supplies the SPA rewrite so client-side routes resolve to `index.html`.
+`frontend/vercel.json` supplies the SPA rewrite so client-side routes resolve to `index.html`, and the security headers for every page: a Content-Security-Policy (`frame-ancestors 'none'`, scripts from the site itself and Google Identity Services only, Google Fonts styles and fonts, `data:` images), `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin` and `X-Frame-Options: DENY`.
+
+The header's `connect-src` is static and therefore allows any `https:` origin. The build narrows it: `vite.config.ts` reads `VITE_API_BASE` at build time and injects a second policy as a `<meta>` tag whose `connect-src` is `'self'`, that exact API origin and Google sign-in. Browsers enforce both policies, so the effective allowlist is the intersection. Consequently `VITE_API_BASE` must be set for the build that is deployed, and changing the API origin requires a frontend rebuild, not just a backend change. If you add another origin the browser must call (an analytics endpoint, a second API), add it to both `frontend/vercel.json` and the plugin in `frontend/vite.config.ts`.
 
 ## 4. Connect frontend and backend
 
@@ -77,6 +80,23 @@ Create the first administrator with one method:
 - Or run `python -m echolens.cli createuser EMAIL PASSWORD --role admin` from a trusted environment connected to the production database.
 
 Do not expose `ECHOLENS_ENV=dev` publicly.
+
+### Browser sessions: cookies and CSRF
+
+The browser session is an `HttpOnly`, `Secure` cookie (`echolens_session`) set by `/auth/login`, `/auth/signup` (self-service bootstrap only) and `/auth/google`, and cleared by `POST /auth/logout`. The JWT is never stored in `localStorage`. Non-browser clients (the GitHub workflows, the CLI, scripts) keep using the `token` from the login response as `Authorization: Bearer`; a Bearer header always takes precedence over a cookie.
+
+Cross-site cookies need all of the following, or sign-in will appear to work and every following request will return `401`:
+
+- `SESSION_COOKIE_SAMESITE=none` when the frontend and API are on different registrable domains (for example `*.vercel.app` and `*.code.run`). Browsers only send cookies on cross-site `fetch`/`EventSource` requests when they are `SameSite=None`, and only accept `SameSite=None` together with `Secure`. If both run under one domain (for example `app.example.com` and `api.example.com`), keep the default `lax`.
+- `SESSION_COOKIE_SECURE=true` (the default). Production and staging refuse to start with it off.
+- `CORS_ORIGINS` set to the exact frontend origin(s). The API only enables credentialed CORS (`Access-Control-Allow-Credentials: true`) when this list is explicit; with no list (local dev) credentials stay off.
+- Optionally `SESSION_COOKIE_DOMAIN` (for example `.example.com`) to share the cookie across subdomains; leave empty for a host-only cookie.
+
+Browsers that block third-party cookies (Safari by default, Chrome with tracking protection) will not send a `SameSite=None` cookie to a different site at all. For those users the reliable setup is to serve the API from a subdomain of the frontend's domain (a custom domain on both Vercel and Northflank) and keep `SESSION_COOKIE_SAMESITE=lax`.
+
+Cookie-authenticated `POST`, `PUT`, `PATCH` and `DELETE` requests must carry `X-CSRF-Token` equal to the `echolens_csrf` cookie (double-submit). The frontend receives the value in the login response and recovers it after a reload from `GET /auth/csrf`; Bearer-authenticated requests are exempt.
+
+The live trace (`/investigations/{id}/trace/stream`) authenticates with the cookie (`EventSource` with `withCredentials`). The old `?token=` query parameter is still accepted for one release and logs a `deprecated_query_token` warning; it will be removed.
 
 ## 5. Configure scheduled workflows
 
@@ -102,6 +122,8 @@ Run each scheduled workflow manually once from the Actions tab to validate crede
 - Set `ECHOLENS_ENV` explicitly (`production`, or `staging`) on every deployed environment. The app refuses to start outside local dev without an explicit value; `dev` disables authentication and must never be public.
 - Use a strong, unique `JWT_SECRET` (`python -c "import secrets; print(secrets.token_urlsafe(48))"`).
 - Set `CORS_ORIGINS` to the exact frontend origin(s), with no trailing slash.
+- Set `SESSION_COOKIE_SAMESITE=none` for a split-site frontend and API, and keep `SESSION_COOKIE_SECURE=true`.
+- Build the frontend with `VITE_API_BASE` set, so the Content-Security-Policy names the real API origin.
 - Set `GITHUB_WEBHOOK_SECRET` if GitHub webhooks are used, and the same value in the webhook config.
 - Restrict Google sign-in with `GOOGLE_ALLOWED_DOMAINS` (comma-separated email domains). If empty, only emails in `GOOGLE_ADMIN_EMAILS` or existing users can sign in. `GOOGLE_DEFAULT_ROLE` defaults to `viewer`.
 - In the Google OAuth client, add the frontend origin (and `http://localhost:5173` for local development) to Authorized JavaScript origins.
