@@ -56,7 +56,10 @@ def test_password_rule():
     assert auth.password_problem("a-long-unique-passphrase") is None
 
 
-def test_forgotten_env_on_a_real_database_refuses_to_boot():
+def test_forgotten_env_on_a_real_database_refuses_to_boot(monkeypatch):
+    # CI exports ECHOLENS_ENV=dev; a process environment counts as "set", so
+    # it has to be absent for this to model a deploy that forgot it.
+    monkeypatch.delenv("ECHOLENS_ENV", raising=False)
     s = Settings(_env_file=None, echolens_db_url="postgresql://x@db/echolens")
     assert any("ECHOLENS_ENV is not set" in p for p in s.check_production_ready())
     local = Settings(_env_file=None, echolens_db_url="sqlite:///echolens.db")
