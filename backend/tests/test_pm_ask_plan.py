@@ -230,7 +230,7 @@ def test_stream_route_is_rate_limited():
     src = (pathlib.Path(__file__).resolve().parents[1] / "echolens" / "api" / "app.py"
            ).read_text(encoding="utf-8")
     i = src.index('"/chat/stream"')
-    assert "@limiter.limit" in src[i:i + 200]
+    assert "@limiter.limit" in src[i:i + 200] or "@limiter.shared_limit" in src[i:i + 200]
 
 
 def test_describe_tool_is_human_and_never_crashes():

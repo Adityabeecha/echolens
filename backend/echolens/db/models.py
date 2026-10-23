@@ -358,6 +358,9 @@ class Investigation(Base):
     # if any. Recorded so the shortcut can be MEASURED (seeded vs cold cases)
     # rather than asserted.
     seeded_from_pattern: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Reviewer-granted budget extensions, [{at, n, by}], for the case History.
+    # Not in checkpoint_json: the investigator rewrites that wholesale each step.
+    extensions_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(nullable=True)
 

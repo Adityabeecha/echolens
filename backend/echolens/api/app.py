@@ -508,6 +508,13 @@ def _run_investigation_bg(investigation_id: int, tier: str) -> None:
         _mark_investigation_failed(investigation_id, str(err))
 
 
+def _unique_slug(prefix: str) -> str:
+    """A slug for an ad-hoc case's anomaly row (the column is UNIQUE): the time
+    for readability plus a random suffix, so same-tick launches never collide."""
+    import secrets
+    return f"{prefix}-{time.time_ns()}-{secrets.token_hex(3)}"
+
+
 # ── endpoints ──────────────────────────────────────────────────────────
 
 from echolens.auth import (
@@ -2075,7 +2082,7 @@ def start_investigation(request: Request, body: NewCase,
         elif body.description:
             opened_by = "manual"
             anomaly = AnomalyEvent(
-                slug=f"manual-{int(time.time())}", type="manual",
+                slug=_unique_slug("manual"), type="manual",
                 metric="manual case", delta=0.0, z=0.0, window="n/a",
                 description=body.description.strip(), status="pending", product_id=pid)
             session.add(anomaly)
@@ -2368,7 +2375,7 @@ def extend_investigation(request: Request, inv_id: int, product_id: int | None =
         p = _scope(session, product_id, user)
         inv = _owned(session, Investigation, inv_id, p.id if p else None)
         try:
-            granted = grant_extension(session, inv)
+            granted = grant_extension(session, inv, by=user.get("email"))
         except ValueError as err:
             raise HTTPException(422, str(err))
         note = extension_trace_note(granted["prior_status"], granted["steps"])
@@ -3232,7 +3239,12 @@ def fixwatch_list(product_id: int | None = None, user: dict = Depends(current_us
              # which is the only time it is non-null, so a long watch list does
              # not carry a day-by-day series per row for nothing.
              "chart": w.chart_json if w.status in TERMINAL_FIX_STATUSES else None,
-             "fix_date": w.fix_date.isoformat() if w.fix_date else None} for w in rows]}
+             "fix_date": w.fix_date.isoformat() if w.fix_date else None,
+             # The release the fix shipped in, and when reviews on it first
+             # appeared — the moment the post-fix window actually opened.
+             "fixed_in_version": w.fixed_in_version,
+             "release_seen_at": (aware_utc(w.release_seen_at).isoformat()
+                                 if w.release_seen_at else None)} for w in rows]}
 
 
 @app.get("/patterns")
@@ -3438,9 +3450,10 @@ def _chat_respond(body: "ChatBody", user: dict, on_step=None) -> dict:
                                  "text": "I can look into that, but opening an investigation "
                                          "needs reviewer access."}, user, message)
         emit("launch", "Opening an investigation…")
-        # time_ns, not int(time.time()): the slug is UNIQUE, so two launches in
-        # the same second (a double-click on the card) raised an IntegrityError.
-        anomaly = AnomalyEvent(slug=f"chat-{time.time_ns()}", type="manual", metric="chat question",
+        # The slug is UNIQUE, so two launches close together (a double-click on
+        # the card) must not share one. time_ns alone was not enough: Windows'
+        # clock ticks every 15.6 ms, so both calls read the same value.
+        anomaly = AnomalyEvent(slug=_unique_slug("chat"), type="manual", metric="chat question",
                                delta=0.0, z=0.0, window="n/a",
                                description=decision["description"], status="pending", product_id=pid)
         session.add(anomaly)
@@ -3462,7 +3475,10 @@ def _chat_respond(body: "ChatBody", user: dict, on_step=None) -> dict:
 
 
 @app.post("/chat")
-@limiter.limit("20/minute")
+# One Ask budget per client across /chat AND /chat/stream: two separate
+# 20/minute limits let one client take 40 LLM-spending turns a minute by
+# alternating routes. shared_limit counts both against the same "ask" scope.
+@limiter.shared_limit("20/minute", scope="ask")
 def chat_endpoint(body: ChatBody, request: Request,
                   user: dict = Depends(current_user)) -> dict:
     """Ask the verified knowledge anything. Returns a finding-cited answer, or —
@@ -3478,7 +3494,7 @@ CHAT_STREAM_MAX_SECONDS = 120
 
 
 @app.post("/chat/stream")
-@limiter.limit("20/minute")  # same cap as /chat: every turn may spend LLM budget
+@limiter.shared_limit("20/minute", scope="ask")  # the SAME budget as /chat, not a second one
 async def chat_stream(body: ChatBody, request: Request,
                       user: dict = Depends(current_user)) -> StreamingResponse:
     """POST /chat, streamed as server-sent events so the UI can show what Ask is

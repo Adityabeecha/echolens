@@ -19,6 +19,7 @@ const KIND: Record<string, { color: string; icon: string }> = {
   evidence_rejected: { color: C.bad, icon: "close" },
   rec_edited: { color: C.accent, icon: "retry" },
   needs_review: { color: C.bad, icon: "warning" },
+  extended: { color: C.accent, icon: "play" },
 };
 
 /**

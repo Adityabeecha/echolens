@@ -203,6 +203,14 @@ def preserve_note(old: str | None, new: str) -> str:
     return new.rstrip() + "\n\n" + old[i:]
 
 
+def note_related(lead: AnomalyEvent, others: list[AnomalyEvent], title_of) -> None:
+    """Name the other members on the lead's description, once, so the case
+    that investigates the lead starts with the whole incident in view."""
+    if others and RELATED_MARKER not in (lead.description or ""):
+        lead.description = ((lead.description or "").rstrip() + "\n\n"
+                            + related_note(lead, others, title_of)).strip()
+
+
 def commit_incident(session: Session, lead_slug: str, product_id: int | None,
                     product: str | None) -> list[str]:
     """When the reviewer picks an incident: note the other members on the lead's
@@ -223,9 +231,7 @@ def commit_incident(session: Session, lead_slug: str, product_id: int | None,
     if lead is None:
         return []
     others = [rows[s] for s in inc["members"][1:] if s in rows]
-    if RELATED_MARKER not in (lead.description or ""):
-        lead.description = ((lead.description or "").rstrip() + "\n\n"
-                            + related_note(lead, others, _headline)).strip()
+    note_related(lead, others, _headline)
     for o in others:
         session.add(TriageDecision(
             anomaly_id=o.id, decision="merge", merge_into_anomaly_id=lead.id,

@@ -49,6 +49,8 @@ _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("investigation_queue", "override_by", "VARCHAR"),
     ("investigation_queue", "override_at", "TIMESTAMP"),
     ("investigation_queue", "override_estimate_usd", "FLOAT"),
+    # budget extensions, for the case History
+    ("investigations", "extensions_json", "JSON"),
 ]
 
 
