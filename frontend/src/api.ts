@@ -2,7 +2,15 @@
 // Dev: Vite proxies "/api" → http://localhost:8000 (see vite.config.ts).
 // Prod (split origins): set VITE_API_BASE to the backend URL at build time,
 // e.g. VITE_API_BASE=https://echolens-api.code.run
-const BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, "") || "/api";
+// A value set without a scheme ("p01--echolens.code.run") was treated as a
+// path on the frontend's own origin, so every API call hit Vercel and failed.
+function apiBase(raw: string | undefined): string {
+  const v = (raw ?? "").trim().replace(/\/+$/, "");
+  if (!v) return "/api";
+  if (v.startsWith("/") || /^https?:\/\//i.test(v)) return v;
+  return `https://${v}`;
+}
+const BASE = apiBase(import.meta.env.VITE_API_BASE as string | undefined);
 
 // ── session (HttpOnly cookie) ───────────────────────────────────────────
 // The JWT lives in an HttpOnly cookie set by /auth/login, /auth/signup and

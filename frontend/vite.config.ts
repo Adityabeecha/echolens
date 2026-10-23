@@ -14,8 +14,11 @@ import react from "@vitejs/plugin-react";
  */
 function apiConnectCsp(apiBase: string | undefined): Plugin {
   let origin = "";
+  // Same repair as api.ts: a value without a scheme means https.
+  const raw = (apiBase ?? "").trim();
+  const base = raw && !raw.startsWith("/") && !/^https?:\/\//i.test(raw) ? `https://${raw}` : raw;
   try {
-    if (apiBase && /^https?:\/\//.test(apiBase)) origin = new URL(apiBase).origin;
+    if (base && /^https?:\/\//i.test(base)) origin = new URL(base).origin;
   } catch {
     origin = "";
   }
