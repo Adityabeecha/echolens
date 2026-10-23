@@ -31,6 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from echolens.db.models import Review, Setting
+from echolens.intent import count_intents
 from echolens.logging import get_logger
 from echolens.search.embedder import cosine, get_embedder
 from echolens.textkit import STOPWORDS, tokenize
@@ -539,6 +540,10 @@ def discover_themes(session: Session, product: str | None = None, *, llm=None,
             "first_seen": c["first_seen"],
             "last_seen": c["last_seen"],
             "trend": c["trend"],
+            # What the reviews in this theme are FOR (bug / request / confusion…),
+            # from the same members the count came from.
+            "intents": count_intents((rows[m].text, rows[m].rating)
+                                     for m in c.get("members") or []),
         })
 
     clustered = sum(t["count"] for t in themes)

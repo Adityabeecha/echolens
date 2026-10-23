@@ -42,6 +42,10 @@ _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("users", "last_active_product_id", "INTEGER"),
     # v9.0 portfolio
     ("investigations", "seeded_from_pattern", "JSON"),
+    # daily-cap override audit
+    ("investigation_queue", "override_by", "VARCHAR"),
+    ("investigation_queue", "override_at", "TIMESTAMP"),
+    ("investigation_queue", "override_estimate_usd", "FLOAT"),
 ]
 
 

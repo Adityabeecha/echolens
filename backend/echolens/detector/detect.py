@@ -496,6 +496,16 @@ def scan(session: Session, as_of: datetime | None = None, persist: bool = True,
                   if c.type == "issue_velocity_surge"
                   or c.severity in ("SEV1", "SEV2")
                   or c.z >= MIN_CASE_Z]
+    # A theme someone muted in Cases raises no NEW signals. Only theme-shaped
+    # detectors are filtered: muting a complaint must never silence the
+    # product-wide 1-star spike or rating drop.
+    if product_id is not None:
+        from echolens.themes.overrides import is_muted_slug, muted_word_sets
+        muted = muted_word_sets(session, product_id)
+        if muted:
+            candidates = [c for c in candidates
+                          if c.type not in ("theme_volume_surge", "issue_velocity_surge")
+                          or not is_muted_slug(c.slug, muted)]
 
     window_start = as_of - timedelta(days=win.recent)
     events: list[AnomalyEvent] = []
@@ -508,7 +518,10 @@ def scan(session: Session, as_of: datetime | None = None, persist: bool = True,
             fresh = prior.window_end is None or (
                 window_start - _aware(prior.window_end)) <= timedelta(days=MERGE_WINDOW_DAYS)
             prior.z, prior.delta = c.z, c.delta
-            prior.description, prior.window = c.description, c.window
+            # An incident note (see detector/incidents.py) outlives the rewrite.
+            from echolens.detector.incidents import preserve_note
+            prior.description = preserve_note(prior.description, c.description)
+            prior.window = c.window
             if fresh:  # same ongoing window → extend it
                 prior.window_start = prior.window_start or window_start
             else:      # a new occurrence after a gap → restart the window

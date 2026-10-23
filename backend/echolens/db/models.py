@@ -255,6 +255,36 @@ class QueuedInvestigation(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # "Investigate now anyway": who bypassed the daily cap for this one row,
+    # when, and the cost estimate they were shown. Auditable after the fact.
+    override_by: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    override_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    override_estimate_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class ThemeOverride(Base):
+    """A person's correction to a discovered theme, per product.
+
+    Discovery is re-run on new data and its names are generated, so a rename
+    typed into the UI cannot live on the theme itself — it would be gone on the
+    next refresh. Overrides sit beside discovery and are applied after it:
+
+    * label        — display name instead of the generated statement
+    * merged_into  — fold this theme's reviews into another theme's slug
+    * muted        — hidden from lists, and the detector stops raising new
+                     signals for its terms
+    """
+    __tablename__ = "theme_overrides"
+    __table_args__ = (UniqueConstraint("product_id", "slug", name="uq_theme_override"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    slug: Mapped[str] = mapped_column(String(128))
+    label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    merged_into: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    muted: Mapped[bool] = mapped_column(default=False)
+    updated_by: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
 
 class FixWatch(Base):
