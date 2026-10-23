@@ -121,6 +121,26 @@ async function writeHeaders(): Promise<Record<string, string>> {
   return _csrf ? { "X-CSRF-Token": _csrf } : {};
 }
 
+const CSRF_REJECTED = "missing or invalid CSRF token";
+
+/** A state-changing request with the CSRF echo. If the server rejects the
+ * token — another tab signed in again and rotated it — fetch the current one
+ * and retry once, instead of failing every write until a reload. */
+async function writeFetch(path: string, init: RequestInit & { headers?: Record<string, string> }): Promise<Response> {
+  const send = async () => fetch(BASE + path, {
+    ...init, credentials: "include", headers: { ...init.headers, ...(await writeHeaders()) },
+  });
+  let r = await send();
+  if (r.status === 403 && _session) {
+    const detail = await r.clone().json().then((j) => j?.detail, () => null);
+    if (detail === CSRF_REJECTED) {
+      _csrf = null;
+      r = await send();
+    }
+  }
+  return r;
+}
+
 function handle(status: number): void {
   if (status === 401) {
     // endSession also clears the stale cookie, so a guest-enabled deployment
@@ -150,10 +170,9 @@ async function get<T>(path: string): Promise<T> {
 }
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
-  const r = await fetch(BASE + path, {
+  const r = await writeFetch(path, {
     method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json", ...(await writeHeaders()) },
+    headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!r.ok) {
@@ -170,10 +189,9 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
 }
 
 async function put<T>(path: string, body?: unknown): Promise<T> {
-  const r = await fetch(BASE + path, {
+  const r = await writeFetch(path, {
     method: "PUT",
-    credentials: "include",
-    headers: { "Content-Type": "application/json", ...(await writeHeaders()) },
+    headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!r.ok) {
@@ -190,9 +208,7 @@ async function put<T>(path: string, body?: unknown): Promise<T> {
 }
 
 async function del<T>(path: string): Promise<T> {
-  const r = await fetch(BASE + path, {
-    method: "DELETE", credentials: "include", headers: await writeHeaders(),
-  });
+  const r = await writeFetch(path, { method: "DELETE" });
   if (!r.ok) {
     handle(r.status);
     let detail = "";
@@ -942,12 +958,10 @@ export const api = {
     // attached to NO product and are invisible to every scoped screen.
     const pid = getActiveProduct();
     if (pid != null) qs.set("product_id", String(pid));
-    return writeHeaders().then((headers) => fetch(`${BASE}/import/reviews?${qs.toString()}`, {
+    return writeFetch(`/import/reviews?${qs.toString()}`, {
       method: "POST",
-      credentials: "include",
-      headers,
       body: fd,
-    })).then(async (r) => {
+    }).then(async (r) => {
       if (!r.ok) {
         // handle() bounces a 401 to the login screen. This raw fetch skipped it,
         // so an expired session here failed silently instead.

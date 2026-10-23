@@ -258,6 +258,22 @@ def test_cookie_write_requires_matching_csrf_header(prod_client):
     assert ok.status_code == 200, ok.text
 
 
+def test_cookie_write_with_csrf_header_but_no_csrf_cookie_is_refused(prod_client):
+    """The header alone proves nothing: it must match the cookie."""
+    csrf = _login(prod_client).json()["csrf_token"]
+    prod_client.cookies.delete(auth.CSRF_COOKIE)
+    assert prod_client.post("/products/1/activate",
+                            headers={"X-CSRF-Token": csrf}).status_code == 403
+
+
+def test_cors_never_credentials_a_wildcard():
+    from echolens.api.app import cors_allows_credentials
+    assert cors_allows_credentials(["https://app.example.com"])
+    assert not cors_allows_credentials([])
+    assert not cors_allows_credentials(["*"])
+    assert not cors_allows_credentials(["https://app.example.com", "*"])
+
+
 def test_bearer_writes_need_no_csrf(prod_client):
     token = _login(prod_client).json()["token"]
     prod_client.cookies.clear()
@@ -274,8 +290,9 @@ def test_logout_clears_the_session(prod_client):
     _login(prod_client)
     out = prod_client.post("/auth/logout")
     assert out.status_code == 200
-    assert any(c.startswith(auth.SESSION_COOKIE + "=") and "Max-Age=0" in c
-               for c in out.headers.get_list("set-cookie"))
+    cleared = out.headers.get_list("set-cookie")
+    for name in (auth.SESSION_COOKIE, auth.CSRF_COOKIE):
+        assert any(c.startswith(name + "=") and "Max-Age=0" in c for c in cleared), name
     assert prod_client.get("/auth/me").status_code == 401
 
 

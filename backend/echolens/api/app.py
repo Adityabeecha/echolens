@@ -129,6 +129,15 @@ log = get_logger("api")
 
 # CORS: explicit allowlist in prod; permissive in dev for localhost tooling.
 _cors_origins = settings.cors_list or (["*"] if settings.echolens_env == "dev" else [])
+
+
+def cors_allows_credentials(origins: list[str]) -> bool:
+    """Credentialed CORS only for an explicit list. A "*" anywhere in it — e.g.
+    CORS_ORIGINS="*" set by hand — keeps credentials off rather than letting
+    Starlette reflect every origin with the visitor's session cookie."""
+    return bool(origins) and "*" not in origins
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
@@ -137,7 +146,7 @@ app.add_middleware(
     # Starlette would reflect any origin while allowing credentials, letting
     # every website read responses with the visitor's session. Dev's "*" (auth
     # off, Vite proxies same-origin anyway) therefore stays uncredentialed.
-    allow_credentials=bool(settings.cors_list),
+    allow_credentials=cors_allows_credentials(_cors_origins),
     allow_methods=["*"],
     allow_headers=["*"],
 )
