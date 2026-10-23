@@ -78,27 +78,6 @@ def _open_problems(session: Session, product_id: int | None = None) -> list[tupl
     return rows
 
 
-def _top_signals(session: Session, product_id: int | None = None, k: int = 3):
-    """Strongest pending, unmerged signals for the product, by z."""
-    from sqlalchemy import select
-
-    from echolens.db.models import AnomalyEvent
-    stmt = select(AnomalyEvent).where(AnomalyEvent.status == "pending",
-                                      AnomalyEvent.merged_into_id.is_(None))
-    if product_id is not None:
-        stmt = stmt.where(AnomalyEvent.product_id == product_id)
-    from echolens.cases import _headline
-    rows = list(session.scalars(stmt).all())
-    rows.sort(key=lambda a: -(a.z or 0.0))
-    seen, out = set(), []
-    for a in rows:  # the same headline twice is one signal to a reader
-        key = _headline(a).strip().lower()
-        if key not in seen:
-            seen.add(key)
-            out.append(a)
-    return out[:k]
-
-
 def _cite(f: Finding, inv: Investigation) -> dict:
     impact = (f.json or {}).get("impact", {})
     return {"investigation_id": inv.id, "finding_id": f.id, "summary": f.summary,
@@ -150,16 +129,14 @@ def matching_signals(session: Session, message: str, product_id: int | None = No
                      k: int = 3) -> list[dict]:
     """Waiting (detected, never investigated, not dismissed) signals whose
     headline shares words with the question, best match first."""
-    from echolens.cases import signal_rows
+    from echolens.detector.incidents import waiting_rows
 
     terms = set(tokenize(message))
     if not terms:
         return []
     scored = []
-    for i, row in enumerate(signal_rows(session, product_id)):
-        if row.get("dismissed"):
-            continue
-        toks = set(tokenize(f"{row.get('title') or ''} {row.get('metric') or ''}"))
+    for i, row in enumerate(waiting_rows(session, product_id)):
+        toks = set(tokenize(" ".join(row["member_topics"])))
         overlap = len(terms & toks)
         if overlap:
             scored.append((overlap, i, row))
@@ -169,7 +146,7 @@ def matching_signals(session: Session, message: str, product_id: int | None = No
 
 def _signals_answer(hits: list[dict], prefix: str = "") -> dict:
     lead = hits[0]
-    more = f" (+{len(hits) - 1} related)" if len(hits) > 1 else ""
+    more = f" (+{len(hits) - 1} other incidents)" if len(hits) > 1 else ""
     # grounded: built from the product's own signals, so the endpoint answers
     # with it directly instead of spending a model call.
     return {"type": "answer", "citations": [], "signals": hits, "basis": basis_signals(),
@@ -195,17 +172,20 @@ def route(session: Session, message: str, product_id: int | None = None,
     # "I couldn't work that out" — while the product had strong signals
     # waiting. Answer from the signals instead, labelled as uninvestigated.
     if any(m in msg for m in RANK_MARKERS) and not _open_problems(session, product_id):
-        signals = _top_signals(session, product_id)
+        from echolens.detector.incidents import waiting_rows
+        waiting = waiting_rows(session, product_id)
+        signals = waiting[:3]
         if signals:
-            from echolens.cases import _headline
             top = signals[0]
-            rest = " and ".join(f"“{_headline(a)}”" for a in signals[1:3])
+            rest = " and ".join(f"“{a['title']}”" for a in signals[1:3])
+            n = len(waiting)
             return {"type": "answer", "citations": [], "grounded": True,
-                    "basis": basis_signals(),
+                    "basis": basis_signals(), "signals": signals, "signal_count": n,
                     "text": (f"Nothing{label} has been investigated yet, so I can't name a cause. "
-                             f"The strongest signal waiting is “{_headline(top)}”"
+                             f"There {'is' if n == 1 else 'are'} {n} incident{'s' if n != 1 else ''} waiting. "
+                             f"The strongest incident is “{top['title']}”"
                              + (f", followed by {rest}" if rest else "") +
-                             ". Ask me to investigate it and I'll open a case.")}
+                             ". Investigate it to find the cause.")}
 
     # nothing investigated yet in this product — say so explicitly, but still
     # surface a detected signal on the topic if there is one

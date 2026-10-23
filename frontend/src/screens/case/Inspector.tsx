@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Evidence, Hypothesis, Investigation, api, canReview } from "../../api";
 import { withToast } from "../../components/Toast";
-import { sourceLabel } from "../../format";
+import { describeToolCall, sourceLabel } from "../../format";
 import { useTrace } from "../../hooks";
 import { C, R, S, T, mono } from "../../theme";
 import { Button, Label } from "../../ui";
@@ -40,6 +40,7 @@ export function EvidenceDetail({ evidence, inv, onReload }: {
   const contradicts = evidence.contradicts.map((id) => byId.get(id)).filter((h): h is Hypothesis => !!h);
   const href = refHref(evidence);
   const f = inv.finding;
+  const proven = f?.status === "approved" && !f.needs_review && f.fix?.status === "confirmed";
   const rejected = !!evidence.rejected;
   const canReject = canReview() && !!f && f.status !== "challenged" && !rejected && !!onReload;
 
@@ -96,7 +97,7 @@ export function EvidenceDetail({ evidence, inv, onReload }: {
         </div>
         <div style={{ overflowWrap: "anywhere" }}>
           <span style={{ color: C.faint }}>Found by</span> —{" "}
-          <span style={{ fontFamily: mono }}>{evidence.retrieved_by}</span>
+          <span title={evidence.retrieved_by}>{describeToolCall(evidence.retrieved_by)}</span>
         </div>
       </div>
 
@@ -106,7 +107,7 @@ export function EvidenceDetail({ evidence, inv, onReload }: {
           <div style={{ fontSize: T.sm, color: C.dim }}>Not linked to any possible cause.</div>
         )}
         <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
-          {supports.map((h) => <HypLine key={`s-${h.id}`} h={h} stance="supports" />)}
+          {supports.map((h) => <HypLine key={`s-${h.id}`} h={h} stance="supports" proven={proven} />)}
           {contradicts.map((h) => <HypLine key={`c-${h.id}`} h={h} stance="contradicts" />)}
         </div>
       </div>
@@ -159,7 +160,7 @@ export function EvidenceDetail({ evidence, inv, onReload }: {
   );
 }
 
-function HypLine({ h, stance }: { h: Hypothesis; stance: "supports" | "contradicts" }) {
+function HypLine({ h, stance, proven = false }: { h: Hypothesis; stance: "supports" | "contradicts"; proven?: boolean }) {
   const color = stance === "supports" ? C.good : C.bad;
   return (
     <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: S[2], alignItems: "baseline",
@@ -171,7 +172,7 @@ function HypLine({ h, stance }: { h: Hypothesis; stance: "supports" | "contradic
       <span style={{ color: h.status === "rejected" ? C.dim : C.text3,
                      textDecoration: h.status === "rejected" ? "line-through" : undefined }}>
         {h.statement}
-        {h.status === "supported" && <span style={{ color: C.good }}> · proven cause</span>}
+        {h.status === "supported" && <span style={{ color: C.good }}> · {proven ? "proven cause" : "supported hypothesis"}</span>}
         {h.status === "rejected" && <span style={{ color: C.dim }}> · ruled out</span>}
       </span>
     </div>

@@ -113,7 +113,7 @@ def _load_board(session: Session, products: list[Product], now: datetime) -> dic
     from echolens.themes import theme_lifecycles
 
     ids = [p.id for p in products]
-    data = {pid: {"watches": [], "resolved": [], "latest": {}, "untriaged": 0,
+    data = {pid: {"watches": [], "resolved": [], "latest": {}, "untriaged": 0, "waiting_incidents": 0,
                   "sources": [], "chronic": [], "rates": (None, None),
                   "has_reviews": False} for pid in ids}
     if not ids:
@@ -136,6 +136,10 @@ def _load_board(session: Session, products: list[Product], now: datetime) -> dic
             AnomalyEvent.product_id.in_(ids), AnomalyEvent.status == "pending",
             AnomalyEvent.merged_into_id.is_(None)).group_by(AnomalyEvent.product_id)).all():
         data[pid]["untriaged"] = n
+
+    from echolens.detector.incidents import waiting_groups
+    for members in waiting_groups(session, ids):
+        data[members[0].product_id]["waiting_incidents"] += 1
 
     # Both rate windows for every product in one pass: [now-35d, now-7d) is the
     # baseline, [now-7d, now) the recent week — same bounds as _negative_rate.
@@ -224,11 +228,14 @@ def product_snapshot(session: Session, product: Product, now: datetime,
                         "text": f"{_n(len(chronic), 'complaint theme')} unresolved for over {CHRONIC_DAYS} days"})
 
     # ── queue depth ────────────────────────────────────────────────────
+    # Preserve the original attention/health contribution of raw pending rows.
+    # The visible decision count is incidents (singletons count once).
     untriaged = data["untriaged"]
-    if untriaged:
+    waiting = data["waiting_incidents"]
+    if untriaged or waiting:
         score += W_UNTRIAGED * untriaged
         reasons.append({"kind": "untriaged", "weight": round(W_UNTRIAGED * untriaged, 1),
-                        "text": f"{_n(untriaged, 'signal')} waiting for triage"})
+                        "text": f"{_n(waiting, 'incident')} waiting for triage"})
 
     # ── trend: is sentiment getting worse? ─────────────────────────────
     recent, baseline = data["rates"]
@@ -267,7 +274,7 @@ def product_snapshot(session: Session, product: Product, now: datetime,
         "top_problem": top_problem,
         "open_problems": high + medium,
         "regressions": len(regressed),
-        "untriaged": untriaged,
+        "untriaged": waiting,
         "negative_rate_pct": round(100 * recent, 1) if recent is not None else None,
         "negative_rate_delta_pct": round(100 * delta, 1) if has_rate else None,
         "confirmed_fixes": len(confirmed_inv),

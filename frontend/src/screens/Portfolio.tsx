@@ -202,9 +202,9 @@ function ProductRow({ p, onOpen, onOpenInvestigation }: {
           </span>
           <span style={{ marginLeft: "auto", fontFamily: mono, fontSize: T.xs, color: C.faint }}>
             {p.has_data ? `${p.negative_rate_pct}% negative` : "no data yet"}
-            {p.has_data && trend !== 0 && (
+            {p.has_data && trend != null && trend !== 0 && (
               <span style={{ color: trend > 0 ? C.bad : C.good, marginLeft: 6 }}>
-                <Icon name={trend > 0 ? "arrowUp" : "arrowDown"} size={11} /> {Math.abs(trend)} pts
+                negative reviews <Icon name={trend > 0 ? "arrowUp" : "arrowDown"} size={11} /> {Math.abs(trend)} pts
               </span>
             )}
           </span>
