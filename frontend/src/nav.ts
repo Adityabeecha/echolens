@@ -167,3 +167,15 @@ export function parseRoute(hash: string): Route | null {
   if (RETIRED[head]) return { screen: RETIRED[head], productId, params };
   return null;
 }
+
+/**
+ * The token of a public, read-only share link (#/share/<token>), or null.
+ *
+ * Deliberately outside `Route`: a shared brief is not a place in the app. It is
+ * rendered before login and without a product, so it must never reach the
+ * router, the boot sequence, or any authenticated request.
+ */
+export function shareTokenFromHash(hash: string): string | null {
+  const m = hash.match(/^#\/?share\/([A-Za-z0-9_-]{16,64})\/?$/);
+  return m ? m[1] : null;
+}

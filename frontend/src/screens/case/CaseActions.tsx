@@ -30,7 +30,7 @@ export function DecisionChip({ decision }: { decision: ProductDecision | null | 
   if (!decision) return null;
   const m = DECISION_META[decision.decision];
   return (
-    <span title="Product decision" style={{
+    <span title={`Product decision${decision.at ? ` · set ${when(decision.at)}` : ""}${decision.reason ? ` — ${decision.reason}` : ""}`} style={{
       display: "inline-flex", alignItems: "center", gap: S[1], padding: `3px ${S[3]}`,
       borderRadius: R.pill, background: m.bg, border: `1px solid ${m.line}`, color: m.color,
       fontSize: T.sm, fontWeight: 500, maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis",
