@@ -37,8 +37,11 @@ class Budget:
         return self.prior_elapsed_s + live
 
     @classmethod
-    def for_tier(cls, name: str) -> "Budget":
-        return cls(tier=BUDGET_TIERS[name])
+    def for_tier(cls, name: str | None) -> "Budget":
+        # An unknown tier ("Quick", "deep ", a stale value from a resumed row)
+        # raised KeyError mid-request. Normalise, and fall back to standard.
+        key = (name or "standard").strip().lower()
+        return cls(tier=BUDGET_TIERS.get(key, BUDGET_TIERS["standard"]))
 
     # The effective hard caps. One definition, read by both the guard and the
     # display, so the budget shown can never disagree with the budget enforced.

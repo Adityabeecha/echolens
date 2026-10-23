@@ -18,7 +18,7 @@ This module does two jobs:
 from __future__ import annotations
 
 import math
-import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
@@ -91,7 +91,14 @@ class FeedbackItem:
 def _norm_text(text: str | None) -> str:
     """Collapse whitespace/case/punctuation so the same sentence posted in two
     places is recognisably the same sentence."""
-    return re.sub(r"[^a-z0-9 ]+", "", (text or "").lower()).strip()
+    normalized = unicodedata.normalize("NFC", (text or "").casefold())
+    # Combining marks carry meaning in scripts such as Devanagari.
+    letters = "".join(c for c in normalized
+                      if c.isalnum() or c.isspace() or unicodedata.category(c).startswith("M"))
+    # Emoji variation selectors are marks too; they must not become the whole
+    # key after their symbols are removed. Keep symbol-only feedback intact.
+    key = letters if any(c.isalnum() for c in letters) else normalized
+    return " ".join(key.split())
 
 
 def _reaction_weight(n: int | None) -> float:
@@ -228,7 +235,7 @@ def dedupe_witnesses(items: list[FeedbackItem]) -> tuple[list[FeedbackItem], int
     by_text: dict[str, FeedbackItem] = {}
     collapsed = 0
     for item in items:
-        key = _norm_text(item.text)[:180]
+        key = _norm_text(item.text)
         if not key:
             continue
         prior = by_text.get(key)

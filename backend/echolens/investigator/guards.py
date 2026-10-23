@@ -33,7 +33,14 @@ CAUSAL_MARKERS = re.compile(
     r"stems? from|stemmed from|attributable to|attributed to|the trigger for|"
     r"the reason(?: (?:that|why))?|owing to|thanks to|brought about by|"
     r"introduced by|down to|explains?(?: why)?|arises? from|arose from|"
-    r"originates? from|traced? (?:back )?to|blame[ds]? on)\b",
+    r"originates? from|traced? (?:back )?to|blame[ds]? on|"
+    # Added 2026-10-22: blame and breakage phrasing that still published
+    # uncited — "is the culprit", "broke sync", "a direct consequence of".
+    r"culprit|to blame|consequence of|broke|breaks|broken by|"
+    r"introduc(?:e|es|ed|ing)\b.{0,40}?\b(?:bug|regression|issue|problem|crash|drain|leak)|"
+    r"regress(?:ed|ion) (?:in|since|after|with)|"
+    r"(?:kills?|killed|drains?|drained) (?:the )?(?:battery|app|performance)|"
+    r"since (?:the )?(?:update|release|upgrade|v?\d+\.\d+))\b",
     re.IGNORECASE,
 )
 EVIDENCE_REF = re.compile(r"\bev_\d+\b")
@@ -185,7 +192,9 @@ def two_source_rule(hypothesis: dict, evidence: list[dict]) -> bool:
 def resolvable_hypothesis(hypotheses: list[dict], evidence: list[dict]) -> dict | None:
     """The hypothesis that satisfies confidence + two-source rule, if any."""
     for h in hypotheses:
-        if h["status"] == "rejected":
+        # A parked hypothesis is out of the active set; it cannot resolve the
+        # case until the model brings it back.
+        if h["status"] in ("rejected", "parked"):
             continue
         if h["confidence"] >= SUPPORT_CONFIDENCE and two_source_rule(h, evidence):
             return h
@@ -231,3 +240,60 @@ def unsupported_claims(prose: str, evidence_ids: set[str]) -> list[str]:
         if not refs or not refs <= evidence_ids:
             violations.append(sentence.strip())
     return violations
+
+
+# ── user-facing text hygiene ────────────────────────────────────────────
+#
+# The finding is read by a PM, not by the guard. Two kinds of internal
+# vocabulary leaked straight into it: the hypothesis label ("H1 supported:
+# release v3.2.0 …" became the case title everywhere) and guard bookkeeping
+# ("This satisfies the two-source rule with 0.90 confidence."). Both are
+# stripped here, deterministically, after the model drafts.
+
+_HYP_PREFIX = re.compile(
+    r"^\s*H\d+\b[\s,]*(?:is\s+)?(?:supported|confirmed|rejected|active|wins?)?\s*[:\-—]\s*",
+    re.IGNORECASE)
+_META_SENTENCE = re.compile(
+    r"two[- ]source rule|claim[- ]grounding|honesty guard|budget (?:cap|guard)|"
+    r"\bH\d+\b(?: is)? (?:supported|rejected)|confidence (?:threshold|of) 0?\.\d+",
+    re.IGNORECASE)
+_CODE_SPAN = re.compile(r"`([^`\n]{1,80})`")
+
+
+def tidy_summary(summary: str) -> str:
+    """'H1 supported: release v3.2.0 introduced…' -> 'Release v3.2.0 introduced…'."""
+    text = _HYP_PREFIX.sub("", summary or "").strip()
+    return text[:1].upper() + text[1:] if text else (summary or "")
+
+
+def tidy_prose(prose: str) -> str:
+    """Drop sentences that narrate the guards rather than the product."""
+    kept = [s for s in re.split(r"(?<=[.!?])\s+", prose or "")
+            if s.strip() and not _META_SENTENCE.search(s)]
+    return " ".join(kept) if kept else (prose or "")
+
+
+def unseen_code_spans(text: str, corpus: str) -> str:
+    """Un-format `identifiers` that appear nowhere in the evidence.
+
+    A recommendation said to disable `automatic_background_photo_sync` — a flag
+    name that exists in no evidence. Rendered as code it reads as a verified
+    config key. Spans the evidence does contain are kept; the rest become plain
+    words so they read as a description, not a fact."""
+    lowered = (corpus or "").lower()
+
+    def repl(m: re.Match) -> str:
+        span = m.group(1)
+        if span.lower() in lowered:
+            return m.group(0)
+        return span.replace("_", " ")
+    return _CODE_SPAN.sub(repl, text or "")
+
+
+def dedupe_refs(refs) -> list:
+    """Evidence ids in first-seen order, each once ('ev_001, ev_001' bug)."""
+    seen: list = []
+    for r in refs or []:
+        if r not in seen:
+            seen.append(r)
+    return seen

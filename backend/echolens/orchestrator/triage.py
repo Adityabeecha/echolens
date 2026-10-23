@@ -113,7 +113,7 @@ class Orchestrator:
 
     def _record_llm_call(self, agent, model, tokens_in, tokens_out, cost, ms):
         self.session.add(LLMCall(
-            investigation_id=None, agent=agent, model=model,
+            investigation_id=None, product_id=self.product_id, agent=agent, model=model,
             tokens_in=tokens_in, tokens_out=tokens_out, cost=cost, ms=ms,
         ))
 
@@ -182,7 +182,13 @@ class Orchestrator:
             res = self.llm.complete_json(TRIAGE_SYSTEM, prompt, TRIAGE_SCHEMA, "orchestrator")
             raw = res.parsed.get("decisions", [])
         except LLMError:
-            raw = []
+            # An unavailable model made no judgment: preserve the signals for
+            # retry rather than permanently recording them as ignored noise.
+            deferred = [Decision(a, "defer", "model service unavailable — retry later")
+                        for a in pending]
+            if persist:
+                self._persist(deferred)
+            return deferred
 
         # Parse LLM proposals; anything unmentioned/invalid defaults to ignore.
         decisions: dict[str, Decision] = {}
@@ -254,8 +260,31 @@ def run_triaged(session: Session, decisions: list[Decision], llm: LLMClient | No
     for d in decisions:
         if d.decision != "investigate":
             continue
+        anomaly_id = d.anomaly.id
         d.anomaly.status = "investigating"
-        inv = Investigator(session, d.anomaly, llm=llm, tier=d.budget_tier or "standard",
-                           opened_by="anomaly", on_step=on_step).run()
+        try:
+            inv = Investigator(session, d.anomaly, llm=llm, tier=d.budget_tier or "standard",
+                               opened_by="anomaly", on_step=on_step).run()
+        except Exception as err:  # noqa: BLE001 - one failing run must not strand the rest
+            # Isolate the failure: roll back the half-done unit of work, park any
+            # case this run left "running" (resumable), and put the anomaly back
+            # to "pending" so the next cycle retries it instead of leaving it
+            # at "investigating" forever.
+            session.rollback()
+            try:
+                for stuck in session.scalars(select(Investigation).where(
+                        Investigation.anomaly_id == anomaly_id,
+                        Investigation.status == "running")).all():
+                    stuck.status = "paused"
+                anomaly = session.get(AnomalyEvent, anomaly_id)
+                if anomaly is not None:
+                    anomaly.status = "pending"
+                session.flush()
+            except Exception:  # noqa: BLE001
+                session.rollback()
+            import logging
+            logging.getLogger("echolens.triage").warning(
+                "investigation_failed anomaly=%s error=%s", anomaly_id, err)
+            continue
         investigations.append(inv)
     return investigations

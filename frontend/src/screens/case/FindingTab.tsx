@@ -4,7 +4,7 @@ import { withToast } from "../../components/Toast";
 import { pct } from "../../format";
 import { SEVERITY } from "../../status";
 import { C, MEASURE, R, S, T, mono } from "../../theme";
-import { EmptyState, Label } from "../../ui";
+import { EmptyState, Label, Rich } from "../../ui";
 import { Icon } from "../../components/Icon";
 
 interface Props {
@@ -24,7 +24,7 @@ function Prose({ text, evidence, onOpenEvidence }: {
     <>
       {text.split(/(\[ev_\d+\])/g).map((p, i) => {
         const m = p.match(/^\[(ev_\d+)\]$/);
-        if (!m) return <span key={i}>{p}</span>;
+        if (!m) return <Rich key={i} text={p} />;
         const ev = evidence.find((e) => e.id === m[1]);
         return (
           <sup key={i} onClick={() => ev && onOpenEvidence(ev)}
@@ -153,7 +153,7 @@ export function FindingTab({
           <Label style={{ letterSpacing: ".12em", marginBottom: S[3] }}>FINDING</Label>
           <div style={{ fontSize: T.xl, fontWeight: 700, lineHeight: "var(--el-lh-snug)",
                         letterSpacing: "-.01em" }}>
-            {f.summary}
+            <Rich text={f.summary} />
           </div>
           <div style={{ fontSize: T.md, lineHeight: "var(--el-lh-normal)", color: C.text3, marginTop: S[3] }}>
             <Prose text={f.prose} evidence={inv.evidence} onOpenEvidence={onOpenEvidence} />
@@ -183,7 +183,7 @@ export function FindingTab({
                                 fontSize: T.sm, color: C.accent, flex: "none" }}>
                     {ac.rank}
                   </div>
-                  <div style={{ flex: 1, fontSize: T.base, fontWeight: 500 }}>{ac.action}</div>
+                  <div style={{ flex: 1, fontSize: T.base, fontWeight: 500, minWidth: 0 }}><Rich text={ac.action} /></div>
                   <Tag color={C.good}>{ac.impact} impact</Tag>
                   <Tag color={C.muted}>{ac.effort} effort</Tag>
                 </div>
@@ -305,16 +305,19 @@ function DecisionCard({ decision, impact, severity }: {
                                 alignItems: "baseline" }}>
             <div style={{ fontFamily: mono, fontSize: T.xs, color: C.faint,
                           textTransform: "uppercase", letterSpacing: ".06em" }}>{q}</div>
-            <div style={{ fontSize: T.md, color: C.text2, lineHeight: "var(--el-lh-normal)" }}>{a || "—"}</div>
+            <div style={{ fontSize: T.md, color: C.text2, lineHeight: "var(--el-lh-normal)",
+                          overflowWrap: "anywhere", minWidth: 0 }}>{a ? <Rich text={a} /> : "—"}</div>
           </div>
         ))}
       </div>
       {impact && (impact.affected_volume > 0 || impact.rating_impact > 0) && (
         <div style={{ display: "flex", gap: S[2], flexWrap: "wrap", marginTop: S[4] }}>
           <ImpactStat label="AFFECTED" value={pct(impact.affected_pct)}
-                      sub={`${impact.affected_volume} reviews / 7d`} />
+                      sub={`of recent negative reviews · ${impact.affected_volume} reviews / 7d`}
+                      hint="Share of recent negative reviews that match this problem. It is a share of reviews, not of users." />
           <ImpactStat label="RATING IMPACT" value={`${impact.rating_impact.toFixed(2)}★`}
                       sub="est. lost vs baseline"
+                      hint="Rating points this problem is estimated to have cost so far. The Plan page shows a separate “recoverable” figure: the part of that loss a fix is expected to win back."
                       color={impact.rating_impact > 0 ? C.bad : C.muted} />
           {impact.blast_radius.top_cohort && impact.blast_radius.top_cohort !== "unknown" && (
             <ImpactStat
@@ -438,11 +441,11 @@ function FollowupCard({ findingId, addenda, onAdded }: {
   );
 }
 
-function ImpactStat({ label, value, sub, color }: {
-  label: string; value: string; sub: string; color?: string;
+function ImpactStat({ label, value, sub, color, hint }: {
+  label: string; value: string; sub: string; color?: string; hint?: string;
 }) {
   return (
-    <div style={{ flex: 1, minWidth: 150, padding: `${S[3]} ${S[3]}`, background: C.card2,
+    <div title={hint} style={{ flex: 1, minWidth: 150, padding: `${S[3]} ${S[3]}`, background: C.card2,
                   border: `1px solid ${C.border2}`, borderRadius: R.control }}>
       <div style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".1em", color: C.faint }}>
         {label}

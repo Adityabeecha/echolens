@@ -24,7 +24,7 @@ export function Calibration({ onGoCases }: { onGoCases: () => void }) {
         <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>
           <EmptyState
             title={`No reviewed findings for ${data.product || "this product"} yet`}
-            body="This screen checks EchoLens against itself: when it says it is 80% sure, is it right 80% of the time? It needs your verdicts to do that. Approve or challenge a few findings and the curve starts here."
+            body="This screen checks EchoLens against itself: when it says it is 80% sure, is it right 80% of the time? It needs your verdicts to do that. Approve or challenge findings — 0 of 20 reviewed so far; the curve firms up at 20."
             action="Review findings in Cases"
             onAction={onGoCases}
           />
@@ -39,7 +39,7 @@ export function Calibration({ onGoCases }: { onGoCases: () => void }) {
         title="Calibration"
         product={data.product}
         subtitle="Stated confidence vs your verdicts"
-        right={<span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>{data.n_reviewed} REVIEWED FINDINGS</span>}
+        right={<span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>{data.n_reviewed} OF 20 REVIEWED FINDINGS</span>}
       />
       <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>
         {data.headline && (

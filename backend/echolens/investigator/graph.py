@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from langgraph.graph import END, StateGraph
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from echolens.config import (
@@ -71,6 +72,16 @@ def _collect_refs(node) -> set[str]:
         for item in node:
             refs |= _collect_refs(item)
     return refs
+
+
+def _as_ids(value) -> list[str]:
+    """A model may send `"supports": "H1"`; iterating that string yielded 'H'
+    and '1', silently losing the evidence→hypothesis link."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [v.strip() for v in value.split(",") if v.strip()]
+    return [str(v) for v in value if v is not None]
 
 
 class Investigator:
@@ -292,6 +303,16 @@ class Investigator:
             f"  {d['date']}: {d['term_neg']} negatives mention it" for d in stats.get("daily_tail", [])]
         return "Dated events to order:\n" + "\n".join(events)
 
+    def _next_eid(self, state: InvState) -> str:
+        """Next free evidence id. `len(evidence) + 1` collided after a resume
+        whose checkpoint predated rows already written for this case, so two
+        different items shared one id. Take the max of state AND the DB."""
+        used = [e["id"] for e in state["evidence"]]
+        used += self.session.scalars(select(EvidenceRow.eid).where(
+            EvidenceRow.investigation_id == self.inv.id)).all()
+        nums = [int(u[3:]) for u in used if isinstance(u, str) and u[3:].isdigit()]
+        return f"ev_{max(nums, default=0) + 1:03d}"
+
     def _apply_hypothesis_revision(self, state: InvState, proposed: list[dict]) -> list[dict]:
         existing = {h["id"]: h for h in state["hypotheses"]}
         by_statement = {
@@ -326,6 +347,8 @@ class Investigator:
         # two_source_rule saw zero items and it could never resolve.
         for p in proposed:
             hid = p.get("id") or f"H{len(merged) + 1}"
+            if any(m["id"] == hid for m in merged):
+                continue  # a repeated id in one revision is the same hypothesis
             statement = p.get("statement", "")
             old = existing.get(hid) or by_statement.get(statement.strip().lower(), {})
             status = p.get("status", "active")
@@ -345,8 +368,11 @@ class Investigator:
                 "statement": p.get("statement", old.get("statement", "")),
                 "confidence": max(0.0, min(1.0, float(p.get("confidence", old.get("confidence", 0.5))))),
                 "status": status,
-                "evidence_for": old.get("evidence_for", []),
-                "evidence_against": old.get("evidence_against", []),
+                # Copies, never the shared list: two proposals that matched the
+                # same `old` used to alias one list, so evidence cited for one
+                # hypothesis silently counted toward the other's two-source rule.
+                "evidence_for": list(old.get("evidence_for", [])),
+                "evidence_against": list(old.get("evidence_against", [])),
                 "next_test": p.get("next_test", ""),
                 # v2.0: hypotheses this one gains from if THEY are rejected
                 "boost_if_rejected": p.get("boost_if_rejected", old.get("boost_if_rejected", [])),
@@ -444,12 +470,12 @@ class Investigator:
                                      "text": f"(merged) near-duplicate of {dup}; counted once, not twice.",
                                      "supports": [], "contradicts": []})
                 continue
-            eid = f"ev_{len(state['evidence']) + 1:03d}"
+            eid = self._next_eid(state)
             ev = {
                 "id": eid, "source": source, "ref": ref,
-                "snippet": item.get("snippet", "")[:400], "retrieved_by": retrieved_by,
-                "supports": [h for h in item.get("supports", []) if h in known_h],
-                "contradicts": [h for h in item.get("contradicts", []) if h in known_h],
+                "snippet": str(item.get("snippet") or "")[:400], "retrieved_by": retrieved_by,
+                "supports": [h for h in _as_ids(item.get("supports")) if h in known_h],
+                "contradicts": [h for h in _as_ids(item.get("contradicts")) if h in known_h],
             }
             state["evidence"].append(ev)
             ref_to_eid[ref] = eid
@@ -473,7 +499,8 @@ class Investigator:
             h = next((x for x in state["hypotheses"] if x["id"] == upd.get("id")), None)
             if h is None:
                 continue
-            cited = [ref_to_eid[r] for r in upd.get("based_on_refs", []) if r in ref_to_eid]
+            cited = guards.dedupe_refs(
+                [ref_to_eid[r] for r in upd.get("based_on_refs", []) if r in ref_to_eid])
             if not cited:  # confidence may only move on cited evidence (PRD §5.2)
                 continue
             old_conf, old_status = h["confidence"], h["status"]
@@ -728,7 +755,11 @@ class Investigator:
                 res = self.llm.complete_json(FINDING_SYSTEM, context, FINDING_SCHEMA, "investigator.finding")
             except LLMError:
                 break
-            candidate = res.parsed
+            candidate = dict(res.parsed)
+            corpus = " ".join(str(e.get("snippet", "")) for e in state["evidence"])
+            candidate["summary"] = guards.tidy_summary(candidate.get("summary", ""))
+            candidate["prose"] = guards.unseen_code_spans(
+                guards.tidy_prose(candidate.get("prose", "")), corpus)
             violations = guards.unsupported_claims(candidate.get("prose", ""), evidence_ids)
             if not violations:
                 finding = candidate

@@ -11,9 +11,9 @@ Copy-Item backend\.env.example backend\.env
 | Variable | Local default | Purpose |
 |---|---|---|
 | `OPENAI_API_KEY` | none | Secret API key used by investigations. Required when an LLM-backed operation runs. |
-| `ECHOLENS_MODEL` | `gpt-4o-mini` | OpenAI chat model used by the investigation agents. |
+| `ECHOLENS_MODEL` | `gpt-4o-mini` | OpenAI chat model used by the investigation agents. Any model used must be listed in `MODEL_PRICING` in `backend/echolens/config.py`. |
 | `ECHOLENS_DB_URL` | `sqlite:///echolens.db` | SQLAlchemy database URL. Use a PostgreSQL pooler URL in production. |
-| `ECHOLENS_ENV` | `dev` | `dev` disables authentication; `staging` and `production` require it. Never publish a `dev` deployment. |
+| `ECHOLENS_ENV` | `dev` | `dev` disables authentication; `staging` and `production` require it. Set it explicitly on every deployment; never publish a `dev` deployment. |
 
 ## Database and search
 
@@ -21,6 +21,7 @@ Copy-Item backend\.env.example backend\.env
 |---|---|---|
 | `EMBEDDING_BACKEND` | `hash` | `hash` is dependency-free; `sentence-transformers` requires `pip install -e ".[embeddings]"`. |
 | `EMBEDDING_DIM` | `256` | Vector dimension for the hash embedding backend. |
+| `DETECTOR_EXTRA_TERMS` | empty | Extra complaint themes to watch, comma-separated. |
 | `SEED_ON_START` | `false` | Seeds the synthetic demo corpus when the database is empty. |
 
 For Supabase, use its PostgreSQL pooler connection string rather than the direct database host. Encode special characters in the password as required by a URL.
@@ -30,12 +31,14 @@ For Supabase, use its PostgreSQL pooler connection string rather than the direct
 | Variable | Default | Purpose |
 |---|---|---|
 | `JWT_SECRET` | insecure example | Secret used to sign access tokens. Generate a unique production value. |
+| `JWT_ALGORITHM` | `HS256` | Token signing algorithm. |
 | `JWT_EXPIRE_MINUTES` | `1440` | Access-token lifetime in minutes. |
 | `CORS_ORIGINS` | empty | Comma-separated frontend origins allowed by the API, with scheme and no trailing slash. Required in production. |
 | `ALLOW_GUEST` | `false` | Allows unauthenticated read-only viewer access. |
 | `GUEST_DEMO_ONLY` | `true` | Restricts guests to products explicitly marked as demos. Keep enabled for public deployments. |
 | `GOOGLE_CLIENT_ID` | empty | Enables Google sign-in. This browser client ID is public by design. |
-| `GOOGLE_DEFAULT_ROLE` | `reviewer` | Role assigned to Google users unless their email is listed as an admin. Use `viewer` for public demos. |
+| `GOOGLE_DEFAULT_ROLE` | `viewer` | Role assigned to Google users unless their email is listed as an admin. |
+| `GOOGLE_ALLOWED_DOMAINS` | empty | Comma-separated email domains allowed to sign in with Google. Empty means only `GOOGLE_ADMIN_EMAILS` and existing users. |
 | `GOOGLE_ADMIN_EMAILS` | empty | Comma-separated Google-account emails that receive the admin role. |
 | `BOOTSTRAP_ADMIN_EMAIL` | empty | Creates the first admin at startup when the database has no users. Remove after bootstrap. |
 | `BOOTSTRAP_ADMIN_PASSWORD` | empty | Secret password paired with `BOOTSTRAP_ADMIN_EMAIL`. Remove after bootstrap. |

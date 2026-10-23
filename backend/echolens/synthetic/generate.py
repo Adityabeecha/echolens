@@ -97,35 +97,69 @@ SYNC_ISSUES = [
 ]
 
 
-def _version_for(rng: random.Random, day: datetime) -> str:
+# Corpus anchoring. The story is built around fixed dates (END = "today").
+# generate(session, anchor=None) keeps those exact dates (eval/golden tests rely
+# on them); anchor="today" or a datetime/date re-bases every date so the corpus
+# ENDS on that day, preserving every relative offset in the story.
+ANCHOR_TODAY = "today"
+
+
+def _shift_for(anchor) -> timedelta:
+    if anchor is None:
+        return timedelta(0)
+    if anchor == ANCHOR_TODAY:
+        n = datetime.now(timezone.utc)
+        target = datetime(n.year, n.month, n.day, tzinfo=timezone.utc)
+    elif isinstance(anchor, datetime):
+        target = anchor if anchor.tzinfo else anchor.replace(tzinfo=timezone.utc)
+        target = target.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif hasattr(anchor, "year") and hasattr(anchor, "month") and hasattr(anchor, "day"):
+        target = datetime(anchor.year, anchor.month, anchor.day, tzinfo=timezone.utc)
+    else:
+        raise ValueError(f"anchor must be None, 'today', a date or a datetime, got {anchor!r}")
+    return target - END
+
+
+def _version_for(rng: random.Random, day: datetime, shift: timedelta = timedelta(0)) -> str:
     """App-version adoption: 3.0 → 3.1 (Apr 20) → 3.2 (Jul 8), gradual uptake."""
-    v31 = datetime(2026, 4, 20, tzinfo=timezone.utc)
+    v31 = datetime(2026, 4, 20, tzinfo=timezone.utc) + shift
+    x = X + shift
     if day < v31:
         return "3.0.2" if rng.random() < 0.8 else "2.9.1"
-    if day < X:
+    if day < x:
         return "3.1." + str(rng.choice([0, 1])) if rng.random() < 0.85 else "3.0.2"
     # after v3.2 ships, adoption ramps ~15%/day up to 90%
-    adoption = min(0.9, 0.15 * ((day - X).days + 1))
+    adoption = min(0.9, 0.15 * ((day - x).days + 1))
     return "3.2.0" if rng.random() < adoption else "3.1.1"
 
 
-def _os_for(rng: random.Random, day: datetime) -> str:
-    if day < ANDROID15_DAY:
+def _os_for(rng: random.Random, day: datetime, shift: timedelta = timedelta(0)) -> str:
+    a15 = ANDROID15_DAY + shift
+    if day < a15:
         return "Android 14"
-    adoption = min(0.6, 0.1 * ((day - ANDROID15_DAY).days + 1))
+    adoption = min(0.6, 0.1 * ((day - a15).days + 1))
     return "Android 15" if rng.random() < adoption else "Android 14"
 
 
-def generate(session: Session) -> dict[str, int]:
-    """Seed the full Lumo story. Returns row counts."""
+def generate(session: Session, anchor=None) -> dict[str, int]:
+    """Seed the full Lumo story. Returns row counts.
+
+    `anchor=None` keeps the legacy fixed dates (story ends 2026-07-17). Pass
+    anchor="today" (seed / bootstrap path) so the demo is always current."""
+    shift = _shift_for(anchor)
+    X = globals()["X"] + shift
+    START = globals()["START"] + shift
+    END = globals()["END"] + shift
+    BATTERY_SPIKE_DAY = globals()["BATTERY_SPIKE_DAY"] + shift
+    PRICING_POST_DAY = globals()["PRICING_POST_DAY"] + shift
     rng = random.Random(SEED)
     counts = {"reviews": 0, "issues": 0, "posts": 0, "releases": 0, "anomalies": 0}
 
     # releases -----------------------------------------------------------
     releases = [
-        Release(version="3.0.0", released_at=datetime(2026, 2, 3, tzinfo=timezone.utc),
+        Release(version="3.0.0", released_at=datetime(2026, 2, 3, tzinfo=timezone.utc) + shift,
                 notes="Lumo v3.0.0 — New: redesigned gallery and timeline. New: dark theme tokens. Fixed: startup crash on tablets."),
-        Release(version="3.1.0", released_at=datetime(2026, 4, 20, tzinfo=timezone.utc),
+        Release(version="3.1.0", released_at=datetime(2026, 4, 20, tzinfo=timezone.utc) + shift,
                 notes="Lumo v3.1.0 — New: print ordering. Improved: search speed. Fixed: HEIC export failures."),
         Release(version="3.2.0", released_at=X,
                 notes="Lumo v3.2.0 — New: automatic background photo sync, enabled by default for all users. Improved: album sharing. Fixed: crash on RTL locales."),
@@ -144,8 +178,8 @@ def generate(session: Session) -> dict[str, int]:
             per_day += rng.randint(6, 9)
         for _ in range(per_day):
             n += 1
-            version = _version_for(rng, day)
-            os_v = _os_for(rng, day)
+            version = _version_for(rng, day, shift)
+            os_v = _os_for(rng, day, shift)
             r = rng.random()
             on_32 = version.startswith("3.2")
 
@@ -211,12 +245,12 @@ def generate(session: Session) -> dict[str, int]:
         AnomalyEvent(
             slug="demo1", type="negative_review_spike",
             metric="daily 1-star review volume", delta=0.23, z=3.8, window="7d",
-            description="1-star reviews +23% week-over-week on Play Store; spike began 2026-07-11.",
+            description=f"1-star reviews +23% week-over-week on Play Store; spike began {BATTERY_SPIKE_DAY.date()}.",
         ),
         AnomalyEvent(
             slug="demo2", type="theme_volume_surge",
             metric="shipping-cost complaint share of negatives", delta=0.12, z=2.1, window="7d",
-            description="Print-shipping cost complaints +12% since 2026-07-04.",
+            description=f"Print-shipping cost complaints +12% since {PRICING_POST_DAY.date()}.",
         ),
     ]
     session.add_all(anomalies)
