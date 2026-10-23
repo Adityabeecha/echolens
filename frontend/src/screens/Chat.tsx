@@ -33,8 +33,19 @@ const SUGGESTIONS = [
 // Ask the verified knowledge anything. Answers say where they came from (a
 // verified case, a raw feedback search, or a waiting signal); an
 // investigate-intent question launches a case that streams in the same thread.
-export function Chat({ onOpenInvestigation, productName }: {
-  onOpenInvestigation: (id: number) => void; productName: string | null;
+interface AskProps {
+  onOpenInvestigation: (id: number) => void;
+  productName: string | null;
+  productId?: number | null;
+}
+
+export function Chat(props: AskProps) {
+  return <AskConversation {...props} showHeader />;
+}
+
+/** Shared by the full Ask screen and the global drawer. */
+export function AskConversation({ onOpenInvestigation, productName, productId, showHeader = false }: AskProps & {
+  showHeader?: boolean;
 }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
@@ -73,10 +84,10 @@ export function Chat({ onOpenInvestigation, productName }: {
         if (!alive.current) return;
         setSteps((prev) => [...prev, s]);
         scrollDown();
-      }, force);
+      }, force, productId);
     } catch (e) {
       if (force && seen > 0) throw e;
-      return api.chat(message, force);
+      return api.chat(message, force, productId);
     }
   };
 
@@ -135,7 +146,7 @@ export function Chat({ onOpenInvestigation, productName }: {
     if (busy) return;
     setBusy(true);
     try {
-      const result = await api.queueThemes([slug], { [slug]: question });
+      const result = await api.queueThemes([slug], { [slug]: question }, "quick", productId);
       if (!alive.current) return;
       const item = result.queued[0] ?? result.already[0];
       if (!item) throw new Error("No queue entry returned");
@@ -151,7 +162,7 @@ export function Chat({ onOpenInvestigation, productName }: {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <ScreenHeader title="Ask" product={productName} subtitle="Answers grounded in your own cases" />
+      {showHeader && <ScreenHeader title="Ask" product={productName} subtitle="Answers grounded in your own cases" />}
 
       <div ref={scrollRef} style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>
         {turns.length === 0 && (
@@ -182,14 +193,14 @@ export function Chat({ onOpenInvestigation, productName }: {
         </div>
       </div>
 
-      <div style={{ flex: "none", borderTop: `1px solid ${C.border}`, padding: `${S[3]} ${S[6]}`, display: "flex", gap: S[2], maxWidth: MEASURE }}>
+      <div style={{ flex: "none", borderTop: `1px solid ${C.border}`, padding: `${S[3]} ${S[6]}`, display: "flex", gap: S[2], maxWidth: MEASURE, minWidth: 0 }}>
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
           aria-label="Ask a question about your feedback"
           placeholder="Ask about a complaint, cause, or what to fix next…"
-          style={{ flex: 1, background: C.bgRaised, border: `1px solid ${C.border3}`, borderRadius: R.control, color: C.text, fontFamily: sans, fontSize: T.md, padding: `${S[3]} ${S[3]}` }}
+          style={{ flex: 1, minWidth: 0, background: C.bgRaised, border: `1px solid ${C.border3}`, borderRadius: R.control, color: C.text, fontFamily: sans, fontSize: T.md, padding: `${S[3]} ${S[3]}` }}
         />
         <button onClick={() => send()} disabled={!input.trim() || busy} className="el-btn el-btn--primary"
           style={{ borderRadius: R.control, padding: `0 ${S[5]}`, fontWeight: 600, fontSize: T.md, cursor: input.trim() && !busy ? "pointer" : "not-allowed", opacity: input.trim() && !busy ? 1 : 0.5 }}>

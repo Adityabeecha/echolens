@@ -243,6 +243,58 @@ async function del<T>(path: string): Promise<T> {
 
 // ── types ────────────────────────────────────────────────────────────
 
+export const CASE_VIEW_FILTERS = ["tab", "sev", "source", "range", "intent", "q"] as const;
+export type CaseViewParams = Partial<Record<typeof CASE_VIEW_FILTERS[number], string>>;
+export interface SavedView {
+  id: number;
+  product_id: number;
+  name: string;
+  params: CaseViewParams;
+  created_at: string;
+}
+
+// Guests never call the persistence endpoints. Keep an in-memory copy as well
+// so blocked browser storage does not break saving during the current visit.
+const guestViews = new Map<number, SavedView[]>();
+function localViews(productId: number): SavedView[] {
+  if (guestViews.has(productId)) return guestViews.get(productId)!;
+  let rows: SavedView[] = [];
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(`echolens_guest_views:${productId}`) ?? "[]");
+    if (Array.isArray(parsed)) rows = parsed.filter((v): v is SavedView =>
+      v && Number.isSafeInteger(v.id) && v.product_id === productId &&
+      typeof v.name === "string" && v.name.trim().length > 0 && v.name.length <= 80 &&
+      typeof v.created_at === "string" && v.params && typeof v.params === "object" &&
+      !Array.isArray(v.params) && Object.entries(v.params).every(([k, value]) =>
+        CASE_VIEW_FILTERS.includes(k as typeof CASE_VIEW_FILTERS[number]) &&
+        typeof value === "string" && value.length <= 500)).slice(0, 20);
+  } catch { /* Corrupt or unavailable storage starts with an empty view list. */ }
+  guestViews.set(productId, rows);
+  return rows;
+}
+function storeLocalViews(productId: number, rows: SavedView[]): void {
+  guestViews.set(productId, rows);
+  try { localStorage.setItem(`echolens_guest_views:${productId}`, JSON.stringify(rows)); }
+  catch { /* The in-memory copy remains usable for this visit. */ }
+}
+function viewProduct(productId: number | null): number {
+  if (productId == null) throw new Error("Choose a product before saving a view.");
+  return productId;
+}
+function cleanView(name: string, params: CaseViewParams) {
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.length > 80) throw new Error("Use a view name between 1 and 80 characters.");
+  const filters: CaseViewParams = {};
+  for (const key of CASE_VIEW_FILTERS) {
+    const value = params[key];
+    if (value) {
+      if (value.length > 500) throw new Error("Filter values must be 500 characters or fewer.");
+      filters[key] = value;
+    }
+  }
+  return { name: trimmed, params: filters };
+}
+
 export interface Triage {
   decision: "investigate" | "ignore" | "merge";
   reason: string;
@@ -1193,6 +1245,41 @@ export interface AuthUser {
 }
 
 export const api = {
+  savedViews: async (productId = getActiveProduct()): Promise<{ views: SavedView[] }> => {
+    if (productId == null) return { views: [] };
+    return isGuest() ? { views: localViews(productId) }
+      : get(`/views?product_id=${productId}`);
+  },
+  createSavedView: async (name: string, params: CaseViewParams, productId = getActiveProduct()): Promise<SavedView> => {
+    const pid = viewProduct(productId), body = cleanView(name, params);
+    if (!isGuest()) return post(`/views?product_id=${pid}`, body);
+    const rows = localViews(pid);
+    if (rows.length >= 20) throw new Error("You can save up to 20 views per product.");
+    if (rows.some(v => v.name === body.name)) throw new Error("A view with that name already exists.");
+    const row = { ...body, id: Math.max(0, ...rows.map(v => v.id)) + 1,
+      product_id: pid, created_at: new Date().toISOString() };
+    storeLocalViews(pid, [...rows, row]);
+    return row;
+  },
+  updateSavedView: async (id: number, name: string, params: CaseViewParams, productId = getActiveProduct()): Promise<SavedView> => {
+    const pid = viewProduct(productId), body = cleanView(name, params);
+    if (!isGuest()) return put(`/views/${id}?product_id=${pid}`, body);
+    const rows = localViews(pid), old = rows.find(v => v.id === id);
+    if (!old) throw new Error("No saved view with that id.");
+    if (rows.some(v => v.id !== id && v.name === body.name)) throw new Error("A view with that name already exists.");
+    const row = { ...old, ...body };
+    storeLocalViews(pid, rows.map(v => v.id === id ? row : v));
+    return row;
+  },
+  deleteSavedView: async (id: number, productId = getActiveProduct()): Promise<{ deleted: number }> => {
+    const pid = viewProduct(productId);
+    if (!isGuest()) return del(`/views/${id}?product_id=${pid}`);
+    const rows = localViews(pid);
+    if (!rows.some(v => v.id === id)) throw new Error("No saved view with that id.");
+    storeLocalViews(pid, rows.filter(v => v.id !== id));
+    return { deleted: id };
+  },
+
   health: () => get<{ db: boolean; llm_key_present: boolean; model: string }>("/health"),
   login: (email: string, password: string) =>
     post<{ token: string; role: string; csrf_token?: string }>("/auth/login", { email, password }),
@@ -1253,9 +1340,9 @@ export const api = {
   // which product to open.
   feedCandidates: (refresh = false) =>
     get<CandidatesResp>(scoped(`/feed/candidates${refresh ? "?refresh=true" : ""}`)),
-  queueThemes: (slugs: string[], statements: Record<string, string>, tier = "quick") =>
+  queueThemes: (slugs: string[], statements: Record<string, string>, tier = "quick", productId = getActiveProduct()) =>
     post<{ queued: QueueSelection[]; already: QueueSelection[]; queue: QueueView; summary: string }>(
-      "/queue/themes", { slugs, statements, tier, product_id: getActiveProduct() }),
+      "/queue/themes", { slugs, statements, tier, product_id: productId }),
   queue: () => get<QueueView>(scoped("/queue")),
   cancelQueued: (queueId: number) => del<{ cancelled: number }>(scoped(`/queue/${queueId}`)),
   /** Bypass today's cap for ONE deferred item. Recorded on the queue row. */
@@ -1304,11 +1391,11 @@ export const api = {
    * in the URL. Rejects on any failure — the caller falls back to `chat`.
    */
   chatStream: async (message: string, onStep: (s: ChatStep) => void,
-                     forceInvestigate = false): Promise<ChatResponse> => {
+                     forceInvestigate = false, productId = getActiveProduct()): Promise<ChatResponse> => {
     const r = await writeFetch("/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-      body: JSON.stringify({ message, product_id: getActiveProduct(), force_investigate: forceInvestigate }),
+      body: JSON.stringify({ message, product_id: productId, force_investigate: forceInvestigate }),
     });
     if (!r.ok || !r.body) {
       handle(r.status);
@@ -1345,9 +1432,9 @@ export const api = {
     }
     throw new Error("The answer stream ended early");
   },
-  chat: (message: string, forceInvestigate = false) =>
+  chat: (message: string, forceInvestigate = false, productId = getActiveProduct()) =>
     post<ChatResponse>("/chat", {
-      message, product_id: getActiveProduct(), force_investigate: forceInvestigate
+      message, product_id: productId, force_investigate: forceInvestigate
     }),
   brief: () => get<WeeklyBrief>(scoped("/brief")),
   findingFollowup: (findingId: number, question: string) =>

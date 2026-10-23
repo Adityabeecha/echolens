@@ -12,6 +12,8 @@ interface Props {
   screen: Screen;
   go: (s: Screen) => void;
   onLogout?: () => void;
+  onAsk?: () => void;
+  askShortcut?: string;
   products?: ProductRow[];
   activeId?: number | null;
   onSwitchProduct?: (id: number) => void;
@@ -193,7 +195,7 @@ const UNDER_CASES: Screen[] = ["cases", "case"];
 export function Sidebar({
   screen, go, onLogout, products = [], activeId = null,
   onSwitchProduct, onAddProduct, onDeleteProduct, theme, onThemeChange,
-  collapsed, onCollapsedChange
+  collapsed, onCollapsedChange, onAsk, askShortcut = "Ctrl K"
 }: Props) {
   const admin = isAdmin();
   // The System group opens itself when you are inside it, so you are never on a
@@ -354,6 +356,15 @@ export function Sidebar({
         </div>
       </div>
 
+      {onAsk && (
+        <button className="el-btn" onClick={onAsk} title={`Ask (${askShortcut})`}
+          aria-label={`Ask (${askShortcut})`}
+          style={{ margin: `${S[1]} ${S[3]}`, padding: `${S[2]} ${S[2]}`,
+                   borderRadius: R.control, color: C.muted, fontSize: T.sm, gap: S[3] }}>
+          <Icon name="ask" size={15} />
+          <span className="el-nav-label">Ask <kbd style={{ marginLeft: S[2], fontSize: T.micro }}>{askShortcut}</kbd></span>
+        </button>
+      )}
       <ThemeToggle mode={theme} onChange={onThemeChange} />
 
       {onLogout && (
