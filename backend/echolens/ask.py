@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from typing import Callable
 
 from sqlalchemy.orm import Session
 
@@ -50,6 +51,44 @@ ASK_SCHEMA = {
     },
     "required": ["action"],
 }
+
+
+# Human wording for each tool, shown live while Ask works. Keyed by tool name;
+# the value builds the sentence from the args the model chose.
+def _q(args: dict, *keys: str) -> str:
+    for k in keys:
+        v = args.get(k)
+        if v:
+            return str(v)[:60]
+    return ""
+
+
+_TOOL_WORDS: dict[str, Callable[[dict], str]] = {
+    "search_reviews": lambda a: f"Searching reviews for '{_q(a, 'query')}'",
+    "review_stats": lambda a: f"Counting reviews that mention '{_q(a, 'term')}'",
+    "compare_periods": lambda a: f"Comparing periods on {_q(a, 'metric') or 'the metric'}",
+    "search_github_issues": lambda a: f"Searching GitHub issues for '{_q(a, 'query')}'",
+    "get_release_notes": lambda a: (f"Reading release notes for {_q(a, 'version')}"
+                                    if a.get("version") else "Reading release notes"),
+    "search_reddit": lambda a: f"Searching Reddit for '{_q(a, 'query')}'",
+    "compare_cohorts": lambda a: ("Comparing " + ("OS versions" if a.get("dimension") == "os"
+                                                  else "versions")
+                                  + f" for '{_q(a, 'term')}'"),
+    "analyze_trend": lambda a: f"Looking for when '{_q(a, 'term')}' started",
+}
+
+
+def describe_tool(name: str, args: dict) -> str:
+    """One user-facing sentence for a tool call ("Searching reviews for 'paywall'…")."""
+    words = _TOOL_WORDS.get(name)
+    try:
+        text = words(args or {}) if words else f"Running {name}"
+    except Exception:
+        text = f"Running {name}"
+    return text.replace(" for ''", "").replace(" mention ''", "") + "…"
+
+
+StepFn = Callable[[dict], None]
 
 
 @dataclass
@@ -108,9 +147,23 @@ def _cite(f: Finding, inv: Investigation) -> dict:
 
 
 def answer(session: Session, message: str, llm: LLMClient,
-           product_id: int | None = None, product_name: str | None = None) -> AskResult:
+           product_id: int | None = None, product_name: str | None = None,
+           on_step: StepFn | None = None) -> AskResult:
+    """Answer one question. `on_step`, when given, is called with a small dict
+    for every visible step (reading findings, each tool call, writing) so a
+    streaming caller can show progress. It never changes what is answered."""
+    def emit(kind: str, text: str, **extra) -> None:
+        if on_step is None:
+            return
+        try:
+            on_step({"kind": kind, "text": text, **extra})
+        except Exception:
+            pass   # a broken listener must not break the answer
+
     rows = _knowledge(session, product_id)
     by_case = {inv.id: (f, inv) for f, inv in rows}
+    emit("read", (f"Reading {len(rows)} verified finding{'s' if len(rows) != 1 else ''}…"
+                  if rows else "No verified findings yet — checking the raw feedback…"))
 
     transcript: list[str] = []
     tool_calls: list[dict] = []
@@ -143,6 +196,7 @@ def answer(session: Session, message: str, llm: LLMClient,
             if name not in TOOLS:
                 transcript.append(f"Tool '{name}' does not exist. Choose from: {list(TOOLS)}")
                 continue
+            emit("tool", describe_tool(name, args), tool=name, why=spec.get("why", ""))
             try:
                 out = run_tool(session, name, args, product=product_name)
                 blob = json.dumps(out)[:MAX_RESULT_CHARS]
@@ -155,6 +209,7 @@ def answer(session: Session, message: str, llm: LLMClient,
         text = (parsed.get("answer") or "").strip()
         if not text:
             break
+        emit("write", "Writing the answer…")
         cites = []
         for case_id in parsed.get("cites_cases", []) or []:
             hit = by_case.get(case_id)

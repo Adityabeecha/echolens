@@ -1315,10 +1315,19 @@ def backlog_plan_view(product_id: int | None = None,
                 "product": p.name if p else None}
 
 
+class PlanOverride(BaseModel):
+    """A reviewer's per-item estimate. Every field optional; None = use EchoLens's."""
+    effort_days: float | None = Field(None, ge=0.5, le=365)
+    impact: int | None = Field(None, ge=1, le=5)
+    segment: str | None = None   # a key of backlog.PRIORITY_SEGMENTS
+
+
 class PlanBody(BaseModel):
     included: list[int] = []
     excluded: list[int] = []
     notes: dict[str, str] | None = None
+    # Keyed by investigation id. Omitted keeps the saved overrides (like notes).
+    overrides: dict[str, PlanOverride] | None = None
     # Bounded: a negative capacity produced a plan the API reported back with a
     # straight face (capacity_days: -50.0), and an unbounded one is meaningless.
     capacity_days: float | None = Field(None, gt=0, le=10000)
@@ -1329,12 +1338,20 @@ class PlanBody(BaseModel):
 def backlog_plan_save(body: PlanBody,
                       user: dict = Depends(require_role("reviewer"))) -> dict:
     """The PM edits and owns the plan; a later re-rank proposes around it."""
-    from echolens.backlog import quarter_plan, save_plan
+    from echolens.backlog import PRIORITY_SEGMENTS, quarter_plan, save_plan
+    overrides = None
+    if body.overrides is not None:
+        bad = sorted({o.segment for o in body.overrides.values()
+                      if o.segment and o.segment not in PRIORITY_SEGMENTS})
+        if bad:
+            raise HTTPException(422, f"unknown priority segment: {', '.join(bad)}")
+        overrides = {k: o.model_dump() for k, o in body.overrides.items()}
     with session_scope() as session:
         p = _scope(session, body.product_id, user)
         pid = p.id if p else None
         save_plan(session, pid, included=body.included, excluded=body.excluded,
-                  notes=body.notes, capacity_days=body.capacity_days)
+                  notes=body.notes, capacity_days=body.capacity_days,
+                  overrides=overrides)
         return {**quarter_plan(session, pid), "product": p.name if p else None}
 
 
@@ -2641,46 +2658,112 @@ class ChatBody(BaseModel):
     force_investigate: bool = False
 
 
-@app.post("/chat")
-@limiter.limit("20/minute")
-def chat_endpoint(body: ChatBody, request: Request,
-                  user: dict = Depends(current_user)) -> dict:
-    """Ask the verified knowledge anything. Returns a finding-cited answer, or —
-    for an investigate-intent question — launches a case that streams in-thread."""
+def _chat_ask_llm(session, user: dict, message: str, pid, pname, on_step=None):
+    """The LLM agent answer, or None when this caller may not spend / it fails.
+    Separate so tests can swap in a scripted model without an API key."""
+    from echolens import ask as ask_mod
+    if not (_may_spend(user) and settings.openai_api_key
+            and ask_mod.has_anything_to_say(session, pid)):
+        return None
+    llm = _metered_llm(session, "ask")
+    return ask_mod.answer(session, message, llm, product_id=pid, product_name=pname,
+                          on_step=on_step)
+
+
+def _chat_next_step(resp: dict, user: dict, message: str) -> dict | None:
+    """The inline "Start an investigation into …" card for an answer that is not
+    backed by a verified case — so Ask never ends at a dead end. Viewers and
+    guests get the card too, with the reason they cannot use it."""
+    if resp.get("type") != "answer" or not message.strip():
+        return None
+    basis = resp.get("basis") or {}
+    if basis.get("kind") == "investigation" and resp.get("confident", True) is not False:
+        return None
+    reason = None
+    allowed = user.get("role") in ("reviewer", "admin") and not user.get("guest")
+    if user.get("guest"):
+        reason = ("Guests can browse the demo but can't start investigations. "
+                  "Sign in with a reviewer account to open one.")
+    elif not allowed:
+        reason = "Starting an investigation needs reviewer access. Ask an admin to upgrade your role."
+    return {"kind": "investigate", "question": message.strip()[:300],
+            "allowed": allowed, "reason": reason}
+
+
+def _chat_finish(resp: dict, user: dict, message: str) -> dict:
+    """Attach provenance (`basis`) and the next-step card to a chat response."""
+    from echolens import chat as chat_mod
+    if resp.get("type") == "answer" and not resp.get("basis"):
+        resp["basis"] = chat_mod.basis_for_citations(resp.get("citations")) or chat_mod.basis_none()
+    resp["next_step"] = _chat_next_step(resp, user, message)
+    return resp
+
+
+def _chat_respond(body: "ChatBody", user: dict, on_step=None) -> dict:
+    """One Ask turn. Shared by POST /chat and POST /chat/stream so the two can
+    never disagree on scoping, guest no-spend or the reviewer-only launch.
+    `on_step` receives progress dicts ({"kind", "text", ...}) as they happen."""
     from echolens import ask as ask_mod
     from echolens import chat as chat_mod
+
+    def emit(kind: str, text: str, **extra) -> None:
+        if on_step is not None:
+            on_step({"kind": kind, "text": text, **extra})
+
+    message = body.message or ""
     with session_scope() as session:
         prod = _scope(session, body.product_id, user)
         pid = prod.id if prod else None
         pname = prod.name if prod else None
-        decision = chat_mod.route(session, body.message, product_id=pid, product_name=pname)
+        if body.force_investigate and message.strip():
+            # The "Start an investigation" card. Previously this flag was only
+            # read when the router had ALREADY chosen to launch, so pressing
+            # "Investigate this properly" on a topic question re-answered it.
+            decision = {"type": "launch", "description": message.strip()}
+        else:
+            emit("route", "Checking what EchoLens has already verified…")
+            decision = chat_mod.route(session, message, product_id=pid, product_name=pname)
 
+        existing = None
         if decision.get("type") == "launch" and not body.force_investigate:
-            existing = ask_mod.best_existing_answer(session, body.message, product_id=pid)
+            existing = ask_mod.best_existing_answer(session, message, product_id=pid)
             if existing is not None:
-                decision = {"type": "answer", "citations": [], "text": ""}
+                f, inv = existing
+                emit("route", f"Already investigated — case #{inv.id}.")
+                decision = {"type": "answer", "citations": [chat_mod._cite(f, inv)],
+                            "basis": chat_mod.basis_investigation(inv.id),
+                            "text": f"{f.summary} — case #{inv.id}. This was already "
+                                    "investigated; start a new one if it's back."}
 
         if decision.get("type") != "launch":
-            if (_may_spend(user) and settings.openai_api_key
-                    and ask_mod.has_anything_to_say(session, pid)):
-                try:
-                    llm = _metered_llm(session, "ask")
-                    result = ask_mod.answer(session, body.message, llm,
-                                            product_id=pid, product_name=pname)
-                    if result.text and (result.citations or result.tool_calls
-                                        or result.confident):
-                        return {"type": "answer", "text": result.text,
-                                "citations": result.citations,
-                                "tool_calls": result.tool_calls,
-                                "confident": result.confident,
-                                "can_investigate": True}
-                except Exception as err:
-                    log.warning("ask_agent_failed", error=f"{type(err).__name__}: {err}")
-            return decision
-        if user.get("role") not in ("reviewer", "admin"):
-            return {"type": "answer", "citations": [],
-                    "text": "I can look into that, but opening an investigation needs reviewer access."}
-        anomaly = AnomalyEvent(slug=f"chat-{int(time.time())}", type="manual", metric="chat question",
+            try:
+                result = _chat_ask_llm(session, user, message, pid, pname, on_step)
+                if result is not None and result.text and (
+                        result.citations or result.tool_calls or result.confident):
+                    if result.citations:
+                        basis = chat_mod.basis_for_citations(result.citations)
+                    elif result.tool_calls:
+                        basis = chat_mod.basis_raw_search()
+                    else:
+                        basis = chat_mod.basis_none(chat_mod.NONE_CAUTION)
+                    return _chat_finish({"type": "answer", "text": result.text,
+                                         "citations": result.citations,
+                                         "tool_calls": result.tool_calls,
+                                         "confident": result.confident,
+                                         "can_investigate": True,
+                                         "basis": basis}, user, message)
+            except Exception as err:
+                log.warning("ask_agent_failed", error=f"{type(err).__name__}: {err}")
+            return _chat_finish(decision, user, message)
+        if user.get("role") not in ("reviewer", "admin") or user.get("guest"):
+            return _chat_finish({"type": "answer", "citations": [],
+                                 "basis": chat_mod.basis_none(),
+                                 "text": "I can look into that, but opening an investigation "
+                                         "needs reviewer access."}, user, message)
+        emit("launch", "Opening an investigation…")
+        # time_ns, not int(time.time()): the slug is UNIQUE, so two launches in
+        # the same second (a double-click on the card) raised an IntegrityError.
+        anomaly = AnomalyEvent(slug=f"chat-{time.time_ns()}", type="manual", metric="chat question",
                                delta=0.0, z=0.0, window="n/a",
                                description=decision["description"], status="pending", product_id=pid)
         session.add(anomaly)
@@ -2693,8 +2776,90 @@ def chat_endpoint(body: ChatBody, request: Request,
         session.flush()
         inv_id = inv.id
     threading.Thread(target=_run_investigation_bg, args=(inv_id, "standard"), daemon=True).start()
-    return {"type": "investigation", "investigation_id": inv_id,
-            "text": f"Opening an investigation into that — case #{inv_id}. It's streaming now."}
+    return _chat_finish({
+        "type": "investigation", "investigation_id": inv_id,
+        "basis": {"kind": "investigation_started", "case_id": inv_id,
+                  "label": f"Investigation started (case #{inv_id})", "caution": None},
+        "text": f"Opening an investigation into that — case #{inv_id}. It's streaming now."},
+        user, message)
+
+
+@app.post("/chat")
+@limiter.limit("20/minute")
+def chat_endpoint(body: ChatBody, request: Request,
+                  user: dict = Depends(current_user)) -> dict:
+    """Ask the verified knowledge anything. Returns a finding-cited answer, or —
+    for an investigate-intent question — launches a case that streams in-thread.
+    Every answer carries `basis` (where it came from) and, when it is not backed
+    by a verified case, a `next_step` offering to investigate."""
+    return _chat_respond(body, user)
+
+
+# A streamed Ask turn must end. ask.py caps the agent at MAX_STEPS model calls,
+# but a hung provider call has no ceiling of its own.
+CHAT_STREAM_MAX_SECONDS = 120
+
+
+@app.post("/chat/stream")
+@limiter.limit("20/minute")  # same cap as /chat: every turn may spend LLM budget
+async def chat_stream(body: ChatBody, request: Request,
+                      user: dict = Depends(current_user)) -> StreamingResponse:
+    """POST /chat, streamed as server-sent events so the UI can show what Ask is
+    doing ("Searching reviews for 'paywall'…") instead of a bare spinner.
+
+    Events: `step` {kind, text, tool?, why?} as they happen, then exactly one
+    `answer` (the same body POST /chat returns) or `error`, then `done`.
+
+    Auth is the normal header dependency. The trace stream authenticates by
+    hand only because EventSource cannot send headers; this is read with
+    fetch(), which can, so the token never has to ride in a URL. Guest scoping
+    and no-spend rules are identical because both routes run _chat_respond.
+    """
+    import queue as queue_mod
+
+    # Resolve the scope up front so a bad product id is a real 404, not an
+    # error event inside a 200 stream.
+    with session_scope() as session:
+        _scope(session, body.product_id, user)
+
+    q: queue_mod.Queue = queue_mod.Queue()
+
+    def work() -> None:
+        try:
+            q.put(("answer", _chat_respond(body, user, on_step=lambda s: q.put(("step", s)))))
+        except HTTPException as err:
+            q.put(("error", {"error": str(err.detail), "status": err.status_code}))
+        except Exception as err:
+            log.warning("chat_stream_failed", error=f"{type(err).__name__}: {err}")
+            q.put(("error", {"error": "Ask failed — try again."}))
+
+    def take():
+        try:
+            return q.get(timeout=0.5)
+        except queue_mod.Empty:
+            return None
+
+    threading.Thread(target=work, name="echolens-chat-stream", daemon=True).start()
+
+    async def gen():
+        started = time.monotonic()
+        while True:
+            if await request.is_disconnected():
+                return
+            if time.monotonic() - started > CHAT_STREAM_MAX_SECONDS:
+                yield _sse("error", {"error": "Ask took too long — try again."})
+                yield _sse("done", {})
+                return
+            item = await run_in_threadpool(take)
+            if item is None:
+                continue
+            event, payload = item
+            yield _sse(event, payload)
+            if event in ("answer", "error"):
+                yield _sse("done", {})
+                return
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 class FollowupBody(BaseModel):
