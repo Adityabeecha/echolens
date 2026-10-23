@@ -34,6 +34,24 @@ def _ensure_list(resp, what: str) -> list:
     return data
 
 
+def fetch_repo_meta(repo: str, timeout: float = 4.0) -> dict | None:
+    """One cheap call for the onboarding preview: the repo's name, description
+    and open-issue count. None means GitHub says it does not exist (or is
+    private to this token); any other failure raises."""
+    import httpx
+
+    headers = {"Accept": "application/vnd.github+json"}
+    if settings.github_token:
+        headers["Authorization"] = f"Bearer {settings.github_token}"
+    with httpx.Client(timeout=timeout, headers=headers) as c:
+        r = c.get(f"https://api.github.com/repos/{repo}")
+    if r.status_code == 404:
+        return None
+    if r.status_code >= 300:
+        raise RuntimeError(f"GitHub repo HTTP {r.status_code}")
+    return r.json()
+
+
 def _default_fetch(repo: str, since: str | None, per_page: int, max_pages: int = 5) -> dict:
     from concurrent.futures import ThreadPoolExecutor
 

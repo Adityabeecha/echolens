@@ -2,6 +2,7 @@
 
     python -m echolens.cli seed
     python -m echolens.cli investigate --anomaly demo1 [--tier standard]
+    python -m echolens.cli mcp      # MCP server on stdio
 """
 from __future__ import annotations
 
@@ -227,6 +228,17 @@ def cmd_createuser(args) -> int:
     return 0
 
 
+def cmd_mcp(args) -> int:
+    """MCP server on stdio. stdout belongs to the protocol, so nothing here may
+    print to it — the rich console is not used."""
+    from echolens.mcp_server import ApiClient, serve
+    try:
+        sys.stdin.reconfigure(encoding="utf-8")  # Windows defaults to cp1252
+    except (AttributeError, ValueError, OSError):
+        pass
+    return serve(api=ApiClient(base_url=args.api_url, token=args.token))
+
+
 def cmd_preflight(_args) -> int:
     from echolens.config import settings
     console.print(f"[bold]Preflight[/] · env={settings.echolens_env}")
@@ -287,6 +299,10 @@ def main(argv: list[str] | None = None) -> int:
     p_usr.add_argument("password")
     p_usr.add_argument("--role", default="viewer", choices=["admin", "reviewer", "viewer"])
 
+    p_mcp = sub.add_parser("mcp", help="run the read-only MCP server on stdio (for Claude Code, Cursor, VS Code)")
+    p_mcp.add_argument("--api-url", default=None, help="deployed API URL (default: ECHOLENS_API_URL)")
+    p_mcp.add_argument("--token", default=None, help="bearer token (default: ECHOLENS_API_TOKEN)")
+
     p_srv = sub.add_parser("serve", help="run the FastAPI server")
     p_srv.add_argument("--host", default="127.0.0.1")
     p_srv.add_argument("--port", type=int, default=8000)
@@ -299,6 +315,7 @@ def main(argv: list[str] | None = None) -> int:
         "triage": cmd_triage, "eval": cmd_eval, "serve": cmd_serve,
         "connect": cmd_connect, "collect": cmd_collect, "embed": cmd_embed,
         "resume": cmd_resume, "createuser": cmd_createuser, "preflight": cmd_preflight,
+        "mcp": cmd_mcp,
     }[args.command](args)
 
 

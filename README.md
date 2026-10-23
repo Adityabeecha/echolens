@@ -74,6 +74,39 @@ npm run build
 
 `frontend/scripts/verify-login-overflow.mjs` is a browser regression test. It expects a local Vite server and a Chromium browser exposed through the Chrome DevTools Protocol; its defaults are documented at the top of the script.
 
+## Query EchoLens from your editor (MCP)
+
+`echolens mcp` is a small, read-only [Model Context Protocol](https://modelcontextprotocol.io) server on stdio. It lets Claude Code, Cursor or VS Code ask a deployed EchoLens what is broken without opening the app. It calls the deployed API over HTTP, so it only needs a URL and a token. It never needs database credentials, and it sees only what that token's role and product scope allow.
+
+Tools: `list_products`, `list_open_problems`, `get_finding(case_id)`, `search_findings(query)` and `product_health`. Each one takes an optional `product_id`.
+
+Get a token by signing in (`POST /auth/login` returns `access_token`, valid for `JWT_EXPIRE_MINUTES`). Then register the server.
+
+```powershell
+# Claude Code
+claude mcp add echolens `
+  --env ECHOLENS_API_URL=https://your-echolens-api.example.com `
+  --env ECHOLENS_API_TOKEN=<token> `
+  -- C:\path\to\backend\.venv\Scripts\python -m echolens.cli mcp
+```
+
+For Cursor (`.cursor/mcp.json`) or VS Code (`.vscode/mcp.json`, which uses `"servers"` in place of `"mcpServers"`), add the same command.
+
+```json
+{
+  "mcpServers": {
+    "echolens": {
+      "command": "/path/to/backend/.venv/bin/python",
+      "args": ["-m", "echolens.cli", "mcp"],
+      "env": { "ECHOLENS_API_URL": "https://your-echolens-api.example.com",
+               "ECHOLENS_API_TOKEN": "<token>" }
+    }
+  }
+}
+```
+
+After `pip install -e backend`, the shorter `echolens mcp` works as the command too.
+
 ## Deploy
 
 The recommended production topology is PostgreSQL/Supabase, a long-running Northflank backend, and a Vercel frontend. Follow [DEPLOY.md](DEPLOY.md). For a single-machine deployment, provide `OPENAI_API_KEY` and `JWT_SECRET`, then run `docker compose up --build` (local use only; set `POSTGRES_PASSWORD` too). CI runs on every push and pull request to `main` via `.github/workflows/ci.yml`.

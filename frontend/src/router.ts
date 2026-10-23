@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Route, SCREEN_LABEL, formatRoute, parseRoute } from "./nav";
+import { Route, SCREEN_LABEL, canonicalRoute, formatRoute, parseRoute } from "./nav";
 
 /** How the previous entry should be described on a Back control. */
 export interface BackTarget {
@@ -47,7 +47,9 @@ export function useRouter(initial: Route) {
     };
   }, []);
 
-  const navigate = useCallback((next: Route, opts?: { replace?: boolean }) => {
+  const navigate = useCallback((target: Route, opts?: { replace?: boolean }) => {
+    // Retired screen names (patterns, calibration) resolve to where they live now.
+    const next = canonicalRoute(target);
     // Decided BEFORE setRoute, against routeRef rather than the updater's
     // `prev`. React may invoke a state updater more than once (StrictMode
     // double-invoke, render replays), and the back-stack push and the

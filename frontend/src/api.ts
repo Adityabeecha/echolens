@@ -208,9 +208,9 @@ async function put<T>(path: string, body?: unknown): Promise<T> {
 }
 
 async function patch<T>(path: string, body?: unknown): Promise<T> {
-  const r = await fetch(BASE + path, {
+  const r = await writeFetch(path, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!r.ok) {
@@ -623,6 +623,34 @@ export interface Overview {
   releases: ReleaseMarker[];
   rating_breakdown: RatingBreakdown;
   freshness: Freshness;
+}
+
+// Issue trackers a finding can be filed to.
+export type TrackerId = "github" | "linear" | "jira";
+export interface TrackerInfo { id: TrackerId; label: string; configured: boolean }
+export interface TicketResult {
+  tracker: TrackerId; repo: string | null;
+  /** GitHub issue number, Linear identifier ("ENG-12") or Jira key ("APP-3"). */
+  number: number | string | null;
+  url: string | null;
+}
+
+/** The onboarding preview of one source. `ok: false` is a normal answer. */
+export interface SourcePreview {
+  ok: boolean;
+  kind?: "invalid" | "not_found" | "timeout" | "unavailable";
+  reason?: string;
+  source?: "play_store" | "github";
+  identifier?: string;
+  title?: string;
+  developer?: string | null;
+  ratings?: number | null;
+  reviews?: number | null;
+  score?: number | null;
+  installs?: string | null;
+  description?: string | null;
+  open_issues?: number | null;
+  stars?: number | null;
 }
 
 // v3.0 onboarding + health snapshot
@@ -1201,15 +1229,15 @@ export const api = {
     get<{ themes: PortfolioTheme[]; products: string[]; days: number; note: string }>("/portfolio/themes"),
   /**
    * POST /chat/stream: the same answer as `chat`, but `onStep` is called with
-   * each progress line as it happens. Read with fetch (not EventSource) so the
-   * token goes in the Authorization header, never the URL. Rejects on any
-   * failure — the caller falls back to `chat`.
+   * each progress line as it happens. Read with fetch (not EventSource) so it
+   * is a normal cookie-authenticated POST with the CSRF header, never a token
+   * in the URL. Rejects on any failure — the caller falls back to `chat`.
    */
   chatStream: async (message: string, onStep: (s: ChatStep) => void,
                      forceInvestigate = false): Promise<ChatResponse> => {
-    const r = await fetch(BASE + "/chat/stream", {
+    const r = await writeFetch("/chat/stream", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "text/event-stream", ...authHeaders() },
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
       body: JSON.stringify({ message, product_id: getActiveProduct(), force_investigate: forceInvestigate }),
     });
     if (!r.ok || !r.body) {
@@ -1367,6 +1395,18 @@ export const api = {
     get<ReplyDrafts>(scoped(`/findings/${findingId}/reply-drafts`)),
   followupQuestions: (findingId: number) =>
     get<FollowupQuestions>(scoped(`/findings/${findingId}/followup-questions`)),
+  /** Which issue trackers this deployment can file to (booleans, no secrets). */
+  trackers: () => get<{ trackers: TrackerInfo[] }>("/integrations/trackers"),
+  /** File a finding to GitHub, Linear or Jira — same ticket body everywhere. */
+  createTicket: (findingId: number, tracker: TrackerId) =>
+    post<TicketResult>(scoped(`/findings/${findingId}/ticket?tracker=${tracker}`)),
+  /** Instant look-up of what the wizard is about to connect. Never throws on a
+   *  slow store — the server answers `ok: false` with a reason instead. */
+  onboardPreview: (q: { play_store?: string; github?: string }) => {
+    const qs = Object.entries(q).filter(([, v]) => v && v.trim())
+      .map(([k, v]) => `${k}=${encodeURIComponent(v!.trim())}`).join("&");
+    return get<{ play_store?: SourcePreview; github?: SourcePreview }>(`/onboard/preview?${qs}`);
+  },
   notifyFinding: (findingId: number) =>
     post<{ routed: string; sent?: string[] }>(scoped(`/findings/${findingId}/notify`)),
   costsSummary: () => get<CostsSummary>(scoped("/costs/summary")),

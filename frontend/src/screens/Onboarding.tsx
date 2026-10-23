@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { OnboardStatus, Snapshot, api, isAdmin, isGuest } from "../api";
+import { OnboardStatus, Snapshot, SourcePreview, api, isAdmin, isGuest } from "../api";
 import { plural } from "../format";
 import { useDialog } from "../hooks";
 import { C, MEASURE, R, S, T, mono, sans } from "../theme";
@@ -209,6 +209,11 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const admin = isAdmin();
+  // Look before you leap: the listing / repo behind what was typed, so a typo
+  // shows up as "that's not my app" before a 90-day backfill starts.
+  const pkgPreview = useSourcePreview("play_store", pkg, admin);
+  const repoPreview = useSourcePreview("github", repo, admin);
+  const storeTitle = pkgPreview.data?.ok ? pkgPreview.data.title : undefined;
 
   const submit = async () => {
     if (!pkg.trim() || !admin) return;
@@ -226,7 +231,7 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
         play_store: pkg.trim(),
         github: repo.trim() || undefined,
         github_sources: repo.trim() ? selectedGithub : undefined,
-        product: name.trim() || undefined,
+        product: name.trim() || storeTitle || undefined,
         app_store: additional.app_store.trim() || undefined,
         chrome_web_store: additional.chrome_web_store.trim() || undefined,
         hacker_news: additional.hacker_news.trim() || undefined,
@@ -245,10 +250,12 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
       <Field label="Play Store package" hint="Required — copy it from the store URL (id=…)">
         <input autoFocus value={pkg} onChange={(e) => setPkg(e.target.value)} placeholder="e.g. com.spotify.music"
           onKeyDown={(e) => e.key === "Enter" && submit()} style={inputStyle} />
+        <PreviewLine state={pkgPreview} />
       </Field>
       <Field label="GitHub repo" hint="Optional — issues and releases sharpen the investigation">
         <input value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="e.g. signalapp/Signal-Android"
           onKeyDown={(e) => e.key === "Enter" && submit()} style={inputStyle} />
+        <PreviewLine state={repoPreview} />
       </Field>
       <fieldset disabled={!repo.trim()} style={{ margin: 0, padding: `${S[3]} ${S[4]}`, border: `1px solid ${C.border2}`, borderRadius: R.control, opacity: repo.trim() ? 1 : 0.6 }}>
         <legend style={{ padding: `0 ${S[2]}`, color: C.text2, fontSize: T.sm, fontWeight: 600 }}>GitHub data</legend>
@@ -284,8 +291,9 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
           <div style={{ gridColumn: "1 / -1", color: C.faint, fontSize: T.sm }}>All additional sources are optional.</div>
         </div>
       )}
-      <Field label="Display name" hint="Optional — defaults to the package name">
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Spotify"
+      <Field label="Display name"
+             hint={storeTitle ? "Optional — defaults to the store listing's name" : "Optional — defaults to the package name"}>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={storeTitle ? storeTitle : "e.g. Spotify"}
           onKeyDown={(e) => e.key === "Enter" && submit()} style={inputStyle} />
       </Field>
 
@@ -337,6 +345,84 @@ function AdditionalField({ label, placeholder, value, onChange }: {
       <span style={{ display: "block", marginBottom: S[2], color: C.text2, fontSize: T.sm, fontWeight: 600 }}>{label}</span>
       <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} style={inputStyle} />
     </label>
+  );
+}
+
+// ── instant preview ─────────────────────────────────────────────────────
+
+/** 190M, not 190,123,456 — a preview is a glance. */
+const compact = (n: number) => new Intl.NumberFormat("en", { notation: "compact" }).format(n);
+
+const PKG_SHAPE = /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/;
+const REPO_SHAPE = /^(https?:\/\/)?(www\.)?(github\.com\/)?[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(\.git)?\/?$/;
+
+interface PreviewState { data: SourcePreview | null; loading: boolean }
+
+/**
+ * Debounced look-up of one onboarding input. Only asks once the value has the
+ * right SHAPE — a half-typed "com.sp" would otherwise flash "not found" on
+ * every keystroke — and drops answers that arrive after the input changed.
+ * Purely advisory: a failure leaves the form exactly as usable as before.
+ */
+function useSourcePreview(kind: "play_store" | "github", raw: string, enabled: boolean): PreviewState {
+  const [state, setState] = useState<PreviewState>({ data: null, loading: false });
+  const seq = useRef(0);
+  useEffect(() => {
+    const value = raw.trim();
+    const id = ++seq.current;
+    const shaped = kind === "play_store" ? PKG_SHAPE.test(value) : REPO_SHAPE.test(value);
+    if (!enabled || !shaped) {
+      setState({ data: null, loading: false });
+      return;
+    }
+    setState((prev) => ({ data: prev.data, loading: true }));
+    const timer = window.setTimeout(() => {
+      api.onboardPreview({ [kind]: value })
+        .then((r) => { if (seq.current === id) setState({ data: r[kind] ?? null, loading: false }); })
+        .catch(() => { if (seq.current === id) setState({ data: null, loading: false }); });
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [kind, raw, enabled]);
+  return state;
+}
+
+function PreviewLine({ state }: { state: PreviewState }) {
+  const { data, loading } = state;
+  if (!data && !loading) return null;
+  let tone: string = C.dim;
+  let icon = "search";
+  let text: React.ReactNode = "Looking it up…";
+  if (data && !loading) {
+    if (data.ok) {
+      tone = C.good;
+      icon = "check";
+      const facts = data.source === "play_store"
+        ? [data.developer, data.ratings != null ? `${compact(data.ratings)} ratings` : null,
+           data.score != null ? `${data.score.toFixed(1)}★` : null]
+        : [data.open_issues != null ? `${compact(data.open_issues)} open ${plural(data.open_issues, "issue")}` : null,
+           data.stars != null ? `${compact(data.stars)} stars` : null];
+      text = (
+        <>
+          <span style={{ color: C.text2, fontWeight: 600 }}>{data.title}</span>
+          {facts.filter(Boolean).length > 0 && (
+            <span style={{ color: C.muted }}> · {facts.filter(Boolean).join(" · ")}</span>
+          )}
+        </>
+      );
+    } else {
+      // Not found is worth a warning; slow or unreachable is only a note.
+      tone = data.kind === "not_found" || data.kind === "invalid" ? C.accent : C.dim;
+      icon = data.kind === "not_found" || data.kind === "invalid" ? "warning" : "info";
+      text = data.reason ?? "Couldn't check this one — you can still continue.";
+    }
+  }
+  return (
+    <span role="status" aria-live="polite"
+      style={{ display: "flex", alignItems: "center", gap: S[2], marginTop: S[2],
+               fontSize: T.sm, color: tone, minHeight: 18 }}>
+      <Icon name={icon} size={13} style={{ flex: "none" }} />
+      <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{text}</span>
+    </span>
   );
 }
 
