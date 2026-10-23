@@ -184,7 +184,6 @@ const PRIMARY: NavItem[] = [
 const SYSTEM: NavItem[] = [
   { key: "sources", icon: "sources", label: "Sources", hint: "Where the feedback comes from" },
   { key: "memory", icon: "patterns", label: "Learned patterns", hint: "How this product breaks, and fixes proven to work" },
-  { key: "costs", icon: "costs", label: "Costs", hint: "What each case cost to run" },
   { key: "settings", icon: "settings", label: "Settings", hint: "Budgets, limits, calibration and trackers" },
 ];
 

@@ -37,8 +37,15 @@ function apiConnectCsp(apiBase: string | undefined): Plugin {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "VITE_");
+  // With ECHOLENS_API_ORIGIN set, Vercel proxies /api/* to the API
+  // (build/vercel-output.mjs), so the app must call its own origin: a leftover
+  // VITE_API_BASE pointing at the API directly would bring back the
+  // cross-site cookie Safari drops.
+  const proxied = Boolean(process.env.ECHOLENS_API_ORIGIN?.trim());
+  const apiBase = proxied ? "/api" : env.VITE_API_BASE;
   return {
-    plugins: [react(), apiConnectCsp(env.VITE_API_BASE)],
+    plugins: [react(), apiConnectCsp(apiBase)],
+    define: proxied ? { "import.meta.env.VITE_API_BASE": JSON.stringify("/api") } : {},
     server: {
       proxy: {
         // Frontend calls /api/*; the backend serves routes without that prefix.

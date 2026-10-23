@@ -22,7 +22,11 @@ const COLS = "64px 1.5fr 90px 90px 90px 100px";
  * levers moved to Settings; what is left is the per-case ledger, which is a
  * developer's view and is now labelled as one.
  */
-export function Costs({ onGoSettings }: { onGoSettings: () => void }) {
+export function Costs({ onGoSettings, embedded = false }: {
+  onGoSettings?: () => void;
+  /** Rendered as the Costs section of Settings: no header of its own. */
+  embedded?: boolean;
+}) {
   const { data, loading, error, reload } = useAsync(() => api.costsSummary(), []);
   if (loading && !data) return <Centered>Loading costs…</Centered>;
   if (error || !data) {
@@ -44,17 +48,19 @@ export function Costs({ onGoSettings }: { onGoSettings: () => void }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <ScreenHeader
-        title="Costs"
-        product={data.product}
-        subtitle="What every case cost to run"
-        right={
-          <button onClick={onGoSettings} className="el-btn"
-            style={{ fontSize: T.sm, color: C.dim }}>
-            Budgets and limits are in Settings →
-          </button>
-        }
-      />
+      {!embedded && (
+        <ScreenHeader
+          title="Costs"
+          product={data.product}
+          subtitle="What every case cost to run"
+          right={onGoSettings && (
+            <button onClick={onGoSettings} className="el-btn"
+              style={{ fontSize: T.sm, color: C.dim }}>
+              Budgets and limits are in Settings →
+            </button>
+          )}
+        />
+      )}
 
       <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]} ${S[12]}` }}>
         <div style={{ display: "flex", gap: S[3], maxWidth: MEASURE, flexWrap: "wrap" }}>

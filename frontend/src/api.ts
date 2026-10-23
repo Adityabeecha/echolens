@@ -1,8 +1,103 @@
 // Typed client for the EchoLens FastAPI backend.
 // Dev: Vite proxies "/api" → http://localhost:8000 (see vite.config.ts).
-// Prod (split origins): set VITE_API_BASE to the backend URL at build time,
+// Prod, same origin (recommended): leave VITE_API_BASE unset; Vercel proxies
+// "/api/*" to the API (ECHOLENS_API_ORIGIN, see DEPLOY.md), so the session
+// cookie is first-party and Safari keeps it.
+// Prod, split origins: set VITE_API_BASE to the backend URL at build time,
 // e.g. VITE_API_BASE=https://echolens-api.code.run
 const BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, "") || "/api";
+
+// ── time limits ─────────────────────────────────────────────────────────
+// A request with no limit is a screen with a skeleton forever: the free-tier
+// backend can accept a connection and then never answer. Every call gets one;
+// the ones that legitimately take a while get more. Streams (chat stream, the
+// trace EventSource) are not routed through here and keep their own limits.
+export const DEFAULT_TIMEOUT_MS = 15_000;
+export const SLOW_TIMEOUT_MS = 60_000;
+const SLOW_PATHS: RegExp[] = [
+  /^\/investigations(\?|$)/,                        // start a case
+  /^\/investigations\/\d+\/(extend|resume|escalate)/,
+  /^\/findings\/\d+\/(review|ticket|github-issue|notify)/,
+  /^\/chat(\?|$)/,
+  /^\/collectors\/(run|retry)/, /^\/collect\/run/,
+  /^\/(triage|queue|onboard|translate|search\/embed|anomalies\/scan)(\/|\?|$)/,
+  /^\/import\//,
+  /^\/feed\/candidates/, /^\/graph(\?|$)/,         // may label themes with a model
+  /^\/requests\/[^/]+\/(spec|ticket)/,
+];
+
+export function timeoutFor(path: string): number {
+  return SLOW_PATHS.some((re) => re.test(path)) ? SLOW_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
+}
+
+/** A request that did not answer within its time limit. */
+export class RequestTimeout extends Error {
+  path: string;
+  ms: number;
+  constructor(path: string, ms: number) {
+    super(`Request timed out after ${Math.round(ms / 1000)} s`);
+    this.name = "RequestTimeout";
+    this.path = path;
+    this.ms = ms;
+  }
+}
+
+// Shared with hooks.ts and ui.tsx through one global slot (requestState.ts):
+// this module stays import-free so it can be loaded on its own.
+type FailureKind = "timeout" | "network" | "http";
+interface RequestState { ambient: AbortSignal | null; last: FailureKind | null }
+function requestState(): RequestState {
+  const g = globalThis as unknown as { __echolensRequests?: RequestState };
+  return (g.__echolensRequests ??= { ambient: null, last: null });
+}
+const noteFailure = (kind: FailureKind) => { requestState().last = kind; };
+const currentSignal = () => requestState().ambient;
+const isAbortError = (e: unknown) =>
+  !!e && typeof e === "object" && (e as { name?: string }).name === "AbortError";
+// No AbortController (an old browser, a test VM): requests still work, untimed.
+const CAN_ABORT = typeof AbortController !== "undefined" && typeof setTimeout !== "undefined";
+
+// Reads in flight when the active product changes answer for the wrong product;
+// they are cancelled with this. Writes never are — a save must not be dropped
+// because someone switched products while it was in flight.
+let _productReads: AbortController | null = null;
+function productReads(): AbortSignal | null {
+  if (!CAN_ABORT) return null;
+  return (_productReads ??= new AbortController()).signal;
+}
+
+/**
+ * Run one request under a time limit, cancelled early by any of `cancelWith`.
+ * The limit covers reading the body too, not just the headers. A timeout is
+ * raised as RequestTimeout; a deliberate cancellation as the AbortError.
+ */
+async function timed<T>(path: string, cancelWith: (AbortSignal | null)[],
+                        run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const ms = timeoutFor(path);
+  if (!CAN_ABORT) return run(undefined as unknown as AbortSignal);
+  const ctl = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; ctl.abort(); }, ms);
+  const outer = cancelWith.filter((x): x is AbortSignal => x != null);
+  const relay = () => ctl.abort();
+  for (const sig of outer) {
+    if (sig.aborted) ctl.abort();
+    else sig.addEventListener("abort", relay, { once: true });
+  }
+  try {
+    return await run(ctl.signal);
+  } catch (e) {
+    if (timedOut) {
+      noteFailure("timeout");
+      throw new RequestTimeout(path, ms);
+    }
+    if (!isAbortError(e) && e instanceof TypeError) noteFailure("network");
+    throw e;
+  } finally {
+    clearTimeout(timer);
+    for (const sig of outer) sig.removeEventListener("abort", relay);
+  }
+}
 
 // ── session (HttpOnly cookie) ───────────────────────────────────────────
 // The JWT lives in an HttpOnly cookie set by /auth/login, /auth/signup and
@@ -31,6 +126,10 @@ let _role: string = localStorage.getItem(ROLE_KEY) || "viewer";
 // the in-memory value appended to every scoped request.
 let _productId: number | null = null;
 export function setActiveProduct(id: number | null): void {
+  if (id !== _productId && _productReads) {
+    _productReads.abort();
+    _productReads = null;          // the next read starts a fresh one
+  }
   _productId = id;
 }
 export function getActiveProduct(): number | null {
@@ -107,12 +206,12 @@ function readCookie(name: string): string | null {
 
 /** Headers for a state-changing request: the CSRF echo, fetched once if a
  * reload lost it. Reads go without it; the server only checks writes. */
-async function writeHeaders(): Promise<Record<string, string>> {
+async function writeHeaders(signal?: AbortSignal | null): Promise<Record<string, string>> {
   if (!_session) return {};
   if (!_csrf) _csrf = readCookie("echolens_csrf"); // same-origin deployments
   if (!_csrf) {
     try {
-      const r = await fetch(BASE + "/auth/csrf", { credentials: "include" });
+      const r = await fetch(BASE + "/auth/csrf", { credentials: "include", signal: signal ?? undefined });
       if (r.ok) _csrf = (await r.json())?.csrf_token ?? null;
     } catch {
       /* the write itself will surface the failure */
@@ -127,8 +226,9 @@ const CSRF_REJECTED = "missing or invalid CSRF token";
  * token — another tab signed in again and rotated it — fetch the current one
  * and retry once, instead of failing every write until a reload. */
 async function writeFetch(path: string, init: RequestInit & { headers?: Record<string, string> }): Promise<Response> {
+  // (The caller's signal, if any, is in `init` and carries through both tries.)
   const send = async () => fetch(BASE + path, {
-    ...init, credentials: "include", headers: { ...init.headers, ...(await writeHeaders()) },
+    ...init, credentials: "include", headers: { ...init.headers, ...(await writeHeaders(init.signal)) },
   });
   let r = await send();
   if (r.status === 403 && _session) {
@@ -153,6 +253,10 @@ function handle(status: number): void {
 /** A stable, human-readable message for fetch and API failures. */
 export function errorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof RequestTimeout) {
+    return "Request timed out — the server took too long to answer. Retry in a moment.";
+  }
+  if (isAbortError(error)) return "Request cancelled.";
   if (/failed to fetch/i.test(message) || /networkerror/i.test(message)) {
     return "The backend is unavailable. It may be restarting — wait a moment and retry.";
   }
@@ -160,85 +264,56 @@ export function errorMessage(error: unknown): string {
 }
 
 async function get<T>(path: string): Promise<T> {
-  // credentials: "include" sends the session cookie to a split-origin API.
-  const r = await fetch(BASE + path, { credentials: "include" });
-  if (!r.ok) {
-    handle(r.status);
-    throw new Error(`${path} → ${r.status}`);
-  }
-  return r.json();
+  // Cancelled by the caller's screen (useAsync) or a product switch; timed out
+  // regardless. The ambient signal must be read before the first await.
+  return timed(path, [currentSignal(), productReads()], async (signal) => {
+    // credentials: "include" sends the session cookie to a split-origin API.
+    const r = await fetch(BASE + path, { credentials: "include", signal });
+    if (!r.ok) {
+      handle(r.status);
+      noteFailure("http");
+      throw new Error(`${path} → ${r.status}`);
+    }
+    return r.json();
+  });
+}
+
+/** POST/PUT/PATCH/DELETE: timed, never cancelled by navigation. */
+async function write<T>(method: string, path: string, body?: unknown, json = true): Promise<T> {
+  return timed(path, [], async (signal) => {
+    const r = await writeFetch(path, json ? {
+      method, signal,
+      headers: { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    } : { method, signal });
+    if (!r.ok) {
+      handle(r.status);
+      let detail = "";
+      try {
+        detail = (await r.json())?.detail ?? "";
+      } catch {
+        /* ignore */
+      }
+      throw new Error(detail || `${path} → ${r.status}`);
+    }
+    return r.json();
+  });
 }
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
-  const r = await writeFetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (!r.ok) {
-    handle(r.status);
-    let detail = "";
-    try {
-      detail = (await r.json())?.detail ?? "";
-    } catch {
-      /* ignore */
-    }
-    throw new Error(detail || `${path} → ${r.status}`);
-  }
-  return r.json();
+  return write<T>("POST", path, body);
 }
 
 async function put<T>(path: string, body?: unknown): Promise<T> {
-  const r = await writeFetch(path, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (!r.ok) {
-    handle(r.status);
-    let detail = "";
-    try {
-      detail = (await r.json())?.detail ?? "";
-    } catch {
-      /* ignore */
-    }
-    throw new Error(detail || `${path} → ${r.status}`);
-  }
-  return r.json();
+  return write<T>("PUT", path, body);
 }
 
 async function patch<T>(path: string, body?: unknown): Promise<T> {
-  const r = await writeFetch(path, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (!r.ok) {
-    handle(r.status);
-    let detail = "";
-    try {
-      detail = (await r.json())?.detail ?? "";
-    } catch {
-      /* ignore */
-    }
-    throw new Error(detail || `${path} → ${r.status}`);
-  }
-  return r.json();
+  return write<T>("PATCH", path, body);
 }
 
 async function del<T>(path: string): Promise<T> {
-  const r = await writeFetch(path, { method: "DELETE" });
-  if (!r.ok) {
-    handle(r.status);
-    let detail = "";
-    try {
-      detail = (await r.json())?.detail ?? "";
-    } catch {
-      /* ignore */
-    }
-    throw new Error(detail || `${path} → ${r.status}`);
-  }
-  return r.json();
+  return write<T>("DELETE", path, undefined, false);
 }
 
 // ── types ────────────────────────────────────────────────────────────
@@ -1510,15 +1585,16 @@ export const api = {
   createShare: (findingId: number) => post<ShareState>(scoped(`/findings/${findingId}/share`)),
   revokeShare: (findingId: number) => del<ShareState>(scoped(`/findings/${findingId}/share`)),
   /** Public, unauthenticated: never sends the session token. */
-  publicShare: async (token: string): Promise<ShareBrief> => {
-    const r = await fetch(`${BASE}/share/${encodeURIComponent(token)}`);
-    if (!r.ok) {
-      let detail = "";
-      try { detail = (await r.json())?.detail ?? ""; } catch { /* ignore */ }
-      throw new Error(detail || `This link is not valid (${r.status}).`);
-    }
-    return r.json();
-  },
+  publicShare: (token: string): Promise<ShareBrief> =>
+    timed(`/share/${token}`, [currentSignal()], async (signal) => {
+      const r = await fetch(`${BASE}/share/${encodeURIComponent(token)}`, { signal });
+      if (!r.ok) {
+        let detail = "";
+        try { detail = (await r.json())?.detail ?? ""; } catch { /* ignore */ }
+        throw new Error(detail || `This link is not valid (${r.status}).`);
+      }
+      return r.json();
+    }),
   resume: (id: number) => post(scoped(`/investigations/${id}/resume`)),
   escalate: (id: number) => post(scoped(`/investigations/${id}/escalate`)),
   sources: () => get<SourcesResp>(scoped("/sources")),
@@ -1554,9 +1630,11 @@ export const api = {
     // attached to NO product and are invisible to every scoped screen.
     const pid = getActiveProduct();
     if (pid != null) qs.set("product_id", String(pid));
-    return writeFetch(`/import/reviews?${qs.toString()}`, {
+    const path = `/import/reviews?${qs.toString()}`;
+    return timed(path, [], (signal) => writeFetch(path, {
       method: "POST",
       body: fd,
+      signal,
     }).then(async (r) => {
       if (!r.ok) {
         // handle() bounces a 401 to the login screen. This raw fetch skipped it,
@@ -1565,7 +1643,7 @@ export const api = {
         throw new Error((await r.json().catch(() => ({})))?.detail || `import → ${r.status}`);
       }
       return r.json() as Promise<{ imported: number; skipped: number; total: number }>;
-    });
+    }));
   },
   // product_id, not just the free-text name. With a blank product the server
   // falls back to `product or identifier`, so the source attached to a product
