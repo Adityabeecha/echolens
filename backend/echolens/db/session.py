@@ -16,6 +16,7 @@ _SessionLocal: sessionmaker | None = None
 # makes new *tables* but never ALTERs existing ones, so we add these by hand.
 # Nullable-only, so it is safe and idempotent on a populated dev database.
 _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
+    ("llm_calls", "product_id", "INTEGER"),
     ("investigations", "reopens_investigation_id", "INTEGER"),
     ("investigations", "checkpoint_json", "JSON"),
     ("investigations", "data_notes", "JSON"),
@@ -86,6 +87,30 @@ def init_db(db_url: str | None = None) -> None:
         # direct id. Silently invisible data is worse than a loud failure.
         from echolens.logging import get_logger
         get_logger("db").error("product_backfill_failed", error=str(err))
+    _tidy_legacy_finding_summaries(engine)
+
+
+def _tidy_legacy_finding_summaries(engine) -> None:
+    """Strip the internal "H1 supported:" label from findings drafted before
+    the 2026-10-22 text-hygiene pass. New drafts are tidied at write time; this
+    fixes rows already stored. Idempotent: a tidy summary is left unchanged."""
+    try:
+        from echolens.db.models import Finding
+        from echolens.investigator.guards import tidy_summary
+        with sessionmaker(bind=engine, expire_on_commit=False)() as s:
+            changed = 0
+            for f in s.query(Finding).filter(Finding.summary.like("H%")).all():
+                clean = tidy_summary(f.summary or "")
+                if clean != f.summary:
+                    f.summary = clean
+                    if isinstance(f.json, dict):
+                        f.json = {**f.json, "summary": clean}
+                    changed += 1
+            if changed:
+                s.commit()
+    except Exception as err:  # cosmetic; never block startup on it
+        from echolens.logging import get_logger
+        get_logger("db").error("finding_summary_tidy_failed", error=str(err))
 
 
 _SCOPED_EXT_ID_TABLES = {

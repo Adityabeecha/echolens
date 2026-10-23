@@ -105,7 +105,7 @@ def _bootstrap() -> None:
         with session_scope() as s:
             if settings.seed_on_start and s.scalar(select(Review).limit(1)) is None:
                 from echolens.synthetic.generate import generate
-                generate(s)
+                generate(s, anchor="today")
                 log.info("bootstrap_seeded")
             if settings.bootstrap_admin_email and settings.bootstrap_admin_password:
                 if s.scalar(select(User).limit(1)) is None:
@@ -330,29 +330,41 @@ def _drain_queue_bg(product_id: int | None) -> None:
                 row = q.claim_next(session, product_id, limit)
                 if row is None:
                     return  # queue empty, or today's budget is gone
-                queue_id, anomaly_id, tier = row.id, row.anomaly_id, row.budget_tier
-                anomaly = session.get(AnomalyEvent, anomaly_id)
-                inv = Investigation(anomaly_id=anomaly_id, status="running",
-                                    opened_by="anomaly", budget_tier=tier, budget_json={},
-                                    data_notes=_data_notes(session, product_id),
-                                    product_id=(anomaly.product_id if anomaly else product_id))
-                session.add(inv)
-                if anomaly is not None:
-                    anomaly.status = "investigating"
-                session.flush()
-                investigation_id = inv.id
-                row.investigation_id = investigation_id
-            ok = True
-            try:
-                _run_investigation_bg(investigation_id, tier)
-            except Exception as err:  # one bad case must not stall the queue
-                ok = False
-                log.error("queued_investigation_failed", queue_id=queue_id, error=str(err))
-            with session_scope() as session:
-                q.finish(session, queue_id, investigation_id, ok=ok)
+                queue_id = row.id
+                investigation_id, tier = _open_claimed(session, row, product_id)
+            _run_claimed_bg(queue_id, investigation_id, tier)
     finally:
         with _queue_worker_lock:
             _queue_worker_active.discard(product_id)
+
+
+def _open_claimed(session, row, product_id: int | None) -> tuple[int, str]:
+    """Create the Investigation for a queue row that was just claimed."""
+    anomaly = session.get(AnomalyEvent, row.anomaly_id)
+    tier = row.budget_tier
+    inv = Investigation(anomaly_id=row.anomaly_id, status="running",
+                        opened_by="anomaly", budget_tier=tier, budget_json={},
+                        data_notes=_data_notes(session, product_id),
+                        product_id=(anomaly.product_id if anomaly else product_id))
+    session.add(inv)
+    if anomaly is not None:
+        anomaly.status = "investigating"
+    session.flush()
+    row.investigation_id = inv.id
+    return inv.id, tier
+
+
+def _run_claimed_bg(queue_id: int, investigation_id: int, tier: str) -> None:
+    """Run a claimed row's investigation and close the row either way."""
+    from echolens.orchestrator import queue as q
+    ok = True
+    try:
+        _run_investigation_bg(investigation_id, tier)
+    except Exception as err:  # one bad case must not stall the queue
+        ok = False
+        log.error("queued_investigation_failed", queue_id=queue_id, error=str(err))
+    with session_scope() as session:
+        q.finish(session, queue_id, investigation_id, ok=ok)
 
 
 def _fail_investigation(session, inv_row, reason: str) -> None:
@@ -444,6 +456,7 @@ class LoginBody(BaseModel):
 
 
 @app.post("/auth/signup")
+@limiter.limit("5/minute")  # bcrypt per call; unthrottled it was a cheap DoS
 def auth_signup(body: SignupBody, request: Request) -> dict:
     """User creation. In production the FIRST admin must come from the
     BOOTSTRAP_ADMIN_* env (not open self-service) — otherwise a stranger could
@@ -453,10 +466,10 @@ def auth_signup(body: SignupBody, request: Request) -> dict:
     with session_scope() as session:
         first_user = session.scalar(select(User).limit(1)) is None
         if first_user:
-            if settings.echolens_env == "production":
+            if settings.auth_required:
                 raise HTTPException(
                     403,
-                    "Open signup is disabled in production. Create the first admin via the "
+                    "Open signup is disabled when authentication is required. Create the first admin via the "
                     "BOOTSTRAP_ADMIN_EMAIL / BOOTSTRAP_ADMIN_PASSWORD environment variables.",
                 )
             role = "admin"  # dev bootstrap
@@ -465,6 +478,10 @@ def auth_signup(body: SignupBody, request: Request) -> dict:
             if caller["role"] != "admin":
                 raise HTTPException(403, "only an admin can create users")
             role = body.role
+        from echolens.auth import password_problem
+        problem = password_problem(body.password)
+        if problem:
+            raise HTTPException(422, problem)
         try:
             user = create_user(session, body.email, body.password, role)
         except ValueError as err:
@@ -500,7 +517,7 @@ def auth_google(body: GoogleBody, request: Request) -> dict:
     echolens.google_auth. Rate-limited because verification can trigger an
     outbound JWKS fetch.
     """
-    from echolens.google_auth import GoogleAuthError, role_for, verify_id_token
+    from echolens.google_auth import GoogleAuthError, may_join, role_for, verify_id_token
     from echolens.auth import upsert_google_user
 
     try:
@@ -512,6 +529,11 @@ def auth_google(body: GoogleBody, request: Request) -> dict:
         raise HTTPException(401, str(err))
 
     with session_scope() as session:
+        from echolens.db.models import User
+        existing = session.scalars(select(User).where(User.email == claims["email"])).first()
+        if not may_join(claims["email"], existing is not None):
+            raise HTTPException(
+                403, "This Google account isn't part of this workspace. Ask an admin to invite you.")
         user = upsert_google_user(session, claims["email"], role_for(claims["email"]))
         return {"token": create_token(user), "role": user.role, "email": user.email}
 
@@ -819,6 +841,8 @@ def delete_product(product_id: int, confirm: str = "",
         _purge(HypothesisRow, HypothesisRow.investigation_id, inv_ids)
         _purge(EvidenceRow, EvidenceRow.investigation_id, inv_ids)
         _purge(LLMCall, LLMCall.investigation_id, inv_ids)
+        # Spend with no case (chat, triage, themes, graph) is tagged by product.
+        _purge(LLMCall, LLMCall.product_id, [product_id])
         _purge(TriageDecision, TriageDecision.anomaly_id, anom_ids)
         # Anything that references an investigation must be gone before the
         # investigations themselves, hence two ordered passes rather than one
@@ -870,7 +894,7 @@ def collect_run(user: dict = Depends(require_role("admin"))) -> dict:
     with session_scope() as session:
         if session.scalar(select(Review).limit(1)) is not None:
             return {"status": "already_populated"}
-        counts = generate(session)
+        counts = generate(session, anchor="today")
     return {"status": "seeded", "counts": counts}
 
 
@@ -1356,7 +1380,7 @@ def feedback_graph(request: Request, product_id: int | None = None,
         prod = _scope(session, product_id, user)
         if prod is None:
             return {"nodes": [], "product": None, "channels": []}
-        llm = (_metered_llm(session, "feedback_graph")
+        llm = (_metered_llm(session, "feedback_graph", prod.id)
                if settings.openai_api_key and _may_spend(user) else None)
         out = build_graph(session, prod.name, llm=llm, days=days, limit=limit)
         if llm is None and settings.openai_api_key:
@@ -1444,19 +1468,23 @@ def feed_candidates(request: Request, product_id: int | None = None,
     bad. These come from clustering complaints by meaning, not from counting
     n-grams, which is why they are sentences rather than words.
     """
+    from echolens.intent import count_intents
     from echolens.orchestrator.queue import find_existing
     from echolens.themes.discover import cached_themes
+    from echolens.themes.overrides import apply_overrides, get_overrides
+    from echolens.themes.requests import cached_requests
 
     with session_scope() as session:
         prod = _scope(session, product_id, user)
         if prod is None:
-            return {"candidates": [], "product": None, "engine": "none"}
+            return {"candidates": [], "requests": [], "product": None, "engine": "none"}
         # A guest gets the cache or the deterministic fallback, never a fresh
         # LLM call. `refresh` deliberately DEFEATS the cache, so it is the one
         # knob an anonymous caller could use to force unlimited spend — it is
         # honoured only for someone who could pay for it.
         may_spend = _may_spend(user)
-        llm = _metered_llm(session, "themes") if settings.openai_api_key and may_spend else None
+        llm = (_metered_llm(session, "themes", prod.id)
+               if settings.openai_api_key and may_spend else None)
         result = cached_themes(session, prod.name, llm=llm, limit=limit,
                                package_name=prod.package_name,
                                force=refresh and may_spend)
@@ -1475,10 +1503,35 @@ def feed_candidates(request: Request, product_id: int | None = None,
                 "label_source": th["label_source"],
                 "first_seen": th.get("first_seen"),
                 "existing": existing,
+                # A cache written before intents existed has none; the quotes
+                # are a fair, if smaller, sample of the same reviews.
+                "intents": th.get("intents") or count_intents(
+                    (v, None) for v in th.get("verbatims") or []),
             })
-        return {"candidates": out, "product": prod.name,
+        # Feature requests / improvements from 3-5 star reviews. Display-only:
+        # a wish list is not something to root-cause, so these are not queued.
+        req = cached_requests(session, prod.name, llm=llm, limit=limit,
+                              package_name=prod.package_name, force=refresh and may_spend)
+        requests_out = [{
+            "slug": f"request-p{prod.id}-{r['slug']}",
+            "statement": r["statement"], "phrase": r.get("phrase"),
+            "count": r["count"], "verbatims": r["verbatims"], "trend": r["trend"],
+            "label_source": r["label_source"], "avg_rating": r.get("avg_rating"),
+            "first_seen": r.get("first_seen"), "intents": r.get("intents"),
+            "existing": None,
+        } for r in req.get("requests", [])]
+        # Corrections people made (rename / merge / mute) go on LAST — after
+        # display_themes has merged wording variants and formatted titles — so
+        # a name a person typed always wins over a generated one.
+        overrides = get_overrides(session, prod.id)
+        muted_n = len([o for o in overrides.values() if o.muted])
+        out = apply_overrides(out, overrides)
+        requests_out = apply_overrides(requests_out, overrides)
+        return {"candidates": out, "requests": requests_out, "product": prod.name,
                 "engine": result.get("engine"), "cached": result.get("cached", False),
                 "reviews_considered": result.get("reviews_considered", 0),
+                "requests_considered": req.get("reviews_considered", 0),
+                "muted": muted_n,
                 "other": result.get("other", 0)}
 
 
@@ -1502,11 +1555,18 @@ def queue_themes(request: Request, body: QueueThemes,
     with session_scope() as session:
         prod = _scope(session, body.product_id, user)
         pid = prod.id if prod else None
+        from echolens.detector.incidents import commit_incident
         queued, already = [], []
         for i, slug in enumerate(body.slugs):
+            # Picking an incident sends its lead's slug. The other members are
+            # named on the lead's description and recorded as merged into it,
+            # BEFORE queueing, so the case starts with the whole picture.
+            folded = commit_incident(session, slug, pid, prod.name if prod else None)
             res = enqueue_theme(session, product_id=pid, slug=slug,
                                 statement=body.statements.get(slug, ""),
                                 tier=body.tier, selection_order=i)
+            if folded:
+                res["incident_members"] = folded
             (already if res["status"] == "already" else queued).append(res)
         limit = _daily_limit(session, pid)
         view = queue_view(session, pid, limit)
@@ -1548,6 +1608,91 @@ def queue_cancel(queue_id: int, product_id: int | None = None,
         if not cancel(session, queue_id):
             raise HTTPException(409, "that item is already running or finished")
     return {"cancelled": queue_id}
+
+
+@app.post("/queue/{queue_id}/run-now")
+@limiter.limit("6/minute")  # each one is a paid run past the budget
+def queue_run_now(request: Request, queue_id: int, product_id: int | None = None,
+                  user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Run ONE deferred item now, past today's cap, and record who did it.
+
+    The cap stays the default for everything else; this is a deliberate,
+    audited exception for a single row. The cost shown is an estimate.
+    """
+    from echolens.db.models import QueuedInvestigation
+    from echolens.orchestrator import queue as q
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        pid = p.id if p else None
+        row = _owned(session, QueuedInvestigation, queue_id, pid)
+        estimate = q.estimate_cost(session, row.budget_tier or "quick", pid)
+        who = user.get("email") or f"user:{user.get('id')}"
+        claimed = q.claim_override(session, queue_id, user=who, estimate_usd=estimate["usd"])
+        if claimed is None:
+            raise HTTPException(409, "that item is already running or finished")
+        investigation_id, tier = _open_claimed(session, claimed, pid)
+    threading.Thread(target=_run_claimed_bg, args=(queue_id, investigation_id, tier),
+                     daemon=True).start()
+    return {"status": "started", "queue_id": queue_id, "investigation_id": investigation_id,
+            "estimate": estimate, "override_by": who}
+
+
+class ThemeOverrideBody(BaseModel):
+    slug: str = Field(min_length=1, max_length=128)
+    action: str
+    label: str | None = Field(default=None, max_length=200)
+    into: str | None = Field(default=None, max_length=128)
+    product_id: int | None = None
+
+
+@app.get("/themes/overrides")
+def theme_overrides_list(product_id: int | None = None,
+                         user: dict = Depends(current_user)) -> dict:
+    from echolens.themes.overrides import override_dicts
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        return {"overrides": override_dicts(session, p.id if p else None)}
+
+
+@app.post("/themes/overrides")
+def theme_overrides_set(body: ThemeOverrideBody,
+                        user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Rename, merge or mute a discovered theme for this product. Persisted,
+    so the correction survives the next re-discovery."""
+    from echolens.themes.overrides import override_dicts, set_override
+    with session_scope() as session:
+        p = _scope(session, body.product_id, user)
+        pid = p.id if p else None
+        try:
+            set_override(session, pid, body.slug, body.action, label=body.label,
+                         into=body.into, user=user.get("email"))
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        return {"overrides": override_dicts(session, pid)}
+
+
+@app.get("/intents")
+def intents_view(product_id: int | None = None, days: int = Query(90, ge=1, le=365),
+                 user: dict = Depends(current_user)) -> dict:
+    """What this product's reviews are FOR, over the window: bug, feature
+    request, UX confusion, praise, other."""
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        return _product_intents(session, p.name if p else None, days)
+
+
+def _product_intents(session, product: str | None, days: int = 90) -> dict:
+    from echolens.detector.detect import reference_now
+    from echolens.intent import count_intents, empty_counts
+    if not product:
+        return {"product": None, "days": days, "total": 0, "counts": empty_counts()}
+    now = reference_now(session, product)
+    rows = session.execute(select(Review.text, Review.rating).where(
+        Review.product == product,
+        Review.created_at >= (now - timedelta(days=days)).replace(tzinfo=None))
+        .limit(20000)).all()
+    counts = count_intents((t, r) for t, r in rows)
+    return {"product": product, "days": days, "total": len(rows), "counts": counts}
 
 
 @app.post("/import/reviews")
@@ -1592,6 +1737,9 @@ def snapshot(product: str | None = None, product_id: int | None = None,
     'Investigate now on anything' entry point outside onboarding."""
     from echolens.onboarding.snapshot import health_snapshot
     with session_scope() as session:
+        if _guest_locked(user) and product is not None:
+            if product not in {p.name for p in _visible_products(session, user)}:
+                raise HTTPException(404, "no such product")
         if product is None:
             p = _scope(session, product_id, user)
             product = p.name if p else None
@@ -1637,9 +1785,33 @@ def list_cases(product_id: int | None = None, user: dict = Depends(current_user)
     described the same case differently. Everything a card renders is decided
     here so the same case cannot look like two different things on two screens.
     """
+    from echolens.detector.incidents import incident_view
+    from echolens.orchestrator.queue import queue_view
+    from echolens.themes.overrides import muted_word_sets
     with session_scope() as session:
         p = _scope(session, product_id, user)
-        return case_view(session, p.id if p else None)
+        pid = p.id if p else None
+        view = case_view(session, pid)
+        name = p.name if p else None
+        # Signals: intent counts, muted themes hidden, related ones grouped into
+        # incidents. Members stay in `signals`; incidents only reference them.
+        view["signals"], view["incidents"] = incident_view(
+            session, name, view["signals"], muted_word_sets(session, pid))
+        view["intents"] = _product_intents(session, name)
+        # Queued rows past today's cap say so, with the override's estimate.
+        limit = _daily_limit(session, pid)
+        q = {i["queue_id"]: i for i in queue_view(session, pid, limit)["queued"]}
+        for row in view["cases"]:
+            item = q.get(row.get("queue_id")) if row.get("queue_id") is not None else None
+            if item is None:
+                continue
+            row["deferred"] = item["status"] == "deferred"
+            row["budget_tier"] = item.get("budget_tier")
+            if row["deferred"]:
+                row["why"] = item["note"]
+                row["estimate"] = item.get("estimate")
+        view["daily_limit"] = limit
+        return view
 
 
 def _triage_summary(considered: int, already: int, started: int, run: bool) -> str:
@@ -2087,10 +2259,9 @@ async def stream_trace(inv_id: int, request: Request, product_id: int | None = N
         ok = False
         if raw:
             try:
+                from echolens.auth import principal_for
                 claims = decode_token(raw)
-                int(claims["sub"])
-                user = {"id": int(claims["sub"]), "email": claims.get("email"),
-                        "role": claims.get("role", "viewer")}
+                user = principal_for(int(claims["sub"]), claims)
                 ok = True
             except Exception:
                 ok = False
@@ -2197,7 +2368,7 @@ def recommend_finding(request: Request, finding_id: int, product_id: int | None 
 
 # ── v4.0: actionable delivery (tickets, GitHub issues, Slack, alerts) ────
 
-def _metered_llm(session, agent_prefix: str):
+def _metered_llm(session, agent_prefix: str, product_id: int | None = None):
     """An OpenAIClient whose spend is RECORDED.
 
     These call sites used `on_call=lambda *a: None`, so LLM work done outside an
@@ -2209,7 +2380,8 @@ def _metered_llm(session, agent_prefix: str):
     from echolens.llm.openai_client import OpenAIClient
 
     def _record(agent, model, tokens_in, tokens_out, cost, ms):
-        session.add(LLMCall(investigation_id=None, agent=f"{agent_prefix}.{agent}",
+        session.add(LLMCall(investigation_id=None, product_id=product_id,
+                            agent=f"{agent_prefix}.{agent}",
                             model=model, tokens_in=tokens_in, tokens_out=tokens_out,
                             cost=cost, ms=ms))
 
@@ -2223,8 +2395,9 @@ def _github_repo(session, product_id: int | None = None) -> str | None:
     and otherwise fall back to GITHUB_DEFAULT_REPO. The moment a second product
     was added, every finding from every product filed into the default repo:
     verified by test, issues for product B landed in product A's tracker (or in
-    whatever GITHUB_DEFAULT_REPO named). Scoped first, global single-repo second,
-    configured default last.
+    whatever GITHUB_DEFAULT_REPO named). Scoped requests use only that product's
+    sources or the explicitly configured default. Global single-repo inference
+    is reserved for unscoped requests.
     """
     from echolens.db.models import CollectorState
     base = select(CollectorState).where(
@@ -2235,6 +2408,7 @@ def _github_repo(session, product_id: int | None = None) -> str | None:
             return scoped[0].identifier
         if len(scoped) > 1:
             return scoped[0].identifier  # deterministic: first configured wins
+        return settings.github_default_repo or None
     rows = session.scalars(base).all()
     if len(rows) == 1:
         return rows[0].identifier
@@ -2267,7 +2441,7 @@ def finding_github_issue(finding_id: int, product_id: int | None = None,
     with session_scope() as session:
         p = _scope(session, product_id, user)
         finding = _owned_finding(session, finding_id, p.id if p else None)
-        repo = _github_repo(session)
+        repo = _github_repo(session, p.id if p else finding.product_id)
         if not repo:
             raise HTTPException(422, "No GitHub repo connected. Connect a repo on Sources, or set GITHUB_DEFAULT_REPO.")
         inv = session.get(Investigation, finding.investigation_id)
@@ -2348,6 +2522,27 @@ def _slack_challenge_bg(finding_id: int, note: str) -> None:
         log.error("slack_challenge_failed", finding_id=finding_id, error=str(err))
 
 
+def _slack_signature_ok(request: Request, body: bytes) -> bool:
+    """Verify Slack's v0 request signature (HMAC-SHA256 over
+    "v0:{timestamp}:{body}" with the app's signing secret). Requests older
+    than five minutes are refused so a captured click cannot be replayed."""
+    import hashlib
+    import hmac as _hmac
+    secret = settings.slack_signing_secret
+    if not secret:
+        return False
+    ts = request.headers.get("x-slack-request-timestamp", "")
+    sig = request.headers.get("x-slack-signature", "")
+    try:
+        if abs(time.time() - int(ts)) > 300:
+            return False
+    except ValueError:
+        return False
+    base = f"v0:{ts}:".encode() + body
+    expected = "v0=" + _hmac.new(secret.encode(), base, hashlib.sha256).hexdigest()
+    return _hmac.compare_digest(sig, expected)
+
+
 @app.post("/integrations/slack/act")
 @limiter.limit("30/minute")  # a challenge here runs a FULL investigation
 async def slack_act(request: Request) -> dict:
@@ -2366,6 +2561,8 @@ async def slack_act(request: Request) -> dict:
     ctype = request.headers.get("content-type", "")
     is_slack = "application/json" not in ctype
     action, finding_id, note, token = None, None, "", ""
+    raw_body = await request.body()  # cached by Starlette; form()/json() still work
+    slack_signed = is_slack and _slack_signature_ok(request, raw_body)
     if not is_slack:
         body = await request.json()
         token = body.get("token", "")
@@ -2389,7 +2586,7 @@ async def slack_act(request: Request) -> dict:
     # token a character at a time to anyone who can time the response, and this
     # endpoint carries full reviewer-equivalent power.
     import hmac as _hmac
-    if not expected or not _hmac.compare_digest(str(token), str(expected)):
+    if not slack_signed and (not expected or not _hmac.compare_digest(str(token), str(expected))):
         raise HTTPException(401, "invalid or missing slack action token")
     if action not in ("approve", "challenge") or finding_id is None:
         raise HTTPException(422, "provide action (approve|challenge) and finding_id")
@@ -2661,10 +2858,16 @@ def chat_endpoint(body: ChatBody, request: Request,
                 decision = {"type": "answer", "citations": [], "text": ""}
 
         if decision.get("type") != "launch":
+            # A deterministic answer that already cites cases (or is built from
+            # the product's own signals) is the honest answer and costs nothing;
+            # only open questions go to the model.
+            if decision.get("citations") or decision.get("grounded"):
+                decision.pop("grounded", None)
+                return decision
             if (_may_spend(user) and settings.openai_api_key
                     and ask_mod.has_anything_to_say(session, pid)):
                 try:
-                    llm = _metered_llm(session, "ask")
+                    llm = _metered_llm(session, "ask", pid)
                     result = ask_mod.answer(session, body.message, llm,
                                             product_id=pid, product_name=pname)
                     if result.text and (result.citations or result.tool_calls
@@ -2990,12 +3193,17 @@ def _product_investigations(session, product_id: int | None):
     return session.scalars(stmt).all()
 
 
-def _product_llm_calls(session, product_id: int | None):
-    """LLM calls scoped through their investigation's product."""
+def _product_llm_calls(session, product_id: int | None, since: datetime | None = None):
+    """LLM calls for a product: through their investigation, or tagged directly
+    (chat, triage, themes, graph — spend that has no case). `since` bounds the
+    scan in SQL instead of loading the whole ledger into Python."""
+    from sqlalchemy import or_
     stmt = select(LLMCall)
     if product_id is not None:
-        stmt = stmt.join(Investigation, Investigation.id == LLMCall.investigation_id).where(
-            Investigation.product_id == product_id)
+        stmt = stmt.outerjoin(Investigation, Investigation.id == LLMCall.investigation_id).where(
+            or_(Investigation.product_id == product_id, LLMCall.product_id == product_id))
+    if since is not None:
+        stmt = stmt.where(LLMCall.created_at >= since)
     return session.scalars(stmt).all()
 
 
@@ -3017,7 +3225,8 @@ def feed_summary(product_id: int | None = None, user: dict = Depends(current_use
         today = _today()
         invs = _product_investigations(session, pid)
         n_today = [i for i in invs if i.created_at and i.created_at.date() == today]
-        spent = sum(c.cost for c in _product_llm_calls(session, pid)
+        day_start = datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc)
+        spent = sum(c.cost for c in _product_llm_calls(session, pid, since=day_start)
                     if c.created_at and c.created_at.date() == today)
         return {"investigations_today": len(n_today),
                 "daily_limit": _daily_limit(session, pid),
@@ -3166,13 +3375,19 @@ def costs_summary(product_id: int | None = None, user: dict = Depends(current_us
     with session_scope() as session:
         p = _scope(session, product_id, user)
         pid = p.id if p else None
-        calls = _product_llm_calls(session, pid)
+        month_floor = datetime.combine(_today().replace(day=1), datetime.min.time(), tzinfo=timezone.utc)
+        calls = _product_llm_calls(session, pid, since=month_floor)
         invs = _product_investigations(session, pid)
         costs = _cost_by_investigation(session, pid)
         resolved = [i for i in invs if i.status == "resolved"]
         dead = [i for i in invs if i.status in ("insufficient_evidence", "budget_exhausted")]
-        spent_today = sum(c.cost for c in calls if c.created_at and c.created_at.date() == _today())
-        total = round(sum(c.cost for c in calls), 4)
+        today = _today()
+        month_start = today.replace(day=1)
+        dated_costs = [(aware_utc(c.created_at).astimezone(timezone.utc).date(), c.cost)
+                       for c in calls if c.created_at]
+        spent_today = sum(cost for day, cost in dated_costs if day == today)
+        month_to_date = round(sum(cost for day, cost in dated_costs
+                                  if month_start <= day <= today), 4)
         avg_resolved = (round(sum(costs.get(i.id, {}).get("cost", 0) for i in resolved) / len(resolved), 4)
                         if resolved else 0.0)
         dead_spend = round(sum(costs.get(i.id, {}).get("cost", 0) for i in dead), 4)
@@ -3203,7 +3418,7 @@ def costs_summary(product_id: int | None = None, user: dict = Depends(current_us
                 "analyst_hours_saved": len(resolved) * 3,
                 "resolved_count": len(resolved),
             },
-            "month_to_date": total,
+            "month_to_date": month_to_date,
             "budget": 25.0,
             "product": p.name if p else None,
             "limits": _limits(session, pid),

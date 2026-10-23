@@ -39,7 +39,7 @@ BUG_CUES = _cues(
 REQUEST_CUES = _cues(
     r"i wish", r"wish (?:it|you|there)", r"please add", r"pls add", r"would love",
     r"it would be (?:great|nice|awesome|helpful)", r"would be (?:great|nice|awesome|helpful) (?:if|to)",
-    r"missing", r"can you (?:please )?add", r"could you (?:please )?add", r"feature request",
+    r"can you (?:please )?add", r"could you (?:please )?add", r"feature request",
     r"hope (?:you|they) add", r"should (?:add|have|include)", r"needs? (?:an? )?option",
     r"add (?:an? )?option", r"bring back",
 )

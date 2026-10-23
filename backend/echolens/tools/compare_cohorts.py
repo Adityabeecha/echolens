@@ -32,7 +32,7 @@ def compare_cohorts(
     if date_from:
         stmt = stmt.where(Review.created_at >= parse_date(date_from))
     if date_to:
-        stmt = stmt.where(Review.created_at <= parse_date(date_to))
+        stmt = stmt.where(Review.created_at <= parse_date(date_to, end_of_day=True))
     if os_version:
         stmt = stmt.where(Review.os_version == os_version)
     if version_prefix:

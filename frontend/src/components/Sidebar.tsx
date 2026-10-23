@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ProductRow, api, isAdmin } from "../api";
+import { ProductRow, api, isAdmin, isGuest } from "../api";
 import { plural } from "../format";
 import { useAsync } from "../hooks";
 import { Screen } from "../nav";
@@ -171,12 +171,14 @@ interface NavItem { key: Screen; icon: IconName; label: string; hint: string }
 const PRIMARY: NavItem[] = [
   { key: "today", icon: "today", label: "Today", hint: "What needs you right now" },
   { key: "cases", icon: "cases", label: "Cases", hint: "Every case, from queued to verified" },
+  { key: "plan", icon: "shipped", label: "Plan", hint: "What to fix next, ranked by impact" },
   { key: "ask", icon: "ask", label: "Ask", hint: "Ask about your feedback" },
 ];
 
 const SYSTEM: NavItem[] = [
   { key: "sources", icon: "sources", label: "Sources", hint: "Where the feedback comes from" },
   { key: "patterns", icon: "patterns", label: "Patterns", hint: "Fixes proven to work" },
+  { key: "memory", icon: "diamond", label: "Product memory", hint: "What EchoLens has learned about this product" },
   { key: "calibration", icon: "calibration", label: "Calibration", hint: "How accurate EchoLens has been" },
   { key: "costs", icon: "costs", label: "Costs", hint: "What each case cost to run" },
   { key: "settings", icon: "settings", label: "Settings", hint: "Budgets, limits and this product" },
@@ -185,8 +187,6 @@ const SYSTEM: NavItem[] = [
 const SYSTEM_KEYS = SYSTEM.map((n) => n.key);
 /** Screens reached from within another screen; they highlight their parent. */
 const UNDER_CASES: Screen[] = ["cases", "case"];
-const UNDER_TODAY: Screen[] = ["today", "plan"];
-const UNDER_PATTERNS: Screen[] = ["patterns", "memory"];
 
 export function Sidebar({
   screen, go, onLogout, products = [], activeId = null,
@@ -197,7 +197,8 @@ export function Sidebar({
   // The System group opens itself when you are inside it, so you are never on a
   // screen the nav claims you are not on.
   const [systemOpen, setSystemOpen] = useState(false);
-  const inSystem = SYSTEM_KEYS.includes(screen) || screen === "memory";
+  const inSystem = SYSTEM_KEYS.includes(screen);
+  const guest = isGuest();
   const showSystem = systemOpen || inSystem;
 
   // What is ACTUALLY running, asked of the server.
@@ -209,8 +210,6 @@ export function Sidebar({
 
   const isActive = (key: Screen) => {
     if (key === "cases") return UNDER_CASES.includes(screen);
-    if (key === "today") return UNDER_TODAY.includes(screen);
-    if (key === "patterns") return UNDER_PATTERNS.includes(screen);
     return screen === key;
   };
 
@@ -249,7 +248,7 @@ export function Sidebar({
 
       {/* The portfolio spans every product, so it sits ABOVE the switcher — the
           switcher scopes what's below it, not this. */}
-      {products.length > 1 && (
+      {products.length > 0 && (
         <button
           onClick={() => go("portfolio")}
           className="el-btn el-nav-wide"
@@ -331,7 +330,7 @@ export function Sidebar({
         <button
           onClick={() => setSystemOpen((o) => !o)}
           className="el-btn el-btn--sm el-nav-system-toggle"
-          title="Sources, patterns, calibration, costs and settings"
+          title="Sources, patterns, memory, calibration, costs and settings"
           aria-expanded={showSystem}
           style={{ display: "flex", alignItems: "center", gap: S[2],
                    padding: `${S[1]} ${S[2]}`, width: "100%", justifyContent: "flex-start",
@@ -359,13 +358,13 @@ export function Sidebar({
         <button
           onClick={onLogout}
           className="el-btn"
-          title="Sign out"
+          title={guest ? "Sign in" : "Sign out"}
           style={{ margin: `${S[1]} ${S[3]} ${S[3]}`, padding: `${S[2]} ${S[2]}`,
                    borderRadius: R.control, color: C.muted, fontSize: T.sm,
                    justifyContent: "flex-start", gap: S[3] }}
         >
-          <Icon name="signout" size={15} style={{ color: C.dim }} />
-          <span className="el-nav-label">Sign out</span>
+          <Icon name={guest ? "arrowRight" : "signout"} size={15} style={{ color: C.dim }} />
+          <span className="el-nav-label">{guest ? "Sign in" : "Sign out"}</span>
         </button>
       )}
 

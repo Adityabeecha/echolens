@@ -41,7 +41,7 @@ def cmd_seed(_args) -> int:
             console.print("[yellow]Database already seeded — delete backend/echolens.db to regenerate.[/]")
             return 0
         from echolens.synthetic.generate import generate
-        counts = generate(session)
+        counts = generate(session, anchor="today")
     console.print(f"[green]Seeded synthetic Lumo dataset:[/] {counts}")
     return 0
 
@@ -213,7 +213,10 @@ def cmd_resume(_args) -> int:
 
 def cmd_createuser(args) -> int:
     init_db()
-    from echolens.auth import create_user
+    from echolens.auth import create_user, password_problem
+    problem = password_problem(args.password)
+    if problem:
+        raise SystemExit(f"createuser: {problem}")
     with session_scope() as session:
         try:
             u = create_user(session, args.email, args.password, args.role)

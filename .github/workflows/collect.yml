@@ -5,7 +5,12 @@
 #
 # Setup: in the repo settings → Secrets and variables → Actions, add:
 #   ECHOLENS_API   = https://<your-service>.code.run   (no trailing slash)
-#   ECHOLENS_EMAIL / ECHOLENS_PASSWORD = a reviewer/admin login (for the token)
+#   ECHOLENS_EMAIL / ECHOLENS_PASSWORD = a dedicated reviewer login (for the token)
+#
+# SECURITY: use a dedicated, low-privilege REVIEWER account for automation (not
+# an admin and not a personal login), with a unique password stored only in
+# these secrets. Rotate it if it ever leaks. The password is only read from the
+# environment and never echoed; do not add `set -x` to these scripts.
 name: EchoLens scheduled collect + scan
 
 on:

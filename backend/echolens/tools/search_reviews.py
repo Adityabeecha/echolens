@@ -28,7 +28,7 @@ def search_reviews(
     if date_from:
         stmt = stmt.where(Review.created_at >= parse_date(date_from))
     if date_to:
-        stmt = stmt.where(Review.created_at <= parse_date(date_to))
+        stmt = stmt.where(Review.created_at <= parse_date(date_to, end_of_day=True))
     if rating_max is not None:
         stmt = stmt.where(Review.rating <= rating_max)
     if rating_min is not None:

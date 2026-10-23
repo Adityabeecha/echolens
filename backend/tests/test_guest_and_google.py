@@ -175,7 +175,7 @@ def test_verification_rejects_garbage(monkeypatch):
 def test_verification_rejects_a_self_signed_token(monkeypatch):
     """A token we sign ourselves with a symmetric key is structurally valid
     but not from Google, so it must be refused."""
-    from jose import jwt as jose_jwt
+    import jwt as jose_jwt
     from echolens import google_auth
     monkeypatch.setattr(settings, "google_client_id", "test-client-id.apps.googleusercontent.com")
     monkeypatch.setattr(google_auth, "_keys", lambda force=False: {"keys": []})
@@ -303,7 +303,7 @@ def test_an_unknown_key_id_does_trigger_one_refetch(monkeypatch):
 
 def test_a_non_rs256_algorithm_is_refused(monkeypatch):
     """Closes the `alg: none` / HMAC-confusion class outright."""
-    from jose import jwt as jose_jwt
+    import jwt as jose_jwt
     from echolens import google_auth
     monkeypatch.setattr(settings, "google_client_id", "test-client.apps.googleusercontent.com")
     monkeypatch.setattr(google_auth, "_keys", lambda force=False: {"keys": [{"kid": "k"}]})

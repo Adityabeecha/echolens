@@ -496,6 +496,12 @@ def scan(session: Session, as_of: datetime | None = None, persist: bool = True,
                   if c.type == "issue_velocity_surge"
                   or c.severity in ("SEV1", "SEV2")
                   or c.z >= MIN_CASE_Z]
+    window_start = as_of - timedelta(days=win.recent)
+    # One slug scheme: whenever an event belongs to a product it carries the
+    # product-prefixed slug. A scan that was not told the product id (the CLI)
+    # resolves it, otherwise it wrote unprefixed slugs next to the UI's `p1-...`
+    # ones and the same anomaly was stored twice.
+    product_id = _resolve_product_id(session, product, product_id)
     # A theme someone muted in Cases raises no NEW signals. Only theme-shaped
     # detectors are filtered: muting a complaint must never silence the
     # product-wide 1-star spike or rating drop.
@@ -507,7 +513,6 @@ def scan(session: Session, as_of: datetime | None = None, persist: bool = True,
                           if c.type not in ("theme_volume_surge", "issue_velocity_surge")
                           or not is_muted_slug(c.slug, muted)]
 
-    window_start = as_of - timedelta(days=win.recent)
     events: list[AnomalyEvent] = []
     for c in candidates:
         slug = f"p{product_id}-{c.slug}" if product_id else c.slug
@@ -517,17 +522,27 @@ def scan(session: Session, as_of: datetime | None = None, persist: bool = True,
         if prior is not None:
             fresh = prior.window_end is None or (
                 window_start - _aware(prior.window_end)) <= timedelta(days=MERGE_WINDOW_DAYS)
-            prior.z, prior.delta = c.z, c.delta
-            # An incident note (see detector/incidents.py) outlives the rewrite.
-            from echolens.detector.incidents import preserve_note
-            prior.description = preserve_note(prior.description, c.description)
-            prior.window = c.window
-            if fresh:  # same ongoing window → extend it
-                prior.window_start = prior.window_start or window_start
-            else:      # a new occurrence after a gap → restart the window
-                prior.window_start = window_start
-            prior.window_end = as_of
-            events.append(prior)
+            new_start = (prior.window_start or window_start) if fresh else window_start
+            if persist:
+                prior.z, prior.delta = c.z, c.delta
+                # An incident note (see detector/incidents.py) outlives the rewrite.
+                from echolens.detector.incidents import preserve_note
+                prior.description = preserve_note(prior.description, c.description)
+                prior.window = c.window
+                prior.window_start = new_start
+                prior.window_end = as_of
+                _merge_legacy(session, product_id, c.slug, prior)
+                events.append(prior)
+            else:
+                # Preview: report the would-be state WITHOUT touching the
+                # persistent row (mutating `prior` dirtied the session, so a
+                # later flush/commit wrote a "preview" to the DB).
+                events.append(AnomalyEvent(
+                    id=prior.id, slug=prior.slug, type=prior.type, metric=prior.metric,
+                    delta=c.delta, z=c.z, window=c.window, description=c.description,
+                    status=prior.status, product_id=prior.product_id,
+                    window_start=new_start, window_end=as_of,
+                    merged_into_id=prior.merged_into_id, created_at=prior.created_at))
             continue
         ev = AnomalyEvent(
             slug=slug, type=c.type, metric=c.metric, delta=c.delta, z=c.z,
@@ -536,10 +551,50 @@ def scan(session: Session, as_of: datetime | None = None, persist: bool = True,
         )
         if persist:
             session.add(ev)
+            session.flush()
+            _merge_legacy(session, product_id, c.slug, ev)
         events.append(ev)
     if persist:
         session.flush()
     return events
+
+
+def _resolve_product_id(session: Session, product: str | None,
+                        product_id: int | None) -> int | None:
+    """The product a scan's events belong to, when the caller did not say."""
+    if product_id:
+        return product_id
+    from echolens.db.models import Product
+    if product:
+        return session.scalar(select(Product.id).where(Product.name == product))
+    names = session.scalars(select(Review.product).where(Review.product.is_not(None)).distinct()).all()
+    if len(names) == 1:
+        return session.scalar(select(Product.id).where(Product.name == names[0]))
+    if not names:
+        ids = session.scalars(select(Product.id).limit(2)).all()
+        if len(ids) == 1:
+            return ids[0]
+    return None
+
+
+def _merge_legacy(session: Session, product_id: int | None, base_slug: str,
+                  keeper: AnomalyEvent) -> None:
+    """Fold a legacy UNPREFIXED row for the same product+detector into `keeper`.
+
+    Older scans wrote `auto-...` slugs while the UI wrote `p<id>-auto-...`; both
+    stayed open. A pending, not-yet-merged legacy row is marked merged (pointer
+    kept, history intact) so every merged_into_id-aware list hides it."""
+    if not product_id or keeper.slug == base_slug or keeper.id is None:
+        return
+    legacy = session.scalars(select(AnomalyEvent).where(
+        AnomalyEvent.slug == base_slug,
+        AnomalyEvent.status == "pending",
+        AnomalyEvent.merged_into_id.is_(None),
+        (AnomalyEvent.product_id == product_id) | AnomalyEvent.product_id.is_(None),
+    )).first()
+    if legacy is not None and legacy.id != keeper.id:
+        legacy.merged_into_id = keeper.id
+        legacy.status = "merged"
 
 
 def _aware(dt: datetime) -> datetime:

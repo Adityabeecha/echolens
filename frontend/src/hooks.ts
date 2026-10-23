@@ -159,6 +159,7 @@ export function useWorkWatcher(
       let busy = 0;
       try {
         const r = await api.investigations();
+        if (stopped) return;
         failures = 0;
         const live = (r.investigations ?? []).filter(
           (i) => i.status === "running" || i.status === "queued",
@@ -230,16 +231,18 @@ export function useTrace(investigationId: number | null): {
     seen.current = 0;
 
     let es: EventSource | null = null;
-    let poll: ReturnType<typeof setInterval> | null = null;
+    let poll: ReturnType<typeof setTimeout> | null = null;
+    let polling = false;
     let failures = 0;
     let stopped = false;
 
     const stopPolling = () => {
-      if (poll) { clearInterval(poll); poll = null; }
+      polling = false;
+      if (poll) { clearTimeout(poll); poll = null; }
     };
 
     const push = (s: TraceStep) => {
-      if (s.seq <= seen.current) return;
+      if (stopped || s.seq <= seen.current) return;
       seen.current = s.seq;
       setSteps((prev) => [...prev, s]);
     };
@@ -248,8 +251,10 @@ export function useTrace(investigationId: number | null): {
       es = new EventSource(api.traceStreamUrl(investigationId));
       es.addEventListener("step", (e) => push(JSON.parse((e as MessageEvent).data)));
       es.addEventListener("done", (e) => {
+        if (stopped) return;
         setStatus(JSON.parse((e as MessageEvent).data).status);
         es?.close();
+        stopPolling();
       });
       es.onerror = () => {
         es?.close();
@@ -260,10 +265,13 @@ export function useTrace(investigationId: number | null): {
     }
 
     function startPolling() {
-      if (poll || stopped) return;
+      if (polling || stopped) return;
+      polling = true;
       const step = async () => {
+        if (stopped || !polling) return;
         try {
           const r = await api.trace(investigationId!, seen.current);
+          if (stopped || !polling) return;
           failures = 0;
           setError(null);
           r.steps.forEach(push);
@@ -275,6 +283,7 @@ export function useTrace(investigationId: number | null): {
           // "Waiting for the first reasoning step…" and no error shown.
           if (r.status !== "running") stopPolling();
         } catch (err) {
+          if (stopped || !polling) return;
           failures += 1;
           if (failures >= MAX_POLL_FAILURES) {
             stopped = true;
@@ -284,10 +293,13 @@ export function useTrace(investigationId: number | null): {
               "Lost contact with the investigation stream.",
             );
           }
+        } finally {
+          // Schedule after completion so slow requests cannot overlap and
+          // deliver an older status after a newer terminal response.
+          if (!stopped && polling) poll = setTimeout(step, 1200);
         }
       };
       void step();
-      poll = setInterval(step, 1200);
     }
 
     return () => {
