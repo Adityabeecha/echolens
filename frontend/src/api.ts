@@ -387,6 +387,8 @@ export interface Finding {
   decision?: Decision;
   severity?: Severity;
   fix?: FixStatus | null;
+  /** How much to trust this finding, from its own evidence rows. */
+  trust?: TrustSummary | null;
   addenda?: { question: string; answer: string; dimension: string }[];
   /** Set when the claim-grounding guard rejected the drafted prose. */
   grounding_violations?: string[];
@@ -507,6 +509,22 @@ export interface CaseRow {
   budget_tier?: string | null;
   /** What running it now would likely cost — always an estimate. */
   estimate?: CostEstimate | null;
+  /** The trust badge, for cases with a finding. */
+  trust?: TrustSummary | null;
+}
+/**
+ * Computed from a case's evidence rows. `label` is the badge sentence; it says
+ * "verified" only when `verified` (approved + confirmed fix) is true.
+ */
+export interface TrustSummary {
+  label: string;
+  sources: { source: string; count: number }[];
+  distinct_sources: number;
+  /** guards.two_source_rule on the supported hypothesis. */
+  two_source_ok: boolean;
+  confidence: "high" | "medium" | "low";
+  evidence_count: number;
+  verified: boolean;
 }
 export interface CostEstimate {
   usd: number;
@@ -625,6 +643,21 @@ export interface Overview {
   releases: ReleaseMarker[];
   rating_breakdown: RatingBreakdown;
   freshness: Freshness;
+  /** Fixes confirmed in the last 14 days that you have not dismissed (max 3). */
+  confirmed_fixes?: ConfirmedFix[];
+}
+export interface ConfirmedFix {
+  watch_id: number;
+  finding_id: number;
+  investigation_id: number;
+  headline: string;
+  metric: string;
+  drop_pct: number | null;
+  fixed_in_version: string | null;
+  confirmed_at: string;
+  chart: FixStatus["chart"];
+  /** Affected reviewers the reply panel would draft for. */
+  reply_count: number;
 }
 
 // Issue trackers a finding can be filed to.
@@ -1329,6 +1362,9 @@ export const api = {
   // Not scoped: which source types exist is global, not per-product.
   availableSources: () => get<AvailableSourcesResp>("/sources/available"),
   fixwatch: () => get<FixWatchResp>(scoped("/fixwatch")),
+  /** Hide a "Fix confirmed" card from your own Today, for good. */
+  dismissFix: (watchId: number) =>
+    post<{ dismissed: number }>(scoped(`/fixwatch/${watchId}/dismiss`)),
   comments: (invId: number) =>
     get<CommentsResp>(scoped(`/investigations/${invId}/comments`)),
   postComment: (invId: number, body: string, parentId?: number) =>

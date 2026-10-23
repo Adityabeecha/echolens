@@ -352,7 +352,18 @@ def _finding_extras(session, finding, recs, status: str) -> dict:
         "severity": severity(float(fj.get("confidence", 0.0)), impact),
         "fix": fix,
         "breadth": breadth,
+        # The trust badge: sources, the two-source rule, the confidence band.
+        "trust": _finding_trust(session, finding),
     }
+
+
+def _finding_trust(session, finding) -> dict | None:
+    from echolens.evidence_summary import finding_trust
+    try:
+        return finding_trust(session, finding)
+    except Exception as err:  # a presentation extra must never break the finding
+        log.warning("finding_trust_failed", finding_id=finding.id, error=str(err))
+        return None
 
 
 def _trace_dict(t: TraceStep) -> dict:
@@ -1904,10 +1915,30 @@ def snapshot(product: str | None = None, product_id: int | None = None,
 def today_overview_view(product_id: int | None = None,
                   user: dict = Depends(current_user)) -> dict:
     """What Today draws around the score: releases inside the charted window,
-    the rating-drop breakdown (an estimate), and when sources last synced."""
+    the rating-drop breakdown (an estimate), when sources last synced, and the
+    fixes confirmed in the last two weeks that this user has not dismissed."""
+    from echolens.evidence_summary import recent_confirmed_fixes
     from echolens.overview import overview
     with session_scope() as session:
-        return overview(session, _scope(session, product_id, user))
+        p = _scope(session, product_id, user)
+        fixes = recent_confirmed_fixes(session, p.id, user.get("id")) if p is not None else []
+        return {**overview(session, p), "confirmed_fixes": fixes}
+
+
+@app.post("/fixwatch/{watch_id}/dismiss")
+def fixwatch_dismiss(watch_id: int, product_id: int | None = None,
+                     user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Hide a "Fix confirmed" card from YOUR Today. Per user: a teammate who has
+    not seen it yet still does."""
+    from echolens.db.models import FixWatch
+    from echolens.evidence_summary import dismiss_fix
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        watch = _owned(session, FixWatch, watch_id, p.id if p else None)
+        if user.get("id") is None:
+            raise HTTPException(422, "sign in to dismiss")
+        dismiss_fix(session, user["id"], watch.id)
+        return {"dismissed": watch.id}
 
 
 @app.post("/search/embed")
@@ -1974,6 +2005,12 @@ def list_cases(product_id: int | None = None, user: dict = Depends(current_user)
             if row["deferred"]:
                 row["why"] = item["note"]
                 row["estimate"] = item.get("estimate")
+        # The trust badge on every card with a finding, batched for the list.
+        from echolens.evidence_summary import trust_for_cases
+        trust = trust_for_cases(session, [r["id"] for r in view["cases"]
+                                          if r.get("id") is not None and r.get("finding_id")])
+        for row in view["cases"]:
+            row["trust"] = trust.get(row.get("id"))
         view["daily_limit"] = limit
         return view
 

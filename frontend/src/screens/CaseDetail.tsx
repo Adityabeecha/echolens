@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Evidence, Investigation, api, errorMessage } from "../api";
-import { StatusChip } from "../components/CaseCard";
+import { StatusChip, TrustBadge } from "../components/CaseCard";
 import { impactLine } from "../format";
 import { CASE_TABS, CaseTab, CASE_TAB_LABEL } from "../nav";
 import { SEVERITY } from "../status";
@@ -152,6 +152,12 @@ export function CaseDetail({
     if (m === "trace" && tab === "finding") onTab("trace");
     if (m === "evidence" && tab === "trace") onTab("finding");
   };
+  // The trust badge summarises the evidence, so it opens it: the Inspector's
+  // evidence view beside the brief when there is room, the Evidence tab when not.
+  const openTrust = () => {
+    if (wide) { setPickedId(null); changeMode("evidence"); }
+    else onTab("evidence");
+  };
   const picked = inv.evidence.find((e) => e.id === pickedId) ?? null;
   const sheetEvidence = inv.evidence.find((e) => e.id === sheetId) ?? null;
   // On a wide screen the trace lives in the Inspector, so the brief takes its tab.
@@ -213,6 +219,7 @@ export function CaseDetail({
               confidence {finding.confidence.toFixed(2)}
             </button>
           )}
+          {finding?.trust && <TrustBadge trust={finding.trust} onClick={openTrust} />}
         </div>
 
         {inv.case_why && (
