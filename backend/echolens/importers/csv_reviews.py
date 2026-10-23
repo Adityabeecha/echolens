@@ -57,7 +57,8 @@ def _int(raw: str | None) -> int | None:
     what was often praise. None means unknown, and unknown rows are skipped.
     """
     try:
-        return max(0, min(5, int(float(str(raw).strip()))))
+        value = float(str(raw).strip())
+        return int(value) if value.is_integer() and 1 <= value <= 5 else None
     except (TypeError, ValueError):
         return None
 

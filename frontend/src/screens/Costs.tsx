@@ -38,7 +38,8 @@ export function Costs({ onGoSettings }: { onGoSettings: () => void }) {
     { label: "SPENT TODAY", value: money(st.spent_today), color: C.text },
     { label: "AVG PER RESOLVED CASE", value: money(st.avg_per_resolved), color: C.good },
     { label: "SPENT ON DEAD ENDS", value: money(st.dead_end_spend), color: C.accent },
-    { label: "EST. ANALYST HOURS SAVED", value: `${st.analyst_hours_saved}h`, color: C.info },
+    { label: "EST. ANALYST HOURS SAVED", value: `${Math.round(Number(st.analyst_hours_saved) * 10) / 10}h`, color: C.info,
+      hint: "Assumes about 3 analyst hours of manual research per resolved case. It is a rough planning figure, not a measurement." },
   ];
 
   return (
@@ -58,13 +59,19 @@ export function Costs({ onGoSettings }: { onGoSettings: () => void }) {
       <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]} ${S[12]}` }}>
         <div style={{ display: "flex", gap: S[3], maxWidth: MEASURE, flexWrap: "wrap" }}>
           {tiles.map((t) => (
-            <div key={t.label} style={{ flex: 1, minWidth: 170, padding: `${S[4]} ${S[4]}`,
+            <div key={t.label} title={t.hint} style={{ flex: 1, minWidth: 170, padding: `${S[4]} ${S[4]}`,
                                         background: C.card, border: `1px solid ${C.border2}`,
                                         borderRadius: R.card }}>
               <div style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".1em",
                             color: C.faint }}>{t.label}</div>
               <div style={{ fontSize: T.xl, fontWeight: 700, marginTop: S[2], fontFamily: mono,
                             color: t.color }}>{t.value}</div>
+              {t.hint && (
+                <div style={{ fontSize: T.micro, color: C.dim, marginTop: S[1],
+                              lineHeight: "var(--el-lh-snug)" }}>
+                  Assumes ~3h of analyst work per resolved case
+                </div>
+              )}
             </div>
           ))}
         </div>

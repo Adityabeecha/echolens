@@ -53,6 +53,8 @@ export function CaseCard({
         <div style={{ flex: 1, minWidth: 0 }}>
           {clickable ? (
             <button type="button" onClick={open}
+              // Space must activate the card without also scrolling the page.
+              onKeyDown={(e) => { if (e.key === " ") { e.preventDefault(); open(); } }}
               className={`el-case-title${compact ? " el-truncate" : ""}`}>
               {row.title}
             </button>

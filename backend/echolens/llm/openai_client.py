@@ -51,6 +51,12 @@ def _is_temperature_refusal(err: Exception) -> bool:
 
 _warned_pricing: set[str] = set()
 
+# Models that have refused `temperature`, remembered for the life of the
+# process. Every flow builds its own client, so a per-instance flag re-learned
+# the refusal on the first call of EVERY investigation, triage and chat turn —
+# one wasted 400 round-trip each time.
+_NO_TEMPERATURE_MODELS: set[str] = set()
+
 
 def compute_cost(model: str, tokens_in: int, tokens_out: int) -> float:
     price = MODEL_PRICING.get(model)
@@ -85,15 +91,21 @@ class OpenAIClient:
         self._base_delay = base_delay
         self._sleep = sleep  # injectable so tests don't actually wait
         self._max_total_s = max_total_s
-        self._supports_temperature = True
+        self._supports_temperature = self.model not in _NO_TEMPERATURE_MODELS
 
-    def _create_with_backoff(self, system: str, user: str, json_schema: dict):
+    def _create_with_backoff(self, system: str, user: str, json_schema: dict,
+                             deadline: float | None = None):
         attempt = 0
-        deadline = time.monotonic() + self._max_total_s
+        if deadline is None:
+            deadline = time.monotonic() + self._max_total_s
         while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise LLMServiceError("model call deadline exhausted")
             try:
                 kwargs: dict = {
                     "model": self.model,
+                    "timeout": min(REQUEST_TIMEOUT_S, remaining),
                     "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
@@ -111,6 +123,7 @@ class OpenAIClient:
                 if self._supports_temperature and _is_temperature_refusal(err):
                     log.warning("llm_temperature_unsupported", model=self.model)
                     self._supports_temperature = False
+                    _NO_TEMPERATURE_MODELS.add(self.model)
                     continue
                 raise
             except _TRANSIENT as err:
@@ -130,10 +143,11 @@ class OpenAIClient:
     def complete_json(self, system: str, user: str, json_schema: dict, agent: str) -> LLMResult:
         last_err: Exception | None = None
         prompt = user
+        deadline = time.monotonic() + self._max_total_s
         for _attempt in range(2):  # one retry specifically for malformed JSON
             start = time.monotonic()
             try:
-                resp = self._create_with_backoff(system, prompt, json_schema)
+                resp = self._create_with_backoff(system, prompt, json_schema, deadline)
             except _TRANSIENT as err:
                 # Do not leak provider-specific 429/timeout/5xx exceptions into
                 # the investigator. Agent nodes can turn this stable exception

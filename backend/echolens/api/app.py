@@ -105,7 +105,7 @@ def _bootstrap() -> None:
         with session_scope() as s:
             if settings.seed_on_start and s.scalar(select(Review).limit(1)) is None:
                 from echolens.synthetic.generate import generate
-                generate(s)
+                generate(s, anchor="today")
                 log.info("bootstrap_seeded")
             if settings.bootstrap_admin_email and settings.bootstrap_admin_password:
                 if s.scalar(select(User).limit(1)) is None:
@@ -444,6 +444,7 @@ class LoginBody(BaseModel):
 
 
 @app.post("/auth/signup")
+@limiter.limit("5/minute")  # bcrypt per call; unthrottled it was a cheap DoS
 def auth_signup(body: SignupBody, request: Request) -> dict:
     """User creation. In production the FIRST admin must come from the
     BOOTSTRAP_ADMIN_* env (not open self-service) — otherwise a stranger could
@@ -453,10 +454,10 @@ def auth_signup(body: SignupBody, request: Request) -> dict:
     with session_scope() as session:
         first_user = session.scalar(select(User).limit(1)) is None
         if first_user:
-            if settings.echolens_env == "production":
+            if settings.auth_required:
                 raise HTTPException(
                     403,
-                    "Open signup is disabled in production. Create the first admin via the "
+                    "Open signup is disabled when authentication is required. Create the first admin via the "
                     "BOOTSTRAP_ADMIN_EMAIL / BOOTSTRAP_ADMIN_PASSWORD environment variables.",
                 )
             role = "admin"  # dev bootstrap
@@ -465,6 +466,10 @@ def auth_signup(body: SignupBody, request: Request) -> dict:
             if caller["role"] != "admin":
                 raise HTTPException(403, "only an admin can create users")
             role = body.role
+        from echolens.auth import password_problem
+        problem = password_problem(body.password)
+        if problem:
+            raise HTTPException(422, problem)
         try:
             user = create_user(session, body.email, body.password, role)
         except ValueError as err:
@@ -500,7 +505,7 @@ def auth_google(body: GoogleBody, request: Request) -> dict:
     echolens.google_auth. Rate-limited because verification can trigger an
     outbound JWKS fetch.
     """
-    from echolens.google_auth import GoogleAuthError, role_for, verify_id_token
+    from echolens.google_auth import GoogleAuthError, may_join, role_for, verify_id_token
     from echolens.auth import upsert_google_user
 
     try:
@@ -512,6 +517,11 @@ def auth_google(body: GoogleBody, request: Request) -> dict:
         raise HTTPException(401, str(err))
 
     with session_scope() as session:
+        from echolens.db.models import User
+        existing = session.scalars(select(User).where(User.email == claims["email"])).first()
+        if not may_join(claims["email"], existing is not None):
+            raise HTTPException(
+                403, "This Google account isn't part of this workspace. Ask an admin to invite you.")
         user = upsert_google_user(session, claims["email"], role_for(claims["email"]))
         return {"token": create_token(user), "role": user.role, "email": user.email}
 
@@ -819,6 +829,8 @@ def delete_product(product_id: int, confirm: str = "",
         _purge(HypothesisRow, HypothesisRow.investigation_id, inv_ids)
         _purge(EvidenceRow, EvidenceRow.investigation_id, inv_ids)
         _purge(LLMCall, LLMCall.investigation_id, inv_ids)
+        # Spend with no case (chat, triage, themes, graph) is tagged by product.
+        _purge(LLMCall, LLMCall.product_id, [product_id])
         _purge(TriageDecision, TriageDecision.anomaly_id, anom_ids)
         # Anything that references an investigation must be gone before the
         # investigations themselves, hence two ordered passes rather than one
@@ -870,7 +882,7 @@ def collect_run(user: dict = Depends(require_role("admin"))) -> dict:
     with session_scope() as session:
         if session.scalar(select(Review).limit(1)) is not None:
             return {"status": "already_populated"}
-        counts = generate(session)
+        counts = generate(session, anchor="today")
     return {"status": "seeded", "counts": counts}
 
 
@@ -1373,7 +1385,7 @@ def feedback_graph(request: Request, product_id: int | None = None,
         prod = _scope(session, product_id, user)
         if prod is None:
             return {"nodes": [], "product": None, "channels": []}
-        llm = (_metered_llm(session, "feedback_graph")
+        llm = (_metered_llm(session, "feedback_graph", prod.id)
                if settings.openai_api_key and _may_spend(user) else None)
         out = build_graph(session, prod.name, llm=llm, days=days, limit=limit)
         if llm is None and settings.openai_api_key:
@@ -1473,7 +1485,8 @@ def feed_candidates(request: Request, product_id: int | None = None,
         # knob an anonymous caller could use to force unlimited spend — it is
         # honoured only for someone who could pay for it.
         may_spend = _may_spend(user)
-        llm = _metered_llm(session, "themes") if settings.openai_api_key and may_spend else None
+        llm = (_metered_llm(session, "themes", prod.id)
+               if settings.openai_api_key and may_spend else None)
         result = cached_themes(session, prod.name, llm=llm, limit=limit,
                                package_name=prod.package_name,
                                force=refresh and may_spend)
@@ -1609,6 +1622,9 @@ def snapshot(product: str | None = None, product_id: int | None = None,
     'Investigate now on anything' entry point outside onboarding."""
     from echolens.onboarding.snapshot import health_snapshot
     with session_scope() as session:
+        if _guest_locked(user) and product is not None:
+            if product not in {p.name for p in _visible_products(session, user)}:
+                raise HTTPException(404, "no such product")
         if product is None:
             p = _scope(session, product_id, user)
             product = p.name if p else None
@@ -2104,10 +2120,9 @@ async def stream_trace(inv_id: int, request: Request, product_id: int | None = N
         ok = False
         if raw:
             try:
+                from echolens.auth import principal_for
                 claims = decode_token(raw)
-                int(claims["sub"])
-                user = {"id": int(claims["sub"]), "email": claims.get("email"),
-                        "role": claims.get("role", "viewer")}
+                user = principal_for(int(claims["sub"]), claims)
                 ok = True
             except Exception:
                 ok = False
@@ -2214,7 +2229,7 @@ def recommend_finding(request: Request, finding_id: int, product_id: int | None 
 
 # ── v4.0: actionable delivery (tickets, GitHub issues, Slack, alerts) ────
 
-def _metered_llm(session, agent_prefix: str):
+def _metered_llm(session, agent_prefix: str, product_id: int | None = None):
     """An OpenAIClient whose spend is RECORDED.
 
     These call sites used `on_call=lambda *a: None`, so LLM work done outside an
@@ -2226,7 +2241,8 @@ def _metered_llm(session, agent_prefix: str):
     from echolens.llm.openai_client import OpenAIClient
 
     def _record(agent, model, tokens_in, tokens_out, cost, ms):
-        session.add(LLMCall(investigation_id=None, agent=f"{agent_prefix}.{agent}",
+        session.add(LLMCall(investigation_id=None, product_id=product_id,
+                            agent=f"{agent_prefix}.{agent}",
                             model=model, tokens_in=tokens_in, tokens_out=tokens_out,
                             cost=cost, ms=ms))
 
@@ -2240,8 +2256,9 @@ def _github_repo(session, product_id: int | None = None) -> str | None:
     and otherwise fall back to GITHUB_DEFAULT_REPO. The moment a second product
     was added, every finding from every product filed into the default repo:
     verified by test, issues for product B landed in product A's tracker (or in
-    whatever GITHUB_DEFAULT_REPO named). Scoped first, global single-repo second,
-    configured default last.
+    whatever GITHUB_DEFAULT_REPO named). Scoped requests use only that product's
+    sources or the explicitly configured default. Global single-repo inference
+    is reserved for unscoped requests.
     """
     from echolens.db.models import CollectorState
     base = select(CollectorState).where(
@@ -2252,6 +2269,7 @@ def _github_repo(session, product_id: int | None = None) -> str | None:
             return scoped[0].identifier
         if len(scoped) > 1:
             return scoped[0].identifier  # deterministic: first configured wins
+        return settings.github_default_repo or None
     rows = session.scalars(base).all()
     if len(rows) == 1:
         return rows[0].identifier
@@ -2284,7 +2302,7 @@ def finding_github_issue(finding_id: int, product_id: int | None = None,
     with session_scope() as session:
         p = _scope(session, product_id, user)
         finding = _owned_finding(session, finding_id, p.id if p else None)
-        repo = _github_repo(session)
+        repo = _github_repo(session, p.id if p else finding.product_id)
         if not repo:
             raise HTTPException(422, "No GitHub repo connected. Connect a repo on Sources, or set GITHUB_DEFAULT_REPO.")
         inv = session.get(Investigation, finding.investigation_id)
@@ -2365,6 +2383,27 @@ def _slack_challenge_bg(finding_id: int, note: str) -> None:
         log.error("slack_challenge_failed", finding_id=finding_id, error=str(err))
 
 
+def _slack_signature_ok(request: Request, body: bytes) -> bool:
+    """Verify Slack's v0 request signature (HMAC-SHA256 over
+    "v0:{timestamp}:{body}" with the app's signing secret). Requests older
+    than five minutes are refused so a captured click cannot be replayed."""
+    import hashlib
+    import hmac as _hmac
+    secret = settings.slack_signing_secret
+    if not secret:
+        return False
+    ts = request.headers.get("x-slack-request-timestamp", "")
+    sig = request.headers.get("x-slack-signature", "")
+    try:
+        if abs(time.time() - int(ts)) > 300:
+            return False
+    except ValueError:
+        return False
+    base = f"v0:{ts}:".encode() + body
+    expected = "v0=" + _hmac.new(secret.encode(), base, hashlib.sha256).hexdigest()
+    return _hmac.compare_digest(sig, expected)
+
+
 @app.post("/integrations/slack/act")
 @limiter.limit("30/minute")  # a challenge here runs a FULL investigation
 async def slack_act(request: Request) -> dict:
@@ -2383,6 +2422,8 @@ async def slack_act(request: Request) -> dict:
     ctype = request.headers.get("content-type", "")
     is_slack = "application/json" not in ctype
     action, finding_id, note, token = None, None, "", ""
+    raw_body = await request.body()  # cached by Starlette; form()/json() still work
+    slack_signed = is_slack and _slack_signature_ok(request, raw_body)
     if not is_slack:
         body = await request.json()
         token = body.get("token", "")
@@ -2406,7 +2447,7 @@ async def slack_act(request: Request) -> dict:
     # token a character at a time to anyone who can time the response, and this
     # endpoint carries full reviewer-equivalent power.
     import hmac as _hmac
-    if not expected or not _hmac.compare_digest(str(token), str(expected)):
+    if not slack_signed and (not expected or not _hmac.compare_digest(str(token), str(expected))):
         raise HTTPException(401, "invalid or missing slack action token")
     if action not in ("approve", "challenge") or finding_id is None:
         raise HTTPException(422, "provide action (approve|challenge) and finding_id")
@@ -2665,7 +2706,7 @@ def _chat_ask_llm(session, user: dict, message: str, pid, pname, on_step=None):
     if not (_may_spend(user) and settings.openai_api_key
             and ask_mod.has_anything_to_say(session, pid)):
         return None
-    llm = _metered_llm(session, "ask")
+    llm = _metered_llm(session, "ask", pid)
     return ask_mod.answer(session, message, llm, product_id=pid, product_name=pname,
                           on_step=on_step)
 
@@ -2736,6 +2777,12 @@ def _chat_respond(body: "ChatBody", user: dict, on_step=None) -> dict:
                                     "investigated; start a new one if it's back."}
 
         if decision.get("type") != "launch":
+            # A deterministic answer that already cites cases (or is built from
+            # the product's own signals) is the honest answer and costs nothing;
+            # only open questions go to the model.
+            if decision.get("citations") or decision.get("grounded"):
+                decision.pop("grounded", None)
+                return _chat_finish(decision, user, message)
             try:
                 result = _chat_ask_llm(session, user, message, pid, pname, on_step)
                 if result is not None and result.text and (
@@ -3155,12 +3202,17 @@ def _product_investigations(session, product_id: int | None):
     return session.scalars(stmt).all()
 
 
-def _product_llm_calls(session, product_id: int | None):
-    """LLM calls scoped through their investigation's product."""
+def _product_llm_calls(session, product_id: int | None, since: datetime | None = None):
+    """LLM calls for a product: through their investigation, or tagged directly
+    (chat, triage, themes, graph — spend that has no case). `since` bounds the
+    scan in SQL instead of loading the whole ledger into Python."""
+    from sqlalchemy import or_
     stmt = select(LLMCall)
     if product_id is not None:
-        stmt = stmt.join(Investigation, Investigation.id == LLMCall.investigation_id).where(
-            Investigation.product_id == product_id)
+        stmt = stmt.outerjoin(Investigation, Investigation.id == LLMCall.investigation_id).where(
+            or_(Investigation.product_id == product_id, LLMCall.product_id == product_id))
+    if since is not None:
+        stmt = stmt.where(LLMCall.created_at >= since)
     return session.scalars(stmt).all()
 
 
@@ -3182,7 +3234,8 @@ def feed_summary(product_id: int | None = None, user: dict = Depends(current_use
         today = _today()
         invs = _product_investigations(session, pid)
         n_today = [i for i in invs if i.created_at and i.created_at.date() == today]
-        spent = sum(c.cost for c in _product_llm_calls(session, pid)
+        day_start = datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc)
+        spent = sum(c.cost for c in _product_llm_calls(session, pid, since=day_start)
                     if c.created_at and c.created_at.date() == today)
         return {"investigations_today": len(n_today),
                 "daily_limit": _daily_limit(session, pid),
@@ -3331,13 +3384,19 @@ def costs_summary(product_id: int | None = None, user: dict = Depends(current_us
     with session_scope() as session:
         p = _scope(session, product_id, user)
         pid = p.id if p else None
-        calls = _product_llm_calls(session, pid)
+        month_floor = datetime.combine(_today().replace(day=1), datetime.min.time(), tzinfo=timezone.utc)
+        calls = _product_llm_calls(session, pid, since=month_floor)
         invs = _product_investigations(session, pid)
         costs = _cost_by_investigation(session, pid)
         resolved = [i for i in invs if i.status == "resolved"]
         dead = [i for i in invs if i.status in ("insufficient_evidence", "budget_exhausted")]
-        spent_today = sum(c.cost for c in calls if c.created_at and c.created_at.date() == _today())
-        total = round(sum(c.cost for c in calls), 4)
+        today = _today()
+        month_start = today.replace(day=1)
+        dated_costs = [(aware_utc(c.created_at).astimezone(timezone.utc).date(), c.cost)
+                       for c in calls if c.created_at]
+        spent_today = sum(cost for day, cost in dated_costs if day == today)
+        month_to_date = round(sum(cost for day, cost in dated_costs
+                                  if month_start <= day <= today), 4)
         avg_resolved = (round(sum(costs.get(i.id, {}).get("cost", 0) for i in resolved) / len(resolved), 4)
                         if resolved else 0.0)
         dead_spend = round(sum(costs.get(i.id, {}).get("cost", 0) for i in dead), 4)
@@ -3368,7 +3427,7 @@ def costs_summary(product_id: int | None = None, user: dict = Depends(current_us
                 "analyst_hours_saved": len(resolved) * 3,
                 "resolved_count": len(resolved),
             },
-            "month_to_date": total,
+            "month_to_date": month_to_date,
             "budget": 25.0,
             "product": p.name if p else None,
             "limits": _limits(session, pid),

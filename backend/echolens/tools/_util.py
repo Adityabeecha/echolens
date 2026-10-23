@@ -5,17 +5,21 @@ Token discipline lives HERE (PRD §5.4): every tool truncates its output
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 
 from echolens.config import TOOL_RESULT_MAX_ITEMS, TOOL_SNIPPET_MAX_CHARS
 
 
-def parse_date(value: str | None) -> datetime | None:
+def parse_date(value: str | None, *, end_of_day: bool = False) -> datetime | None:
     if not value:
         return None
     dt = datetime.fromisoformat(value)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
+    # Date-only upper bounds include that calendar day; explicit timestamps
+    # retain their precise cutoff instead of being expanded.
+    if end_of_day and len(value) == 10:
+        dt = datetime.combine(dt.date(), time.max, tzinfo=dt.tzinfo)
     return dt
 
 

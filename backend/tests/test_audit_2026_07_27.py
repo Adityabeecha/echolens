@@ -232,7 +232,9 @@ def test_a_failed_item_freezes_the_watermark_and_marks_the_source_errored():
     st = s.query(CollectorState).first()
 
     assert r.failed_items == 1
-    assert st.watermark == "2026-01-01", "must not advance past the failed item"
+    # Keep the pre-run cursor: partial advancement can skip failures sharing
+    # an earlier successful item's timestamp or arriving out of order.
+    assert st.watermark is None, "failed pages must retain the pre-run cursor"
     assert st.status == "error", "a run that dropped items is not healthy"
 
 

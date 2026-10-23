@@ -10,7 +10,8 @@ from datetime import datetime, timedelta, timezone
 
 import bcrypt
 from fastapi import Depends, HTTPException, Request
-from jose import JWTError, jwt
+import jwt
+from jwt import PyJWTError as JWTError
 from sqlalchemy import select
 
 from echolens.config import settings
@@ -58,6 +59,21 @@ def decode_token(token: str) -> dict:
 
 
 # ── user management ─────────────────────────────────────────────────────
+
+MIN_PASSWORD_LENGTH = 10
+
+
+def password_problem(password: str) -> str | None:
+    """Why this password is unacceptable for a NEW account, or None.
+
+    Enforced at the account-creation surfaces (signup, the CLI, bootstrap),
+    not inside create_user, so fixtures can still make throwaway users."""
+    if len(password or "") < MIN_PASSWORD_LENGTH:
+        return f"password must be at least {MIN_PASSWORD_LENGTH} characters"
+    if (password or "").strip().lower() in {"password123", "1234567890", "qwertyuiop", "echolens123"}:
+        return "that password is too common"
+    return None
+
 
 def create_user(session, email: str, password: str, role: str = "viewer") -> User:
     if role not in ROLES:
@@ -137,7 +153,21 @@ def current_user(request: Request) -> dict:
         uid = int(payload["sub"])
     except (JWTError, KeyError, ValueError, TypeError, AttributeError):
         raise HTTPException(401, "invalid or expired token")
-    return {"id": uid, "email": payload.get("email"), "role": payload.get("role", "viewer")}
+    return principal_for(uid, payload)
+
+
+def principal_for(uid: int, payload: dict) -> dict:
+    """The caller's CURRENT role, from the database.
+
+    The role used to come from the token claim, so a user who was demoted or
+    deleted kept their old powers until the token expired (24h by default).
+    One indexed lookup per request is the price of revocation that works."""
+    from echolens.db.session import session_scope
+    with session_scope() as session:
+        user = session.get(User, uid)
+        if user is None:
+            raise HTTPException(401, "account no longer exists")
+        return {"id": user.id, "email": user.email, "role": user.role}
 
 
 def require_role(minimum: str):
