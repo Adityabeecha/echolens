@@ -5,9 +5,11 @@ has to live beside it rather than in it. These overrides are applied AFTER the
 themes are built and formatted (display_themes / titles, where present), keyed
 by the same public slug the UI already holds, so they survive every refresh.
 
-Muting reaches one step further than the list: the detector consults
+Muting and merging reach one step further than the list: the detector consults
 `muted_word_sets` and stops raising NEW theme signals for a muted theme's
-terms. Existing anomaly rows are left alone, so nothing already triaged or
+terms, and `merge_targets` so a surge in a merged-away theme's terms counts
+toward the theme it was merged into instead of raising its own signal.
+Existing anomaly rows are left alone, so nothing already triaged or
 investigated changes underneath anyone.
 """
 from __future__ import annotations
@@ -157,6 +159,24 @@ def muted_word_sets(session: Session, product_id: int | None) -> list[set[str]]:
         return []
     return [w for w in (slug_words(o.slug) for o in get_overrides(session, product_id).values()
                         if o.muted) if w]
+
+
+def merge_targets(session: Session, product_id: int | None) -> list[tuple[set[str], str]]:
+    """(words of a merged-away theme, core slug of the theme it now counts as),
+    merge chains followed to their end, for the detector. The core slug is the
+    target with its app prefixes stripped: 'theme-p1-sync-fails' -> 'sync-fails'."""
+    if product_id is None:
+        return []
+    overrides = get_overrides(session, product_id)
+    out = []
+    for slug, o in overrides.items():
+        if not o.merged_into:
+            continue
+        target = _resolve(slug, overrides)
+        words, core = slug_words(slug), _PREFIX.sub("", target.lower()).strip("-")
+        if words and core and target != slug:
+            out.append((words, core))
+    return out
 
 
 def is_muted_slug(slug: str | None, muted: list[set[str]]) -> bool:

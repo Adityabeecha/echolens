@@ -7,6 +7,8 @@ needs_human rather than left orphaned.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -149,7 +151,7 @@ def extension_offer(session: Session, inv: Investigation) -> dict:
     return out
 
 
-def grant_extension(session: Session, inv: Investigation) -> dict:
+def grant_extension(session: Session, inv: Investigation, by: str | None = None) -> dict:
     """The SYNCHRONOUS half of "continue with more budget": validate, write the
     granted headroom into the checkpoint, and mark the case running again. The
     caller runs Investigator.resume (off the request path in the API)."""
@@ -183,6 +185,10 @@ def grant_extension(session: Session, inv: Investigation) -> dict:
     b["human_extensions"] = budget.human_extensions + 1
     ckpt["budget"] = b
     inv.checkpoint_json = ckpt          # reassign: JSON columns don't track mutation
+    # The audit record for History: when, which extension, and who granted it.
+    inv.extensions_json = [*(inv.extensions_json or []),
+                           {"at": datetime.now(timezone.utc).isoformat(),
+                            "n": b["human_extensions"], "steps": EXTENSION_STEPS, "by": by}]
     prior_status = inv.status
     inv.status = "running"
     inv.paused = False

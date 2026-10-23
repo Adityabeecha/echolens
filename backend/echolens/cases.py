@@ -510,6 +510,16 @@ def case_history(session: Session, inv: Investigation) -> list[dict]:
         elif w.status == "persists_reopened":
             add(w.fix_date, "regressed", "The fix didn't hold — complaints continued.")
 
+    from echolens.investigator.recover import MAX_HUMAN_EXTENSIONS
+    for ext in inv.extensions_json or []:
+        try:  # stored as ISO text inside the JSON list
+            at = datetime.fromisoformat(ext["at"]) if isinstance(ext.get("at"), str) else None
+        except ValueError:
+            at = None
+        add(at, "extended",
+            f"Given +{ext.get('steps', 5)} steps (extension {ext.get('n', '?')} "
+            f"of {MAX_HUMAN_EXTENSIONS}).", by=ext.get("by"))
+
     # A re-opened child means this case's story continues elsewhere.
     child = session.scalars(select(Investigation).where(
         Investigation.reopens_investigation_id == inv.id).order_by(Investigation.id)).first()

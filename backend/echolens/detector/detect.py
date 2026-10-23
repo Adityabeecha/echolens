@@ -460,6 +460,63 @@ MIN_CASE_Z = SEV3_Z          # detector-level filter, not a display filter
 MERGE_WINDOW_DAYS = 7        # same metric within N days → same anomaly, not a new one
 
 
+_SURGE_PREFIXES = ("auto-theme-", "auto-post-")
+
+
+def fold_merged_themes(candidates: list[Candidate],
+                       merges: list[tuple[set[str], str]]) -> list[Candidate]:
+    """Re-key theme surges for merged-away themes onto their target theme.
+
+    `merges` is overrides.merge_targets: (words of theme A, core slug of B). A
+    theme_volume_surge whose words all belong to A — the same containment rule
+    mute uses — and not to B becomes B's surge, keeping its source prefix
+    (auto-theme- / auto-post-). Surges that land on one slug fold into ONE
+    candidate carrying the strongest z, so scan() upserts B's signal instead
+    of raising A's. Every other candidate passes through untouched.
+    """
+    from echolens.themes.overrides import slug_words
+
+    # Slot per output position; a re-keyed surge joins its target's slot.
+    groups: dict[str, dict] = {}
+    out: list[Candidate | str] = []
+    for c in candidates:
+        prefix = next((p for p in _SURGE_PREFIXES if c.slug.startswith(p)), None)
+        if c.type != "theme_volume_surge" or prefix is None:
+            out.append(c)
+            continue
+        words = slug_words(c.slug)
+        target = next((core for src, core in merges
+                       if words and words <= src and not words <= slug_words(core)), None)
+        key = f"{prefix}{target}" if target else c.slug
+        g = groups.get(key)
+        if g is None:
+            g = groups[key] = {"native": None, "merged": [], "terms": []}
+            out.append(key)
+        if target:
+            g["merged"].append(c)
+            g["terms"].append(c.slug[len(prefix):].replace("-", " "))
+        else:
+            g["native"] = c
+
+    def build(key: str) -> Candidate:
+        g = groups[key]
+        if not g["merged"]:
+            return g["native"]
+        everyone = ([g["native"]] if g["native"] else []) + g["merged"]
+        best = max(everyone, key=lambda c: c.z)
+        # The strongest measurement, under the target's own name: the signal
+        # is still B's, it just counts A's surge now.
+        metric = (g["native"].metric if g["native"]
+                  else f"'{key.split('-', 2)[2].replace('-', ' ')}' complaints (incl. merged themes)")
+        return Candidate(
+            slug=key, type=best.type, metric=metric, delta=best.delta, z=best.z,
+            window=best.window, severity=best.severity,
+            description=(f"{best.description} Includes surges in merged theme terms: "
+                         f"{', '.join(sorted(set(g['terms'])))}."))
+
+    return [build(c) if isinstance(c, str) else c for c in out]
+
+
 def scan(session: Session, as_of: datetime | None = None, persist: bool = True,
          product: str | None = None, product_id: int | None = None) -> list[AnomalyEvent]:
     """Run every detector for ONE product and UPSERT the results.
@@ -506,12 +563,24 @@ def scan(session: Session, as_of: datetime | None = None, persist: bool = True,
     # detectors are filtered: muting a complaint must never silence the
     # product-wide 1-star spike or rating drop.
     if product_id is not None:
-        from echolens.themes.overrides import is_muted_slug, muted_word_sets
+        from echolens.themes.overrides import is_muted_slug, merge_targets, muted_word_sets
         muted = muted_word_sets(session, product_id)
+
+        def unmuted(cands: list[Candidate]) -> list[Candidate]:
+            return [c for c in cands
+                    if c.type not in ("theme_volume_surge", "issue_velocity_surge")
+                    or not is_muted_slug(c.slug, muted)]
+
         if muted:
-            candidates = [c for c in candidates
-                          if c.type not in ("theme_volume_surge", "issue_velocity_surge")
-                          or not is_muted_slug(c.slug, muted)]
+            candidates = unmuted(candidates)
+        # A theme merged into another in Cases raises no signal of its own: its
+        # surge counts toward the target's. Checked against mute again after,
+        # so a theme merged INTO a muted one stays silent (as in the list).
+        merges = merge_targets(session, product_id)
+        if merges:
+            candidates = fold_merged_themes(candidates, merges)
+            if muted:
+                candidates = unmuted(candidates)
 
     events: list[AnomalyEvent] = []
     for c in candidates:
