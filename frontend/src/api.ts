@@ -914,7 +914,7 @@ export const api = {
   resume: (id: number) => post(scoped(`/investigations/${id}/resume`)),
   escalate: (id: number) => post(scoped(`/investigations/${id}/escalate`)),
   sources: () => get<SourcesResp>(scoped("/sources")),
-  overview: () => get<Overview>(scoped("/overview")),
+  overview: () => get<Overview>(scoped("/today/overview")),
   // Not scoped: which source types exist is global, not per-product.
   availableSources: () => get<AvailableSourcesResp>("/sources/available"),
   fixwatch: () => get<FixWatchResp>(scoped("/fixwatch")),

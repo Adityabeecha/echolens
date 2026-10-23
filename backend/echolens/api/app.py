@@ -1614,8 +1614,8 @@ def snapshot(product: str | None = None, product_id: int | None = None,
         return health_snapshot(session, product=product, days=days)
 
 
-@app.get("/overview")
-def overview_view(product_id: int | None = None,
+@app.get("/today/overview")
+def today_overview_view(product_id: int | None = None,
                   user: dict = Depends(current_user)) -> dict:
     """What Today draws around the score: releases inside the charted window,
     the rating-drop breakdown (an estimate), and when sources last synced."""

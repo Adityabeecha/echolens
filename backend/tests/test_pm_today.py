@@ -198,13 +198,13 @@ def client(monkeypatch):
 
 
 def test_overview_endpoint_and_sources_freshness(client):
-    o = client.get("/overview?product_id=1")
+    o = client.get("/today/overview?product_id=1")
     assert o.status_code == 200
     body = o.json()
     assert [r["version"] for r in body["releases"]] == ["3.2.0"]
     assert body["rating_breakdown"]["dropped"] is True
     assert body["freshness"]["stale"] is False and body["freshness"]["age_minutes"] <= 6
-    assert client.get("/overview?product_id=999").status_code == 404
+    assert client.get("/today/overview?product_id=999").status_code == 404
 
     src = client.get("/sources?product_id=1").json()
     assert src["last_synced"]["sources"] == 1
