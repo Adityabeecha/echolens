@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from echolens.db.models import AnomalyEvent, Investigation, QueuedInvestigation
+from echolens.db.models import AnomalyEvent, Investigation, LLMCall, QueuedInvestigation
 from echolens.logging import get_logger
 from echolens.timeutil import aware_utc
 
@@ -33,6 +33,25 @@ PRIORITY_SEV3 = 40
 PRIORITY_MANUAL = 60
 
 LIVE_STATUSES = ("queued", "running")
+
+
+# Shared by Settings and critical-case continuations. Product overrides layer
+# over workspace settings; a displayed cap and an enforced cap must agree.
+DEFAULT_MONTHLY_BUDGET = 25.0
+
+
+def effective_limits(session: Session, product_id: int | None = None) -> dict:
+    from echolens.config import BUDGET_TIERS, ORCHESTRATOR_DAILY_INVESTIGATIONS, ORCHESTRATOR_DAILY_COST_USD
+    from echolens.db.models import Product, Setting
+    row = session.get(Setting, "limits", populate_existing=True)
+    defaults = {"daily_investigations": ORCHESTRATOR_DAILY_INVESTIGATIONS,
+                "per_case_budget": BUDGET_TIERS["standard"].max_cost_usd,
+                "per_case_wall_min": BUDGET_TIERS["standard"].max_wall_clock_s // 60,
+                "daily_cost_budget": ORCHESTRATOR_DAILY_COST_USD,
+                "monthly_budget": DEFAULT_MONTHLY_BUDGET}
+    merged = {**defaults, **(row.value if row else {})}
+    product = session.get(Product, product_id, populate_existing=True) if product_id is not None else None
+    return {**merged, **(product.limits_json or {})} if product else merged
 
 
 def _severity_priority(anomaly: AnomalyEvent | None) -> int:
@@ -197,6 +216,46 @@ def pending(session: Session, product_id: int | None = None) -> list[QueuedInves
     return sorted(rows, key=lambda r: (r.priority, r.selection_order, r.id))
 
 
+# A tier's typical cost needs a few real cases behind it before it means
+# anything; below this the tier's cap is shown instead, labelled as such.
+MIN_COST_SAMPLES = 3
+
+
+def deferred_note(daily_limit: int) -> str:
+    return f"Deferred: daily limit {daily_limit} reached; runs tomorrow"
+
+
+def estimate_cost(session: Session, tier: str, product_id: int | None = None) -> dict:
+    """What one more case at this tier is likely to cost — always an ESTIMATE.
+
+    The median of what past cases at the same tier actually cost (LLM calls
+    summed per case), when there are enough of them; otherwise the tier's
+    configured ceiling, which is an upper bound rather than a typical figure,
+    and says so.
+    """
+    from sqlalchemy import func
+
+    from echolens.config import BUDGET_TIERS
+    cap = BUDGET_TIERS.get(tier) or BUDGET_TIERS["standard"]
+    stmt = (select(func.sum(LLMCall.cost))
+            .join(Investigation, Investigation.id == LLMCall.investigation_id)
+            .where(Investigation.budget_tier == tier,
+                   Investigation.status != "running")
+            .group_by(Investigation.id)
+            .order_by(Investigation.id.desc())
+            .limit(50))
+    if product_id is not None:
+        stmt = stmt.where(Investigation.product_id == product_id)
+    costs = sorted(float(c or 0.0) for c in session.scalars(stmt).all())
+    if len(costs) >= MIN_COST_SAMPLES:
+        mid = len(costs) // 2
+        median = costs[mid] if len(costs) % 2 else (costs[mid - 1] + costs[mid]) / 2
+        return {"usd": round(median, 4), "basis": "median",
+                "samples": len(costs), "tier": tier, "is_estimate": True}
+    return {"usd": round(float(cap.max_cost_usd), 4), "basis": "tier_cap",
+            "samples": len(costs), "tier": tier, "is_estimate": True}
+
+
 def queue_view(session: Session, product_id: int | None, daily_limit: int,
                as_of: datetime | None = None) -> dict:
     """The queue as Today and Cases show it: position, what is running, and which
@@ -204,6 +263,7 @@ def queue_view(session: Session, product_id: int | None, daily_limit: int,
     now = as_of or datetime.now(timezone.utc)
     used = investigations_today(session, product_id, now)
     remaining = max(0, daily_limit - used)
+    estimates: dict[str, dict] = {}
 
     running_stmt = select(QueuedInvestigation).where(QueuedInvestigation.status == "running")
     if product_id is not None:
@@ -213,12 +273,16 @@ def queue_view(session: Session, product_id: int | None, daily_limit: int,
     items = []
     for i, row in enumerate(pending(session, product_id)):
         beyond = i >= remaining
+        tier = row.budget_tier or "quick"
+        if beyond and tier not in estimates:
+            estimates[tier] = estimate_cost(session, tier, product_id)
         items.append({
             "queue_id": row.id, "position": i + 1, "title": row.title,
             "source": row.source, "budget_tier": row.budget_tier,
             "anomaly_id": row.anomaly_id, "investigation_id": row.investigation_id,
             "status": "deferred" if beyond else "queued",
-            "note": ("daily limit reached — runs tomorrow" if beyond else None),
+            "note": (deferred_note(daily_limit) if beyond else None),
+            "estimate": estimates.get(tier) if beyond else None,
         })
     return {
         "running": [{"queue_id": r.id, "title": r.title,
@@ -299,6 +363,31 @@ def claim_next(session: Session, product_id: int | None, daily_limit: int,
     row.status = "running"
     row.started_at = now
     session.flush()
+    return row
+
+
+def claim_override(session: Session, queue_id: int, *, user: str | None,
+                   estimate_usd: float | None,
+                   as_of: datetime | None = None) -> QueuedInvestigation | None:
+    """"Investigate now anyway": claim ONE specific queued row past the cap.
+
+    The bypass is per row and leaves a trail on it — who, when, and the
+    estimate they were shown — so a day that ran over budget can be explained
+    afterwards. Returns None when the row is no longer waiting (already
+    running, finished or cancelled), so a double click cannot run it twice.
+    """
+    now = as_of or datetime.now(timezone.utc)
+    row = session.get(QueuedInvestigation, queue_id)
+    if row is None or row.status != "queued":
+        return None
+    row.status = "running"
+    row.started_at = now
+    row.override_by = user or "unknown"
+    row.override_at = now
+    row.override_estimate_usd = estimate_usd
+    session.flush()
+    log.info("queue_cap_override", queue_id=row.id, product_id=row.product_id,
+             by=row.override_by, estimate_usd=estimate_usd)
     return row
 
 

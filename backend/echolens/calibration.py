@@ -22,7 +22,10 @@ _REASON_LABELS = {
     "weak_evidence": "evidence too weak",
     "wrong_severity": "severity/impact off",
     "already_knew": "already known",
+    "rec_estimate_off": "recommendation effort/impact off",
 }
+# ReviewFeedback actions that object to a finding, in whole or in part (v15).
+_OBJECTIONS = ("challenge", "reject_evidence", "edit_rec")
 _REASON_GUIDANCE = {
     "wrong_cause": "Before concluding, run a segmentation/refutation query that could DISPROVE the "
                    "leading cause (e.g. does the effect also appear where it shouldn't?).",
@@ -31,6 +34,8 @@ _REASON_GUIDANCE = {
     "wrong_severity": "Sanity-check severity against the affected-volume and rating numbers; don't overstate "
                       "a narrow issue.",
     "already_knew": "Check whether this cause is already known (prior findings) before spending budget re-proving it.",
+    "rec_estimate_off": "Ground effort and impact estimates in the affected volume and the size of the change; "
+                        "say MED when unsure rather than guessing HIGH or LOW.",
 }
 
 
@@ -48,9 +53,13 @@ SUFFICIENT_N = 20
 MIN_WEAK_SPOT_COUNT = 3
 
 def _verdict(session: Session, finding: Finding) -> str | None:
-    """'approve' / 'challenge' from the finding's latest review, or None."""
+    """'approve' / 'challenge' from the finding's latest review, or None.
+
+    Only whole-finding verdicts count: a partial challenge (v15) logged after an
+    approval must not knock the finding out of the calibration curve."""
     fb = session.scalars(
-        select(ReviewFeedback).where(ReviewFeedback.finding_id == finding.id)
+        select(ReviewFeedback).where(ReviewFeedback.finding_id == finding.id,
+                                     ReviewFeedback.action.in_(("approve", "challenge")))
         .order_by(ReviewFeedback.id.desc())
     ).first()
     return fb.action if fb else None
@@ -127,16 +136,27 @@ def weak_spots(session: Session, product_id: int | None = None) -> dict:
     if product_id is not None:
         scope = {f.id for f in _findings(session, product_id)}
     counts: dict[str, int] = {}
+    partial: dict[str, int] = {}
+    full = 0
+    # v15: partial challenges (one struck quote, one corrected estimate) are
+    # objections too, and count toward the same weak spots. They are tallied
+    # separately as well so the screen can say how many were partial.
     for fb in session.scalars(
-        select(ReviewFeedback).where(ReviewFeedback.action == "challenge")).all():
+        select(ReviewFeedback).where(ReviewFeedback.action.in_(_OBJECTIONS))).all():
         if scope is not None and fb.finding_id not in scope:
             continue
         if fb.reason:
             counts[fb.reason] = counts.get(fb.reason, 0) + 1
+            if fb.action == "challenge":
+                full += 1
+            else:
+                partial[fb.reason] = partial.get(fb.reason, 0) + 1
     spots = [{"reason": r, "label": _REASON_LABELS.get(r, r), "count": c,
+              "partial": partial.get(r, 0),
               "guidance": _REASON_GUIDANCE.get(r, "")}
              for r, c in sorted(counts.items(), key=lambda kv: -kv[1])]
-    return {"total_challenges": sum(counts.values()), "spots": spots}
+    return {"total_challenges": full, "partial_challenges": sum(partial.values()),
+            "spots": spots}
 
 
 def guidance_text(session: Session, product_id: int | None = None) -> str:

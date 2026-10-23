@@ -113,4 +113,5 @@ def test_every_llm_spending_endpoint_is_rate_limited():
                   "/findings/{finding_id}/followup", "/integrations/slack/act"):
         i = text.index(f'"{route}"')
         window = text[i:i + 400]
-        assert "@limiter.limit" in window, f"{route} spends LLM budget with no cap"
+        assert "@limiter.limit" in window or "@limiter.shared_limit" in window, \
+            f"{route} spends LLM budget with no cap"

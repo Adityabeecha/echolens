@@ -38,6 +38,11 @@ class Review(Base):
     embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # v1.0: which tracked product/app this row belongs to (package name)
     product: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    # Detected language ("en", "es", "und" = undetermined) and, for non-English
+    # reviews, an English translation. Analysis reads text_en when present;
+    # quotes always show `text`, verbatim.
+    lang: Mapped[str | None] = mapped_column(String(8), nullable=True, index=True)
+    text_en: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class Issue(Base):
@@ -199,6 +204,21 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class SavedView(Base):
+    """A user's named Cases filters, private to one product."""
+    __tablename__ = "saved_views"
+    __table_args__ = (UniqueConstraint("user_id", "product_id", "name",
+                                       name="uq_saved_views_owner_product_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Like other author ids, this also supports the synthetic dev principal (0).
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    params: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 # ── investigation state ────────────────────────────────────────────────
 
 
@@ -255,13 +275,43 @@ class QueuedInvestigation(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # "Investigate now anyway": who bypassed the daily cap for this one row,
+    # when, and the cost estimate they were shown. Auditable after the fact.
+    override_by: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    override_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    override_estimate_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class ThemeOverride(Base):
+    """A person's correction to a discovered theme, per product.
+
+    Discovery is re-run on new data and its names are generated, so a rename
+    typed into the UI cannot live on the theme itself — it would be gone on the
+    next refresh. Overrides sit beside discovery and are applied after it:
+
+    * label        — display name instead of the generated statement
+    * merged_into  — fold this theme's reviews into another theme's slug
+    * muted        — hidden from lists, and the detector stops raising new
+                     signals for its terms
+    """
+    __tablename__ = "theme_overrides"
+    __table_args__ = (UniqueConstraint("product_id", "slug", name="uq_theme_override"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    slug: Mapped[str] = mapped_column(String(128))
+    label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    merged_into: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    muted: Mapped[bool] = mapped_column(default=False)
+    updated_by: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
 
 class FixWatch(Base):
     """v6.0 closed-loop verification: links a finding's GitHub issue to the metric
     it should fix, then watches whether the fix actually worked.
 
-    Lifecycle: issue_open → (issue closes) watching → confirmed | persists_reopened,
+    Lifecycle: issue_open → (issue closes) [waiting_for_release →] watching → confirmed | persists_reopened,
     and later possibly → regressed if the fixed theme re-spikes."""
     __tablename__ = "fix_watches"
 
@@ -281,6 +331,11 @@ class FixWatch(Base):
     confirmed_at: Mapped[datetime | None] = mapped_column(nullable=True)
     chart_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # before/after series
     product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    # Version-aware verification: the app version carrying the fix. When set, the
+    # post-fix window opens at the first review on that version (release_seen_at)
+    # rather than at issue close, because a mobile release takes days to reach users.
+    fixed_in_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    release_seen_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
@@ -323,6 +378,9 @@ class Investigation(Base):
     # if any. Recorded so the shortcut can be MEASURED (seeded vs cold cases)
     # rather than asserted.
     seeded_from_pattern: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Reviewer-granted budget extensions, [{at, n, by}], for the case History.
+    # Not in checkpoint_json: the investigator rewrites that wholesale each step.
+    extensions_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
@@ -376,6 +434,27 @@ class Finding(Base):
     json: Mapped[dict] = mapped_column(JSON, default=dict)  # prose, claim->evidence map, what_would_settle_it
     product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class SentAlert(Base):
+    """Successful incident delivery, scoped to one product/channel/24h window.
+
+    Member ids let a later, stronger signal join an already delivered incident
+    without changing its identity and sending the same incident again.
+    """
+    __tablename__ = "sent_alerts"
+    __table_args__ = (UniqueConstraint("incident_key", "window_start", "channel", "kind",
+                                      name="uq_sent_alert_window"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int | None] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), nullable=True, index=True)
+    incident_key: Mapped[str] = mapped_column(String(96), index=True)
+    window_start: Mapped[datetime] = mapped_column(index=True)
+    channel: Mapped[str] = mapped_column(String(16))
+    kind: Mapped[str] = mapped_column(String(16))  # instant|digest
+    member_ids: Mapped[list] = mapped_column(JSON, default=list)
+    finding_ids: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class Recommendation(Base):
@@ -494,3 +573,42 @@ class LLMCall(Base):
     cost: Mapped[float] = mapped_column(Float, default=0.0)
     ms: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class FindingDecision(Base):
+    """v15: the PRODUCT decision on a finding, separate from its accuracy review.
+
+    Approve/Challenge answers "is this true?". This answers "what are we doing
+    about it?" — fix now, park until a date, or won't fix (by design, not worth
+    it). Append-only: the latest row is the decision in force, earlier rows are
+    the audit trail History reads back.
+    """
+    __tablename__ = "finding_decisions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    finding_id: Mapped[int] = mapped_column(ForeignKey("findings.id"), index=True)
+    investigation_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    decision: Mapped[str] = mapped_column(String(16))   # fix_now|park|wont_fix|cleared
+    revisit_by: Mapped[datetime | None] = mapped_column(nullable=True)  # park only
+    reason: Mapped[str] = mapped_column(Text, default="")
+    user_id: Mapped[int | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class ShareLink(Base):
+    """v15: a revocable, read-only public link to ONE finding's brief.
+
+    The token is the whole credential (secrets.token_urlsafe), so it is unique
+    and never derived from an id. Revoking sets revoked_at rather than deleting,
+    so "who shared this, and when was it pulled" stays answerable.
+    """
+    __tablename__ = "share_links"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    finding_id: Mapped[int] = mapped_column(ForeignKey("findings.id"), index=True)
+    product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_by: Mapped[int | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    revoked_at: Mapped[datetime | None] = mapped_column(nullable=True)

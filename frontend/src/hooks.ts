@@ -1,6 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, TraceStep } from "./api";
 
+/** Live `window.matchMedia(query).matches`, re-rendering when it flips. */
+export function useMediaQuery(query: string): boolean {
+  const get = () => typeof window !== "undefined" && !!window.matchMedia?.(query).matches;
+  const [matches, setMatches] = useState(get);
+  useEffect(() => {
+    const mq = window.matchMedia?.(query);
+    if (!mq) return;
+    const on = () => setMatches(mq.matches);
+    on();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, [query]);
+  return matches;
+}
+
 // Simple async loader with loading/error/reload.
 export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []): {
   data: T | null;
@@ -248,7 +263,8 @@ export function useTrace(investigationId: number | null): {
     };
 
     try {
-      es = new EventSource(api.traceStreamUrl(investigationId));
+      // withCredentials: the session cookie authenticates a split-origin stream.
+      es = new EventSource(api.traceStreamUrl(investigationId), { withCredentials: true });
       es.addEventListener("step", (e) => push(JSON.parse((e as MessageEvent).data)));
       es.addEventListener("done", (e) => {
         if (stopped) return;

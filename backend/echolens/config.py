@@ -116,6 +116,17 @@ class Settings(BaseSettings):
     # e.g. "https://echolens.vercel.app"
     cors_origins: str = ""
 
+    # Browser session cookie (HttpOnly; the SPA never sees the JWT).
+    # SameSite: "lax" when the frontend and API share a site (same registrable
+    # domain, e.g. app.example.com + api.example.com); "none" when they do not
+    # (e.g. *.vercel.app + *.code.run) — a cross-site fetch/EventSource only
+    # carries the cookie with SameSite=None, which browsers accept only with
+    # Secure. Leave secure on everywhere but plain-http local testing.
+    session_cookie_samesite: str = "lax"
+    session_cookie_secure: bool = True
+    # Optional Domain attribute, e.g. ".example.com"; empty = host-only cookie.
+    session_cookie_domain: str = ""
+
     # Free-tier bootstrap (no shell needed): on startup, if the DB has no users
     # and these are set, create the first admin. Seed demo data if requested.
     bootstrap_admin_email: str = ""
@@ -180,6 +191,13 @@ class Settings(BaseSettings):
         if self.echolens_env in ("production", "staging"):
             if self.jwt_secret in self._INSECURE_SECRETS:
                 problems.append("JWT_SECRET is unset or the insecure default — set a strong random value")
+            samesite = self.session_cookie_samesite.lower()
+            if samesite not in ("lax", "strict", "none"):
+                problems.append("SESSION_COOKIE_SAMESITE must be lax, strict or none")
+            if not self.session_cookie_secure:
+                # Browsers drop SameSite=None cookies without Secure, and a
+                # non-Secure session cookie travels over plain http.
+                problems.append("SESSION_COOKIE_SECURE is off — the session cookie must be Secure")
         if self.echolens_env == "production":
             if not self.openai_api_key:
                 problems.append("OPENAI_API_KEY is not set")
@@ -223,6 +241,24 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     alert_email_from: str = ""
     alert_email_to: str = ""
+
+    # ── issue trackers beyond GitHub (all optional) ─────────────────────
+    # Linear: a personal API key and the team issues are filed under.
+    linear_api_key: str = ""
+    linear_team_id: str = ""
+    # Jira Cloud: site URL (https://acme.atlassian.net), an Atlassian account
+    # email + API token, and the project issues land in.
+    jira_base_url: str = ""
+    jira_email: str = ""
+    jira_api_token: str = ""
+    jira_project_key: str = ""
+    jira_issue_type: str = "Task"
+
+    # ── MCP server (`echolens mcp`) ─────────────────────────────────────
+    # The MCP server runs on a developer's machine and reads a DEPLOYED
+    # EchoLens over HTTP, so it needs that API's URL and a bearer token.
+    echolens_api_url: str = ""
+    echolens_api_token: str = ""
 
     @property
     def extra_theme_terms(self) -> list[str]:

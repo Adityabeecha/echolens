@@ -9,6 +9,8 @@
 //   #/p/12/cases?tab=running     the case list, filtered — shareable
 //   #/p/12/cases/34              case 34 (finding tab by default)
 //   #/p/12/cases/34/trace        case 34's investigation trace
+//   #/p/12/memory?view=fixes     learned patterns, proven-fixes tab
+//   #/p/12/settings?section=calibration
 //   #/portfolio                  cross-product, deliberately unscoped
 //   #/onboarding                 the add-product wizard
 
@@ -68,12 +70,12 @@ export const SCREEN_LABEL: Record<Screen, string> = {
   case: "Case",
   ask: "Ask",
   sources: "Sources",
-  patterns: "Patterns",
-  calibration: "Calibration",
+  patterns: "Learned patterns",
+  calibration: "Settings",
   costs: "Costs",
   settings: "Settings",
   plan: "Plan",
-  memory: "Product memory",
+  memory: "Learned patterns",
   portfolio: "All products",
   onboarding: "Add a product",
 };
@@ -96,7 +98,30 @@ function qs(params?: Record<string, string>): string {
   return "?" + pairs.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
 }
 
-export function formatRoute(r: Route): string {
+/**
+ * Patterns and Product memory were two screens about one thing — what EchoLens
+ * has learned — so they are now two tabs of "Learned patterns" (`memory`).
+ * Calibration is a section of Settings. The old screen names stay in the
+ * union so existing `go("patterns")` / `go("calibration")` callers and old
+ * links keep working; they are rewritten here, in one place.
+ */
+export const LEARNED_VIEWS = ["map", "fixes"] as const;
+export type LearnedView = (typeof LEARNED_VIEWS)[number];
+export const SETTINGS_SECTIONS = ["general", "calibration"] as const;
+export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
+
+export function canonicalRoute(r: Route): Route {
+  if (r.screen === "patterns") {
+    return { ...r, screen: "memory", params: { ...r.params, view: "fixes" } };
+  }
+  if (r.screen === "calibration") {
+    return { ...r, screen: "settings", params: { ...r.params, section: "calibration" } };
+  }
+  return r;
+}
+
+export function formatRoute(route: Route): string {
+  const r = canonicalRoute(route);
   if (GLOBAL_SCREENS.includes(r.screen)) return `#/${r.screen}${qs(r.params)}`;
   const p = r.productId != null ? `/p/${r.productId}` : "";
   if (r.screen === "case") {
@@ -156,7 +181,7 @@ export function parseRoute(hash: string): Route | null {
     return { screen: head as Screen, productId: null, params };
   }
   if (PRODUCT_SCREENS.includes(head as Screen)) {
-    return { screen: head as Screen, productId, params };
+    return canonicalRoute({ screen: head as Screen, productId, params });
   }
   // Retired screens keep working rather than dead-ending: their content moved,
   // so send people where it moved to.
@@ -166,4 +191,16 @@ export function parseRoute(hash: string): Route | null {
   };
   if (RETIRED[head]) return { screen: RETIRED[head], productId, params };
   return null;
+}
+
+/**
+ * The token of a public, read-only share link (#/share/<token>), or null.
+ *
+ * Deliberately outside `Route`: a shared brief is not a place in the app. It is
+ * rendered before login and without a product, so it must never reach the
+ * router, the boot sequence, or any authenticated request.
+ */
+export function shareTokenFromHash(hash: string): string | null {
+  const m = hash.match(/^#\/?share\/([A-Za-z0-9_-]{16,64})\/?$/);
+  return m ? m[1] : null;
 }

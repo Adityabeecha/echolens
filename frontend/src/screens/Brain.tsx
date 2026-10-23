@@ -19,6 +19,8 @@ interface Props {
   onGoCases: () => void;
   /** Optional; falls back to the URL so the link works without App wiring. */
   onGoPatterns?: () => void;
+  /** Rendered as a tab of Learned patterns, which owns the header. */
+  embedded?: boolean;
 }
 
 /**
@@ -26,7 +28,7 @@ interface Props {
  * the two things that map is FOR: reviewing a proposed change before it ships,
  * and answering a new PM's "what goes wrong here?" from real history.
  */
-export function Brain({ onOpenInvestigation, onBack, backLabel, onGoCases, onGoPatterns }: Props) {
+export function Brain({ onOpenInvestigation, onBack, backLabel, onGoCases, onGoPatterns, embedded }: Props) {
   const { data, loading, error, reload } = useAsync(() => api.brain(), []);
 
   if (loading && !data) return <Centered>Reading what this product has taught EchoLens…</Centered>;
@@ -45,15 +47,17 @@ export function Brain({ onOpenInvestigation, onBack, backLabel, onGoCases, onGoP
   });
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <ScreenHeader
-        title="Product memory"
-        product={data.product}
-        subtitle="How this product breaks, learned from confirmed fixes"
-        back={{ label: backLabel, onClick: onBack }}
-        right={<span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>
-          {edges.length} LEARNED PATTERN{edges.length === 1 ? "" : "S"}
-        </span>}
-      />
+      {!embedded && (
+        <ScreenHeader
+          title="Product memory"
+          product={data.product}
+          subtitle="How this product breaks, learned from confirmed fixes"
+          back={{ label: backLabel, onClick: onBack }}
+          right={<span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>
+            {edges.length} LEARNED PATTERN{edges.length === 1 ? "" : "S"}
+          </span>}
+        />
+      )}
       <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>
         {edges.length === 0 ? (
           <EmptyState
@@ -65,7 +69,7 @@ export function Brain({ onOpenInvestigation, onBack, backLabel, onGoCases, onGoP
               <div style={{ marginTop: S[3], fontSize: T.sm, color: C.dim }}>
                 Looking for fixes that were proven to work?{" "}
                 <button onClick={goPatterns} className="el-btn"
-                  style={{ color: C.accent, fontSize: T.sm }}>See Patterns →</button>
+                  style={{ color: C.accent, fontSize: T.sm }}>See proven fixes →</button>
               </div>
             </>}
             action="Investigate a signal"

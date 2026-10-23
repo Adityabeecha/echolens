@@ -122,10 +122,89 @@ def upsert_google_user(session, email: str, role: str) -> User:
     return user
 
 
+# ── browser session cookie + CSRF ───────────────────────────────────────
+#
+# The browser keeps its session in an HttpOnly cookie, so script on the page
+# (an XSS payload, a compromised dependency) cannot read the JWT the way it
+# could from localStorage. Automation keeps sending `Authorization: Bearer`.
+#
+# A cookie is sent by the browser on its own, so a cookie-authenticated write
+# also needs proof that it came from our frontend: the double-submit token. A
+# second, script-readable cookie holds a random value that the SPA echoes in
+# X-CSRF-Token. Another site can make the browser SEND both cookies but cannot
+# READ either one, so it cannot produce the matching header. The value is also
+# returned in the login response body, because a frontend on another origin
+# cannot read a cookie set by the API's origin through document.cookie.
+
+SESSION_COOKIE = "echolens_session"
+CSRF_COOKIE = "echolens_csrf"
+CSRF_HEADER = "X-CSRF-Token"
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def _cookie_kwargs() -> dict:
+    samesite = settings.session_cookie_samesite.lower()
+    kw = {"secure": settings.session_cookie_secure or samesite == "none",
+          "samesite": samesite if samesite in ("lax", "strict", "none") else "lax",
+          "path": "/"}
+    if settings.session_cookie_domain:
+        kw["domain"] = settings.session_cookie_domain
+    return kw
+
+
+def new_csrf_token() -> str:
+    import secrets
+    return secrets.token_urlsafe(32)
+
+
+def set_session_cookies(response, token: str, csrf: str | None = None) -> str:
+    """Attach the session + CSRF cookies to `response`; returns the CSRF value."""
+    csrf = csrf or new_csrf_token()
+    max_age = settings.jwt_expire_minutes * 60
+    kw = _cookie_kwargs()
+    response.set_cookie(SESSION_COOKIE, token, max_age=max_age, httponly=True, **kw)
+    # Not HttpOnly by design: same-origin deployments may read it from
+    # document.cookie. It authorises nothing on its own.
+    response.set_cookie(CSRF_COOKIE, csrf, max_age=max_age, httponly=False, **kw)
+    return csrf
+
+
+def clear_session_cookies(response) -> None:
+    kw = _cookie_kwargs()
+    for name in (SESSION_COOKIE, CSRF_COOKIE):
+        response.delete_cookie(name, path=kw["path"], domain=kw.get("domain"),
+                               secure=kw["secure"], samesite=kw["samesite"],
+                               httponly=name == SESSION_COOKIE)
+
+
+def session_token(request: Request) -> tuple[str | None, bool]:
+    """(raw JWT, came_from_cookie). A Bearer header wins over the cookie, so
+    automation and tests are unaffected by whatever cookie a client holds."""
+    header = request.headers.get("Authorization", "")
+    if header.startswith("Bearer "):
+        return header.split(" ", 1)[1], False
+    cookie = (getattr(request, "cookies", None) or {}).get(SESSION_COOKIE)
+    return (cookie, True) if cookie else (None, False)
+
+
+def check_csrf(request: Request) -> None:
+    """403 a cookie-authenticated state-changing request without the token."""
+    import hmac
+    if request.method.upper() in _SAFE_METHODS:
+        return
+    sent = request.headers.get(CSRF_HEADER, "")
+    expected = request.cookies.get(CSRF_COOKIE, "")
+    if not sent or not expected or not hmac.compare_digest(sent, expected):
+        raise HTTPException(403, "missing or invalid CSRF token")
+
+
 # ── FastAPI dependencies ────────────────────────────────────────────────
 
 def current_user(request: Request) -> dict:
     """Return the authenticated principal.
+
+    The token is a Bearer header (automation) or the HttpOnly session cookie
+    (the browser); a cookie-authenticated write must also pass check_csrf.
 
     Three ways to arrive here without a token:
       - dev mode           -> synthetic ADMIN (local development only)
@@ -139,13 +218,20 @@ def current_user(request: Request) -> dict:
     """
     if not settings.auth_required:
         return DEV_ADMIN
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
+    raw, via_cookie = session_token(request)
+    if raw is None:
         if settings.allow_guest:
             return dict(GUEST)
         raise HTTPException(401, "missing bearer token")
+    if via_cookie:
+        check_csrf(request)
+    return principal_from_token(raw)
+
+
+def principal_from_token(raw: str) -> dict:
+    """Verify a JWT and resolve the principal behind it (401 on any failure)."""
     try:
-        payload = decode_token(auth.split(" ", 1)[1])
+        payload = decode_token(raw)
         # int(payload["sub"]) sat OUTSIDE this try, so a correctly-signed token
         # carrying sub="abc" raised ValueError and a token with no sub raised
         # KeyError — neither is a JWTError, so both escaped as an unhandled 500

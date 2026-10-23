@@ -291,7 +291,7 @@ function HypothesisCard({ h, selected, onPick }: {
   );
 }
 
-function TraceRow({ step, last, selHyp, onOpenEvidence, evidence }: {
+export function TraceRow({ step, last, selHyp, onOpenEvidence, evidence }: {
   step: TraceStep;
   last: boolean;
   selHyp: string | null;

@@ -76,3 +76,130 @@ def finding_ticket(session: Session, finding: Finding, repo: str | None = None,
         body.append(f"_Full case: {deep_link}_")
 
     return {"title": title, "body": "\n".join(body)}
+
+
+# ── v15: the shareable brief ────────────────────────────────────────────
+#
+# The ticket above is for an engineer and carries the whole evidence chain.
+# This is for everyone else — a Slack thread, a Notion page, a read-only link —
+# so it says what a person outside the tool needs and nothing they would have to
+# decode: no evidence ids, no hypothesis labels, no confidence decimals, no
+# status enums.
+
+# Channels where the quote is a user speaking, ranked first in the brief.
+_USER_VOICE = ("play_store", "app_store", "chrome_web_store", "csv", "csv_reviews",
+               "in_app", "support", "zendesk", "forum", "discord", "reddit",
+               "hacker_news", "stack_overflow")
+_SOURCE_NAMES = {
+    "play_store": "Play Store review", "app_store": "App Store review",
+    "chrome_web_store": "Chrome Web Store review", "csv": "Imported review",
+    "csv_reviews": "Imported review", "in_app": "In-app feedback",
+    "support": "Support ticket", "zendesk": "Support ticket", "forum": "Community forum",
+    "discord": "Discord", "reddit": "Reddit", "hacker_news": "Hacker News",
+    "stack_overflow": "Stack Overflow", "github": "GitHub issue",
+    "release_notes": "Release notes",
+}
+_LEVEL = {"LOW": "low", "MED": "medium", "HIGH": "high"}
+BRIEF_QUOTES = 3
+
+
+def _plain(text: str) -> str:
+    """Prose with the internal scaffolding removed: [ev_001] citations and
+    bare hypothesis labels mean nothing outside the app."""
+    import re
+    text = re.sub(r"\s*\[ev_\d+\]", "", text or "")
+    text = re.sub(r"\(\s*(?:H\d+[\s,]*)+\)", "", text)
+    return re.sub(r"[ \t]{2,}", " ", text).strip()
+
+
+def share_brief(session: Session, finding: Finding, link: str | None = None) -> dict:
+    """{headline, impact, quotes, actions, markdown} for one finding.
+
+    Quotes come ONLY from this finding's own investigation, and only when that
+    investigation belongs to the same product as the finding — a brief that can
+    be posted outside the app must never carry another product's users' words.
+    Evidence a reviewer struck is left out.
+    """
+    from echolens.review import rejected_eids
+
+    fj = finding.json or {}
+    inv = session.get(Investigation, finding.investigation_id)
+    recs = session.scalars(select(Recommendation).where(
+        Recommendation.finding_id == finding.id).order_by(Recommendation.rank)).all()
+    impact = fj.get("impact", {}) or {}
+
+    quotes: list[dict] = []
+    # The case's owner, resolved the way _owned does for legacy rows (via the
+    # anomaly) — a NULL is not a wildcard.
+    owner = None
+    if inv is not None:
+        owner = inv.product_id
+        if owner is None and inv.anomaly_id:
+            anomaly = session.get(AnomalyEvent, inv.anomaly_id)
+            owner = anomaly.product_id if anomaly else None
+    same_product = inv is not None and owner == finding.product_id
+    if same_product:
+        struck = rejected_eids(finding)
+        rows = [e for e in session.scalars(select(EvidenceRow).where(
+            EvidenceRow.investigation_id == finding.investigation_id)).all()
+            if e.eid not in struck and (e.snippet or "").strip()
+            and not (e.json or {}).get("contradicts")]
+        # Quotes behind the proven cause first, then user voices before trackers.
+        cited = set()
+        hid = fj.get("supported_hypothesis")
+        for e in rows:
+            if hid and hid in ((e.json or {}).get("supports") or []):
+                cited.add(e.eid)
+        rows.sort(key=lambda e: (e.eid not in cited,
+                                 e.source not in _USER_VOICE, e.eid))
+        seen: set[str] = set()
+        for e in rows:
+            text = " ".join(e.snippet.split())
+            if text.lower() in seen:
+                continue
+            seen.add(text.lower())
+            quotes.append({"text": text,
+                           "source": _SOURCE_NAMES.get(e.source, e.source.replace("_", " ").title())})
+            if len(quotes) >= BRIEF_QUOTES:
+                break
+
+    headline = (finding.summary or fj.get("summary") or "Finding").strip()
+    how_bad = impact_line(impact)
+    why = _plain(fj.get("prose", ""))
+    actions = [{"action": r.action.strip(),
+                "impact": _LEVEL.get((r.impact or "").upper(), (r.impact or "").lower()),
+                "effort": _LEVEL.get((r.effort or "").upper(), (r.effort or "").lower())}
+               for r in recs if (r.action or "").strip()]
+
+    md = [f"*{headline}*", "", f"*How bad:* {how_bad}"]
+    if why and why != headline:
+        md += ["", why]
+    if quotes:
+        md += ["", "*What users are saying:*"]
+        md += [f"> “{q['text']}” — {q['source']}" for q in quotes]
+    md += ["", "*Recommended actions:*"]
+    if actions:
+        md += [f"{i}. {a['action']} ({a['impact']} impact, {a['effort']} effort)"
+               for i, a in enumerate(actions, start=1)]
+    else:
+        md.append("No action agreed yet.")
+    if link:
+        md += ["", f"Full brief: {link}"]
+
+    return {"headline": headline, "impact": how_bad, "why": why, "quotes": quotes,
+            "actions": actions, "markdown": "\n".join(md)}
+
+
+# ── v16: a feature-request spec as a ticket ─────────────────────────────
+
+
+def request_ticket(spec: dict, deep_link: str | None = None) -> dict:
+    """{title, body} for a spec from prd.build_spec. The body is the spec as the
+    PM read it, minus its H1 — the title already says it."""
+    lines = (spec.get("markdown") or "").splitlines()
+    if lines and lines[0].startswith("# "):
+        lines = lines[1:]
+    body = "\n".join(lines).strip()
+    if deep_link:
+        body += f"\n\n_Filed from EchoLens: {deep_link}_"
+    return {"title": f"[EchoLens] Spec: {spec.get('title') or 'Feature request'}", "body": body}

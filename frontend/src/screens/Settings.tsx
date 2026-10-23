@@ -4,8 +4,11 @@ import { withToast } from "../components/Toast";
 import { money } from "../format";
 import { useAsync } from "../hooks";
 import { C, MEASURE, R, S, T, mono } from "../theme";
+import { SettingsSection } from "../nav";
 import { Bar, Centered, ErrorState, Label, ScreenHeader } from "../ui";
 import { Icon } from "../components/Icon";
+import { SubTabs } from "../components/SubTabs";
+import { Calibration } from "./Calibration";
 
 interface Props {
   product: ProductRow | null;
@@ -13,7 +16,16 @@ interface Props {
   onGoSources: () => void;
   onAddProduct: () => void;
   onDeleteProduct: (p: ProductRow) => void;
+  /** Which section is open; in the URL as ?section= so it can be linked. */
+  section?: SettingsSection;
+  onSection?: (section: SettingsSection) => void;
+  onGoReview?: () => void;
 }
+
+const SECTIONS: { key: SettingsSection; label: string }[] = [
+  { key: "general", label: "Budgets & product" },
+  { key: "calibration", label: "Calibration" },
+];
 
 /**
  * Settings — the parts of "how EchoLens runs" that are a product decision.
@@ -24,12 +36,46 @@ interface Props {
  * Costs; the levers are here.
  */
 export function Settings({
-  product, onGoCosts, onGoSources, onAddProduct, onDeleteProduct
+  product, onGoCosts, onGoSources, onAddProduct, onDeleteProduct,
+  section = "general", onSection, onGoReview
 }: Props) {
+  const guest = isGuest();
+  const session = guest ? "Exploring the demo (read-only)" : `SIGNED IN AS ${getRole().toUpperCase()}`;
+  // Calibration ("is EchoLens right as often as it claims?") was its own
+  // System screen. It is the question of how far to trust the numbers, so it
+  // is a section here now, and #/calibration redirects to it.
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      <ScreenHeader
+        title="Settings"
+        product={product?.name}
+        subtitle="Budgets, limits, calibration and this product"
+        right={
+          <span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>
+            {session}
+          </span>
+        }
+      />
+      <SubTabs label="Settings sections" tabs={SECTIONS} active={section}
+               onChange={(s) => onSection?.(s)} />
+      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+        {section === "calibration" ? (
+          <Calibration embedded onGoCases={() => onGoReview?.()} />
+        ) : (
+          <GeneralSection product={product} onGoCosts={onGoCosts} onGoSources={onGoSources}
+                          onAddProduct={onAddProduct} onDeleteProduct={onDeleteProduct} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function GeneralSection({
+  product, onGoCosts, onGoSources, onAddProduct, onDeleteProduct
+}: Pick<Props, "product" | "onGoCosts" | "onGoSources" | "onAddProduct" | "onDeleteProduct">) {
   const { data, loading, error, reload } = useAsync(() => api.costsSummary(), []);
   const guest = isGuest();
   const admin = isAdmin() && !guest;
-  const session = guest ? "Exploring the demo (read-only)" : `SIGNED IN AS ${getRole().toUpperCase()}`;
   const why = guest ? "Sign in with an admin account to change this." : "Only admins can change this.";
 
   if (loading && !data) return <Centered>Loading settings…</Centered>;
@@ -45,18 +91,6 @@ export function Settings({
   const over = data.month_to_date > data.budget;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <ScreenHeader
-        title="Settings"
-        product={product?.name ?? data.product}
-        subtitle="Budgets, limits and this product"
-        right={
-          <span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>
-            {session}
-          </span>
-        }
-      />
-
       <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]} ${S[12]}` }}>
         <Label style={{ marginBottom: S[2] }}>SPEND THIS MONTH</Label>
         <div style={{ maxWidth: MEASURE, padding: `${S[4]} ${S[5]}`, background: C.card,
@@ -130,7 +164,50 @@ export function Settings({
             </div>
           )}
         </div>
+
+        <Label as="h2" style={{ margin: "28px 0 10px" }}>ISSUE TRACKERS</Label>
+        <TrackersPanel />
       </div>
+  );
+}
+
+/** Which trackers a finding can be filed to. They are configured on the server
+ *  only, so this names the settings to set rather than offering a form. */
+function TrackersPanel() {
+  const { data, loading, error, reload } = useAsync(() => api.trackers(), []);
+  const ENV: Record<string, string> = {
+    github: "GITHUB_TOKEN",
+    linear: "LINEAR_API_KEY + LINEAR_TEAM_ID",
+    jira: "JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_PROJECT_KEY",
+  };
+  return (
+    <div style={{ maxWidth: MEASURE, padding: `${S[4]} ${S[5]}`, background: C.card,
+                  border: `1px solid ${C.border2}`, borderRadius: R.card,
+                  display: "flex", flexDirection: "column", gap: S[3] }}>
+      {loading && !data && <span style={{ fontSize: T.sm, color: C.dim }}>Checking trackers…</span>}
+      {error && !data && (
+        <span style={{ fontSize: T.sm, color: C.muted }}>
+          Couldn't check which trackers are set up.{" "}
+          <button onClick={reload} className="el-btn" style={{ color: C.accent }}>Retry</button>
+        </span>
+      )}
+      {data?.trackers.map((t) => (
+        <div key={t.id} style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: S[3],
+                                  alignItems: "baseline" }}>
+          <span style={{ display: "flex", alignItems: "center", gap: S[2], fontSize: T.sm, color: C.text2 }}>
+            <Icon name={t.configured ? "check" : "circle"} size={12}
+                  style={{ color: t.configured ? C.good : C.faint }} />
+            {t.label}
+          </span>
+          <span style={{ fontSize: T.sm, color: t.configured ? C.text3 : C.dim, minWidth: 0 }}>
+            {t.configured ? "Connected. Findings can be filed here." : (
+              <>Not set up. Set{" "}
+                <span style={{ fontFamily: mono, fontSize: T.xs, wordBreak: "break-word" }}>{ENV[t.id]}</span>
+                {" "}on the server.</>
+            )}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

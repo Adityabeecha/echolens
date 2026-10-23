@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Evidence, Investigation, api, errorMessage } from "../api";
-import { StatusChip } from "../components/CaseCard";
+import { StatusChip, TrustBadge } from "../components/CaseCard";
 import { impactLine } from "../format";
 import { CASE_TABS, CaseTab, CASE_TAB_LABEL } from "../nav";
 import { SEVERITY } from "../status";
@@ -13,6 +13,10 @@ import { DiscussionTab } from "./case/DiscussionTab";
 import { HistoryTab } from "./case/HistoryTab";
 import { TraceTab } from "./case/TraceTab";
 import { Icon } from "../components/Icon";
+import { EvidenceSheet } from "../components/EvidenceSheet";
+import { useMediaQuery } from "../hooks";
+import { EvidenceDetail, Inspector, InspectorMode } from "./case/Inspector";
+import { DecisionChip } from "./case/CaseActions";
 
 interface Props {
   caseId: number;
@@ -21,12 +25,14 @@ interface Props {
   onTab: (tab: CaseTab) => void;
   onBack: () => void;
   backLabel: string;
-  onOpenEvidence: (e: Evidence) => void;
   onOpenCase: (id: number, status?: string) => void;
   onReviewed: () => void;
   onGoCalibration: () => void;
   onGoPatterns: () => void;
 }
+
+/** Wide enough for the brief and the Inspector side by side. */
+const SPLIT_QUERY = "(min-width: 1100px)";
 
 /**
  * One case, one route, five tabs.
@@ -38,12 +44,25 @@ interface Props {
  * the URL so a specific view is still linkable.
  */
 export function CaseDetail({
-  caseId, tab, productName, onTab, onBack, backLabel, onOpenEvidence, onOpenCase,
+  caseId, tab, productName, onTab, onBack, backLabel, onOpenCase,
   onReviewed, onGoCalibration, onGoPatterns
 }: Props) {
   const [inv, setInv] = useState<Investigation | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pollGeneration, setPollGeneration] = useState(0);
+  // v15 split pane. On a wide screen the brief stays on the left and whatever
+  // you click — a citation, or the trace — opens in the Inspector beside it,
+  // instead of sending you to another tab. Narrow screens keep one column and
+  // open a citation as a sheet.
+  const wide = useMediaQuery(SPLIT_QUERY);
+  const [pickedId, setPickedId] = useState<string | null>(null);
+  const [sheetId, setSheetId] = useState<string | null>(null);
+  const [mode, setMode] = useState<InspectorMode>(tab === "trace" ? "trace" : "evidence");
+  // A deep link to /trace (or the Back button landing on it) drives the
+  // Inspector, so #/p/1/cases/1/trace still opens the trace on wide screens.
+  useEffect(() => {
+    if (tab === "trace") setMode("trace");
+  }, [tab]);
 
   // Monotonic sequence guard, matching the polling effect below. Retry calls
   // this, and a slow response used to be able to land AFTER a newer poll tick
@@ -123,6 +142,28 @@ export function CaseDetail({
   }
   if (!inv) return <Centered>Loading case #{caseId}…</Centered>;
 
+  const openEvidence = (e: Evidence) => {
+    if (wide) { setPickedId(e.id); setMode("evidence"); if (tab === "trace") onTab("finding"); }
+    else setSheetId(e.id);
+  };
+  const changeMode = (m: InspectorMode) => {
+    setMode(m);
+    // Keep the URL honest about what is showing, so the view stays linkable.
+    if (m === "trace" && tab === "finding") onTab("trace");
+    if (m === "evidence" && tab === "trace") onTab("finding");
+  };
+  // The trust badge summarises the evidence, so it opens it: the Inspector's
+  // evidence view beside the brief when there is room, the Evidence tab when not.
+  const openTrust = () => {
+    if (wide) { setPickedId(null); changeMode("evidence"); }
+    else onTab("evidence");
+  };
+  const picked = inv.evidence.find((e) => e.id === pickedId) ?? null;
+  const sheetEvidence = inv.evidence.find((e) => e.id === sheetId) ?? null;
+  // On a wide screen the trace lives in the Inspector, so the brief takes its tab.
+  const leftTab: CaseTab = wide && tab === "trace" ? "finding" : tab;
+  const tabs = wide ? CASE_TABS.filter((t) => t !== "trace") : CASE_TABS;
+
   const finding = inv.finding;
   const sev = finding?.severity ? SEVERITY[finding.severity.band] : null;
   const impact = impactLine(finding?.impact ?? null);
@@ -158,6 +199,7 @@ export function CaseDetail({
             {inv.title}
           </div>
           <StatusChip status={inv.case_status} />
+          <DecisionChip decision={inv.product_decision} />
           {sev && (
             <span style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".04em",
                            padding: `${S[1]} ${S[2]}`, borderRadius: R.sm, color: sev.color,
@@ -177,6 +219,7 @@ export function CaseDetail({
               confidence {finding.confidence.toFixed(2)}
             </button>
           )}
+          {finding?.trust && <TrustBadge trust={finding.trust} onClick={openTrust} />}
         </div>
 
         {inv.case_why && (
@@ -184,8 +227,8 @@ export function CaseDetail({
         )}
 
         <div className="el-case-tabs" style={{ display: "flex", gap: S[1], marginTop: S[3] }}>
-          {CASE_TABS.map((t) => {
-            const active = t === tab;
+          {tabs.map((t) => {
+            const active = t === leftTab;
             return (
               <button
                 key={t}
@@ -230,22 +273,38 @@ export function CaseDetail({
         </div>
       )}
 
-      <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex" }}>
-        {tab === "finding" && (
-          <FindingTab inv={inv} onOpenEvidence={onOpenEvidence} onReload={load}
-                      onReviewed={onReviewed} onOpenTrace={() => onTab("trace")}
-                      onOpenCase={onOpenCase} />
+      <div className={wide ? "el-case-split" : undefined}
+        style={wide
+          ? { flex: 1, minHeight: 0, overflow: "hidden", display: "grid",
+              gridTemplateColumns: "minmax(0, 3fr) minmax(360px, 2fr)" }
+          : { flex: 1, minHeight: 0, overflow: "hidden", display: "flex" }}>
+        <div style={{ minWidth: 0, minHeight: 0, overflow: "hidden", display: "flex" }}>
+          {leftTab === "finding" && (
+            <FindingTab inv={inv} onOpenEvidence={openEvidence} onReload={load}
+                        onReviewed={onReviewed} onOpenTrace={() => changeMode("trace")}
+                        onOpenCase={onOpenCase} />
+          )}
+          {leftTab === "trace" && (
+            <TraceTab inv={inv} onOpenEvidence={openEvidence} onReload={load} />
+          )}
+          {leftTab === "evidence" && <EvidenceTab inv={inv} onOpenEvidence={openEvidence} />}
+          {leftTab === "engineering" && (
+            <EngineeringTab inv={inv} onReload={load} onGoPatterns={onGoPatterns} />
+          )}
+          {leftTab === "discussion" && <DiscussionTab caseId={caseId} />}
+          {leftTab === "history" && <HistoryTab inv={inv} onOpenCase={onOpenCase} />}
+        </div>
+        {wide && (
+          <Inspector inv={inv} mode={mode} onMode={changeMode} evidence={picked}
+                     onPick={openEvidence} onReload={load} />
         )}
-        {tab === "trace" && (
-          <TraceTab inv={inv} onOpenEvidence={onOpenEvidence} onReload={load} />
-        )}
-        {tab === "evidence" && <EvidenceTab inv={inv} onOpenEvidence={onOpenEvidence} />}
-        {tab === "engineering" && (
-          <EngineeringTab inv={inv} onReload={load} onGoPatterns={onGoPatterns} />
-        )}
-        {tab === "discussion" && <DiscussionTab caseId={caseId} />}
-        {tab === "history" && <HistoryTab inv={inv} onOpenCase={onOpenCase} />}
       </div>
+
+      {!wide && (
+        <EvidenceSheet evidence={sheetEvidence} onClose={() => setSheetId(null)}>
+          {sheetEvidence && <EvidenceDetail evidence={sheetEvidence} inv={inv} onReload={load} />}
+        </EvidenceSheet>
+      )}
     </div>
   );
 }

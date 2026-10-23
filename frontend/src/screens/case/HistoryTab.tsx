@@ -14,6 +14,12 @@ const KIND: Record<string, { color: string; icon: string }> = {
   fix_shipped: { color: C.accent, icon: "shipped" },
   verified: { color: C.good, icon: "check" },
   regressed: { color: C.bad, icon: "warning" },
+  // v15: product decisions and partial challenges
+  decision: { color: C.info, icon: "diamond" },
+  evidence_rejected: { color: C.bad, icon: "close" },
+  rec_edited: { color: C.accent, icon: "retry" },
+  needs_review: { color: C.bad, icon: "warning" },
+  extended: { color: C.accent, icon: "play" },
 };
 
 /**
@@ -61,6 +67,7 @@ export function HistoryTab({ inv, onOpenCase }: {
                 <div style={{ fontFamily: mono, fontSize: T.micro, color: C.faint,
                               letterSpacing: ".06em" }}>
                   {when(e.at)}
+                  {e.by && <span style={{ color: C.dim }}> · {e.by}</span>}
                 </div>
                 <div style={{ fontSize: T.base, color: C.text2, marginTop: S[1], lineHeight: "var(--el-lh-normal)" }}>
                   {e.text}

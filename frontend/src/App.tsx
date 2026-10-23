@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
-import { Evidence, ProductRow, api, getToken, isAdmin, isGuest, onAuthError, setActiveProduct, setGuest, setRole, setToken } from "./api";
-import { CaseTab, GLOBAL_SCREENS, Screen, caseTabFor } from "./nav";
+import { ReactNode, Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
+import { ProductRow, api, endSession, isAdmin, isAuthed, isGuest, onAuthError, setActiveProduct, setGuest, setRole } from "./api";
+import { CaseTab, GLOBAL_SCREENS, LEARNED_VIEWS, LearnedView, SETTINGS_SECTIONS, Screen,
+         SettingsSection, caseTabFor } from "./nav";
 import { useRouter } from "./router";
 import { useWorkWatcher } from "./hooks";
 import { C, T, sans } from "./theme";
 import { Sidebar } from "./components/Sidebar";
-import { EvidenceSheet } from "./components/EvidenceSheet";
+import { AskDrawer, isAskShortcut } from "./components/AskDrawer";
+import { Chat } from "./screens/Chat";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { NewCaseModal } from "./components/NewCaseModal";
 import { DeleteProductModal } from "./components/DeleteProductModal";
@@ -13,20 +15,32 @@ import { Toasts, clearToasts, toast } from "./components/Toast";
 import { Today } from "./screens/Today";
 import { Cases } from "./screens/Cases";
 import { CaseDetail } from "./screens/CaseDetail";
-import { Sources } from "./screens/Sources";
-import { Costs } from "./screens/Costs";
-import { Settings } from "./screens/Settings";
 import { Login } from "./screens/Login";
-import { Onboarding } from "./screens/Onboarding";
-import { Calibration } from "./screens/Calibration";
-import { Patterns } from "./screens/Patterns";
-import { Portfolio } from "./screens/Portfolio";
-import { Chat } from "./screens/Chat";
-import { Backlog } from "./screens/Backlog";
-import { Brain } from "./screens/Brain";
+import { Centered } from "./ui";
 import { ThemeToggle } from "./components/ThemeToggle";
+import { FirstRunTour } from "./components/FirstRunTour";
+import { markTourSeen, tourSeen } from "./tourState";
 import { ThemeMode, applyTheme, persistTheme, resolveTheme } from "./themeMode";
 import { persistSidebarCollapsed, resolveSidebarCollapsed } from "./sidebarState";
+
+// Route-level code splitting. Today, Cases and the case detail are where
+// nearly every visit starts and stays, so they ship in the main bundle; the
+// rest load on first visit. A chunk that fails to load (a redeploy replaced
+// it) throws inside the ErrorBoundary below, which offers a way back.
+const Sources = lazy(() => import("./screens/Sources").then((m) => ({ default: m.Sources })));
+const Costs = lazy(() => import("./screens/Costs").then((m) => ({ default: m.Costs })));
+const Settings = lazy(() => import("./screens/Settings").then((m) => ({ default: m.Settings })));
+const Onboarding = lazy(() => import("./screens/Onboarding").then((m) => ({ default: m.Onboarding })));
+const Portfolio = lazy(() => import("./screens/Portfolio").then((m) => ({ default: m.Portfolio })));
+const Backlog = lazy(() => import("./screens/Backlog").then((m) => ({ default: m.Backlog })));
+const LearnedPatterns = lazy(() => import("./screens/LearnedPatterns").then((m) => ({ default: m.LearnedPatterns })));
+
+/** The wait while a lazily loaded screen's chunk arrives. */
+function ScreenChunk({ children, fallback = <Centered>Loading…</Centered> }: {
+  children: ReactNode; fallback?: ReactNode;
+}) {
+  return <Suspense fallback={fallback}>{children}</Suspense>;
+}
 
 export default function App() {
   const [theme, setTheme] = useState<ThemeMode>(() => resolveTheme());
@@ -35,15 +49,26 @@ export default function App() {
   // everything the detector has ever noticed.
   const { route, navigate, back, backTarget, setParams } =
     useRouter({ screen: "today", productId: null });
-  const [evidence, setEvidence] = useState<Evidence | null>(null);
+  const [askOpen, setAskOpen] = useState(false);
+  const askReturnFocus = useRef<HTMLElement | null>(null);
+  const closeAsk = useCallback(() => setAskOpen(false), []);
+  const openAsk = useCallback(() => {
+    if (askOpen) return;
+    // Capture before making the background inert, which may blur the opener.
+    askReturnFocus.current = document.activeElement as HTMLElement | null;
+    setAskOpen(true);
+  }, [askOpen]);
   const [newCaseOpen, setNewCaseOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   // "In the app" is either a real session or an accepted guest visit. A guest
   // has no token, so `authed` alone would bounce them straight back to Login.
-  const [authed, setAuthed] = useState<boolean>(!!getToken() || isGuest());
+  const [authed, setAuthed] = useState<boolean>(isAuthed() || isGuest());
   const [products, setProducts] = useState<ProductRow[]>([]);
   const [booted, setBooted] = useState(false);
   const [deleting, setDeleting] = useState<ProductRow | null>(null);
+  // The first-run tour opens once, when the first product is added.
+  const [tourOpen, setTourOpen] = useState(false);
+  const closeTour = useCallback(() => { markTourSeen(); setTourOpen(false); }, []);
 
   useEffect(() => {
     applyTheme(theme);
@@ -72,6 +97,17 @@ export default function App() {
   useEffect(() => {
     setActiveProduct(activeId);
   }, [activeId]);
+
+  useEffect(() => {
+    if (!authed) { setAskOpen(false); return; }
+    const onKey = (event: KeyboardEvent) => {
+      if (!isAskShortcut(event)) return;
+      event.preventDefault();
+      openAsk();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [authed, openAsk]);
 
   // Boot: the server decides which products exist and which was last active.
   // The URL wins when it already names one, so a deep link isn't overridden.
@@ -207,7 +243,8 @@ export default function App() {
   useWorkWatcher(activeId, reloadKey, bumpReload, 4000, announceStarted);
 
   const logout = () => {
-    setToken(null);
+    closeAsk();
+    endSession();
     // Drop the cached role too. Leaving "admin" behind is what let a stale
     // value from an earlier session decide the next one's UI.
     setRole("viewer");
@@ -249,7 +286,9 @@ export default function App() {
   const key = activeId ?? "none";
 
   return (
+    <>
     <div
+      inert={askOpen ? true : undefined}
       className="el-shell"
       style={{
         display: "flex",
@@ -274,6 +313,8 @@ export default function App() {
           screen={screen}
           go={go}
           onLogout={logout}
+          onAsk={openAsk}
+          askShortcut={/Mac|iPhone|iPad|iPod/.test(navigator.platform) ? "\u2318 K" : "Ctrl K"}
           products={products}
           activeId={activeId}
           onSwitchProduct={switchProduct}
@@ -326,6 +367,7 @@ export default function App() {
             <Cases
               key={key}
               productName={productName}
+              productId={activeId}
               params={params}
               setParams={setParams}
               onOpenCase={openCase}
@@ -344,7 +386,6 @@ export default function App() {
               onTab={setCaseTab}
               onBack={back}
               backLabel={backTarget?.label ?? "Cases"}
-              onOpenEvidence={setEvidence}
               onOpenCase={openCase}
               onReviewed={bumpReload}
               onGoCalibration={() => go("calibration")}
@@ -353,78 +394,94 @@ export default function App() {
           )}
 
           {screen === "ask" && (
-            <Chat key={key} productName={productName}
-                  onOpenInvestigation={(id) => openCase(id, "resolved")} />
+            <ScreenChunk>
+              <Chat key={key} productName={productName} productId={activeId}
+                    onOpenInvestigation={(id) => openCase(id, "resolved")} />
+            </ScreenChunk>
           )}
 
           {screen === "sources" && (
-            <Sources key={key} productName={productName}
-                     onAddProduct={() => navigate({ screen: "onboarding", productId: null })} />
+            <ScreenChunk>
+              <Sources key={key} productName={productName}
+                       onAddProduct={() => navigate({ screen: "onboarding", productId: null })} />
+            </ScreenChunk>
           )}
 
-          {screen === "patterns" && (
-            <Patterns key={key} onGoMemory={() => go("memory")}
-                      onGoCases={() => go("cases")} />
+          {screen === "costs" && (
+            <ScreenChunk><Costs key={key} onGoSettings={() => go("settings")} /></ScreenChunk>
           )}
-
-          {screen === "calibration" && (
-            <Calibration key={key} onGoCases={() => go("cases", { tab: "needs-review" })} />
-          )}
-
-          {screen === "costs" && <Costs key={key} onGoSettings={() => go("settings")} />}
 
           {screen === "settings" && (
-            <Settings
-              key={key}
-              product={activeProduct}
-              onGoCosts={() => go("costs")}
-              onGoSources={() => go("sources")}
-              onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
-              onDeleteProduct={setDeleting}
-            />
+            <ScreenChunk>
+              <Settings
+                key={key}
+                product={activeProduct}
+                onGoCosts={() => go("costs")}
+                onGoSources={() => go("sources")}
+                onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
+                onDeleteProduct={setDeleting}
+                section={SETTINGS_SECTIONS.includes(params.section as SettingsSection)
+                  ? params.section as SettingsSection : "general"}
+                onSection={(section) => setParams({ section: section === "general" ? null : section })}
+                onGoReview={() => go("cases", { tab: "needs-review" })}
+              />
+            </ScreenChunk>
           )}
 
           {/* Reached from within another screen rather than from the nav, so
               they carry a named Back instead of a nav highlight. */}
           {screen === "plan" && (
-            <Backlog key={key} onOpenInvestigation={openCase} onBack={back}
-                     onGoCases={() => go("cases")}
-                     backLabel={backTarget?.label ?? "Cases"} />
+            <ScreenChunk>
+              <Backlog key={key} onOpenInvestigation={openCase} onBack={back}
+                       onGoCases={() => go("cases")}
+                       backLabel={backTarget?.label ?? "Cases"} />
+            </ScreenChunk>
           )}
+          {/* Patterns and Product memory, as two tabs of one screen. */}
           {screen === "memory" && (
-            <Brain key={key} onOpenInvestigation={openCase} onBack={back}
-                   onGoCases={() => go("cases")}
-                   onGoPatterns={() => go("patterns")}
-                   backLabel={backTarget?.label ?? "Patterns"} />
+            <ScreenChunk>
+              <LearnedPatterns
+                key={key}
+                productName={productName}
+                view={LEARNED_VIEWS.includes(params.view as LearnedView) ? params.view as LearnedView : "map"}
+                onView={(view) => setParams({ view: view === "map" ? null : view })}
+                onOpenInvestigation={openCase}
+                onGoCases={() => go("cases")}
+              />
+            </ScreenChunk>
           )}
 
           {screen === "portfolio" && (
-            <Portfolio
-              onOpenProduct={switchProduct}
-              onOpenInvestigation={(id) => openCase(id, "resolved")}
-              onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
-            />
+            <ScreenChunk>
+              <Portfolio
+                onOpenProduct={switchProduct}
+                onOpenInvestigation={(id) => openCase(id, "resolved")}
+                onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
+              />
+            </ScreenChunk>
           )}
 
           {onboarding && (
-            <Onboarding
-              // Always dismissible. "Can I skip this?" is not the same question
-              // as "does a product exist yet?" — the answer is always yes.
-              canSkip
-              onClose={closeOnboarding}
-              onProductCreated={(id) => {
-                // Scope everything to the new product straight away.
-                setActiveProduct(id);
-                api.products().then((r) => setProducts(r.products)).catch(() => {});
-                api.activateProduct(id).catch(() => {});
-              }}
-              onCancel={() => {
-                closeOnboarding();
-              }}
-              onDone={() => finishOnboarding("today")}
-              onReviewSignals={() => finishOnboarding("cases", { signals: "1" })}
-              onManageSources={() => finishOnboarding("sources")}
-            />
+            <ScreenChunk fallback={null}>
+              <Onboarding
+                // Always dismissible. "Can I skip this?" is not the same question
+                // as "does a product exist yet?" — the answer is always yes.
+                canSkip
+                onClose={closeOnboarding}
+                onProductCreated={(id) => {
+                  // Scope everything to the new product straight away.
+                  setActiveProduct(id);
+                  api.products().then((r) => setProducts(r.products)).catch(() => {});
+                  api.activateProduct(id).catch(() => {});
+                }}
+                onCancel={() => {
+                  closeOnboarding();
+                }}
+                onDone={() => finishOnboarding("today")}
+                onReviewSignals={() => finishOnboarding("cases", { signals: "1" })}
+                onManageSources={() => finishOnboarding("sources")}
+              />
+            </ScreenChunk>
           )}
         </ErrorBoundary>
       </div>
@@ -451,7 +508,6 @@ export default function App() {
         />
       )}
 
-      <EvidenceSheet evidence={evidence} onClose={() => setEvidence(null)} />
       {newCaseOpen && (
         <NewCaseModal
           onClose={() => setNewCaseOpen(false)}
@@ -463,7 +519,12 @@ export default function App() {
         />
       )}
       <Toasts />
+      {tourOpen && !onboarding && <FirstRunTour onClose={closeTour} />}
     </div>
+    {askOpen && <AskDrawer productId={activeId} productName={productName} onClose={closeAsk}
+      returnFocus={askReturnFocus.current}
+      onOpenInvestigation={(id) => { closeAsk(); openCase(id); }} />}
+    </>
   );
 
   /** Leaving the wizard: adopt the new product, then land where asked. */
@@ -480,6 +541,7 @@ export default function App() {
       api.activateProduct(newest.id).catch(() => {});
       bumpReload();
       navigate({ screen: target, productId: newest.id, params: extra }, { replace: true });
+      if (r.products.length === 1 && !tourSeen()) setTourOpen(true);
     }).catch(() => {
       // Without this the wizard sat on its completed state forever with no
       // feedback if the refresh failed.

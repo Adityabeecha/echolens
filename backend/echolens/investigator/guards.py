@@ -94,22 +94,21 @@ SENTENCE_SPLIT = re.compile(
 
 def budget_exceeded(budget: Budget) -> list[str]:
     """Return the list of exhausted limits (empty = within budget). Caps are
-    scaled by the one-time extension factor (v2.0)."""
-    t = budget.tier
-    f = budget.extension_factor
+    scaled by the one-time extension factor (v2.0), plus any headroom a
+    reviewer explicitly granted (v15) — still a hard ceiling either way."""
     reasons = []
-    if budget.iterations >= t.max_iterations * f:
-        reasons.append(f"iterations {budget.iterations}/{int(t.max_iterations * f)}")
-    if budget.tool_calls >= t.max_tool_calls * f:
-        reasons.append(f"tool_calls {budget.tool_calls}/{int(t.max_tool_calls * f)}")
-    if budget.tokens >= t.max_tokens * f:
-        reasons.append(f"tokens {budget.tokens}/{int(t.max_tokens * f)}")
-    if budget.cost_usd >= t.max_cost_usd * f:
-        reasons.append(f"cost ${budget.cost_usd:.2f}/${t.max_cost_usd * f:.2f}")
+    if budget.iterations >= budget.cap_iterations():
+        reasons.append(f"iterations {budget.iterations}/{int(budget.cap_iterations())}")
+    if budget.tool_calls >= budget.cap_tool_calls():
+        reasons.append(f"tool_calls {budget.tool_calls}/{int(budget.cap_tool_calls())}")
+    if budget.tokens >= budget.cap_tokens():
+        reasons.append(f"tokens {budget.tokens}/{int(budget.cap_tokens())}")
+    if budget.cost_usd >= budget.cap_cost_usd():
+        reasons.append(f"cost ${budget.cost_usd:.2f}/${budget.cap_cost_usd():.2f}")
     # elapsed includes wall-clock spent before a restart (restored from checkpoint),
     # so a resumed investigation can't get its full time budget over again.
-    if budget.elapsed_s() >= t.max_wall_clock_s * f:
-        reasons.append(f"wall_clock >= {int(t.max_wall_clock_s * f)}s")
+    if budget.elapsed_s() >= budget.cap_wall_s():
+        reasons.append(f"wall_clock >= {int(budget.cap_wall_s())}s")
     return reasons
 
 

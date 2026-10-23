@@ -1,16 +1,53 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    proxy: {
-      // Frontend calls /api/*; the backend serves routes without that prefix.
-      "/api": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-        rewrite: (p) => p.replace(/^\/api/, ""),
+/**
+ * Narrow connect-src to the one API origin this build talks to.
+ *
+ * vercel.json carries the full Content-Security-Policy as a response header
+ * (frame-ancestors only works there), but it is static, so its connect-src
+ * has to allow any https: origin. This adds a second, build-time policy as a
+ * <meta> tag whose connect-src names the exact origin from VITE_API_BASE.
+ * Browsers enforce every policy present, so the effective connect-src is the
+ * intersection: 'self' plus that API origin plus Google sign-in.
+ * Build-only: the dev server's HMR websocket is not in the list.
+ */
+function apiConnectCsp(apiBase: string | undefined): Plugin {
+  let origin = "";
+  try {
+    if (apiBase && /^https?:\/\//.test(apiBase)) origin = new URL(apiBase).origin;
+  } catch {
+    origin = "";
+  }
+  const policy = ["connect-src 'self'", origin, "https://accounts.google.com/gsi/"]
+    .filter(Boolean)
+    .join(" ");
+  return {
+    name: "echolens-api-connect-csp",
+    apply: "build",
+    transformIndexHtml: () => [
+      {
+        tag: "meta",
+        attrs: { "http-equiv": "Content-Security-Policy", content: policy },
+        injectTo: "head-prepend", // before any script; charset stays inside the first 1024 bytes
+      },
+    ],
+  };
+}
+
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, ".", "VITE_");
+  return {
+    plugins: [react(), apiConnectCsp(env.VITE_API_BASE)],
+    server: {
+      proxy: {
+        // Frontend calls /api/*; the backend serves routes without that prefix.
+        "/api": {
+          target: "http://127.0.0.1:8000",
+          changeOrigin: true,
+          rewrite: (p) => p.replace(/^\/api/, ""),
+        },
       },
     },
-  },
+  };
 });

@@ -16,6 +16,8 @@ _SessionLocal: sessionmaker | None = None
 # makes new *tables* but never ALTERs existing ones, so we add these by hand.
 # Nullable-only, so it is safe and idempotent on a populated dev database.
 _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
+    ("fix_watches", "fixed_in_version", "VARCHAR"),
+    ("fix_watches", "release_seen_at", "TIMESTAMP"),
     ("llm_calls", "product_id", "INTEGER"),
     ("investigations", "reopens_investigation_id", "INTEGER"),
     ("investigations", "checkpoint_json", "JSON"),
@@ -43,6 +45,15 @@ _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("users", "last_active_product_id", "INTEGER"),
     # v9.0 portfolio
     ("investigations", "seeded_from_pattern", "JSON"),
+    # daily-cap override audit
+    ("investigation_queue", "override_by", "VARCHAR"),
+    ("investigation_queue", "override_at", "TIMESTAMP"),
+    ("investigation_queue", "override_estimate_usd", "FLOAT"),
+    # budget extensions, for the case History
+    ("investigations", "extensions_json", "JSON"),
+    # review translation: detected language + cached English text
+    ("reviews", "lang", "VARCHAR"),
+    ("reviews", "text_en", "TEXT"),
 ]
 
 

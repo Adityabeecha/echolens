@@ -207,6 +207,7 @@ class Orchestrator:
             )
         for a in pending:  # default for anything the model skipped
             decisions.setdefault(a.slug, Decision(a, "ignore", "not selected by orchestrator"))
+        self._fold_incidents(decisions, pending, persist)
 
         for d in decisions.values():  # v2.0: nudge the LLM's tier by complexity
             if d.decision == "investigate":
@@ -215,6 +216,51 @@ class Orchestrator:
         if persist:
             self._persist(list(decisions.values()))
         return list(decisions.values())
+
+    def _fold_incidents(self, decisions: dict[str, Decision], pending: list[AnomalyEvent],
+                        persist: bool) -> None:
+        """One incident, one case — the same rule the Cases screen applies.
+
+        A bad release fires the 1-star spike, the rating drop and a theme surge
+        in the same window. The model may pick several of them, and each would
+        open its own case and spend its own slot of the daily cap on one root
+        cause. Deterministically, after the model's judgment: when ANY member of
+        an incident is picked, only its strongest member (detector/incidents.py
+        `group`, lead first) is investigated, at the deepest tier proposed for
+        the group; the others are merged into it. An incident nobody picked is
+        left exactly as the model decided.
+        """
+        from echolens.cases import _headline
+        from echolens.detector.incidents import group, note_related
+
+        for members in group(pending):
+            if len(members) < 2:
+                continue
+            picked = [decisions[m.slug] for m in members
+                      if decisions[m.slug].decision == "investigate"]
+            if not picked:
+                continue
+            lead, others = members[0], members[1:]
+            tiers = [d.budget_tier or "standard" for d in picked]
+            tier = max(tiers, key=lambda t: _TIER_ORDER.index(t) if t in _TIER_ORDER else 1)
+            lead_d = decisions[lead.slug]
+            if lead_d.decision != "investigate":
+                lead_d.decision = "investigate"
+                lead_d.reason = ("strongest signal of an incident the orchestrator picked — "
+                                 + lead_d.reason)
+                lead_d.merge_into = None
+            lead_d.budget_tier = tier
+            reason = f"Grouped into one incident with “{_headline(lead)}” — investigated together."
+            for o in others:
+                decisions[o.slug] = Decision(o, "merge", reason, merge_into=lead)
+            # A merge the model pointed at a member that is now itself merged
+            # follows it to the lead, so no chain ends on a non-investigated row.
+            folded = {o.id for o in others}
+            for d in decisions.values():
+                if d.decision == "merge" and d.merge_into is not None and d.merge_into.id in folded:
+                    d.merge_into = lead
+            if persist:
+                note_related(lead, others, _headline)
 
     def _enforce_daily_cap(self, decisions: list[Decision], as_of: datetime) -> None:
         """Deterministic guard: never exceed the daily investigation cap.

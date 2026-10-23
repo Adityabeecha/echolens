@@ -160,8 +160,67 @@ def theme_rate(session: Session, theme: dict, product: str | None,
     }
 
 
+def negative_corpus(session: Session, products: list[str], days: int = 30,
+                    as_of=None) -> dict[str, list[set[str]]]:
+    """Each product's negative reviews in its own `days` window, tokenized once.
+
+    Same windows as theme_rate (ending at each product's reference_now, or at
+    `as_of`), but fetched in three statements for ALL products. The cross-product
+    theme screen called theme_rate per theme per product — two queries each and
+    every review re-tokenized for every theme.
+    """
+    from datetime import timedelta, timezone
+
+    from sqlalchemy import func
+
+    from echolens.detector.detect import AS_OF
+    from echolens.timeutil import aware_utc
+
+    names = [p for p in products if p]
+    if not names:
+        return {}
+    if as_of is not None:
+        ends = {p: as_of for p in names}
+    else:
+        latest = dict(session.execute(select(Review.product, func.max(Review.created_at))
+                                      .where(Review.product.in_(names))
+                                      .group_by(Review.product)).all())
+        fallback = None
+        if any(latest.get(p) is None for p in names):
+            fallback = session.scalar(select(func.max(Review.created_at)))
+        ends = {}
+        for p in names:
+            end = latest.get(p) or fallback
+            ends[p] = AS_OF if end is None else (end if end.tzinfo else end.replace(tzinfo=timezone.utc))
+    starts = {p: ends[p] - timedelta(days=days) for p in names}
+    out: dict[str, list[set[str]]] = {p: [] for p in names}
+    rows = session.execute(select(Review.product, Review.text, Review.created_at).where(
+        Review.rating <= 2, Review.product.in_(names),
+        Review.created_at >= min(starts.values()), Review.created_at <= max(ends.values()))).all()
+    for product, text, created in rows:
+        created = aware_utc(created)
+        if created is not None and starts[product] <= created <= ends[product]:
+            out[product].append({_norm(t) for t in tokenize(text)})
+    return out
+
+
 def compare_theme(session: Session, theme: dict, products: list[str],
-                  days: int = 30, as_of=None) -> list[dict]:
-    """The same theme's complaint rate across products, loudest first."""
-    rows = [theme_rate(session, theme, p, days, as_of) for p in products]
+                  days: int = 30, as_of=None,
+                  corpus: dict[str, list[set[str]]] | None = None) -> list[dict]:
+    """The same theme's complaint rate across products, loudest first.
+
+    Pass `corpus` (from negative_corpus) when comparing many themes so the
+    reviews are read and tokenized once, not once per theme per product."""
+    if corpus is None:
+        rows = [theme_rate(session, theme, p, days, as_of) for p in products]
+        return sorted(rows, key=lambda r: -r["rate_pct"])
+    vocab = {_norm(t) for t in theme.get("terms", [])}
+    rows = []
+    for p in products:
+        docs = corpus.get(p, [])
+        mentions = sum(1 for toks in docs if vocab & toks) if vocab else 0
+        rows.append({"theme_id": theme.get("id"), "product": p, "negatives": len(docs),
+                     "mentions": mentions,
+                     "rate_pct": round(100 * mentions / len(docs), 1) if docs and vocab else 0.0,
+                     "days": days})
     return sorted(rows, key=lambda r: -r["rate_pct"])

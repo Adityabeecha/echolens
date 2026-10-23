@@ -3,7 +3,11 @@ import { useAsync } from "../hooks";
 import { C, R, S, T, mono } from "../theme";
 import { Centered, EmptyState, ErrorState, Label, ScreenHeader } from "../ui";
 
-export function Calibration({ onGoCases }: { onGoCases: () => void }) {
+export function Calibration({ onGoCases, embedded }: {
+  onGoCases: () => void;
+  /** Rendered as a section of Settings, which owns the header. */
+  embedded?: boolean;
+}) {
   const { data, loading, error, reload } = useAsync(() => api.calibration(), []);
   if (loading && !data) return <Centered>Loading calibration…</Centered>;
   if (error || !data) {
@@ -19,8 +23,8 @@ export function Calibration({ onGoCases }: { onGoCases: () => void }) {
   if (data.n_reviewed === 0) {
     return (
       <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-        <ScreenHeader title="Calibration" product={data.product}
-                      subtitle="Stated confidence vs your verdicts" />
+        {!embedded && <ScreenHeader title="Calibration" product={data.product}
+                      subtitle="Stated confidence vs your verdicts" />}
         <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>
           <EmptyState
             title={`No reviewed findings for ${data.product || "this product"} yet`}
@@ -35,12 +39,14 @@ export function Calibration({ onGoCases }: { onGoCases: () => void }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <ScreenHeader
-        title="Calibration"
-        product={data.product}
-        subtitle="Stated confidence vs your verdicts"
-        right={<span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>{data.n_reviewed} OF 20 REVIEWED FINDINGS</span>}
-      />
+      {!embedded && (
+        <ScreenHeader
+          title="Calibration"
+          product={data.product}
+          subtitle="Stated confidence vs your verdicts"
+          right={<span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>{data.n_reviewed} OF 20 REVIEWED FINDINGS</span>}
+        />
+      )}
       <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>
         {data.headline && (
           <div style={{ fontSize: T.lg, fontWeight: 600, letterSpacing: "-.01em", color: C.text, maxWidth: 720, marginBottom: S[1] }}>

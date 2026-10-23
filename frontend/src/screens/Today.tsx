@@ -1,15 +1,19 @@
 import { ReactNode, useState } from "react";
-import { CaseRow, PortfolioProduct, api, getActiveProduct, isAdmin, isGuest } from "../api";
+import {
+  CaseRow, ConfirmedFix, Freshness, PortfolioProduct, RatingBreakdown, ReleaseMarker, api,
+  canReview, getActiveProduct, isAdmin, isGuest
+} from "../api";
+import { formatRoute } from "../nav";
 import { CaseCard } from "../components/CaseCard";
 import { withToast } from "../components/Toast";
-import { plural } from "../format";
+import { ago, plural } from "../format";
 import { useAsync } from "../hooks";
 import { statusMeta } from "../status";
 import { C, MEASURE, R, S, T, mono } from "../theme";
 import { Icon } from "../components/Icon";
 import {
   BeforeAfterChart, Button, EmptyState, ErrorState, Label, ScreenBody, ScreenHeader,
-  Skeleton, Spark
+  RatingTrend, Skeleton
 } from "../ui";
 
 interface Props {
@@ -48,7 +52,13 @@ export function Today({
   const sources = useAsync(() => api.sources(), [reloadKey]);
   const brief = useAsync(() => api.brief(), [reloadKey]);
   const fixwatch = useAsync(() => api.fixwatch(), [reloadKey]);
+  // Releases, the rating-drop breakdown and freshness. Optional context: if it
+  // fails, the score strip still renders, just without the extras.
+  const overview = useAsync(() => api.overview(), [reloadKey]);
   const [cancelling, setCancelling] = useState<number | null>(null);
+  const [collecting, setCollecting] = useState(false);
+  // Dismissed this session; the server remembers it for next time.
+  const [dismissedFixes, setDismissedFixes] = useState<number[]>([]);
 
   const rows = cases.data?.cases ?? [];
   const product = productName ?? cases.data?.product ?? null;
@@ -74,9 +84,14 @@ export function Today({
   // Only terminal-confirmed watches carry a chart, and only those are shown —
   // a watch still in its observation window has nothing to report yet.
   const VERIFIED_LIMIT = 3;
+  // Recently confirmed fixes get their own card (below), so they are left out
+  // of the longer-running list rather than shown twice.
+  const confirmedFixes = (overview.data?.confirmed_fixes ?? [])
+    .filter((f) => !dismissedFixes.includes(f.watch_id));
+  const celebrated = new Set(confirmedFixes.map((f) => f.watch_id));
   const verifiedCases = new Set<number>();
   const verifiedFixes = (fixwatch.data?.watches ?? [])
-    .filter((w) => w.status === "confirmed" && w.chart)
+    .filter((w) => w.status === "confirmed" && w.chart && !celebrated.has(w.id))
     .filter((w) => {
       if (verifiedCases.has(w.investigation_id)) return false;
       verifiedCases.add(w.investigation_id);
@@ -100,6 +115,10 @@ export function Today({
   const allOpenProblems = rows
     .filter((r) => ["resolved", "needs_review", "needs_human", "regressed"].includes(r.status))
     .filter((r) => r.id == null || !surfaced.has(r.id))
+    // A product decision closes the question for this list: won't-fix is out
+    // for good, parked is out until its revisit date (the server computes
+    // `hidden`, so the date logic lives in one place).
+    .filter((r) => !r.decision?.hidden)
     .sort((a, b) =>
       (b.severity_score ?? 0) - (a.severity_score ?? 0) ||
       (b.impact?.affected_pct ?? 0) - (a.impact?.affected_pct ?? 0));
@@ -118,6 +137,19 @@ export function Today({
     bumpReload();
   };
 
+  const collectNow = async () => {
+    setCollecting(true);
+    await withToast(() => api.collectorsRun(), {
+      success: (r) => {
+        const got = r.results.reduce((n, x) => n + x.inserted, 0);
+        return `Collected ${got} new ${plural(got, "item")}.`;
+      },
+      failure: "Couldn't collect"
+    });
+    setCollecting(false);
+    bumpReload();
+  };
+
   const loading = cases.loading && !cases.data;
 
   return (
@@ -128,6 +160,10 @@ export function Today({
         subtitle="What needs you right now"
         right={
           <span className="el-today-header-actions" style={{ display: "inline-flex", alignItems: "center", gap: S[4] }}>
+            {overview.data && (
+              <SyncedNote f={overview.data.freshness} busy={collecting}
+                          onCollect={canReview() ? collectNow : undefined} />
+            )}
             <span className="el-live-summary" style={{ display: "inline-flex", alignItems: "center", gap: S[2],
                            fontSize: T.sm, color: C.muted }}>
               {running.length > 0 && (
@@ -162,7 +198,7 @@ export function Today({
                   {loading
                     ? "Reading today's signals…"
                     : needsYou.length + staleSources.length === 0 && untriaged > 0
-                    ? `${untriaged} ${plural(untriaged, "signal")} waiting for triage`
+                    ? `${untriaged} ${plural(untriaged, "incident")} waiting for triage`
                     : needsYou.length + staleSources.length === 0
                     ? "Everything important is moving"
                     : `${needsYou.length + staleSources.length} ${plural(needsYou.length + staleSources.length, "decision")} waiting`}
@@ -186,6 +222,8 @@ export function Today({
             <ScoreStrip
               me={me}
               weekly={snapshot.data?.weekly ?? []}
+              releases={overview.data?.releases ?? []}
+              breakdown={overview.data?.rating_breakdown ?? null}
               onOpenCase={onOpenCase}
               loading={portfolio.loading && !portfolio.data}
             />
@@ -203,7 +241,7 @@ export function Today({
               ) : needsYou.length === 0 && staleSources.length === 0 ? (
                 untriaged > 0 ? (
                   <ActionRow
-                    title={`${untriaged} ${plural(untriaged, "signal")} detected, not yet investigated`}
+                    title={`${untriaged} ${plural(untriaged, "incident")} detected, not yet investigated`}
                     detail="Spikes and rising complaints EchoLens noticed. Choose which become cases."
                     action="Review signals"
                     onAction={() => onGoCases("all")}
@@ -312,6 +350,21 @@ export function Today({
               )}
             </Section>
 
+            {/* ── fixes confirmed in the last two weeks ─────────────── */}
+            {/* Rendered only when one exists; a dismissed card stays gone. */}
+            {confirmedFixes.length > 0 && (
+              <Section title="Fix confirmed" count={confirmedFixes.length} color={C.good}>
+                <div style={{ display: "flex", flexDirection: "column", gap: S[3],
+                              maxWidth: MEASURE }}>
+                  {confirmedFixes.map((f) => (
+                    <FixConfirmedCard key={`confirmed-${f.watch_id}`} fix={f}
+                      onOpenCase={onOpenCase}
+                      onDismissed={() => setDismissedFixes((d) => [...d, f.watch_id])} />
+                  ))}
+                </div>
+              </Section>
+            )}
+
             {/* ── d. what actually worked ───────────────────────────── */}
             {/* Rendered only when there is something proven. An empty state
                 here would be a permanent "nothing worked yet" on the home
@@ -416,18 +469,22 @@ function AccessNote({ onSignIn }: { onSignIn?: () => void }) {
  * being left to imply that the score itself has a history we do not keep.
  */
 function ScoreStrip({
-  me, weekly, onOpenCase, loading
+  me, weekly, releases, breakdown, onOpenCase, loading
 }: {
   me: PortfolioProduct | null;
   weekly: { week_start: string; count: number; avg_rating: number | null }[];
+  releases: ReleaseMarker[];
+  breakdown: RatingBreakdown | null;
   onOpenCase: (id: number, status?: string) => void;
   loading: boolean;
 }) {
+  // Health labels: they read the right way round for a number where higher is
+  // better. The band key itself still comes from the attention score.
   const BAND: Record<string, { color: string; label: string }> = {
     on_fire: { color: C.bad, label: "Needs you today" },
-    attention: { color: C.accent, label: "Worth a look" },
-    watch: { color: C.info, label: "Trending, not urgent" },
-    healthy: { color: C.good, label: "Nothing demanding attention" }
+    attention: { color: C.accent, label: "Needs attention" },
+    watch: { color: C.info, label: "Watch" },
+    healthy: { color: C.good, label: "Healthy" }
   };
 
   if (loading) {
@@ -461,35 +518,39 @@ function ScoreStrip({
                     background: band.color }} />
 
       <div style={{ flex: "none" }}>
-        <span title="0–100. Higher means more needs your attention: open problems, regressions, waiting signals and worsening sentiment add to it.">
-          <Label>EchoLens score · higher = needs attention</Label>
+        <span title="0–100. Higher is healthier: 100 minus the attention score, which open problems, regressions, waiting signals and worsening sentiment add to.">
+          <Label>Health · higher is better</Label>
         </span>
         <div style={{ display: "flex", alignItems: "baseline", gap: S[3], marginTop: S[2] }}>
-          <span className="el-num" style={{ fontSize: T.xl, fontWeight: 700,
-                         color: band.color, lineHeight: 1 }}>
-            {Math.round(me.score)}
+          <span className="el-num"
+            title={`Health ${Math.round(me.health)} of 100 — 100 minus the attention score`}
+            style={{ fontSize: T.xl, fontWeight: 700, color: band.color, lineHeight: 1 }}>
+            {Math.round(me.health)}
           </span>
-          {me.has_data && delta !== 0 && (
+          {me.has_data && delta != null && delta !== 0 && (
             <span
               title="Share of reviews that are negative, last 7 days vs the prior month"
               style={{ display: "inline-flex", alignItems: "center", gap: 2,
                        fontFamily: mono, fontSize: T.sm,
                        color: delta > 0 ? C.bad : C.good, whiteSpace: "nowrap" }}
             >
-              <Icon name={delta > 0 ? "arrowUp" : "arrowDown"} size={12} />
+              negative reviews <Icon name={delta > 0 ? "arrowUp" : "arrowDown"} size={12} />
               {Math.round(Math.abs(delta))} pts
             </span>
           )}
         </div>
-        <div style={{ fontSize: T.sm, color: C.muted, marginTop: S[1] }}>{band.label}</div>
+        <div style={{ fontSize: T.sm, color: C.muted, marginTop: S[1] }}>
+          {me.health_label ?? band.label}
+        </div>
       </div>
 
       {ratings.length > 1 && (
         <div style={{ flex: "none" }}>
-          <Spark points={ratings} color={C.accent} width={110} height={34}
-                 title="Average star rating by week" />
+          <RatingTrend weekly={weekly} releases={releases} color={C.accent}
+                       width={140} height={34} title="Average star rating by week" />
           <Label style={{ marginTop: S[1] }}>
-            Avg rating · {ratings.length} weeks
+            Avg rating · {weekly.length} weeks
+            {releases.length > 0 ? ` · ${releases.length} ${plural(releases.length, "release")}` : ""}
           </Label>
         </div>
       )}
@@ -515,7 +576,97 @@ function ScoreStrip({
           </Button>
         )}
       </div>
+
+      {breakdown?.dropped && <RatingDrop b={breakdown} onOpenCase={onOpenCase} />}
     </section>
+  );
+}
+
+/**
+ * Where a rating drop came from, as a compact horizontal bar per theme.
+ *
+ * Labelled as an estimate in the heading, not a footnote: the split is an
+ * attribution, and the method is one hover away. Bars are scaled to the
+ * largest part, so a positive remainder (themes that improved) still reads.
+ */
+function RatingDrop({ b, onOpenCase }: {
+  b: RatingBreakdown;
+  onOpenCase: (id: number, status?: string) => void;
+}) {
+  const star = (x: number) => `${x > 0 ? "+" : x < 0 ? "−" : ""}${Math.abs(x).toFixed(2)}★`;
+  const max = Math.max(0.01, ...b.parts.map((p) => Math.abs(p.contribution)));
+  return (
+    <div style={{ flexBasis: "100%", minWidth: 0, paddingTop: S[4],
+                  borderTop: `1px solid ${C.border2}` }}
+         role="group" aria-label="Rating drop breakdown">
+      <div style={{ display: "flex", alignItems: "baseline", gap: S[2], flexWrap: "wrap",
+                    marginBottom: S[2] }}>
+        <Label style={{ color: C.muted }}>
+          Rating {star(b.delta ?? 0)} vs prior {Math.round(b.window.prior_days / 7)} weeks
+        </Label>
+        <span title={b.method}
+          style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, cursor: "help" }}>
+          estimate · {b.rating_prior?.toFixed(2)}★ → {b.rating_now?.toFixed(2)}★
+        </span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: S[1], maxWidth: 560 }}>
+        {b.parts.map((p) => {
+          const neg = p.contribution < 0;
+          const w = (Math.abs(p.contribution) / max) * 100;
+          return (
+            <div key={p.theme_id}
+              style={{ display: "grid", gridTemplateColumns: "minmax(110px,200px) 1fr 64px",
+                       gap: S[3], alignItems: "center", fontSize: T.sm }}>
+              <span className="el-truncate"
+                style={{ color: p.theme_id === "other" ? C.dim : C.text3 }}>
+                {p.label}
+                {p.case_id != null && (
+                  <button className="el-btn el-btn--sm"
+                    onClick={() => onOpenCase(p.case_id!, "resolved")}
+                    style={{ color: C.accent, fontFamily: mono, fontSize: T.xs, padding: 0,
+                             marginLeft: S[2], background: "none", display: "inline" }}>
+                    case #{p.case_id}
+                  </button>
+                )}
+              </span>
+              <span aria-hidden style={{ display: "block", height: 6, borderRadius: R.pill,
+                                         background: C.track, overflow: "hidden" }}>
+                <span style={{ display: "block", height: "100%", width: `${w}%`,
+                               borderRadius: R.pill, background: neg ? C.bad : C.good }} />
+              </span>
+              <span style={{ fontFamily: mono, fontSize: T.xs, textAlign: "right",
+                             color: neg ? C.bad : C.good, fontVariantNumeric: "tabular-nums" }}>
+                {star(p.contribution)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Last synced 12 min ago", with Collect now once the data is older than the
+ * stale threshold. A calm Today built on data that stopped arriving is the
+ * most misleading screen in the app, so the age always sits in the header.
+ */
+function SyncedNote({ f, busy, onCollect }: {
+  f: Freshness; busy: boolean; onCollect?: () => void;
+}) {
+  if (f.sources === 0) return null;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: S[2],
+                   fontSize: T.sm, color: f.stale ? C.accent : C.muted }}>
+      <span title={f.last_synced_at ?? undefined}>
+        {f.last_synced_at ? `Last synced ${ago(f.age_minutes)}` : "Not synced yet"}
+      </span>
+      {f.stale && onCollect && (
+        <Button variant="ghost" size="sm" onClick={onCollect} disabled={busy}>
+          {busy ? "Collecting…" : "Collect now"}
+        </Button>
+      )}
+    </span>
   );
 }
 
@@ -634,6 +785,58 @@ function Section({ title, count, color, action, emphasis, children }: {
       </div>
       {children}
     </section>
+  );
+}
+
+/**
+ * A fix that verification just confirmed. Calm, not confetti: what dropped,
+ * the before/after when there is one, and the obvious next step — telling the
+ * people who complained.
+ */
+function FixConfirmedCard({ fix, onOpenCase, onDismissed }: {
+  fix: ConfirmedFix;
+  onOpenCase: (id: number, status?: string) => void;
+  onDismissed: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  // The reply drafts live on the case's Engineering tab.
+  const reply = () => {
+    window.location.hash = formatRoute({ screen: "case", id: fix.investigation_id,
+                                         tab: "engineering", productId: getActiveProduct() });
+  };
+  const dismiss = async () => {
+    setBusy(true);
+    const r = await withToast(() => api.dismissFix(fix.watch_id), {
+      success: "Dismissed. It won't come back on your Today.",
+      failure: "Couldn't dismiss that card",
+    });
+    setBusy(false);
+    if (r) onDismissed();
+  };
+  return (
+    <div className="el-card" style={{ padding: `${S[3]} ${S[4]}`, borderColor: C.goodLine }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: S[2], flexWrap: "wrap" }}>
+        <Icon name="check" size={14} style={{ color: C.good, flex: "none" }} />
+        <button onClick={() => onOpenCase(fix.investigation_id, "resolved")} className="el-btn"
+          style={{ fontSize: T.md, fontWeight: 600, color: C.text, textAlign: "left" }}>
+          {fix.headline}
+        </button>
+        <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint }}>
+          case #{fix.investigation_id}
+        </span>
+      </div>
+      {fix.chart && <BeforeAfterChart chart={fix.chart} compact />}
+      <div style={{ display: "flex", gap: S[2], flexWrap: "wrap", marginTop: S[3] }}>
+        {fix.reply_count > 0 && (
+          <Button size="sm" variant="primary" icon="reply" onClick={reply}>
+            Reply to affected reviewers ({fix.reply_count})
+          </Button>
+        )}
+        {canReview() && (
+          <Button size="sm" variant="ghost" loading={busy} onClick={dismiss}>Dismiss</Button>
+        )}
+      </div>
+    </div>
   );
 }
 

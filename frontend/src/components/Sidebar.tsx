@@ -12,6 +12,8 @@ interface Props {
   screen: Screen;
   go: (s: Screen) => void;
   onLogout?: () => void;
+  onAsk?: () => void;
+  askShortcut?: string;
   products?: ProductRow[];
   activeId?: number | null;
   onSwitchProduct?: (id: number) => void;
@@ -175,13 +177,15 @@ const PRIMARY: NavItem[] = [
   { key: "ask", icon: "ask", label: "Ask", hint: "Ask about your feedback" },
 ];
 
+// Four, not six. Patterns and Product memory were two halves of one answer —
+// "what has EchoLens learned?" — so they are tabs of Learned patterns now, and
+// Calibration ("is it right as often as it claims?") is a section of Settings.
+// Old links to either are rewritten in nav.ts, so nothing 404s.
 const SYSTEM: NavItem[] = [
   { key: "sources", icon: "sources", label: "Sources", hint: "Where the feedback comes from" },
-  { key: "patterns", icon: "patterns", label: "Patterns", hint: "Fixes proven to work" },
-  { key: "memory", icon: "diamond", label: "Product memory", hint: "What EchoLens has learned about this product" },
-  { key: "calibration", icon: "calibration", label: "Calibration", hint: "How accurate EchoLens has been" },
+  { key: "memory", icon: "patterns", label: "Learned patterns", hint: "How this product breaks, and fixes proven to work" },
   { key: "costs", icon: "costs", label: "Costs", hint: "What each case cost to run" },
-  { key: "settings", icon: "settings", label: "Settings", hint: "Budgets, limits and this product" },
+  { key: "settings", icon: "settings", label: "Settings", hint: "Budgets, limits, calibration and trackers" },
 ];
 
 const SYSTEM_KEYS = SYSTEM.map((n) => n.key);
@@ -191,7 +195,7 @@ const UNDER_CASES: Screen[] = ["cases", "case"];
 export function Sidebar({
   screen, go, onLogout, products = [], activeId = null,
   onSwitchProduct, onAddProduct, onDeleteProduct, theme, onThemeChange,
-  collapsed, onCollapsedChange
+  collapsed, onCollapsedChange, onAsk, askShortcut = "Ctrl K"
 }: Props) {
   const admin = isAdmin();
   // The System group opens itself when you are inside it, so you are never on a
@@ -330,7 +334,7 @@ export function Sidebar({
         <button
           onClick={() => setSystemOpen((o) => !o)}
           className="el-btn el-btn--sm el-nav-system-toggle"
-          title="Sources, patterns, memory, calibration, costs and settings"
+          title="Sources, learned patterns, costs and settings"
           aria-expanded={showSystem}
           style={{ display: "flex", alignItems: "center", gap: S[2],
                    padding: `${S[1]} ${S[2]}`, width: "100%", justifyContent: "flex-start",
@@ -352,6 +356,15 @@ export function Sidebar({
         </div>
       </div>
 
+      {onAsk && (
+        <button className="el-btn" onClick={onAsk} title={`Ask (${askShortcut})`}
+          aria-label={`Ask (${askShortcut})`}
+          style={{ margin: `${S[1]} ${S[3]}`, padding: `${S[2]} ${S[2]}`,
+                   borderRadius: R.control, color: C.muted, fontSize: T.sm, gap: S[3] }}>
+          <Icon name="ask" size={15} />
+          <span className="el-nav-label">Ask <kbd style={{ marginLeft: S[2], fontSize: T.micro }}>{askShortcut}</kbd></span>
+        </button>
+      )}
       <ThemeToggle mode={theme} onChange={onThemeChange} />
 
       {onLogout && (
@@ -373,6 +386,7 @@ export function Sidebar({
           <button
             key={`mobile-${item.key}`}
             type="button"
+            data-tour={item.key}
             onClick={() => go(item.key)}
             className={isActive(item.key) ? "is-active" : ""}
             aria-current={isActive(item.key) ? "page" : undefined}
@@ -401,6 +415,7 @@ function NavRow({ item, active, onClick, small }: {
   return (
     <button
       onClick={onClick}
+      data-tour={item.key}
       className={`el-btn el-nav-item${small ? " el-nav-item--small" : ""}${active ? " el-nav-item--active" : ""}`}
       title={item.hint}
       aria-current={active ? "page" : undefined}

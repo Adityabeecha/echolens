@@ -24,7 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from echolens.db.models import (
-    AnomalyEvent, Finding, FixWatch, Investigation, Product,
+    AnomalyEvent, Finding, FindingDecision, FixWatch, Investigation, Product,
     QueuedInvestigation, Review, ReviewFeedback, TriageDecision)
 from echolens.impact import severity
 from echolens.timeutil import aware_utc
@@ -181,6 +181,11 @@ def derive_status(inv: Investigation, finding: Finding | None,
         return NEEDS_HUMAN, "The evidence conflicts — this needs a human decision."
     if finding is None:
         return NEEDS_HUMAN, "This case ended without a finding."
+    # v15: a reviewer struck evidence and the two-source rule no longer holds.
+    # Said plainly, because "waiting for your review" would hide WHY it is back.
+    if (finding.json or {}).get("needs_review"):
+        return NEEDS_REVIEW, ("Evidence was rejected and the finding no longer has two "
+                              "independent sources — it needs review again.")
     if finding.status == "approved":
         return RESOLVED, "You approved the finding; no verified fix yet."
     return NEEDS_REVIEW, "A finding is drafted and waiting for your review."
@@ -257,6 +262,11 @@ def case_rows(session: Session, product_id: int | None,
                     AnomalyEvent.id.in_(a_ids))).all():
                 anomalies[a.id] = a
 
+    # v15: the product decision in force on each case's finding, so Today can
+    # drop parked / won't-fix work from "open problems" without a second fetch.
+    from echolens.review import decision_dict, latest_decisions
+    decisions = latest_decisions(session, [f.id for f in latest_finding.values()])
+
     rows: list[dict] = []
     for inv in investigations:
         finding = latest_finding.get(inv.id)
@@ -290,6 +300,7 @@ def case_rows(session: Session, product_id: int | None,
             "issue_url": watch.issue_url if watch else None,
             "issue_number": watch.issue_number if watch else None,
             "reopens_investigation_id": inv.reopens_investigation_id,
+            "decision": decision_dict(decisions.get(finding.id), now) if finding else None,
             "spark": spark.series(_terms(finding, anomaly)),
         })
 
@@ -325,6 +336,7 @@ def case_rows(session: Session, product_id: int | None,
             "finding_id": None,
             "issue_url": None, "issue_number": None,
             "reopens_investigation_id": None,
+            "decision": None,
             "position": position,
             "spark": spark.series(_terms(None, anomaly)),
         })
@@ -379,6 +391,7 @@ def signal_rows(session: Session, product_id: int | None,
         td = decisions.get(a.id)
         dismissed = td is not None and td.decision in ("ignore", "merge")
         out.append({
+            "id": a.id,
             "slug": a.slug,
             "title": _headline(a),
             "type": a.type,
@@ -388,6 +401,8 @@ def signal_rows(session: Session, product_id: int | None,
             "age_days": _age_days(a.created_at, now),
             "dismissed": dismissed,
             "dismissed_reason": (td.reason if dismissed else None),
+            "window_start": aware_utc(a.window_start).isoformat() if a.window_start else None,
+            "window_end": aware_utc(a.window_end).isoformat() if a.window_end else None,
         })
     return out
 
@@ -410,6 +425,17 @@ def case_view(session: Session, product_id: int | None,
     }
 
 
+def _decision_text(d: FindingDecision) -> str:
+    if d.decision == "fix_now":
+        return "Product decision: fix now."
+    if d.decision == "park":
+        until = aware_utc(d.revisit_by).date().isoformat() if d.revisit_by else None
+        return f"Product decision: parked{f' until {until}' if until else ''}."
+    if d.decision == "wont_fix":
+        return "Product decision: won't fix."
+    return "Product decision cleared."
+
+
 def case_history(session: Session, inv: Investigation) -> list[dict]:
     """The audit trail of a case: opened, challenged, re-opened, fixed, regressed.
 
@@ -418,10 +444,11 @@ def case_history(session: Session, inv: Investigation) -> list[dict]:
     """
     events: list[dict] = []
 
-    def add(at, kind: str, text: str, case_id: int | None = None, note: str = ""):
+    def add(at, kind: str, text: str, case_id: int | None = None, note: str = "",
+            by: str | None = None):
         events.append({
             "at": aware_utc(at).isoformat() if at else None,
-            "kind": kind, "text": text, "case_id": case_id, "note": note,
+            "kind": kind, "text": text, "case_id": case_id, "note": note, "by": by,
         })
 
     add(inv.created_at, "opened",
@@ -439,11 +466,37 @@ def case_history(session: Session, inv: Investigation) -> list[dict]:
                 ReviewFeedback.finding_id == f.id).order_by(ReviewFeedback.id)).all():
             if fb.action == "approve":
                 add(fb.created_at, "approved", "You approved the finding.", note=fb.note or "")
+            elif fb.action == "reject_evidence":
+                eid, _, why = (fb.note or "").partition(":")
+                add(fb.created_at, "evidence_rejected",
+                    f"You rejected evidence {eid.strip()} as not supporting the finding.",
+                    note=why.strip())
+            elif fb.action == "edit_rec":
+                add(fb.created_at, "rec_edited",
+                    f"You corrected recommendation {fb.note or ''}".strip() + ".")
             else:
                 reason = (fb.reason or "").replace("_", " ")
                 add(fb.created_at, "challenged",
                     f"You challenged the finding{f' — {reason}' if reason else ''}.",
                     note=fb.note or "")
+        if (f.json or {}).get("needs_review"):
+            nr = f.json["needs_review"]
+            at = nr.get("at")
+            try:  # stored as ISO text inside the finding's JSON
+                at = datetime.fromisoformat(at) if isinstance(at, str) else None
+            except ValueError:
+                at = None
+            add(at, "needs_review", nr.get("reason", "The finding needs review again."))
+        decisions = session.scalars(select(FindingDecision).where(
+            FindingDecision.finding_id == f.id).order_by(FindingDecision.id)).all()
+        # Who decided: the user is stored with every decision, so say so.
+        from echolens.db.models import User
+        ids = {d.user_id for d in decisions if d.user_id}
+        emails = ({u.id: u.email for u in session.scalars(
+            select(User).where(User.id.in_(ids))).all()} if ids else {})
+        for d in decisions:
+            add(d.created_at, "decision", _decision_text(d), note=d.reason or "",
+                by=emails.get(d.user_id))
 
     for w in session.scalars(select(FixWatch).where(
             FixWatch.investigation_id == inv.id).order_by(FixWatch.id)).all():
@@ -456,6 +509,16 @@ def case_history(session: Session, inv: Investigation) -> list[dict]:
             add(w.fix_date, "regressed", "Regressed — the complaints came back.")
         elif w.status == "persists_reopened":
             add(w.fix_date, "regressed", "The fix didn't hold — complaints continued.")
+
+    from echolens.investigator.recover import MAX_HUMAN_EXTENSIONS
+    for ext in inv.extensions_json or []:
+        try:  # stored as ISO text inside the JSON list
+            at = datetime.fromisoformat(ext["at"]) if isinstance(ext.get("at"), str) else None
+        except ValueError:
+            at = None
+        add(at, "extended",
+            f"Given +{ext.get('steps', 5)} steps (extension {ext.get('n', '?')} "
+            f"of {MAX_HUMAN_EXTENSIONS}).", by=ext.get("by"))
 
     # A re-opened child means this case's story continues elsewhere.
     child = session.scalars(select(Investigation).where(

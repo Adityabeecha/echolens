@@ -41,6 +41,83 @@ export function Label({ children, style, as }: {
   );
 }
 
+/**
+ * A weekly rating line with vertical release markers.
+ *
+ * Unlike Spark, x is TIME, not index: a week with no reviews is a gap in the
+ * line rather than being silently squeezed out, which is what keeps a release
+ * marker over the week it actually shipped in. Each marker carries its own
+ * tooltip ("v3.2.0 shipped Jul 10") on a hit area wider than the 1px line, and
+ * is focusable so the label is reachable without a mouse.
+ */
+export function RatingTrend({
+  weekly, releases = [], color, width = 160, height = 40, title
+}: {
+  weekly: { week_start: string; avg_rating: number | null }[];
+  releases?: { released_at: string; label: string }[];
+  color: string;
+  width?: number;
+  height?: number;
+  title?: string;
+}) {
+  const pts = weekly.filter((w) => w.avg_rating != null);
+  if (weekly.length < 2 || pts.length < 2) return null;
+  const DAY = 86_400_000;
+  const t0 = Date.parse(weekly[0].week_start);
+  const t1 = Date.parse(weekly[weekly.length - 1].week_start) + 7 * DAY;
+  const span = Math.max(1, t1 - t0);
+  const pad = 3;
+  const x = (t: number) => pad + ((t - t0) / span) * (width - 2 * pad);
+  const vals = pts.map((w) => w.avg_rating as number);
+  const max = Math.max(...vals);
+  const min = Math.min(...vals);
+  const vSpan = max - min || 1;
+  const y = (v: number) => height - pad - ((v - min) / vSpan) * (height - 2 * pad);
+  // A point sits mid-week; consecutive non-null weeks join, a null week breaks.
+  const segments: string[][] = [];
+  let cur: string[] = [];
+  for (const w of weekly) {
+    if (w.avg_rating == null) {
+      if (cur.length) segments.push(cur);
+      cur = [];
+      continue;
+    }
+    cur.push(`${x(Date.parse(w.week_start) + 3.5 * DAY)},${y(w.avg_rating)}`);
+  }
+  if (cur.length) segments.push(cur);
+  const last = weekly.filter((w) => w.avg_rating != null).slice(-1)[0];
+  const markers = releases
+    .map((r) => ({ ...r, t: Date.parse(r.released_at) }))
+    .filter((r) => Number.isFinite(r.t) && r.t >= t0 && r.t <= t1);
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}
+      style={{ flex: "none", overflow: "visible" }}
+      role={title ? "img" : undefined}
+      aria-label={title ? [title, ...markers.map((m) => m.label)].join(". ") : undefined}
+    >
+      {title && <title>{title}</title>}
+      {markers.map((m) => (
+        <g key={`${m.label}-${m.t}`} tabIndex={0} aria-label={m.label} style={{ cursor: "default" }}>
+          <title>{m.label}</title>
+          <rect x={x(m.t) - 4} y={0} width={8} height={height} fill="transparent" />
+          <line x1={x(m.t)} x2={x(m.t)} y1={0} y2={height}
+            stroke={C.faint} strokeWidth={1} strokeDasharray="2 2" />
+        </g>
+      ))}
+      {segments.map((seg, i) => seg.length > 1 ? (
+        <polyline key={i} points={seg.join(" ")} fill="none" stroke={color}
+          strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+      ) : (
+        <circle key={i} cx={seg[0].split(",")[0]} cy={seg[0].split(",")[1]} r={1.5} fill={color} />
+      ))}
+      {last && (
+        <circle cx={x(Date.parse(last.week_start) + 3.5 * DAY)} cy={y(last.avg_rating as number)}
+          r={2} fill={color} />
+      )}
+    </svg>
+  );
+}
+
 // Horizontal progress bar (budget meters, confidence bars).
 export function Bar({ pct, color, height = 5 }: { pct: number; color: string; height?: number }) {
   const v = Math.max(0, Math.min(100, pct));
@@ -137,6 +214,8 @@ export interface FixChartData {
   fix_date?: string;
   window_days?: number;
   metric?: string;
+  fixed_in_version?: string | null;
+  window_start?: "first_review_on_fixed_version" | "issue_closed";
 }
 
 // Did the fix work? Complaint volume either side of the ship date.
@@ -187,7 +266,10 @@ export function BeforeAfterChart({
     <figure style={{ margin: `${S[3]} 0 0` }} role="img" aria-label={summary}>
       {!compact && (
         <figcaption style={{ fontSize: T.sm, color: C.muted, marginBottom: S[2] }}>
-          Complaint volume for “{chart.terms.join(", ")}” around the fix.
+          Complaint volume for “{chart.terms.join(", ")}” around the fix
+          {chart.window_start === "first_review_on_fixed_version" && chart.fixed_in_version
+            ? ` — the after window starts at the first review on v${chart.fixed_in_version}.`
+            : "."}
         </figcaption>
       )}
       <div style={{ display: "flex", gap: S[4], alignItems: "stretch" }}>

@@ -1,8 +1,11 @@
-import { CaseRow } from "../api";
-import { age, impactLine } from "../format";
+import { CaseRow, TrustSummary, getActiveProduct } from "../api";
+import { age, impactLine, plural, sourceLabel } from "../format";
+import { formatRoute } from "../nav";
 import { SEVERITY, primaryActionFor, statusMeta } from "../status";
 import { C, R, S, T, mono } from "../theme";
 import { Button, Spark } from "../ui";
+import { DecisionChip } from "../screens/case/CaseActions";
+import { Icon } from "./Icon";
 
 /**
  * The one case card.
@@ -75,6 +78,7 @@ export function CaseCard({
               {row.id != null ? `Case #${row.id}` : "Queued"}
             </span>
             <StatusChip status={row.status} />
+            <DecisionChip decision={row.decision} />
             {sev && (
               <span style={{ fontFamily: mono, fontSize: T.micro,
                              letterSpacing: "var(--el-ls-wide)",
@@ -99,6 +103,9 @@ export function CaseCard({
             <span className="el-mono" style={{ fontSize: T.xs, color: C.faint }}>
               {age(row.age_days)}
             </span>
+            {row.trust && row.id != null && (
+              <TrustBadge trust={row.trust} onClick={() => openCaseEvidence(row.id!)} />
+            )}
           </div>
           {!compact && row.why && (
             <div style={{ fontSize: T.sm, color: C.dim, marginTop: S[2],
@@ -146,5 +153,50 @@ export function StatusChip({ status }: { status: string }) {
       )}
       {meta.label}
     </span>
+  );
+}
+
+/** Straight to a case's Evidence tab — what a trust badge is a summary of. */
+function openCaseEvidence(id: number) {
+  window.location.hash = formatRoute({ screen: "case", id, tab: "evidence", productId: getActiveProduct() });
+}
+
+/**
+ * How much to trust a finding, in one line: the confidence band, what the
+ * evidence is, and whether two independent sources back the cause. The label
+ * is the server's, and it says "verified" only when the finding is approved
+ * AND a fix is confirmed — the same rule the Inspector uses for "proven".
+ */
+export function TrustBadge({ trust, onClick }: { trust: TrustSummary; onClick?: () => void }) {
+  const tone = !trust.two_source_ok
+    ? { color: C.muted, bg: "transparent", line: C.border3, icon: "warning" }
+    : trust.verified
+      ? { color: C.good, bg: C.goodBg, line: C.goodLine, icon: "check" }
+      : { color: C.info, bg: C.infoBg, line: C.infoLine, icon: "info" };
+  const breakdown = trust.sources
+    .map((s) => `${sourceLabel(s.source)}: ${s.count} ${plural(s.count, "item")}`).join(" · ");
+  const title = (breakdown || "No evidence rows")
+    + (trust.two_source_ok ? "" : " — the cause is not yet backed by two independent sources")
+    + (onClick ? ". Click to open the evidence." : "");
+  const style = {
+    display: "inline-flex", alignItems: "center", gap: S[1], padding: `2px ${S[2]}`,
+    borderRadius: R.pill, background: tone.bg, border: `1px solid ${tone.line}`,
+    fontSize: T.xs, color: tone.color, whiteSpace: "nowrap" as const, maxWidth: "100%",
+    overflow: "hidden", textOverflow: "ellipsis", lineHeight: "var(--el-lh-normal)",
+  };
+  const body = (
+    <>
+      <Icon name={tone.icon} size={11} />
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{trust.label}</span>
+    </>
+  );
+  if (!onClick) return <span title={title} style={style}>{body}</span>;
+  return (
+    <button type="button" className="el-btn" title={title}
+      aria-label={`${trust.label}. Open the evidence`}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      style={{ ...style, cursor: "pointer", fontFamily: "inherit" }}>
+      {body}
+    </button>
   );
 }

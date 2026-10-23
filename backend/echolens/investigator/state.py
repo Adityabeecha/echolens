@@ -20,6 +20,21 @@ class Budget:
     prior_elapsed_s: float = 0.0
     extension_factor: float = 1.0  # v2.0: one-time extension multiplier on caps
     extended: bool = False
+    # v15: headroom a REVIEWER explicitly granted to a dead-end case ("continue
+    # with more budget"). Additive on top of the scaled tier caps, so the guard
+    # still enforces a hard ceiling — it is just a ceiling a human raised, with
+    # their name on it, rather than one the agent raised for itself.
+    extra_iterations: int = 0
+    extra_tool_calls: int = 0
+    extra_tokens: int = 0
+    extra_cost_usd: float = 0.0
+    extra_wall_s: float = 0.0
+    human_extensions: int = 0
+    auto_extensions: int = 0
+    # Automatic grants can raise steps while retaining the stricter Settings
+    # dollar/time ceilings. Zero means no additional ceiling on legacy grants.
+    cost_ceiling_usd: float = 0.0
+    wall_ceiling_s: float = 0.0
 
     def elapsed_s(self) -> float:
         import time
@@ -33,13 +48,34 @@ class Budget:
         key = (name or "standard").strip().lower()
         return cls(tier=BUDGET_TIERS.get(key, BUDGET_TIERS["standard"]))
 
+    # The effective hard caps. One definition, read by both the guard and the
+    # display, so the budget shown can never disagree with the budget enforced.
+    def cap_iterations(self) -> float:
+        return self.tier.max_iterations * self.extension_factor + self.extra_iterations
+
+    def cap_tool_calls(self) -> float:
+        return self.tier.max_tool_calls * self.extension_factor + self.extra_tool_calls
+
+    def cap_tokens(self) -> float:
+        return self.tier.max_tokens * self.extension_factor + self.extra_tokens
+
+    def cap_cost_usd(self) -> float:
+        cap = self.tier.max_cost_usd * self.extension_factor + self.extra_cost_usd
+        return min(cap, self.cost_ceiling_usd) if self.cost_ceiling_usd > 0 else cap
+
+    def cap_wall_s(self) -> float:
+        cap = self.tier.max_wall_clock_s * self.extension_factor + self.extra_wall_s
+        return min(cap, self.wall_ceiling_s) if self.wall_ceiling_s > 0 else cap
+
     def as_dict(self) -> dict:
-        f = self.extension_factor
+        tier = self.tier.name + (" +ext" if self.extended else "")
+        if self.human_extensions:
+            tier += f" +{self.human_extensions} granted"
         return {
-            "tier": self.tier.name + (" +ext" if self.extended else ""),
-            "iterations": f"{self.iterations}/{int(self.tier.max_iterations * f)}",
-            "tool_calls": f"{self.tool_calls}/{int(self.tier.max_tool_calls * f)}",
-            "tokens": f"{self.tokens}/{int(self.tier.max_tokens * f)}",
+            "tier": tier,
+            "iterations": f"{self.iterations}/{int(self.cap_iterations())}",
+            "tool_calls": f"{self.tool_calls}/{int(self.cap_tool_calls())}",
+            "tokens": f"{self.tokens}/{int(self.cap_tokens())}",
             "cost_usd": round(self.cost_usd, 4),
         }
 
@@ -60,4 +96,5 @@ class InvState(TypedDict, total=False):
     pending_delegate: dict | None  # {specialist, focus} — v2.0 delegation
     last_tool: dict | None      # {name, args, result} or {name, args, error}
     proposed: dict | None       # plan's declared conclusion, validated by check
+    budget_stop_reason: str  # automatic continuation hit a current Settings cap
     over_budget: bool           # set by the pre-flight check in _plan
