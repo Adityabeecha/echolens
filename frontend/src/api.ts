@@ -1377,6 +1377,10 @@ export const api = {
     post<{ inserted: number; error: string | null }>("/collectors/retry", {
       source, identifier, product_id: getActiveProduct()
     }),
+  collectorsReset: (source: string, identifier: string) =>
+    post<{ source: string; identifier: string; fetched: number; inserted: number;
+           skipped_duplicate: number; error: string | null; duration_seconds: number }>(
+      "/collectors/reset", { source, identifier, product_id: getActiveProduct() }),
   collectorsRun: () => post<{
     duration_seconds: number;
     results: { source: string; identifier: string; fetched: number; inserted: number;

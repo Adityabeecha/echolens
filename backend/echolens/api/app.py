@@ -277,7 +277,7 @@ def _investigation_dict(session, inv: Investigation) -> dict:
         "data_notes": inv.data_notes or [],
         # v13: the case's own audit trail, so History is a tab rather than a
         # thing that happened somewhere you can no longer see.
-        "history": case_history(session, inv),
+        "history": _extension_history(session, inv),
         "hypotheses": [{"id": h.hid, "statement": h.statement, "confidence": h.confidence,
                         "status": h.status, **h.json} for h in hyps],
         "evidence": [{"id": e.eid, "source": e.source, "ref": e.ref, "snippet": e.snippet,
@@ -297,6 +297,16 @@ def _investigation_dict(session, inv: Investigation) -> dict:
 def _decision_view(session, finding_id: int) -> dict | None:
     from echolens.review import decision_dict, latest_decision
     return decision_dict(latest_decision(session, finding_id))
+
+
+def _extension_history(session, inv):
+    events = case_history(session, inv)
+    reasons = {ext.get("at"): ext.get("reason", "") for ext in inv.extensions_json or []
+               if ext.get("by") == "auto"}
+    for event in events:
+        if event["kind"] == "extended" and event.get("by") == "auto":
+            event["note"] = reasons.get(event["at"], "")
+    return events
 
 
 def _extension_view(session, inv: Investigation) -> dict | None:
@@ -925,7 +935,7 @@ def delete_product(product_id: int, confirm: str = "",
         FixWatch, HypothesisRow, Investigation, Issue, KnowledgeEdge, LLMCall, Mention,
         Post, Product, QueuedInvestigation, Recommendation, Release, Review,
         ReviewFeedback, ReviewRequest, TraceStep, TriageDecision, User,
-        FindingDecision, ShareLink)
+        FindingDecision, ShareLink, SentAlert)
     with session_scope() as session:
         p = session.get(Product, product_id)
         if p is None:
@@ -971,7 +981,7 @@ def delete_product(product_id: int, confirm: str = "",
         _purge(ReviewRequest, ReviewRequest.investigation_id, inv_ids)
         _purge(QueuedInvestigation, QueuedInvestigation.investigation_id, inv_ids)
         for model in (FixWatch, Finding, Investigation, AnomalyEvent, CollectorState,
-                      QueuedInvestigation, KnowledgeEdge, Comment, Mention, ReviewRequest):
+                      QueuedInvestigation, KnowledgeEdge, Comment, Mention, ReviewRequest, SentAlert):
             for row in session.scalars(select(model).where(model.product_id == product_id)).all():
                 session.delete(row)
         # Older collector rows were created before product_id was populated.
@@ -1114,6 +1124,29 @@ def collectors_retry(body: RetryBody, user: dict = Depends(require_role("reviewe
             st.id, st.watermark))
         return {"source": res.source, "identifier": res.identifier,
                 "inserted": res.inserted, "error": res.error}
+
+
+@app.post("/collectors/reset")
+def collectors_reset(body: RetryBody, user: dict = Depends(require_role("admin"))) -> dict:
+    """Clear one source cursor and replay its bounded backfill; keep feedback."""
+    from echolens.collectors.registry import reset_source
+    with session_scope() as session:
+        product = _scope(session, body.product_id, user)
+        try:
+            result = reset_source(session, body.source, body.identifier,
+                                  product.id if product else None)
+        except LookupError as err:
+            raise HTTPException(404, str(err))
+        except RuntimeError as err:
+            raise HTTPException(409, str(err))
+        except ValueError as err:
+            raise HTTPException(400, str(err))
+        error = result.error or (f"{result.failed_items} items could not be ingested"
+                                 if result.failed_items else None)
+        return {"source": result.source, "identifier": result.identifier,
+                "fetched": result.fetched, "inserted": result.inserted,
+                "skipped_duplicate": result.skipped_duplicate, "error": error,
+                "duration_seconds": result.duration_s}
 
 
 @app.get("/collectors")
@@ -3070,31 +3103,14 @@ def alerts_digest(hours: int = Query(24, ge=1, le=8760), product_id: int | None 
     meant to see one of them.
     """
     from datetime import timedelta
-    from echolens.impact import severity
-    from echolens.notify import _send_slack, deep_link
+    from echolens.notify import notify_digest
     with session_scope() as session:
-        prod = _scope(session, product_id, user)
+        product = _scope(session, product_id, user)
         since = datetime.now(timezone.utc) - timedelta(hours=hours)
-        f_stmt = select(Finding).order_by(Finding.id.desc())
-        if prod is not None:
-            f_stmt = f_stmt.where(Finding.product_id == prod.id)
-        findings = [f for f in session.scalars(f_stmt).all()
-                    if f.created_at and aware_utc(f.created_at) >= since]
-        if not findings:
-            return {"sent": False, "reason": "no findings in window"}
-        lines = []
-        for f in findings[:20]:
-            fj = f.json or {}
-            sev = severity(float(fj.get("confidence", 0.0)), fj.get("impact", {}))
-            link = deep_link(f.investigation_id)
-            label = fj.get("summary") or "finding"
-            lines.append(f"• *{sev['band']}* — {label}" + (f" (<{link}|case #{f.investigation_id}>)" if link else ""))
-        payload = {"blocks": [
-            {"type": "header", "text": {"type": "plain_text", "text": f"EchoLens digest · {len(findings)} findings"}},
-            {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}},
-        ]}
-        ok = _send_slack(payload)
-        return {"sent": ok, "count": len(findings)}
+        stmt = select(Finding).where(Finding.created_at >= since).order_by(Finding.id.desc())
+        if product is not None:
+            stmt = stmt.where(Finding.product_id == product.id)
+        return notify_digest(session, list(session.scalars(stmt).all()))
 
 
 # ── v6.0: closed-loop verification (fix watch, patterns, product health) ─
@@ -3758,19 +3774,8 @@ def _today() -> date:
 def _limits(session, product_id: int | None = None) -> dict:
     """Effective budget limits: per-product overrides > workspace overrides >
     config defaults (v8.0 — each product keeps its own budgets)."""
-    from echolens.db.models import Product
-    row = session.get(Setting, "limits")
-    defaults = {
-        "daily_investigations": ORCHESTRATOR_DAILY_INVESTIGATIONS,
-        "per_case_budget": BUDGET_TIERS["standard"].max_cost_usd,
-        "per_case_wall_min": BUDGET_TIERS["standard"].max_wall_clock_s // 60,
-    }
-    merged = {**defaults, **(row.value if row else {})}
-    if product_id is not None:
-        p = session.get(Product, product_id)
-        if p is not None and p.limits_json:
-            merged = {**merged, **p.limits_json}
-    return merged
+    from echolens.orchestrator.queue import effective_limits
+    return effective_limits(session, product_id)
 
 
 def _daily_limit(session, product_id: int | None = None) -> int:
@@ -4089,7 +4094,7 @@ def costs_summary(product_id: int | None = None, user: dict = Depends(current_us
                 "resolved_count": len(resolved),
             },
             "month_to_date": month_to_date,
-            "budget": 25.0,
+            "budget": float(_limits(session, pid)["monthly_budget"]),
             "product": p.name if p else None,
             "limits": _limits(session, pid),
             "rows": rows,
@@ -4100,6 +4105,8 @@ class LimitsBody(BaseModel):
     daily_investigations: int | None = Field(None, ge=1, le=100)
     per_case_budget: float | None = Field(None, ge=0.01, le=1000)
     per_case_wall_min: int | None = Field(None, ge=1, le=1440)
+    daily_cost_budget: float | None = Field(None, ge=0, le=10000)
+    monthly_budget: float | None = Field(None, ge=0, le=100000)
 
 
 @app.put("/settings/limits")
@@ -4122,7 +4129,8 @@ def set_limits(body: LimitsBody, product_id: int | None = None,
         # Merge onto the EFFECTIVE limits for this scope, so a partial body
         # (one field) does not blank the others.
         current = _limits(session, prod.id if prod else None)
-        for k in ("daily_investigations", "per_case_budget", "per_case_wall_min"):
+        for k in ("daily_investigations", "per_case_budget", "per_case_wall_min",
+                  "daily_cost_budget", "monthly_budget"):
             v = getattr(body, k)
             if v is not None:
                 current[k] = v
