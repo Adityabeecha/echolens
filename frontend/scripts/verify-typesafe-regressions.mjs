@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import vm from "node:vm";
 import ts from "typescript";
@@ -9,6 +9,18 @@ import ts from "typescript";
 const require = createRequire(import.meta.url);
 const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
+const transpile = url => ts.transpileModule(readFileSync(url, "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 } }).outputText;
+// A relative import the test did not stub runs as the REAL source module (e.g.
+// Backlog's ../format), so a new pure helper import cannot break the harness
+// and the code under test still sees its true behaviour. Stubs always win.
+function realModule(from, name, resolve) {
+  const base = new URL(name, from);
+  const url = [".ts", ".tsx", "/index.ts", "/index.tsx"].map(ext => new URL(base.href + ext)).find(u => existsSync(u));
+  if (!url) throw new Error(`harness cannot resolve ${name} from ${from.pathname}`);
+  const exports = {};
+  vm.runInNewContext(transpile(url), { exports, require: n => resolve(n, url) });
+  return exports;
+}
 function harness(file, dependencies = {}) {
   const slots = [], effects = [], timers = new Map();
   let cursor = 0, nextTimer = 1;
@@ -20,8 +32,16 @@ function harness(file, dependencies = {}) {
   };
   const exports = {};
   const schedule = fn => { const id = nextTimer++; timers.set(id, fn); return id; };
-  const source = ts.transpileModule(readFileSync(new URL(file, import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 } }).outputText;
-  vm.runInNewContext(source, { exports, require: name => name === "react" ? react : dependencies[name] ?? require(name), setTimeout: schedule, setInterval: schedule, clearTimeout: id => timers.delete(id), clearInterval: id => timers.delete(id), EventSource: class { constructor() { throw new Error("SSE unavailable"); } } });
+  const entry = new URL(file, import.meta.url), loaded = new Map();
+  const resolve = (name, from) => {
+    if (name === "react") return react;
+    if (from === entry && name in dependencies) return dependencies[name];
+    if (!name.startsWith(".")) return require(name);
+    const key = new URL(name, from).href;
+    if (!loaded.has(key)) loaded.set(key, realModule(from, name, resolve));
+    return loaded.get(key);
+  };
+  vm.runInNewContext(transpile(entry), { exports, require: name => resolve(name, entry), setTimeout: schedule, setInterval: schedule, clearTimeout: id => timers.delete(id), clearInterval: id => timers.delete(id), EventSource: class { constructor() { throw new Error("SSE unavailable"); } } });
   return { exports, timers, render(fn) { cursor = 0; const result = fn(); for (const effect of effects) if (effect?.fn) { const fn = effect.fn; delete effect.fn; effect.cleanup = fn(); } return result; } };
 }
 const tests = [];
