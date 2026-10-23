@@ -142,7 +142,7 @@ export function CaseDetail({
         <div style={{ display: "flex", alignItems: "center", gap: S[3], flexWrap: "wrap" }}>
           <button onClick={onBack} className="el-btn"
             style={{ color: C.dim, fontSize: T.base, whiteSpace: "nowrap" }}>
-            <Icon name="chevronLeft" size={15} /> Back to {backLabel}
+            <Icon name="chevronLeft" size={15} /> Back to Cases
           </button>
           <div style={{ width: 1, height: 16, background: C.border2 }} />
           <span className="el-case-breadcrumb">Case #{caseId}</span>

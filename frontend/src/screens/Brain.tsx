@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { BrainEdge, ChangeReview, api } from "../api";
+import { formatRoute } from "../nav";
 import { useAsync } from "../hooks";
 import { C, MEASURE, R, S, T, mono, sans } from "../theme";
 import { Bar, Centered, EmptyState, ErrorState, Label, ScreenHeader } from "../ui";
@@ -16,6 +17,8 @@ interface Props {
   onBack: () => void;
   backLabel: string;
   onGoCases: () => void;
+  /** Optional; falls back to the URL so the link works without App wiring. */
+  onGoPatterns?: () => void;
 }
 
 /**
@@ -23,7 +26,7 @@ interface Props {
  * the two things that map is FOR: reviewing a proposed change before it ships,
  * and answering a new PM's "what goes wrong here?" from real history.
  */
-export function Brain({ onOpenInvestigation, onBack, backLabel, onGoCases }: Props) {
+export function Brain({ onOpenInvestigation, onBack, backLabel, onGoCases, onGoPatterns }: Props) {
   const { data, loading, error, reload } = useAsync(() => api.brain(), []);
 
   if (loading && !data) return <Centered>Reading what this product has taught EchoLens…</Centered>;
@@ -36,6 +39,10 @@ export function Brain({ onOpenInvestigation, onBack, backLabel, onGoCases }: Pro
   }
 
   const edges = data.edges;
+  const goPatterns = onGoPatterns ?? (() => {
+    const m = window.location.hash.match(/#\/p\/(\d+)/);
+    window.location.hash = formatRoute({ screen: "patterns", productId: m ? Number(m[1]) : null });
+  });
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <ScreenHeader
@@ -50,9 +57,18 @@ export function Brain({ onOpenInvestigation, onBack, backLabel, onGoCases }: Pro
       <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>
         {edges.length === 0 ? (
           <EmptyState
-            title={`EchoLens hasn't learned how ${data.product || "this product"} breaks yet`}
-            body={'Each confirmed fix teaches it one rule — "changes to X tend to cause Y". Once a few fixes land, this becomes a map you can check a proposed change against before it ships.'}
-            action="Go to Cases"
+            title={`Nothing learned about ${data.product || "this product"} yet`}
+            body={<>
+              Product memory maps which parts of the product tend to break and how, built from the
+              causes found in your finished investigations. Next step: let an investigation finish
+              and it starts filling in.
+              <div style={{ marginTop: S[3], fontSize: T.sm, color: C.dim }}>
+                Looking for fixes that were proven to work?{" "}
+                <button onClick={goPatterns} className="el-btn"
+                  style={{ color: C.accent, fontSize: T.sm }}>See Patterns →</button>
+              </div>
+            </>}
+            action="Investigate a signal"
             onAction={onGoCases}
           />
         ) : (

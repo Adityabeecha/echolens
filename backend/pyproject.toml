@@ -20,7 +20,7 @@ dependencies = [
     "apscheduler>=3.10",
     "structlog>=24.1",
     "slowapi>=0.1.9",
-    "python-jose[cryptography]>=3.3",
+    "pyjwt[crypto]>=2.9",  # python-jose is unmaintained (CVE-2024-33663/33664)
     "bcrypt>=4.0",
     # v4.0: Slack interactivity posts form-encoded payloads (request.form())
     "python-multipart>=0.0.9",

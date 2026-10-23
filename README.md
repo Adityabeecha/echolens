@@ -20,7 +20,7 @@ The FastAPI backend owns collection, detection, investigations, authentication, 
 ```text
 backend/             Python API, investigation engine, collectors, database, and tests
 frontend/            React/Vite application and focused frontend verification scripts
-.github/workflows/   Scheduled collection, weekly briefing, and deployment verification
+.github/workflows/   CI (backend tests, frontend build), scheduled collection, weekly briefing, and deployment verification
 deploy/              Nginx configuration for the Docker Compose deployment
 ```
 
@@ -109,7 +109,7 @@ After `pip install -e backend`, the shorter `echolens mcp` works as the command 
 
 ## Deploy
 
-The recommended production topology is PostgreSQL/Supabase, a long-running Northflank backend, and a Vercel frontend. Follow [DEPLOY.md](DEPLOY.md). For a single-machine deployment, provide `OPENAI_API_KEY` and `JWT_SECRET`, then run `docker compose up --build`.
+The recommended production topology is PostgreSQL/Supabase, a long-running Northflank backend, and a Vercel frontend. Follow [DEPLOY.md](DEPLOY.md). For a single-machine deployment, provide `OPENAI_API_KEY` and `JWT_SECRET`, then run `docker compose up --build` (local use only; set `POSTGRES_PASSWORD` too). CI runs on every push and pull request to `main` via `.github/workflows/ci.yml`.
 
 ## Security
 

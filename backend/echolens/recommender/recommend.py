@@ -86,11 +86,13 @@ def recommend(session: Session, finding: Finding, llm: LLMClient | None = None) 
     except LLMError:
         return []
 
+    from echolens.investigator.guards import unseen_code_spans
+    corpus = " ".join(str(e.snippet or "") for e in evs)
     out: list[Recommendation] = []
     for a in sorted(actions, key=lambda x: x.get("rank", 99))[:4]:
         rec = Recommendation(
-            finding_id=finding.id, action=a.get("action", ""),
-            rationale=a.get("rationale", ""), effort=a.get("effort", "MED"),
+            finding_id=finding.id, action=unseen_code_spans(a.get("action", ""), corpus),
+            rationale=unseen_code_spans(a.get("rationale", ""), corpus), effort=a.get("effort", "MED"),
             impact=a.get("impact", "MED"), rank=int(a.get("rank", len(out) + 1)),
         )
         session.add(rec)

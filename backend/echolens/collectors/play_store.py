@@ -73,7 +73,8 @@ class PlayStoreCollector(Collector):
         # `limit` is honoured after filtering. It was passed in and then ignored,
         # so a run had no bound on how much it ingested (app_store.py:67 does
         # this correctly).
-        return raw[:limit] if limit else raw
+        selected = raw[:limit] if limit else raw
+        return sorted(selected, key=lambda r: _at(r) or datetime.min.replace(tzinfo=timezone.utc))
 
     def ingest_item(self, session: Session, item: dict) -> tuple[bool, str | None]:
         ext_id = f"gp_{item.get('reviewId')}"

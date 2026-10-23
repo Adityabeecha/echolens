@@ -61,10 +61,13 @@ export function GoogleButton({
   clientId,
   onCredential,
   disabled,
+  onUnavailable,
 }: {
   clientId: string;
   onCredential: (credential: string) => void;
   disabled?: boolean;
+  /** Called when the button could not be drawn, so the caller can offer another way in. */
+  onUnavailable?: () => void;
 }) {
   const host = useRef<HTMLDivElement | null>(null);
   const [failed, setFailed] = useState(false);
@@ -72,6 +75,8 @@ export function GoogleButton({
   // re-running initialize on every render would re-draw the button.
   const cb = useRef(onCredential);
   cb.current = onCredential;
+  const unavailable = useRef(onUnavailable);
+  unavailable.current = onUnavailable;
 
   useEffect(() => {
     if (!clientId) return;
@@ -94,14 +99,21 @@ export function GoogleButton({
       if (width === drawnAt) return;
       drawnAt = width;
       host.current.innerHTML = ""; // re-render cleanly at the new width
-      window.google.accounts.id.renderButton(host.current, {
-        theme: "filled_black",
-        size: "large",
-        text: "signin_with",
-        shape: "rectangular",
-        logo_alignment: "left",
-        width,
-      });
+      try {
+        window.google.accounts.id.renderButton(host.current, {
+          theme: "filled_black",
+          size: "large",
+          text: "signin_with",
+          shape: "rectangular",
+          logo_alignment: "left",
+          width,
+        });
+      } catch {
+        // Initialisation rejected (bad client id, origin not allowed): show a
+        // quiet note instead of a dead button.
+        cancelled = true;
+        setFailed(true);
+      }
     };
 
     loadScript()
@@ -117,6 +129,11 @@ export function GoogleButton({
       })
       .catch(() => !cancelled && setFailed(true));
 
+    // If nothing was drawn shortly after load, the button is not usable.
+    const check = window.setTimeout(() => {
+      if (!cancelled && host.current && host.current.childElementCount === 0) setFailed(true);
+    }, 6000);
+
     // Redraw when the column resizes, otherwise the button keeps the width it
     // happened to have at first paint.
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => draw()) : null;
@@ -124,9 +141,14 @@ export function GoogleButton({
 
     return () => {
       cancelled = true;
+      window.clearTimeout(check);
       ro?.disconnect();
     };
   }, [clientId]);
+
+  useEffect(() => {
+    if (failed) unavailable.current?.();
+  }, [failed]);
 
   if (!clientId) return null;
 
@@ -143,7 +165,7 @@ export function GoogleButton({
         }}
       >
         Google sign-in could not load — an ad blocker or privacy extension is
-        usually the cause. Use email and password below, or continue as a guest.
+        usually the cause. Use email and password instead.
       </div>
     );
   }

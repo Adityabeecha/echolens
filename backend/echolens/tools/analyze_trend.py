@@ -32,7 +32,7 @@ def analyze_trend(
     if date_from:
         stmt = stmt.where(Review.created_at >= parse_date(date_from))
     if date_to:
-        stmt = stmt.where(Review.created_at <= parse_date(date_to))
+        stmt = stmt.where(Review.created_at <= parse_date(date_to, end_of_day=True))
     rows = session.scalars(stmt).all()
 
     terms = terms_of(term)

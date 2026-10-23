@@ -9,8 +9,8 @@ client could post any JSON it likes to /auth/google. Decoding it without
 checking the signature would let anyone log in as anyone by editing the
 payload, so every check below is load-bearing.
 
-No new dependency: python-jose (already used for our own tokens) does JWKS
-verification, and httpx (already used by the collectors) fetches the keys.
+PyJWT (also used for our own tokens) does the verification, and httpx
+(already used by the collectors) fetches the keys.
 """
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ import threading
 import time
 
 import httpx
-from jose import jwt
-from jose.exceptions import JWTError
+import jwt
+from jwt import PyJWTError as JWTError
 
 from echolens.config import settings
 from echolens.logging import get_logger
@@ -76,16 +76,19 @@ def verify_id_token(token: str) -> dict:
         raise GoogleAuthError("no credential supplied")
 
     def _decode(jwks: dict) -> dict:
-        # jose checks signature, `aud`, `iss` and `exp`. Passing the audience
+        # PyJWT checks signature, `aud`, `iss` and `exp`. Passing the audience
         # is what stops a token minted for a DIFFERENT Google app — which is
         # still perfectly signed by Google — from authenticating here.
+        match = next((k for k in jwks.get("keys", []) if k.get("kid") == kid), None)
+        if match is None:
+            raise JWTError("unknown signing key")
         return jwt.decode(
             token,
-            jwks,
+            jwt.PyJWK(match, algorithm="RS256").key,
             algorithms=["RS256"],
             audience=settings.google_client_id,
-            issuer="https://accounts.google.com",
-            options={"verify_at_hash": False},
+            issuer=sorted(_ISSUERS),
+            options={"require": ["exp", "iss", "aud"]},
         )
 
     # Read the header BEFORE any network work. This is unverified data, used
@@ -115,14 +118,13 @@ def verify_id_token(token: str) -> dict:
     except JWTError as err:
         raise GoogleAuthError(f"invalid Google token: {err}") from err
     except Exception as err:
-        # jose raises JWKError (a KeyError subclass, NOT a JWTError) for a
-        # malformed key set, so it escaped this handler entirely and surfaced
-        # as an unhandled 500 with a stack trace instead of a clean 401.
+        # A malformed key set raises outside the JWT error hierarchy, so it
+        # used to escape this handler and surface as an unhandled 500 with a
+        # stack trace instead of a clean 401.
         # Verification failing for ANY reason is a rejection, never a crash.
         raise GoogleAuthError(f"invalid Google token: {type(err).__name__}") from err
 
-    # `iss` is checked above only for the canonical form; Google also uses the
-    # bare hostname, so accept either and reject anything else.
+    # Keep the explicit issuer allowlist check alongside the email checks.
     if claims.get("iss") not in _ISSUERS:
         raise GoogleAuthError("unexpected token issuer")
 
@@ -136,6 +138,19 @@ def verify_id_token(token: str) -> dict:
         raise GoogleAuthError("that Google account's email is not verified")
 
     return {"email": email, "name": claims.get("name") or "", "sub": claims.get("sub")}
+
+
+def may_join(email: str, existing_user: bool) -> bool:
+    """May this verified Google account sign in to this workspace?
+
+    Verification proves who someone is, not that they belong here. Admins on
+    the allowlist and people who already have an account always may; anyone
+    else only when their email domain is explicitly allowed."""
+    email = (email or "").strip().lower()
+    if existing_user or email in settings.google_admin_list:
+        return True
+    domain = email.rsplit("@", 1)[-1] if "@" in email else ""
+    return bool(domain) and domain in settings.google_domain_list
 
 
 def role_for(email: str) -> str:

@@ -106,13 +106,23 @@ class GitHubCollector(Collector):
             if "pull_request" in iss:  # the issues endpoint also returns PRs
                 iss = {**iss, "_is_pr": True}
             items.append({"kind": "issue", **iss})
-        for rel in data.get("releases", []):
+        items = items[:limit] if limit else items
+        # GitHub sends newest-first, but the runner freezes its cursor on an
+        # item failure. Process older issues first so a successful newer issue
+        # cannot advance the cursor past an older failed one.
+        items.sort(key=lambda item: iso(_dt(item.get("updated_at")))
+                   if _dt(item.get("updated_at")) else "")
+        releases = data.get("releases", [])
+        for rel in (releases[:limit] if limit else releases):  # limit applies to releases too
             items.append({"kind": "release", **rel})
-        return items[:limit]
+        return items
 
     def ingest_item(self, session: Session, item: dict) -> tuple[bool, str | None]:
         if item.get("kind") == "release":
-            return self._ingest_release(session, item)
+            inserted, _ = self._ingest_release(session, item)
+            # The cursor is sent only to the issues endpoint. A newer release
+            # must not move it past issues that have not been collected yet.
+            return inserted, None
         return self._ingest_issue(session, item)
 
     def _ingest_issue(self, session: Session, item: dict) -> tuple[bool, str | None]:

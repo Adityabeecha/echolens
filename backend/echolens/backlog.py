@@ -299,7 +299,7 @@ def save_plan(session: Session, product_id: int | None, *, included: list[int],
     value = {
         "included": sorted(set(int(x) for x in included)),
         "excluded": sorted(set(int(x) for x in excluded)),
-        "notes": {str(k): v for k, v in (notes or prior["notes"]).items()},
+        "notes": {str(k): v for k, v in (notes if notes is not None else prior["notes"]).items()},
         "capacity_days": float(capacity_days if capacity_days is not None
                                else prior["capacity_days"]),
         "owned": True,
@@ -352,6 +352,8 @@ def quarter_plan(session: Session, product_id: int | None = None,
     return {
         "proposed": chosen,
         "deferred": deferred,
+        "included": saved["included"],
+        "excluded": saved["excluded"],
         "capacity_days": capacity,
         "committed_days": round(used, 1),
         "remaining_days": round(max(0.0, capacity - used), 1),

@@ -92,9 +92,21 @@ The retained workflows perform:
 
 - `.github/workflows/collect.yml`: collect, scan, and triage every six hours.
 - `.github/workflows/brief.yml`: send the weekly brief.
-- `.github/workflows/deploy.yml`: verify `/health` after backend changes reach `main`.
+- `.github/workflows/deploy.yml`: poll `/health` (up to about 10 minutes) after backend changes reach `main`.
+- `.github/workflows/ci.yml`: on every push and pull request to `main`, runs the backend tests (Python 3.11, SQLite) and the frontend `npm ci` + `npm run build` (Node 22).
 
 Run each scheduled workflow manually once from the Actions tab to validate credentials.
+
+## Security checklist
+
+- Set `ECHOLENS_ENV` explicitly (`production`, or `staging`) on every deployed environment. The app refuses to start outside local dev without an explicit value; `dev` disables authentication and must never be public.
+- Use a strong, unique `JWT_SECRET` (`python -c "import secrets; print(secrets.token_urlsafe(48))"`).
+- Set `CORS_ORIGINS` to the exact frontend origin(s), with no trailing slash.
+- Set `GITHUB_WEBHOOK_SECRET` if GitHub webhooks are used, and the same value in the webhook config.
+- Restrict Google sign-in with `GOOGLE_ALLOWED_DOMAINS` (comma-separated email domains). If empty, only emails in `GOOGLE_ADMIN_EMAILS` or existing users can sign in. `GOOGLE_DEFAULT_ROLE` defaults to `viewer`.
+- In the Google OAuth client, add the frontend origin (and `http://localhost:5173` for local development) to Authorized JavaScript origins.
+- Use a dedicated low-privilege reviewer account for `ECHOLENS_EMAIL`/`ECHOLENS_PASSWORD`, not an admin.
+- Keep `GUEST_DEMO_ONLY=true` for public demos, and run `python -m echolens.cli preflight` before deploying.
 
 ## Verify the deployment
 

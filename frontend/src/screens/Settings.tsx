@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ProductRow, api, getRole, isAdmin } from "../api";
+import { ProductRow, api, getRole, isAdmin, isGuest } from "../api";
 import { withToast } from "../components/Toast";
 import { money } from "../format";
 import { useAsync } from "../hooks";
@@ -27,7 +27,10 @@ export function Settings({
   product, onGoCosts, onGoSources, onAddProduct, onDeleteProduct
 }: Props) {
   const { data, loading, error, reload } = useAsync(() => api.costsSummary(), []);
-  const admin = isAdmin();
+  const guest = isGuest();
+  const admin = isAdmin() && !guest;
+  const session = guest ? "Exploring the demo (read-only)" : `SIGNED IN AS ${getRole().toUpperCase()}`;
+  const why = guest ? "Sign in with an admin account to change this." : "Only admins can change this.";
 
   if (loading && !data) return <Centered>Loading settings…</Centered>;
   if (error || !data) {
@@ -49,7 +52,7 @@ export function Settings({
         subtitle="Budgets, limits and this product"
         right={
           <span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>
-            SIGNED IN AS {getRole().toUpperCase()}
+            {session}
           </span>
         }
       />
@@ -82,9 +85,12 @@ export function Settings({
         </div>
 
         <Label style={{ margin: "28px 0 10px" }}>
-          LIMITS{admin ? "" : " · ADMIN CAN ADJUST"}
+          LIMITS{admin ? "" : " · READ-ONLY"}
         </Label>
-        <LimitsPanel limits={data.limits} onSaved={reload} />
+        {!admin && (
+          <p style={{ fontSize: T.sm, color: C.dim, margin: `0 0 ${S[2]}`, maxWidth: MEASURE }}>{why}</p>
+        )}
+        <LimitsPanel limits={data.limits} onSaved={reload} admin={admin} />
 
         <Label style={{ margin: "28px 0 10px" }}>THIS PRODUCT</Label>
         <div style={{ maxWidth: MEASURE, padding: `${S[4]} ${S[5]}`, background: C.card,
@@ -107,14 +113,22 @@ export function Settings({
                 Add another product
               </button>
             )}
-            {admin && product && (
-              <button onClick={() => onDeleteProduct(product)} className="el-btn"
+            {product && (
+              <button onClick={() => admin && onDeleteProduct(product)} className="el-btn"
+                disabled={!admin}
+                title={admin ? undefined : why}
                 style={{ background: "transparent", color: C.bad, border: `1px solid ${C.bad}55`,
-                         borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base }}>
+                         borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base,
+                         opacity: admin ? 1 : 0.45, cursor: admin ? "pointer" : "not-allowed" }}>
                 Delete {product.name}
               </button>
             )}
           </div>
+          {!admin && product && (
+            <div style={{ fontSize: T.xs, color: C.dim }}>
+              Deleting a product is admin-only. {why}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -133,13 +147,13 @@ function Field({ label, value }: { label: string; value: string }) {
   );
 }
 
-function LimitsPanel({ limits, onSaved }: {
+function LimitsPanel({ limits, onSaved, admin }: {
   limits: { daily_investigations: number; per_case_budget: number; per_case_wall_min: number };
   onSaved: () => void;
+  admin: boolean;
 }) {
   const [state, setState] = useState(limits);
   useEffect(() => setState(limits), [limits]);
-  const admin = isAdmin();
 
   const adjust = async (key: keyof typeof state, delta: number, min: number, max: number) => {
     const before = state;

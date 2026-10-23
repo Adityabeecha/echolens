@@ -27,16 +27,20 @@ jobs:
             echo "::notice::variables -> Actions -> Variables) to verify deploys automatically."
             exit 0
           fi
-          echo "Waiting for Northflank to build and roll out…"
-          sleep 60
-          for i in $(seq 1 20); do
+          echo "Polling $API/health for up to ~10 minutes..."
+          # Starts immediately. The old build may keep answering 200 while the
+          # new one rolls out, so this confirms the service is up, not which
+          # build it is; failures during the rollout are simply retried.
+          start=$(date +%s)
+          for i in $(seq 1 40); do
             code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$API/health" || true)
+            elapsed=$(( $(date +%s) - start ))
             if [ "$code" = "200" ]; then
-              echo "healthy after $((60 + i * 15))s"
-              curl -s "$API/health"
+              echo "healthy after ${elapsed}s (attempt $i)"
+              curl -s --max-time 30 "$API/health"; echo
               exit 0
             fi
-            echo "  attempt $i: HTTP $code"
+            echo "  attempt $i (${elapsed}s): HTTP ${code:-000}"
             sleep 15
           done
           echo "::error::$API/health never returned 200. Check the build logs in Northflank."
