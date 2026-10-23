@@ -248,7 +248,8 @@ export function useTrace(investigationId: number | null): {
     };
 
     try {
-      es = new EventSource(api.traceStreamUrl(investigationId));
+      // withCredentials: the session cookie authenticates a split-origin stream.
+      es = new EventSource(api.traceStreamUrl(investigationId), { withCredentials: true });
       es.addEventListener("step", (e) => push(JSON.parse((e as MessageEvent).data)));
       es.addEventListener("done", (e) => {
         if (stopped) return;

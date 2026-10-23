@@ -8,20 +8,6 @@
       content="EchoLens investigates product feedback the way an analyst would: every conclusion backed by evidence you can click."
     />
     <meta name="theme-color" content="#101816" />
-    <script>
-      (() => {
-        let theme = "dark";
-        try {
-          theme = localStorage.getItem("echolens_theme") === "light" ? "light" : "dark";
-        } catch {
-          // Restricted storage is a valid browser state; Dark remains safe.
-        }
-        document.documentElement.dataset.theme = theme;
-        document.documentElement.style.colorScheme = theme;
-        const meta = document.querySelector('meta[name="theme-color"]');
-        if (meta) meta.content = theme === "dark" ? "#101816" : "#f6f4ef";
-      })();
-    </script>
     <!-- Match the application canvas before the stylesheet arrives. -->
     <style>
       html, body { margin: 0; }
@@ -37,16 +23,19 @@
     <!-- Loaded WITHOUT blocking first paint.
          A plain stylesheet link blocks rendering until fonts.googleapis.com
          answers, and that CSS then triggers a second round trip to
-         fonts.gstatic.com. media="print" + onload flips it to a real stylesheet
-         once it has arrived, so the app paints in the fallback face
-         immediately. `display=swap` already meant a visible swap; this only
-         stops the wait being blank. -->
+         fonts.gstatic.com. media="print" + a load listener (in boot.js) flips
+         it to a real stylesheet once it has arrived, so the app paints in the
+         fallback face immediately. `display=swap` already meant a visible
+         swap; this only stops the wait being blank. -->
     <link
+      id="el-fonts"
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
       media="print"
-      onload="this.media='all'"
     />
+    <!-- Theme + font switch before first paint. External, not inline, so the
+         Content-Security-Policy needs no 'unsafe-inline' for scripts. -->
+    <script src="/boot.js"></script>
     <noscript>
       <link
         href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"

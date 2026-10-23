@@ -72,7 +72,12 @@ def _load(session: Session, product_ids: list[int] | None, now) -> dict:
     return data
 
 
-def _resolution_rate(d: dict) -> float:
+def _resolution_rate(session: Session, product_id: int | None = None) -> float:
+    from echolens.backlog import resolution_rate
+    return resolution_rate(session, product_id)
+
+
+def _loaded_resolution_rate(d: dict) -> float:
     """Same rule as backlog.resolution_rate — DISTINCT resolved cases with a
     confirmed fix, clamped to [0, 1] — computed from the rows already loaded
     instead of re-querying both tables per product."""
@@ -127,7 +132,7 @@ def _compose(d: dict, now) -> dict:
     regressions = [{"slug": a.slug, "parent_case_id": a.parent_case_id}
                    for a in d["regressions"] if _recent(a.created_at, since)]
 
-    rate = _resolution_rate(d)
+    rate = _loaded_resolution_rate(d)
     fix_next = _fix_next(d, rate, now)
 
     # chronic themes (context for the brief)

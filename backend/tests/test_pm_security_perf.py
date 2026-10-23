@@ -22,9 +22,12 @@ from sqlalchemy.pool import StaticPool
 
 import echolens.db.session as db_session
 from echolens.config import settings
+from echolens import auth
 from echolens.db.models import (
     AnomalyEvent, Base, CollectorState, Finding, FixWatch, Investigation, LLMCall,
     Product, Review, ReviewFeedback, TriageDecision)
+
+PASSWORD = "correct-horse-battery-9"
 
 
 def _wire(monkeypatch, engine):
@@ -144,3 +147,218 @@ def test_read_endpoints_statement_count_is_flat(monkeypatch):
     large = _counts(monkeypatch, 12, READ_PATHS)
     grew = {p: (small[p], large[p]) for p in READ_PATHS if large[p] != small[p]}
     assert not grew, f"statement count grows with data: {grew}"
+
+
+def test_portfolio_board_stays_under_a_fixed_budget(monkeypatch):
+    """Absolute ceilings, so a later change cannot reintroduce a per-product
+    query that happens to cost the same at both scales by accident."""
+    counts = _counts(monkeypatch, 6, ["/portfolio", "/portfolio/brief", "/portfolio/themes"])
+    assert counts["/portfolio"] <= 15
+    assert counts["/portfolio/brief"] <= 25
+    assert counts["/portfolio/themes"] <= 6
+
+
+def test_batched_theme_comparison_matches_per_product_rates(monkeypatch):
+    """The one-pass corpus must report the same rates theme_rate does."""
+    from echolens.vocab import canonical_theme, compare_theme, negative_corpus
+    eng = _engine()
+    Session = _wire(monkeypatch, eng)
+    _build(Session, 3)
+    with Session() as s:
+        names = ["app-0", "app-1", "app-2"]
+        corpus = negative_corpus(s, names, 30)
+        for words in (["battery", "drain"], ["login", "crash"], ["sync"]):
+            theme = canonical_theme(words)
+            assert (compare_theme(s, theme, names, 30)
+                    == compare_theme(s, theme, names, 30, corpus=corpus))
+
+
+def test_batched_portfolio_matches_single_product_snapshot(monkeypatch):
+    from echolens.portfolio import portfolio, product_snapshot
+    eng = _engine()
+    Session = _wire(monkeypatch, eng)
+    _build(Session, 4)
+    now = datetime.now(timezone.utc)
+    with Session() as s:
+        board = {r["product_id"]: r for r in portfolio(s, now)["products"]}
+        for p in s.query(Product).all():
+            assert product_snapshot(s, p, now) == board[p.id]
+
+
+def test_batched_briefs_match_single_product_briefs(monkeypatch):
+    from echolens.backlog import resolution_rate
+    from echolens.brief import weekly_brief, weekly_briefs
+    eng = _engine()
+    Session = _wire(monkeypatch, eng)
+    _build(Session, 4)
+    now = datetime.now(timezone.utc)
+    with Session() as s:
+        ids = [p.id for p in s.query(Product).all()]
+        batch = weekly_briefs(s, ids, now)
+        for pid in ids:
+            assert batch[pid] == weekly_brief(s, now, pid)
+            assert batch[pid]["resolution_rate"] == resolution_rate(s, pid)
+
+
+# ── auth: cookie session, CSRF, SSE, headers ────────────────────────────
+
+@pytest.fixture()
+def prod_client(monkeypatch):
+    """Real auth over an in-memory DB with one reviewer and one admin.
+
+    https base URL: the session cookie is Secure, and a client honouring that
+    (as httpx and every browser do) will not send it over plain http."""
+    monkeypatch.setattr(settings, "echolens_env", "production")
+    monkeypatch.setattr(settings, "jwt_secret", "test-secret-" + "x" * 32)
+    monkeypatch.setattr(settings, "session_cookie_samesite", "lax")
+    monkeypatch.setattr(settings, "session_cookie_secure", True)
+    eng = _engine()
+    Session = _wire(monkeypatch, eng)
+    with Session() as s:
+        auth.create_user(s, "rev@team.com", PASSWORD, "reviewer")
+        auth.create_user(s, "admin@team.com", PASSWORD, "admin")
+        s.add(Product(name="app", is_demo=True))
+        s.commit()
+    from echolens.api.app import app
+    app.state.limiter.reset()  # login is rate-limited per IP across the suite
+    return TestClient(app, base_url="https://testserver")
+
+
+def _login(client, email="rev@team.com"):
+    r = client.post("/auth/login", json={"email": email, "password": PASSWORD})
+    assert r.status_code == 200, r.text
+    return r
+
+
+def test_login_sets_httponly_session_and_readable_csrf_cookie(prod_client):
+    r = _login(prod_client)
+    cookies = r.headers.get_list("set-cookie")
+    session = next(c for c in cookies if c.startswith(auth.SESSION_COOKIE + "="))
+    csrf = next(c for c in cookies if c.startswith(auth.CSRF_COOKIE + "="))
+    assert "HttpOnly" in session and "Secure" in session and "samesite=lax" in session.lower()
+    assert "HttpOnly" not in csrf and "Secure" in csrf
+    body = r.json()
+    assert body["csrf_token"] and body["csrf_token"] in csrf
+    # Automation still gets a bearer token in the body.
+    assert body["token"]
+
+
+def test_cookie_alone_authenticates_reads(prod_client):
+    _login(prod_client)
+    me = prod_client.get("/auth/me")
+    assert me.status_code == 200 and me.json()["email"] == "rev@team.com"
+
+
+def test_cookie_write_requires_matching_csrf_header(prod_client):
+    csrf = _login(prod_client).json()["csrf_token"]
+    assert prod_client.post("/products/1/activate").status_code == 403
+    assert prod_client.post("/products/1/activate",
+                            headers={"X-CSRF-Token": "forged"}).status_code == 403
+    ok = prod_client.post("/products/1/activate", headers={"X-CSRF-Token": csrf})
+    assert ok.status_code == 200, ok.text
+
+
+def test_bearer_writes_need_no_csrf(prod_client):
+    token = _login(prod_client).json()["token"]
+    prod_client.cookies.clear()
+    r = prod_client.post("/products/1/activate", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+
+
+def test_csrf_endpoint_recovers_token_after_reload(prod_client):
+    csrf = _login(prod_client).json()["csrf_token"]
+    assert prod_client.get("/auth/csrf").json()["csrf_token"] == csrf
+
+
+def test_logout_clears_the_session(prod_client):
+    _login(prod_client)
+    out = prod_client.post("/auth/logout")
+    assert out.status_code == 200
+    assert any(c.startswith(auth.SESSION_COOKIE + "=") and "Max-Age=0" in c
+               for c in out.headers.get_list("set-cookie"))
+    assert prod_client.get("/auth/me").status_code == 401
+
+
+def test_cookie_role_still_comes_from_the_database(prod_client):
+    """A demoted user loses their powers on the next request, cookie or not."""
+    _login(prod_client, "admin@team.com")
+    from echolens.db.models import User
+    from echolens.db.session import session_scope
+    with session_scope() as s:
+        s.query(User).filter_by(email="admin@team.com").one().role = "viewer"
+    assert prod_client.get("/auth/me").json()["role"] == "viewer"
+
+
+def test_admin_creating_a_user_keeps_the_admin_session(prod_client):
+    csrf = _login(prod_client, "admin@team.com").json()["csrf_token"]
+    r = prod_client.post("/auth/signup", headers={"X-CSRF-Token": csrf},
+                         json={"email": "new@team.com", "password": PASSWORD, "role": "viewer"})
+    assert r.status_code == 200, r.text
+    assert not any(c.startswith(auth.SESSION_COOKIE + "=")
+                   for c in r.headers.get_list("set-cookie"))
+    assert prod_client.get("/auth/me").json()["email"] == "admin@team.com"
+
+
+def test_samesite_none_for_split_origin_deploys(prod_client, monkeypatch):
+    monkeypatch.setattr(settings, "session_cookie_samesite", "none")
+    cookies = _login(prod_client).headers.get_list("set-cookie")
+    assert all("samesite=none" in c.lower() and "Secure" in c for c in cookies)
+
+
+def test_production_refuses_an_insecure_session_cookie(monkeypatch):
+    monkeypatch.setattr(settings, "echolens_env", "production")
+    monkeypatch.setattr(settings, "session_cookie_secure", False)
+    assert any("SESSION_COOKIE_SECURE" in p for p in settings.check_production_ready())
+
+
+def _resolved_case():
+    from echolens.db.session import session_scope
+    with session_scope() as s:
+        inv = Investigation(status="resolved", product_id=1, budget_json={})
+        s.add(inv)
+        s.flush()
+        return inv.id
+
+
+def test_trace_stream_authenticates_with_the_cookie(prod_client):
+    _login(prod_client)
+    iid = _resolved_case()
+    r = prod_client.get(f"/investigations/{iid}/trace/stream?product_id=1")
+    assert r.status_code == 200 and "event: done" in r.text
+
+
+def test_trace_stream_query_token_still_works_but_is_logged(prod_client, monkeypatch):
+    import echolens.api.app as app_mod
+    token = _login(prod_client).json()["token"]
+    prod_client.cookies.clear()
+    warnings = []
+
+    class Log:
+        def warning(self, event, **kw):
+            warnings.append(event)
+
+        def __getattr__(self, _name):
+            return lambda *a, **k: None
+
+    monkeypatch.setattr(app_mod, "log", Log())
+    iid = _resolved_case()
+    r = prod_client.get(f"/investigations/{iid}/trace/stream?product_id=1&token={token}")
+    assert r.status_code == 200
+    assert "deprecated_query_token" in warnings
+    assert prod_client.get(f"/investigations/{iid}/trace/stream?product_id=1").status_code == 401
+
+
+def test_api_sends_security_headers(prod_client):
+    r = prod_client.get("/auth/config")
+    assert r.headers["X-Content-Type-Options"] == "nosniff"
+    assert r.headers["X-Frame-Options"] == "DENY"
+    assert r.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
+
+
+def test_dev_mode_needs_no_cookie_or_csrf(monkeypatch):
+    eng = _engine()
+    _wire(monkeypatch, eng)
+    from echolens.api.app import app
+    client = TestClient(app)
+    assert client.get("/auth/me").json()["role"] == "admin"
+    assert client.post("/anomalies/scan").status_code != 403

@@ -4,10 +4,24 @@
 // e.g. VITE_API_BASE=https://echolens-api.code.run
 const BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, "") || "/api";
 
-// ── auth token (persisted) ──────────────────────────────────────────────
-const TOKEN_KEY = "echolens_token";
-let _token: string | null = localStorage.getItem(TOKEN_KEY);
+// ── session (HttpOnly cookie) ───────────────────────────────────────────
+// The JWT lives in an HttpOnly cookie set by /auth/login, /auth/signup and
+// /auth/google, so no script on this page can read it. It used to sit in
+// localStorage, where any XSS could lift it. What is persisted here is only a
+// hint that a session cookie should exist, so a reload skips the login screen;
+// the server stays the judge, and a 401 clears the hint.
+const SESSION_KEY = "echolens_session";
+const LEGACY_TOKEN_KEY = "echolens_token";
+let _session = localStorage.getItem(SESSION_KEY) === "1";
+// Drop any JWT an older build left behind; it must not linger in storage.
+localStorage.removeItem(LEGACY_TOKEN_KEY);
 let _onAuthError: (() => void) | null = null;
+
+// Double-submit CSRF token: echoed in X-CSRF-Token on every write. Kept in
+// memory only. The API's csrf cookie is on the API's origin, so a split-origin
+// frontend cannot read it from document.cookie; the value arrives in the login
+// response and, after a reload, from GET /auth/csrf.
+let _csrf: string | null = null;
 
 const ROLE_KEY = "echolens_role";
 let _role: string = localStorage.getItem(ROLE_KEY) || "viewer";
@@ -28,13 +42,24 @@ function scoped(path: string): string {
   return path + (path.includes("?") ? "&" : "?") + `product_id=${_productId}`;
 }
 
-export function setToken(t: string | null): void {
-  _token = t;
-  if (t) localStorage.setItem(TOKEN_KEY, t);
-  else localStorage.removeItem(TOKEN_KEY);
+/** Record a session the server just opened (its cookie is already set). */
+export function startSession(csrf?: string | null): void {
+  _session = true;
+  _csrf = csrf ?? null;
+  localStorage.setItem(SESSION_KEY, "1");
 }
-export function getToken(): string | null {
-  return _token;
+function forgetSession(): void {
+  _session = false;
+  _csrf = null;
+  localStorage.removeItem(SESSION_KEY);
+}
+/** Sign out: drop local state and ask the server to clear the cookie. */
+export function endSession(): void {
+  forgetSession();
+  // Always, not only when the hint said signed in: the hint can be lost (storage
+  // cleared) while the cookie survives. Best effort; a failure leaves a cookie
+  // the next 401 clears again.
+  void fetch(BASE + "/auth/logout", { method: "POST", credentials: "include" }).catch(() => {});
 }
 export function setRole(r: string): void {
   _role = r;
@@ -65,21 +90,42 @@ export function setGuest(on: boolean): void {
 }
 /** Browsing without an account. */
 export function isGuest(): boolean {
-  return _guest && !_token;
+  return _guest && !_session;
 }
 /** True when the user is signed in properly. */
 export function isAuthed(): boolean {
-  return !!_token;
+  return _session;
 }
 export function onAuthError(fn: () => void): void {
   _onAuthError = fn;
 }
-function authHeaders(): Record<string, string> {
-  return _token ? { Authorization: `Bearer ${_token}` } : {};
+
+function readCookie(name: string): string | null {
+  const hit = document.cookie.split("; ").find((c) => c.startsWith(name + "="));
+  return hit ? decodeURIComponent(hit.slice(name.length + 1)) : null;
 }
+
+/** Headers for a state-changing request: the CSRF echo, fetched once if a
+ * reload lost it. Reads go without it; the server only checks writes. */
+async function writeHeaders(): Promise<Record<string, string>> {
+  if (!_session) return {};
+  if (!_csrf) _csrf = readCookie("echolens_csrf"); // same-origin deployments
+  if (!_csrf) {
+    try {
+      const r = await fetch(BASE + "/auth/csrf", { credentials: "include" });
+      if (r.ok) _csrf = (await r.json())?.csrf_token ?? null;
+    } catch {
+      /* the write itself will surface the failure */
+    }
+  }
+  return _csrf ? { "X-CSRF-Token": _csrf } : {};
+}
+
 function handle(status: number): void {
   if (status === 401) {
-    setToken(null);
+    // endSession also clears the stale cookie, so a guest-enabled deployment
+    // does not keep rejecting every request for the expired session.
+    endSession();
     _onAuthError?.(); // bounce back to login
   }
 }
@@ -94,7 +140,8 @@ export function errorMessage(error: unknown): string {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const r = await fetch(BASE + path, { headers: authHeaders() });
+  // credentials: "include" sends the session cookie to a split-origin API.
+  const r = await fetch(BASE + path, { credentials: "include" });
   if (!r.ok) {
     handle(r.status);
     throw new Error(`${path} → ${r.status}`);
@@ -105,7 +152,8 @@ async function get<T>(path: string): Promise<T> {
 async function post<T>(path: string, body?: unknown): Promise<T> {
   const r = await fetch(BASE + path, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
+    credentials: "include",
+    headers: { "Content-Type": "application/json", ...(await writeHeaders()) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!r.ok) {
@@ -124,7 +172,8 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
 async function put<T>(path: string, body?: unknown): Promise<T> {
   const r = await fetch(BASE + path, {
     method: "PUT",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
+    credentials: "include",
+    headers: { "Content-Type": "application/json", ...(await writeHeaders()) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!r.ok) {
@@ -141,7 +190,9 @@ async function put<T>(path: string, body?: unknown): Promise<T> {
 }
 
 async function del<T>(path: string): Promise<T> {
-  const r = await fetch(BASE + path, { method: "DELETE", headers: authHeaders() });
+  const r = await fetch(BASE + path, {
+    method: "DELETE", credentials: "include", headers: await writeHeaders(),
+  });
   if (!r.ok) {
     handle(r.status);
     let detail = "";
@@ -776,12 +827,12 @@ export interface AuthUser {
 export const api = {
   health: () => get<{ db: boolean; llm_key_present: boolean; model: string }>("/health"),
   login: (email: string, password: string) =>
-    post<{ token: string; role: string }>("/auth/login", { email, password }),
+    post<{ token: string; role: string; csrf_token?: string }>("/auth/login", { email, password }),
   signup: (email: string, password: string) =>
-    post<{ id: number; email: string; role: string; token: string }>("/auth/signup", { email, password }),
+    post<{ id: number; email: string; role: string; token: string; csrf_token?: string }>("/auth/signup", { email, password }),
   /** Exchange a Google ID token for an EchoLens token. */
   google: (credential: string) =>
-    post<{ token: string; role: string; email: string }>("/auth/google", { credential }),
+    post<{ token: string; role: string; email: string; csrf_token?: string }>("/auth/google", { credential }),
   /** Which sign-in options this deployment offers. Safe without a token. */
   authConfig: () =>
     get<{
@@ -891,11 +942,12 @@ export const api = {
     // attached to NO product and are invisible to every scoped screen.
     const pid = getActiveProduct();
     if (pid != null) qs.set("product_id", String(pid));
-    return fetch(`${BASE}/import/reviews?${qs.toString()}`, {
+    return writeHeaders().then((headers) => fetch(`${BASE}/import/reviews?${qs.toString()}`, {
       method: "POST",
-      headers: { ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
+      credentials: "include",
+      headers,
       body: fd,
-    }).then(async (r) => {
+    })).then(async (r) => {
       if (!r.ok) {
         // handle() bounces a 401 to the login screen. This raw fetch skipped it,
         // so an expired session here failed silently instead.
@@ -951,13 +1003,11 @@ export const api = {
   // the number silently reverted.
   setLimits: (limits: { daily_investigations?: number; per_case_budget?: number; per_case_wall_min?: number }) =>
     put<Record<string, number>>(scoped("/settings/limits"), limits),
-  // SSE URL for the live trace. EventSource cannot set an Authorization header,
-  // so the token rides in the query string — without it the endpoint 401s in
-  // every non-dev environment and the "live" trace silently degrades to polling.
+  // SSE URL for the live trace. No token in it: a JWT in a URL ends up in
+  // proxy logs and history. The session cookie authenticates the stream, sent
+  // because useTrace opens the EventSource with withCredentials.
   traceStreamUrl: (id: number) => {
     const qs = new URLSearchParams();
-    const t = getToken();
-    if (t) qs.set("token", t);
     if (_productId != null) qs.set("product_id", String(_productId));
     const q = qs.toString();
     return `${BASE}/investigations/${id}/trace/stream${q ? `?${q}` : ""}`;
