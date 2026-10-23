@@ -185,7 +185,7 @@ def test_three_selected_with_a_daily_limit_of_two_defers_the_third():
 
     view = queue_view(s, p.id, daily_limit=2, as_of=NOW)
     assert [q["status"] for q in view["queued"]] == ["queued", "queued", "deferred"]
-    assert view["queued"][2]["note"] == "daily limit reached — runs tomorrow"
+    assert view["queued"][2]["note"] == "Deferred: daily limit 2 reached; runs tomorrow"
     assert view["remaining_today"] == 2
     # nothing was dropped
     assert len(view["queued"]) == 3

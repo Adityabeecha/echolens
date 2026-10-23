@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CaseRow, SignalRow, ThemeCandidate, api, canReview } from "../api";
+import {
+  CaseRow, Incident, IntentCounts, SignalRow, ThemeCandidate, ThemeOverride, api, canReview,
+} from "../api";
 import { CaseCard } from "../components/CaseCard";
 import { withToast } from "../components/Toast";
-import { plural, when } from "../format";
+import { money, plural, when } from "../format";
 import { useAsync } from "../hooks";
 import { CASE_TABS, SEVERITY } from "../status";
 import { C, MEASURE, R, S, T, mono, sans } from "../theme";
@@ -61,6 +63,7 @@ export function Cases({
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<number | null>(null);
+  const [runningNow, setRunningNow] = useState<number | null>(null);
   const [signalsOpen, setSignalsOpen] = useState(params.signals === "1");
   // Local mirror of the search box. Writing straight to the URL on every
   // keystroke called history.replaceState 20 times for a 20-character query;
@@ -140,9 +143,33 @@ export function Cases({
       return true;
     });
   const dismissedSignals = signals.filter((s) => s.dismissed);
-  const themes = (candidates.data?.candidates ?? []).filter((c) => !c.existing);
-  const takenThemes = (candidates.data?.candidates ?? []).filter((c) => c.existing);
-  const selectable = liveSignals.length + themes.length;
+  const allThemes = candidates.data?.candidates ?? [];
+  const themes = allThemes.filter((c) => !c.existing);
+  const takenThemes = allThemes.filter((c) => c.existing);
+  const requests = candidates.data?.requests ?? [];
+
+  // Related signals (same window, same theme or both product-wide) arrive
+  // grouped as incidents. An incident is ONE row here; its members are shown
+  // inside it rather than again as separate rows.
+  const incidents = view.data?.incidents ?? [];
+  const inIncident = new Set(incidents.flatMap((i) => i.members));
+  const bySlug = new Map(signals.map((s) => [s.slug, s]));
+  const loneSignals = liveSignals.filter((s) => !inIncident.has(s.slug));
+
+  // What the reviews behind each card are FOR. The filter keeps a card when the
+  // chosen intent leads it or makes up at least a quarter of it.
+  const intent = (params.intent ?? "") as IntentFilter;
+  const showIntent = (c?: IntentCounts | null) => intentMatches(c, intent);
+  const visIncidents = incidents.filter((i) => showIntent(i.intents));
+  const visSignals = loneSignals.filter((s) => showIntent(s.intents));
+  const visThemes = themes.filter((t) => showIntent(t.intents));
+  const visRequests = requests.filter((t) => showIntent(t.intents));
+  const hiddenByIntent = intent
+    ? (incidents.length + loneSignals.length + themes.length + requests.length)
+      - (visIncidents.length + visSignals.length + visThemes.length + visRequests.length)
+    : 0;
+
+  const selectable = incidents.length + loneSignals.length + themes.length;
   const selectedCount = Object.keys(selected).length;
 
   const toggle = (slug: string, statement: string) =>
@@ -175,6 +202,28 @@ export function Cases({
     await withToast(fn, { success, failure: `${label} failed` });
     setBusy(null);
     bumpReload();
+  };
+
+  // "Investigate now anyway": one deferred item, past today's cap. The server
+  // records who did it on the queue row.
+  const runNow = async (row: CaseRow) => {
+    if (row.queue_id == null) return;
+    setRunningNow(row.queue_id);
+    const result = await withToast(() => api.runQueuedNow(row.queue_id!), {
+      success: "Started now, outside today's limit.",
+      failure: "Couldn't start that item",
+    });
+    setRunningNow(null);
+    bumpReload();
+    if (result?.investigation_id) onOpenCase(result.investigation_id, "running");
+  };
+
+  const editTheme = async (body: Parameters<typeof api.setThemeOverride>[0], success: string) => {
+    await withToast(() => api.setThemeOverride(body), {
+      success, failure: "Couldn't save that change",
+    });
+    candidates.reload();
+    view.reload();
   };
 
   const cancelQueued = async (row: CaseRow) => {
@@ -277,13 +326,19 @@ export function Cases({
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: S[2], maxWidth: MEASURE }}>
             {rows.map((r) => (
-              <CaseCard
-                key={r.id != null ? `c-${r.id}` : `q-${r.queue_id}`}
-                row={r}
-                busy={r.queue_id != null && cancelling === r.queue_id}
-                onOpen={(row) => row.id != null && onOpenCase(row.id, row.status)}
-                onAction={r.status === "queued" ? cancelQueued : undefined}
-              />
+              <div key={r.id != null ? `c-${r.id}` : `q-${r.queue_id}`}
+                   style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
+                <CaseCard
+                  row={r}
+                  busy={r.queue_id != null && cancelling === r.queue_id}
+                  onOpen={(row) => row.id != null && onOpenCase(row.id, row.status)}
+                  onAction={r.status === "queued" ? cancelQueued : undefined}
+                />
+                {r.deferred && (
+                  <DeferredBar row={r} reviewer={reviewer}
+                               busy={runningNow === r.queue_id} onRunNow={() => runNow(r)} />
+                )}
+              </div>
             ))}
           </div>
         )}
@@ -352,12 +407,26 @@ export function Cases({
                 />
               )}
 
-              {liveSignals.length > 0 && (
+              {(selectable > 0 || requests.length > 0) && (
+                <IntentFilterBar value={intent} hidden={hiddenByIntent}
+                                 onChange={(v) => setParams({ intent: v || null })} />
+              )}
+
+              {visIncidents.length + visSignals.length > 0 && (
                 <>
-                  <Label style={{ marginBottom: S[2] }}>DETECTED · {liveSignals.length}</Label>
+                  <Label style={{ marginBottom: S[2] }}>
+                    DETECTED · {visIncidents.length + visSignals.length}
+                  </Label>
                   <div style={{ display: "flex", flexDirection: "column", gap: S[2],
                                 marginBottom: S[4] }}>
-                    {liveSignals.map((s) => (
+                    {visIncidents.map((inc) => (
+                      <IncidentCard key={inc.key} incident={inc}
+                                    members={inc.members.map((m) => bySlug.get(m)).filter(
+                                      (m): m is SignalRow => !!m)}
+                                    selected={!!selected[inc.lead]}
+                                    onToggle={() => toggle(inc.lead, inc.title)} />
+                    ))}
+                    {visSignals.map((s) => (
                       <SignalCard key={s.slug} signal={s} selected={!!selected[s.slug]}
                                   onToggle={() => toggle(s.slug, s.title)} />
                     ))}
@@ -365,19 +434,48 @@ export function Cases({
                 </>
               )}
 
-              {themes.length > 0 && (
+              {visThemes.length > 0 && (
                 <>
                   <Label style={{ marginBottom: S[2] }}>
-                    RECURRING COMPLAINTS · {themes.length}
+                    RECURRING COMPLAINTS · {visThemes.length}
                   </Label>
                   <div style={{ display: "flex", flexDirection: "column", gap: S[2],
                                 marginBottom: S[4] }}>
-                    {themes.map((t) => (
+                    {visThemes.map((t) => (
                       <ThemeCard key={t.slug} theme={t} selected={!!selected[t.slug]}
-                                 onToggle={() => toggle(t.slug, t.statement)} />
+                                 onToggle={() => toggle(t.slug, t.statement)}
+                                 menu={reviewer ? (
+                                   <ThemeMenu theme={t} others={allThemes} onEdit={editTheme} />
+                                 ) : undefined} />
                     ))}
                   </div>
                 </>
+              )}
+
+              {/* Asked for, not complained about: 3-5 star reviews with a
+                  "wish / please add / would love" in them. Not investigated —
+                  there is no root cause to find — so no checkbox. */}
+              {visRequests.length > 0 && (
+                <>
+                  <Label style={{ marginBottom: S[2] }}>
+                    REQUESTS FROM USERS · {visRequests.length}
+                  </Label>
+                  <div style={{ display: "flex", flexDirection: "column", gap: S[2],
+                                marginBottom: S[4] }}>
+                    {visRequests.map((t) => (
+                      <ThemeCard key={t.slug} theme={t}
+                                 menu={reviewer ? (
+                                   <ThemeMenu theme={t} others={requests} onEdit={editTheme} />
+                                 ) : undefined} />
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {(candidates.data?.muted ?? 0) > 0 && (
+                <MutedThemes count={candidates.data?.muted ?? 0} reviewer={reviewer}
+                             onUnmute={(slug) => editTheme({ slug, action: "unmute" },
+                               "Theme unmuted — it shows again.")} />
               )}
 
               {takenThemes.length > 0 && (
@@ -391,7 +489,7 @@ export function Cases({
               {dismissedSignals.length > 0 && (
                 <>
                   <Label style={{ marginBottom: S[2], color: C.faint }}>
-                    DISMISSED AS NOISE · {dismissedSignals.length}
+                    DISMISSED OR MERGED · {dismissedSignals.length}
                   </Label>
                   <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
                     {dismissedSignals.map((s) => (
@@ -514,14 +612,22 @@ function SignalCard({ signal, selected, onToggle }: {
           <span>{signal.window} window</span>
           {detectedOn(signal.age_days) && <span>detected {detectedOn(signal.age_days)}</span>}
         </div>
+        <IntentPills counts={signal.intents} />
       </div>
     </label>
   );
 }
 
-function ThemeCard({ theme, selected, onToggle }: {
-  theme: ThemeCandidate; selected: boolean; onToggle: () => void;
+function ThemeCard({ theme, selected, onToggle, menu }: {
+  theme: ThemeCandidate;
+  /** Omitted for display-only cards (user requests), which have no checkbox. */
+  selected?: boolean;
+  onToggle?: () => void;
+  menu?: React.ReactNode;
 }) {
+  // The statement IS the first quote when it fell back to verbatim, so one
+  // quote is nothing new to show; otherwise even a single example is worth it.
+  const quotesToShow = theme.label_source === "verbatim" ? 1 : 0;
   const [open, setOpen] = useState(false);
   const trend =
     theme.trend === "up" ? { s: "arrowUp", c: C.bad } :
@@ -529,12 +635,17 @@ function ThemeCard({ theme, selected, onToggle }: {
   return (
     <div className="el-card" style={{ padding: `${S[3]} ${S[4]}` }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: S[3] }}>
-        <input type="checkbox" checked={selected} onChange={onToggle}
-          aria-label={`Select: ${theme.statement}`}
-          style={{ width: 15, height: 15, marginTop: S[1], flex: "none",
-                   accentColor: C.accent, cursor: "pointer" }} />
+        {onToggle && (
+          <input type="checkbox" checked={!!selected} onChange={onToggle}
+            aria-label={`Select: ${theme.statement}`}
+            style={{ width: 15, height: 15, marginTop: S[1], flex: "none",
+                     accentColor: C.accent, cursor: "pointer" }} />
+        )}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: T.base, color: C.text2, lineHeight: "var(--el-lh-snug)" }}>{theme.statement}</div>
+          <div style={{ fontSize: T.base, color: C.text2, lineHeight: "var(--el-lh-snug)" }}
+               title={theme.renamed ? `Generated name: ${theme.original_statement ?? ""}` : undefined}>
+            {theme.statement}
+          </div>
           <div style={{ display: "flex", alignItems: "center", gap: S[2], marginTop: S[1],
                         flexWrap: "wrap" }}>
             <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint }}>
@@ -552,7 +663,20 @@ function ThemeCard({ theme, selected, onToggle }: {
                 VERBATIM
               </span>
             )}
-            {theme.verbatims.length > 1 && (
+            {theme.avg_rating != null && (
+              <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint }}>
+                · avg {theme.avg_rating.toFixed(1)}★
+              </span>
+            )}
+            {theme.renamed && (
+              <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint }}>· renamed</span>
+            )}
+            {(theme.merged_from?.length ?? 0) > 0 && (
+              <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint }}>
+                · {theme.merged_from!.length} merged in
+              </span>
+            )}
+            {theme.verbatims.length > quotesToShow && (
               <button onClick={() => setOpen((o) => !o)} className="el-btn el-btn--sm"
                 aria-expanded={open}
                 style={{ fontFamily: mono, fontSize: T.micro, color: C.dim, padding: `0 ${S[1]}` }}>
@@ -569,8 +693,360 @@ function ThemeCard({ theme, selected, onToggle }: {
               ))}
             </div>
           )}
+          <IntentPills counts={theme.intents} />
+        </div>
+        {menu}
+      </div>
+    </div>
+  );
+}
+
+// ── intents ─────────────────────────────────────────────────────────────
+
+type IntentFilter = "" | "bug" | "feature_request" | "ux_confusion";
+
+const INTENT_META: { key: keyof IntentCounts; label: string; color: string }[] = [
+  { key: "bug", label: "Bug", color: C.bad },
+  { key: "feature_request", label: "Request", color: C.info },
+  { key: "ux_confusion", label: "UX confusion", color: C.accent },
+  { key: "praise", label: "Praise", color: C.good },
+  { key: "other", label: "Other", color: C.faint },
+];
+
+const INTENT_FILTERS: { key: IntentFilter; label: string }[] = [
+  { key: "", label: "All" },
+  { key: "bug", label: "Bugs" },
+  { key: "feature_request", label: "Requests" },
+  { key: "ux_confusion", label: "UX confusion" },
+];
+
+/** Keep a card when the chosen intent leads it or is at least a quarter of it.
+ * A card with no reviews behind it (a GitHub burst) only shows under All. */
+function intentMatches(counts: IntentCounts | null | undefined, filter: IntentFilter): boolean {
+  if (!filter) return true;
+  if (!counts) return false;
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  const n = counts[filter] ?? 0;
+  if (!total || !n) return false;
+  const top = Math.max(...Object.values(counts));
+  return n === top || n / total >= 0.25;
+}
+
+function IntentPills({ counts }: { counts?: IntentCounts | null }) {
+  if (!counts) return null;
+  const shown = INTENT_META.filter((m) => (counts[m.key] ?? 0) > 0);
+  if (shown.length === 0) return null;
+  return (
+    <div style={{ display: "flex", gap: S[1], marginTop: S[2], flexWrap: "wrap" }}
+         aria-label="What these reviews are about">
+      {shown.map((m) => (
+        <span key={m.key}
+          style={{ display: "inline-flex", alignItems: "center", gap: S[1],
+                   padding: `1px ${S[2]}`, borderRadius: R.pill,
+                   border: `1px solid ${C.border3}`, fontSize: T.micro, color: C.muted,
+                   fontFamily: mono, whiteSpace: "nowrap" }}>
+          <span aria-hidden style={{ width: 6, height: 6, borderRadius: "50%",
+                                     background: m.color, flex: "none" }} />
+          {m.label} {counts[m.key]}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function IntentFilterBar({ value, onChange, hidden }: {
+  value: IntentFilter; onChange: (v: IntentFilter) => void; hidden: number;
+}) {
+  return (
+    <div role="group" aria-label="Filter by what the reviews are about"
+         style={{ display: "flex", alignItems: "center", gap: S[1], flexWrap: "wrap",
+                  marginBottom: S[3] }}>
+      {INTENT_FILTERS.map((f) => {
+        const active = f.key === value;
+        return (
+          <button key={f.key || "all"} onClick={() => onChange(f.key)} className="el-btn"
+            aria-pressed={active}
+            style={{ background: active ? C.active : "transparent",
+                     color: active ? C.text : C.muted,
+                     border: `1px solid ${active ? C.border3 : "transparent"}`,
+                     borderRadius: R.control, padding: `${S[1]} ${S[3]}`, fontSize: T.sm,
+                     cursor: "pointer", fontFamily: sans, whiteSpace: "nowrap" }}>
+            {f.label}
+          </button>
+        );
+      })}
+      {hidden > 0 && (
+        <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, marginLeft: S[2] }}>
+          {hidden} hidden by this filter
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ── incidents ───────────────────────────────────────────────────────────
+
+function IncidentCard({ incident, members, selected, onToggle }: {
+  incident: Incident; members: SignalRow[]; selected: boolean; onToggle: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const others = members.length - 1;
+  return (
+    <div className="el-card" style={{ padding: `${S[3]} ${S[4]}` }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: S[3] }}>
+        <input type="checkbox" checked={selected} onChange={onToggle}
+          aria-label={`Select incident: ${incident.title}`}
+          style={{ width: 15, height: 15, marginTop: S[1], flex: "none",
+                   accentColor: C.accent, cursor: "pointer" }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: T.base, color: C.text2, lineHeight: "var(--el-lh-snug)" }}>
+            {incident.title}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: S[2], marginTop: S[1],
+                        flexWrap: "wrap", fontFamily: mono, fontSize: T.micro, color: C.faint }}>
+            <span style={{ color: C.info }}>INCIDENT</span>
+            <span>{members.length} related signals, same window</span>
+            <span>z {incident.z.toFixed(1)}</span>
+            <button onClick={() => setOpen((o) => !o)} className="el-btn el-btn--sm"
+              aria-expanded={open}
+              style={{ fontFamily: mono, fontSize: T.micro, color: C.dim, padding: `0 ${S[1]}` }}>
+              <Icon name={open ? "chevronDown" : "chevronRight"} size={11} />
+              {open ? "hide signals" : "show signals"}
+            </button>
+          </div>
+          {open && (
+            <div style={{ display: "flex", flexDirection: "column", gap: S[1], marginTop: S[2],
+                          paddingLeft: 10, borderLeft: `2px solid ${C.border3}` }}>
+              {members.map((m, i) => (
+                <div key={m.slug} style={{ display: "flex", gap: S[2], flexWrap: "wrap",
+                                           fontSize: T.sm, color: C.dim }}>
+                  <span style={{ color: i === 0 ? C.text2 : C.dim }}>{m.title}</span>
+                  <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint }}>
+                    {sourceLabel(m.type)} · z {m.z.toFixed(1)}{i === 0 ? " · strongest" : ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {selected && others > 0 && (
+            <div style={{ fontSize: T.sm, color: C.dim, marginTop: S[2] }}>
+              Investigates the strongest signal; the other {others}{" "}
+              {plural(others, "is", "are")} noted on the case.
+            </div>
+          )}
+          <IntentPills counts={incident.intents} />
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── editable themes ─────────────────────────────────────────────────────
+
+type OverrideBody = Parameters<typeof api.setThemeOverride>[0];
+
+function ThemeMenu({ theme, others, onEdit }: {
+  theme: ThemeCandidate; others: ThemeCandidate[];
+  onEdit: (body: OverrideBody, success: string) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<"menu" | "rename" | "merge">("menu");
+  const [label, setLabel] = useState(theme.statement);
+  const [into, setInto] = useState("");
+  const [saving, setSaving] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+  const targets = others.filter((o) => o.slug !== theme.slug);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDown);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onDown);
+    };
+  }, [open]);
+
+  const save = async (body: OverrideBody, success: string) => {
+    setSaving(true);
+    await onEdit(body, success);
+    setSaving(false);
+    setOpen(false);
+  };
+
+  const item = (text: string, onClick: () => void, disabled = false) => (
+    <button onClick={onClick} disabled={disabled || saving} className="el-btn"
+      style={{ display: "block", width: "100%", textAlign: "left", background: "transparent",
+               border: "none", color: disabled ? C.faint : C.text2, fontSize: T.sm,
+               fontFamily: sans, padding: `${S[2]} ${S[3]}`, cursor: disabled ? "default" : "pointer" }}>
+      {text}
+    </button>
+  );
+
+  return (
+    <div ref={ref} style={{ position: "relative", flex: "none" }}>
+      <button onClick={() => { setOpen((o) => !o); setMode("menu"); setLabel(theme.statement); }}
+        className="el-btn el-btn--sm" aria-haspopup="menu" aria-expanded={open}
+        aria-label={`Edit theme: ${theme.statement}`} title="Rename, merge or mute"
+        style={{ color: C.dim, padding: `0 ${S[2]}`, fontSize: T.base, lineHeight: 1 }}>
+        ⋯
+      </button>
+      {open && (
+        <div role="menu"
+          style={{ position: "absolute", right: 0, top: "100%", marginTop: S[1], zIndex: 20,
+                   minWidth: 240, maxWidth: "min(320px, 80vw)", background: C.bgRaised,
+                   border: `1px solid ${C.border3}`, borderRadius: R.control,
+                   boxShadow: "var(--el-e3)", padding: S[1] }}>
+          {mode === "menu" && (
+            <>
+              {item("Rename…", () => setMode("rename"))}
+              {item(targets.length ? "Merge into…" : "Merge into… (no other themes)",
+                    () => setMode("merge"), targets.length === 0)}
+              {item("Mute — hide it and stop new signals", () =>
+                save({ slug: theme.slug, action: "mute" },
+                     "Theme muted. It's hidden and won't raise new signals."))}
+              {theme.renamed && item("Restore generated name", () =>
+                save({ slug: theme.slug, action: "rename", label: "" }, "Generated name restored."))}
+            </>
+          )}
+          {mode === "rename" && (
+            <form onSubmit={(e) => { e.preventDefault();
+                                     save({ slug: theme.slug, action: "rename", label },
+                                          "Theme renamed."); }}
+                  style={{ display: "flex", flexDirection: "column", gap: S[2], padding: S[2] }}>
+              <input value={label} onChange={(e) => setLabel(e.target.value)} autoFocus
+                aria-label="New theme name" maxLength={120}
+                style={{ background: C.card, border: `1px solid ${C.border3}`,
+                         borderRadius: R.control, color: C.text, fontFamily: sans,
+                         fontSize: T.sm, padding: `${S[2]} ${S[3]}` }} />
+              <div style={{ display: "flex", gap: S[2], justifyContent: "flex-end" }}>
+                <SmallButton onClick={() => setMode("menu")}>Back</SmallButton>
+                <button type="submit" disabled={saving || !label.trim()}
+                  className="el-btn el-btn--primary el-btn--sm">
+                  {saving ? "Saving…" : "Rename"}
+                </button>
+              </div>
+            </form>
+          )}
+          {mode === "merge" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: S[2], padding: S[2] }}>
+              <select value={into} onChange={(e) => setInto(e.target.value)}
+                aria-label="Theme to merge into"
+                style={{ background: C.card, border: `1px solid ${C.border3}`,
+                         borderRadius: R.control, color: C.text, fontFamily: sans,
+                         fontSize: T.sm, padding: S[2] }}>
+                <option value="">Choose a theme…</option>
+                {targets.map((t) => <option key={t.slug} value={t.slug}>{t.statement}</option>)}
+              </select>
+              <div style={{ display: "flex", gap: S[2], justifyContent: "flex-end" }}>
+                <SmallButton onClick={() => setMode("menu")}>Back</SmallButton>
+                <button disabled={saving || !into}
+                  onClick={() => save({ slug: theme.slug, action: "merge", into },
+                                      "Merged — its reviews now count toward the other theme.")}
+                  className="el-btn el-btn--primary el-btn--sm">
+                  {saving ? "Merging…" : "Merge"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MutedThemes({ count, reviewer, onUnmute }: {
+  count: number; reviewer: boolean; onUnmute: (slug: string) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<ThemeOverride[] | null>(null);
+  const toggle = async () => {
+    const next = !open;
+    setOpen(next);
+    if (next) {
+      try {
+        setRows((await api.themeOverrides()).overrides.filter((o) => o.muted));
+      } catch {
+        setRows([]);
+      }
+    }
+  };
+  return (
+    <div style={{ marginBottom: S[4] }}>
+      <button onClick={toggle} className="el-btn el-btn--sm" aria-expanded={open}
+        style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, padding: `0 ${S[1]}` }}>
+        <Icon name={open ? "chevronDown" : "chevronRight"} size={11} />
+        {count} muted {plural(count, "theme")}
+      </button>
+      {open && (
+        <div style={{ display: "flex", flexDirection: "column", gap: S[1], marginTop: S[2] }}>
+          {rows == null ? (
+            <span style={{ fontSize: T.sm, color: C.faint }}>Loading…</span>
+          ) : rows.length === 0 ? (
+            <span style={{ fontSize: T.sm, color: C.faint }}>Nothing is muted.</span>
+          ) : rows.map((o) => (
+            <div key={o.slug} style={{ display: "flex", alignItems: "center", gap: S[2],
+                                       fontSize: T.sm, color: C.dim }}>
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
+                             whiteSpace: "nowrap" }}>
+                {o.label || o.slug.replace(/^(theme|request)-p\d+-/, "").replace(/-/g, " ")}
+              </span>
+              {o.updated_by && (
+                <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint }}>
+                  by {o.updated_by}
+                </span>
+              )}
+              {reviewer && (
+                <SmallButton onClick={async () => {
+                  await onUnmute(o.slug);
+                  setRows((r) => (r ?? []).filter((x) => x.slug !== o.slug));
+                }}>Unmute</SmallButton>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── daily cap ───────────────────────────────────────────────────────────
+
+/** Under a queued card that lost on today's budget: why it is waiting, and the
+ * one-off way past the cap, with what it is likely to cost. */
+function DeferredBar({ row, reviewer, busy, onRunNow }: {
+  row: CaseRow; reviewer: boolean; busy: boolean; onRunNow: () => void;
+}) {
+  const est = row.estimate;
+  const estText = est
+    ? est.basis === "median"
+      ? `est. ~${money(est.usd)} (typical ${est.tier} case, from ${est.samples} past)`
+      : `est. up to ${money(est.usd)} (${est.tier} budget cap)`
+    : null;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: S[3], flexWrap: "wrap",
+                  padding: `${S[2]} ${S[4]}`, marginLeft: S[2], borderLeft: `2px solid ${C.accentLine}`,
+                  fontSize: T.sm, color: C.dim }}>
+      <span style={{ flex: 1, minWidth: 200 }}>{row.why}</span>
+      {reviewer && (
+        <>
+          {estText && (
+            <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint }}
+                  title="An estimate, not a quote — real cost depends on how much evidence the case needs.">
+              {estText}
+            </span>
+          )}
+          <button onClick={onRunNow} disabled={busy} className="el-btn el-btn--sm"
+            style={{ border: `1px solid ${C.border3}`, borderRadius: R.control,
+                     padding: `${S[1]} ${S[3]}`, color: C.text2, cursor: busy ? "wait" : "pointer" }}>
+            {busy ? "Starting…" : "Investigate now anyway"}
+          </button>
+        </>
+      )}
     </div>
   );
 }

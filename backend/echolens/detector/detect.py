@@ -496,13 +496,23 @@ def scan(session: Session, as_of: datetime | None = None, persist: bool = True,
                   if c.type == "issue_velocity_surge"
                   or c.severity in ("SEV1", "SEV2")
                   or c.z >= MIN_CASE_Z]
-
     window_start = as_of - timedelta(days=win.recent)
     # One slug scheme: whenever an event belongs to a product it carries the
     # product-prefixed slug. A scan that was not told the product id (the CLI)
     # resolves it, otherwise it wrote unprefixed slugs next to the UI's `p1-...`
     # ones and the same anomaly was stored twice.
     product_id = _resolve_product_id(session, product, product_id)
+    # A theme someone muted in Cases raises no NEW signals. Only theme-shaped
+    # detectors are filtered: muting a complaint must never silence the
+    # product-wide 1-star spike or rating drop.
+    if product_id is not None:
+        from echolens.themes.overrides import is_muted_slug, muted_word_sets
+        muted = muted_word_sets(session, product_id)
+        if muted:
+            candidates = [c for c in candidates
+                          if c.type not in ("theme_volume_surge", "issue_velocity_surge")
+                          or not is_muted_slug(c.slug, muted)]
+
     events: list[AnomalyEvent] = []
     for c in candidates:
         slug = f"p{product_id}-{c.slug}" if product_id else c.slug
@@ -515,7 +525,10 @@ def scan(session: Session, as_of: datetime | None = None, persist: bool = True,
             new_start = (prior.window_start or window_start) if fresh else window_start
             if persist:
                 prior.z, prior.delta = c.z, c.delta
-                prior.description, prior.window = c.description, c.window
+                # An incident note (see detector/incidents.py) outlives the rewrite.
+                from echolens.detector.incidents import preserve_note
+                prior.description = preserve_note(prior.description, c.description)
+                prior.window = c.window
                 prior.window_start = new_start
                 prior.window_end = as_of
                 _merge_legacy(session, product_id, c.slug, prior)

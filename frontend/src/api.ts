@@ -387,8 +387,36 @@ export interface CaseRow {
   position?: number;
   /** Weekly complaint volume, or null when there is nothing real to draw. */
   spark: number[] | null;
+  /** Queued past today's daily cap; `why` says so. */
+  deferred?: boolean;
+  budget_tier?: string | null;
+  /** What running it now would likely cost — always an estimate. */
+  estimate?: CostEstimate | null;
+}
+export interface CostEstimate {
+  usd: number;
+  /** "median" of past cases at this tier, or the tier's "tier_cap". */
+  basis: "median" | "tier_cap";
+  samples: number;
+  tier: string;
+  is_estimate: true;
+}
+/** Review counts by what the review is FOR. Every key is always present. */
+export type IntentCounts = Record<"bug" | "feature_request" | "ux_confusion" | "praise" | "other", number>;
+/** Related signals for one product and window, investigated as one. */
+export interface Incident {
+  key: string;
+  /** The strongest member: investigating the incident investigates this. */
+  lead: string;
+  title: string;
+  members: string[];
+  z: number;
+  window_start: string;
+  window_end: string;
+  intents: IntentCounts | null;
 }
 export interface SignalRow {
+  id?: number;
   slug: string;
   title: string;
   type: string;
@@ -398,12 +426,19 @@ export interface SignalRow {
   age_days: number | null;
   dismissed: boolean;
   dismissed_reason: string | null;
+  window_start?: string | null;
+  window_end?: string | null;
+  /** Null when no reviews sit behind the signal (e.g. a GitHub issue burst). */
+  intents?: IntentCounts | null;
 }
 export interface CaseView {
   product: string | null;
   product_id: number | null;
   cases: CaseRow[];
   signals: SignalRow[];
+  incidents?: Incident[];
+  intents?: { product: string | null; days: number; total: number; counts: IntentCounts };
+  daily_limit?: number;
   counts: Record<string, number>;
 }
 export interface TraceStep {
@@ -640,13 +675,30 @@ export interface ThemeCandidate {
   count: number;
   verbatims: string[];
   trend: "up" | "down" | "flat";
-  label_source: "model" | "verbatim";
+  label_source: "model" | "verbatim" | "phrase";
   first_seen?: string | null;
   /** Set when this theme is already queued or investigated. */
   existing: { reason: string; queue_id: number | null; investigation_id: number | null } | null;
+  intents?: IntentCounts | null;
+  /** Set when someone renamed it; the generated name is kept here. */
+  renamed?: boolean;
+  original_statement?: string;
+  merged_from?: string[];
+  avg_rating?: number | null;
+}
+export interface ThemeOverride {
+  slug: string;
+  label: string | null;
+  merged_into: string | null;
+  muted: boolean;
+  updated_by: string | null;
+  updated_at: string | null;
 }
 export interface CandidatesResp {
   candidates: ThemeCandidate[];
+  /** Feature requests / improvements from 3-5 star reviews. */
+  requests?: ThemeCandidate[];
+  muted?: number;
   product: string | null;
   engine?: string;
   cached?: boolean;
@@ -953,6 +1005,15 @@ export const api = {
       "/queue/themes", { slugs, statements, tier, product_id: getActiveProduct() }),
   queue: () => get<QueueView>(scoped("/queue")),
   cancelQueued: (queueId: number) => del<{ cancelled: number }>(scoped(`/queue/${queueId}`)),
+  /** Bypass today's cap for ONE deferred item. Recorded on the queue row. */
+  runQueuedNow: (queueId: number) =>
+    post<{ status: string; investigation_id: number; estimate: CostEstimate }>(
+      scoped(`/queue/${queueId}/run-now`)),
+  themeOverrides: () => get<{ overrides: ThemeOverride[] }>(scoped("/themes/overrides")),
+  setThemeOverride: (body: { slug: string; action: "rename" | "merge" | "mute" | "unmute" | "reset";
+                             label?: string; into?: string }) =>
+    post<{ overrides: ThemeOverride[] }>("/themes/overrides",
+      { ...body, product_id: getActiveProduct() }),
   brain: (includeRetired = false) =>
     get<{ edges: BrainEdge[]; product: string | null }>(
       scoped(`/brain${includeRetired ? "?include_retired=true" : ""}`)),

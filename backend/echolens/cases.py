@@ -379,6 +379,7 @@ def signal_rows(session: Session, product_id: int | None,
         td = decisions.get(a.id)
         dismissed = td is not None and td.decision in ("ignore", "merge")
         out.append({
+            "id": a.id,
             "slug": a.slug,
             "title": _headline(a),
             "type": a.type,
@@ -388,6 +389,8 @@ def signal_rows(session: Session, product_id: int | None,
             "age_days": _age_days(a.created_at, now),
             "dismissed": dismissed,
             "dismissed_reason": (td.reason if dismissed else None),
+            "window_start": aware_utc(a.window_start).isoformat() if a.window_start else None,
+            "window_end": aware_utc(a.window_end).isoformat() if a.window_end else None,
         })
     return out
 

@@ -375,29 +375,41 @@ def _drain_queue_bg(product_id: int | None) -> None:
                 row = q.claim_next(session, product_id, limit)
                 if row is None:
                     return  # queue empty, or today's budget is gone
-                queue_id, anomaly_id, tier = row.id, row.anomaly_id, row.budget_tier
-                anomaly = session.get(AnomalyEvent, anomaly_id)
-                inv = Investigation(anomaly_id=anomaly_id, status="running",
-                                    opened_by="anomaly", budget_tier=tier, budget_json={},
-                                    data_notes=_data_notes(session, product_id),
-                                    product_id=(anomaly.product_id if anomaly else product_id))
-                session.add(inv)
-                if anomaly is not None:
-                    anomaly.status = "investigating"
-                session.flush()
-                investigation_id = inv.id
-                row.investigation_id = investigation_id
-            ok = True
-            try:
-                _run_investigation_bg(investigation_id, tier)
-            except Exception as err:  # one bad case must not stall the queue
-                ok = False
-                log.error("queued_investigation_failed", queue_id=queue_id, error=str(err))
-            with session_scope() as session:
-                q.finish(session, queue_id, investigation_id, ok=ok)
+                queue_id = row.id
+                investigation_id, tier = _open_claimed(session, row, product_id)
+            _run_claimed_bg(queue_id, investigation_id, tier)
     finally:
         with _queue_worker_lock:
             _queue_worker_active.discard(product_id)
+
+
+def _open_claimed(session, row, product_id: int | None) -> tuple[int, str]:
+    """Create the Investigation for a queue row that was just claimed."""
+    anomaly = session.get(AnomalyEvent, row.anomaly_id)
+    tier = row.budget_tier
+    inv = Investigation(anomaly_id=row.anomaly_id, status="running",
+                        opened_by="anomaly", budget_tier=tier, budget_json={},
+                        data_notes=_data_notes(session, product_id),
+                        product_id=(anomaly.product_id if anomaly else product_id))
+    session.add(inv)
+    if anomaly is not None:
+        anomaly.status = "investigating"
+    session.flush()
+    row.investigation_id = inv.id
+    return inv.id, tier
+
+
+def _run_claimed_bg(queue_id: int, investigation_id: int, tier: str) -> None:
+    """Run a claimed row's investigation and close the row either way."""
+    from echolens.orchestrator import queue as q
+    ok = True
+    try:
+        _run_investigation_bg(investigation_id, tier)
+    except Exception as err:  # one bad case must not stall the queue
+        ok = False
+        log.error("queued_investigation_failed", queue_id=queue_id, error=str(err))
+    with session_scope() as session:
+        q.finish(session, queue_id, investigation_id, ok=ok)
 
 
 def _fail_investigation(session, inv_row, reason: str) -> None:
@@ -1538,13 +1550,16 @@ def feed_candidates(request: Request, product_id: int | None = None,
     bad. These come from clustering complaints by meaning, not from counting
     n-grams, which is why they are sentences rather than words.
     """
+    from echolens.intent import count_intents
     from echolens.orchestrator.queue import find_existing
     from echolens.themes.discover import cached_themes
+    from echolens.themes.overrides import apply_overrides, get_overrides
+    from echolens.themes.requests import cached_requests
 
     with session_scope() as session:
         prod = _scope(session, product_id, user)
         if prod is None:
-            return {"candidates": [], "product": None, "engine": "none"}
+            return {"candidates": [], "requests": [], "product": None, "engine": "none"}
         # A guest gets the cache or the deterministic fallback, never a fresh
         # LLM call. `refresh` deliberately DEFEATS the cache, so it is the one
         # knob an anonymous caller could use to force unlimited spend — it is
@@ -1570,10 +1585,35 @@ def feed_candidates(request: Request, product_id: int | None = None,
                 "label_source": th["label_source"],
                 "first_seen": th.get("first_seen"),
                 "existing": existing,
+                # A cache written before intents existed has none; the quotes
+                # are a fair, if smaller, sample of the same reviews.
+                "intents": th.get("intents") or count_intents(
+                    (v, None) for v in th.get("verbatims") or []),
             })
-        return {"candidates": out, "product": prod.name,
+        # Feature requests / improvements from 3-5 star reviews. Display-only:
+        # a wish list is not something to root-cause, so these are not queued.
+        req = cached_requests(session, prod.name, llm=llm, limit=limit,
+                              package_name=prod.package_name, force=refresh and may_spend)
+        requests_out = [{
+            "slug": f"request-p{prod.id}-{r['slug']}",
+            "statement": r["statement"], "phrase": r.get("phrase"),
+            "count": r["count"], "verbatims": r["verbatims"], "trend": r["trend"],
+            "label_source": r["label_source"], "avg_rating": r.get("avg_rating"),
+            "first_seen": r.get("first_seen"), "intents": r.get("intents"),
+            "existing": None,
+        } for r in req.get("requests", [])]
+        # Corrections people made (rename / merge / mute) go on LAST — after
+        # display_themes has merged wording variants and formatted titles — so
+        # a name a person typed always wins over a generated one.
+        overrides = get_overrides(session, prod.id)
+        muted_n = len([o for o in overrides.values() if o.muted])
+        out = apply_overrides(out, overrides)
+        requests_out = apply_overrides(requests_out, overrides)
+        return {"candidates": out, "requests": requests_out, "product": prod.name,
                 "engine": result.get("engine"), "cached": result.get("cached", False),
                 "reviews_considered": result.get("reviews_considered", 0),
+                "requests_considered": req.get("reviews_considered", 0),
+                "muted": muted_n,
                 "other": result.get("other", 0)}
 
 
@@ -1597,11 +1637,18 @@ def queue_themes(request: Request, body: QueueThemes,
     with session_scope() as session:
         prod = _scope(session, body.product_id, user)
         pid = prod.id if prod else None
+        from echolens.detector.incidents import commit_incident
         queued, already = [], []
         for i, slug in enumerate(body.slugs):
+            # Picking an incident sends its lead's slug. The other members are
+            # named on the lead's description and recorded as merged into it,
+            # BEFORE queueing, so the case starts with the whole picture.
+            folded = commit_incident(session, slug, pid, prod.name if prod else None)
             res = enqueue_theme(session, product_id=pid, slug=slug,
                                 statement=body.statements.get(slug, ""),
                                 tier=body.tier, selection_order=i)
+            if folded:
+                res["incident_members"] = folded
             (already if res["status"] == "already" else queued).append(res)
         limit = _daily_limit(session, pid)
         view = queue_view(session, pid, limit)
@@ -1643,6 +1690,91 @@ def queue_cancel(queue_id: int, product_id: int | None = None,
         if not cancel(session, queue_id):
             raise HTTPException(409, "that item is already running or finished")
     return {"cancelled": queue_id}
+
+
+@app.post("/queue/{queue_id}/run-now")
+@limiter.limit("6/minute")  # each one is a paid run past the budget
+def queue_run_now(request: Request, queue_id: int, product_id: int | None = None,
+                  user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Run ONE deferred item now, past today's cap, and record who did it.
+
+    The cap stays the default for everything else; this is a deliberate,
+    audited exception for a single row. The cost shown is an estimate.
+    """
+    from echolens.db.models import QueuedInvestigation
+    from echolens.orchestrator import queue as q
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        pid = p.id if p else None
+        row = _owned(session, QueuedInvestigation, queue_id, pid)
+        estimate = q.estimate_cost(session, row.budget_tier or "quick", pid)
+        who = user.get("email") or f"user:{user.get('id')}"
+        claimed = q.claim_override(session, queue_id, user=who, estimate_usd=estimate["usd"])
+        if claimed is None:
+            raise HTTPException(409, "that item is already running or finished")
+        investigation_id, tier = _open_claimed(session, claimed, pid)
+    threading.Thread(target=_run_claimed_bg, args=(queue_id, investigation_id, tier),
+                     daemon=True).start()
+    return {"status": "started", "queue_id": queue_id, "investigation_id": investigation_id,
+            "estimate": estimate, "override_by": who}
+
+
+class ThemeOverrideBody(BaseModel):
+    slug: str = Field(min_length=1, max_length=128)
+    action: str
+    label: str | None = Field(default=None, max_length=200)
+    into: str | None = Field(default=None, max_length=128)
+    product_id: int | None = None
+
+
+@app.get("/themes/overrides")
+def theme_overrides_list(product_id: int | None = None,
+                         user: dict = Depends(current_user)) -> dict:
+    from echolens.themes.overrides import override_dicts
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        return {"overrides": override_dicts(session, p.id if p else None)}
+
+
+@app.post("/themes/overrides")
+def theme_overrides_set(body: ThemeOverrideBody,
+                        user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Rename, merge or mute a discovered theme for this product. Persisted,
+    so the correction survives the next re-discovery."""
+    from echolens.themes.overrides import override_dicts, set_override
+    with session_scope() as session:
+        p = _scope(session, body.product_id, user)
+        pid = p.id if p else None
+        try:
+            set_override(session, pid, body.slug, body.action, label=body.label,
+                         into=body.into, user=user.get("email"))
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        return {"overrides": override_dicts(session, pid)}
+
+
+@app.get("/intents")
+def intents_view(product_id: int | None = None, days: int = Query(90, ge=1, le=365),
+                 user: dict = Depends(current_user)) -> dict:
+    """What this product's reviews are FOR, over the window: bug, feature
+    request, UX confusion, praise, other."""
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        return _product_intents(session, p.name if p else None, days)
+
+
+def _product_intents(session, product: str | None, days: int = 90) -> dict:
+    from echolens.detector.detect import reference_now
+    from echolens.intent import count_intents, empty_counts
+    if not product:
+        return {"product": None, "days": days, "total": 0, "counts": empty_counts()}
+    now = reference_now(session, product)
+    rows = session.execute(select(Review.text, Review.rating).where(
+        Review.product == product,
+        Review.created_at >= (now - timedelta(days=days)).replace(tzinfo=None))
+        .limit(20000)).all()
+    counts = count_intents((t, r) for t, r in rows)
+    return {"product": product, "days": days, "total": len(rows), "counts": counts}
 
 
 @app.post("/import/reviews")
@@ -1745,9 +1877,33 @@ def list_cases(product_id: int | None = None, user: dict = Depends(current_user)
     described the same case differently. Everything a card renders is decided
     here so the same case cannot look like two different things on two screens.
     """
+    from echolens.detector.incidents import incident_view
+    from echolens.orchestrator.queue import queue_view
+    from echolens.themes.overrides import muted_word_sets
     with session_scope() as session:
         p = _scope(session, product_id, user)
-        return case_view(session, p.id if p else None)
+        pid = p.id if p else None
+        view = case_view(session, pid)
+        name = p.name if p else None
+        # Signals: intent counts, muted themes hidden, related ones grouped into
+        # incidents. Members stay in `signals`; incidents only reference them.
+        view["signals"], view["incidents"] = incident_view(
+            session, name, view["signals"], muted_word_sets(session, pid))
+        view["intents"] = _product_intents(session, name)
+        # Queued rows past today's cap say so, with the override's estimate.
+        limit = _daily_limit(session, pid)
+        q = {i["queue_id"]: i for i in queue_view(session, pid, limit)["queued"]}
+        for row in view["cases"]:
+            item = q.get(row.get("queue_id")) if row.get("queue_id") is not None else None
+            if item is None:
+                continue
+            row["deferred"] = item["status"] == "deferred"
+            row["budget_tier"] = item.get("budget_tier")
+            if row["deferred"]:
+                row["why"] = item["note"]
+                row["estimate"] = item.get("estimate")
+        view["daily_limit"] = limit
+        return view
 
 
 def _triage_summary(considered: int, already: int, started: int, run: bool) -> str:

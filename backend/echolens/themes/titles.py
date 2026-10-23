@@ -129,6 +129,11 @@ def display_themes(result: dict, *, preferred_slugs: set[str] | None = None) -> 
             title["merged_slugs"] = list(dict.fromkeys(
                 slug for t in group for slug in [t["slug"], *t.get("merged_slugs", [])]
                 if slug != title["slug"]))
+            # Intent counts follow the merged count (variants share no review
+            # ids, so a sum is exact rather than a double count).
+            if all(isinstance(t.get("intents"), dict) for t in group):
+                keys = set().union(*(t["intents"] for t in group))
+                title["intents"] = {k: sum(t["intents"].get(k, 0) for t in group) for k in keys}
             trends = {t.get("trend", "flat") for t in group}
             title["trend"] = next(iter(trends)) if len(trends) == 1 else "flat"
         title.pop("_review_ids", None)
