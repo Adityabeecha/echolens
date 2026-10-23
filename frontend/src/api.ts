@@ -366,6 +366,34 @@ export interface SourcesResp {
   product?: string | null;
 }
 
+// Issue trackers a finding can be filed to.
+export type TrackerId = "github" | "linear" | "jira";
+export interface TrackerInfo { id: TrackerId; label: string; configured: boolean }
+export interface TicketResult {
+  tracker: TrackerId; repo: string | null;
+  /** GitHub issue number, Linear identifier ("ENG-12") or Jira key ("APP-3"). */
+  number: number | string | null;
+  url: string | null;
+}
+
+/** The onboarding preview of one source. `ok: false` is a normal answer. */
+export interface SourcePreview {
+  ok: boolean;
+  kind?: "invalid" | "not_found" | "timeout" | "unavailable";
+  reason?: string;
+  source?: "play_store" | "github";
+  identifier?: string;
+  title?: string;
+  developer?: string | null;
+  ratings?: number | null;
+  reviews?: number | null;
+  score?: number | null;
+  installs?: string | null;
+  description?: string | null;
+  open_issues?: number | null;
+  stars?: number | null;
+}
+
 // v3.0 onboarding + health snapshot
 export interface SnapshotTheme {
   label: string;
@@ -938,6 +966,18 @@ export const api = {
     get<{ title: string; body: string; repo: string | null }>(scoped(`/findings/${findingId}/issue`)),
   createGithubIssue: (findingId: number) =>
     post<{ repo: string; number: number; url: string }>(scoped(`/findings/${findingId}/github-issue`)),
+  /** Which issue trackers this deployment can file to (booleans, no secrets). */
+  trackers: () => get<{ trackers: TrackerInfo[] }>("/integrations/trackers"),
+  /** File a finding to GitHub, Linear or Jira — same ticket body everywhere. */
+  createTicket: (findingId: number, tracker: TrackerId) =>
+    post<TicketResult>(scoped(`/findings/${findingId}/ticket?tracker=${tracker}`)),
+  /** Instant look-up of what the wizard is about to connect. Never throws on a
+   *  slow store — the server answers `ok: false` with a reason instead. */
+  onboardPreview: (q: { play_store?: string; github?: string }) => {
+    const qs = Object.entries(q).filter(([, v]) => v && v.trim())
+      .map(([k, v]) => `${k}=${encodeURIComponent(v!.trim())}`).join("&");
+    return get<{ play_store?: SourcePreview; github?: SourcePreview }>(`/onboard/preview?${qs}`);
+  },
   notifyFinding: (findingId: number) =>
     post<{ routed: string; sent?: string[] }>(scoped(`/findings/${findingId}/notify`)),
   costsSummary: () => get<CostsSummary>(scoped("/costs/summary")),

@@ -33,6 +33,9 @@ dev = ["pytest>=8.0"]
 # real semantic embeddings (heavy; hashing fallback works without this)
 embeddings = ["sentence-transformers>=2.2"]
 
+[project.scripts]
+echolens = "echolens.cli:main"
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

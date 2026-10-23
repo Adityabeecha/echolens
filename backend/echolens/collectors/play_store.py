@@ -45,6 +45,15 @@ def _default_fetch(app_id: str, count: int, retries: int = 3) -> list[dict]:
     raise last if last else RuntimeError("play store fetch failed")
 
 
+def fetch_app_details(app_id: str) -> dict:
+    """The store listing (title, ratings count, score) for the onboarding
+    preview. One request, no retries: a preview that is slow is worse than one
+    that says "couldn't check". Raises NotFoundError for an unknown package."""
+    from google_play_scraper import app  # type: ignore
+
+    return app(app_id, lang="en", country="us")
+
+
 class PlayStoreCollector(Collector):
     source = "play_store"
 

@@ -205,6 +205,24 @@ class Settings(BaseSettings):
     alert_email_from: str = ""
     alert_email_to: str = ""
 
+    # ── issue trackers beyond GitHub (all optional) ─────────────────────
+    # Linear: a personal API key and the team issues are filed under.
+    linear_api_key: str = ""
+    linear_team_id: str = ""
+    # Jira Cloud: site URL (https://acme.atlassian.net), an Atlassian account
+    # email + API token, and the project issues land in.
+    jira_base_url: str = ""
+    jira_email: str = ""
+    jira_api_token: str = ""
+    jira_project_key: str = ""
+    jira_issue_type: str = "Task"
+
+    # ── MCP server (`echolens mcp`) ─────────────────────────────────────
+    # The MCP server runs on a developer's machine and reads a DEPLOYED
+    # EchoLens over HTTP, so it needs that API's URL and a bearer token.
+    echolens_api_url: str = ""
+    echolens_api_token: str = ""
+
     @property
     def extra_theme_terms(self) -> list[str]:
         return [t.strip() for t in self.detector_extra_terms.split(",") if t.strip()]

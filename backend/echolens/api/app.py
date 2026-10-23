@@ -1169,6 +1169,23 @@ def onboard(body: OnboardBody, user: dict = Depends(require_role("admin"))) -> d
             "additional_sources": connected_additional}
 
 
+@app.get("/onboard/preview")
+@limiter.limit("30/minute")  # each call reaches out to Google Play / GitHub
+def onboard_preview(request: Request, play_store: str | None = None,
+                    github: str | None = None,
+                    user: dict = Depends(require_role("admin"))) -> dict:
+    """What the wizard is about to connect, before it connects it: the Play
+    Store listing's title and ratings, or the repo's name and open issues.
+    Short timeout, never an error status — a slow store just says so."""
+    from echolens.onboarding.preview import preview_github, preview_play_store
+    out: dict = {}
+    if play_store is not None and play_store.strip():
+        out["play_store"] = preview_play_store(play_store)
+    if github is not None and github.strip():
+        out["github"] = preview_github(github)
+    return out
+
+
 @app.get("/onboard/status")
 def onboard_status(product: str, user: dict = Depends(current_user)) -> dict:
     """Live view for the onboarding wait screen: source health, whether the
@@ -2267,7 +2284,9 @@ def finding_github_issue(finding_id: int, product_id: int | None = None,
     with session_scope() as session:
         p = _scope(session, product_id, user)
         finding = _owned_finding(session, finding_id, p.id if p else None)
-        repo = _github_repo(session)
+        # Scoped to the finding's product: unscoped, a second product's
+        # findings filed into whichever repo happened to be configured.
+        repo = _github_repo(session, finding.product_id)
         if not repo:
             raise HTTPException(422, "No GitHub repo connected. Connect a repo on Sources, or set GITHUB_DEFAULT_REPO.")
         inv = session.get(Investigation, finding.investigation_id)
@@ -2284,6 +2303,53 @@ def finding_github_issue(finding_id: int, product_id: int | None = None,
         if issue.get("number"):
             link_issue(session, finding, repo, int(issue["number"]), issue.get("url", ""))
         return {"repo": repo, **issue}
+
+
+@app.get("/integrations/trackers")
+def integrations_trackers(user: dict = Depends(current_user)) -> dict:
+    """Which issue trackers this deployment can file to. Booleans only — the
+    credentials themselves never leave the server."""
+    from echolens.integrations.trackers import TRACKERS, configured_trackers
+    configured = configured_trackers()
+    labels = {"github": "GitHub", "linear": "Linear", "jira": "Jira"}
+    return {"trackers": [{"id": t, "label": labels[t], "configured": configured[t]}
+                         for t in TRACKERS]}
+
+
+@app.post("/findings/{finding_id}/ticket")
+def finding_ticket_create(finding_id: int, tracker: str = "github",
+                          product_id: int | None = None,
+                          user: dict = Depends(require_role("reviewer"))) -> dict:
+    """File a finding to GitHub, Linear or Jira. Same ticket body everywhere
+    (exporting.finding_ticket); only GitHub issues are linked for fix-watch,
+    because the close webhook only exists there."""
+    from echolens.exporting import finding_ticket
+    from echolens.integrations.trackers import (
+        TRACKERS, TrackerError, configured_trackers, create_ticket)
+    from echolens.notify import deep_link
+    if tracker not in TRACKERS:
+        raise HTTPException(422, f"unknown tracker '{tracker}' — use github, linear or jira")
+    if not configured_trackers()[tracker]:
+        raise HTTPException(422, f"{tracker.capitalize()} is not configured on this deployment.")
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
+        repo = _github_repo(session, finding.product_id)
+        if tracker == "github" and not repo:
+            raise HTTPException(422, "No GitHub repo connected. Connect a repo on Sources, or set GITHUB_DEFAULT_REPO.")
+        inv = session.get(Investigation, finding.investigation_id)
+        ticket = finding_ticket(session, finding, repo=repo,
+                                deep_link=deep_link(inv.id) if inv else None)
+        try:
+            issue = create_ticket(tracker, ticket["title"], ticket["body"], repo=repo)
+        except TrackerError as err:
+            # Upstream bodies can carry account details; log them, return a generic line.
+            log.warning("ticket_failed", tracker=tracker, finding_id=finding_id, error=str(err))
+            raise HTTPException(422, f"could not create the {tracker} issue — see server logs")
+        if tracker == "github" and issue.get("number"):
+            from echolens.fixwatch import link_issue
+            link_issue(session, finding, repo, int(issue["number"]), issue.get("url", ""))
+        return {"tracker": tracker, "repo": repo if tracker == "github" else None, **issue}
 
 
 @app.post("/findings/{finding_id}/notify")
