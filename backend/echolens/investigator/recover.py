@@ -106,7 +106,7 @@ def _recorded_cost(session: Session, inv: Investigation, budget) -> float:
     from echolens.db.models import LLMCall
     ledger = session.scalar(select(func.coalesce(func.sum(LLMCall.cost), 0.0)).where(
         LLMCall.investigation_id == inv.id)) or 0.0
-    return float(ledger) if ledger > 0 else float(budget.cost_usd)
+    return max(float(ledger), float(budget.cost_usd))
 
 
 def _is_dead_end(session: Session, inv: Investigation, budget) -> bool:
@@ -129,7 +129,7 @@ def extension_offer(session: Session, inv: Investigation) -> dict:
     spent = _recorded_cost(session, inv, budget)
     per_step = spent / max(1, budget.iterations)
     estimate = round(per_step * EXTENSION_STEPS, 2)
-    used = budget.human_extensions
+    used = max(budget.human_extensions, len(inv.extensions_json or []))
     out = {"eligible": False, "reason": "", "steps": EXTENSION_STEPS,
            "estimate_usd": estimate, "spent_usd": round(spent, 4),
            "used": used, "remaining": max(0, MAX_HUMAN_EXTENSIONS - used)}
@@ -151,14 +151,126 @@ def extension_offer(session: Session, inv: Investigation) -> dict:
     return out
 
 
+def auto_budget_room(session: Session, inv: Investigation, budget, as_of=None) -> dict:
+    """Remaining paid headroom in the same scope shown in Settings."""
+    from sqlalchemy import func, or_
+    from echolens.db.models import LLMCall
+    from echolens.orchestrator.queue import effective_limits, investigations_today
+    from echolens.timeutil import aware_utc
+    now = as_of or datetime.now(timezone.utc)
+    limits = effective_limits(session, inv.product_id)
+    day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    month = day.replace(day=1)
+    stmt = select(LLMCall).outerjoin(Investigation, Investigation.id == LLMCall.investigation_id)
+    if inv.product_id is not None:
+        stmt = stmt.where(or_(LLMCall.product_id == inv.product_id,
+                              Investigation.product_id == inv.product_id))
+    calls = session.scalars(stmt.where(LLMCall.created_at >= month, LLMCall.created_at <= now)).all()
+    daily = sum(float(c.cost) for c in calls if aware_utc(c.created_at) >= day)
+    monthly = sum(float(c.cost) for c in calls)
+    # Injected clients may checkpoint costs without writing a ledger row.
+    ledger, tokens = session.execute(select(
+        func.coalesce(func.sum(LLMCall.cost), 0.0),
+        func.coalesce(func.sum(LLMCall.tokens_in + LLMCall.tokens_out), 0)).where(
+            LLMCall.investigation_id == inv.id)).one()
+    # A trace commit can precede its loop checkpoint on a crash. The ledger is
+    # authoritative when it is ahead; never restore spend or tokens backwards.
+    budget.cost_usd = max(budget.cost_usd, float(ledger))
+    budget.tokens = max(budget.tokens, int(tokens))
+    unrecorded = max(0.0, budget.cost_usd - float(ledger))
+    daily += unrecorded; monthly += unrecorded
+    # Other active automatic grants have already promised this headroom. Keep
+    # it reserved until their case ends instead of allocating it a second time.
+    active_stmt = select(Investigation).where(Investigation.status == "running", Investigation.id != inv.id)
+    if inv.product_id is not None:
+        active_stmt = active_stmt.where(Investigation.product_id == inv.product_id)
+    active = [row for row in session.scalars(active_stmt.execution_options(populate_existing=True)).all()
+              if ((row.checkpoint_json or {}).get("budget") or {}).get("auto_extensions")]
+    costs = dict(session.execute(select(LLMCall.investigation_id, func.sum(LLMCall.cost))
+                 .where(LLMCall.investigation_id.in_([row.id for row in active]))
+                 .group_by(LLMCall.investigation_id)).all()) if active else {}
+    reserved = 0.0
+    for row in active:
+        restored = _restored_budget(row)
+        reserved += max(0.0, restored.cap_cost_usd() - max(restored.cost_usd, float(costs.get(row.id) or 0)))
+    daily += reserved; monthly += reserved
+    reason = ""
+    if investigations_today(session, inv.product_id, now) >= int(limits["daily_investigations"]):
+        reason = "Daily investigation cap reached"
+    elif daily >= float(limits["daily_cost_budget"]):
+        reason = "Daily spend cap reached"
+    elif monthly >= float(limits["monthly_budget"]):
+        reason = "Monthly budget reached"
+    elif budget.cost_usd >= float(limits["per_case_budget"]):
+        reason = "Per-case budget reached"
+    elif budget.elapsed_s() >= float(limits["per_case_wall_min"]) * 60:
+        reason = "Per-case time cap reached"
+    ceiling = min(float(limits["per_case_budget"]),
+                  budget.cost_usd + max(0.0, float(limits["daily_cost_budget"]) - daily),
+                  budget.cost_usd + max(0.0, float(limits["monthly_budget"]) - monthly))
+    return {"reason": reason, "cost_ceiling_usd": ceiling,
+            "wall_ceiling_s": float(limits["per_case_wall_min"]) * 60}
+
+
+def automatic_extension_offer(session: Session, inv: Investigation) -> dict:
+    """One audited continuation for a promising, exhausted critical case."""
+    from echolens.db.models import AnomalyEvent, Finding
+    from echolens.impact import severity
+    from echolens.investigator import guards
+    budget = _restored_budget(inv)
+    out = extension_offer(session, inv)
+    if not out["eligible"]:
+        return out
+    out["eligible"] = False
+    if inv.status != "budget_exhausted":
+        out["reason"] = "Automatic continuation requires an exhausted budget"
+    elif budget.auto_extensions or budget.extended or any(e.get("by") == "auto" for e in inv.extensions_json or []):
+        out["reason"] = "An automatic extension has already been used"
+    elif guards.best_confidence((inv.checkpoint_json or {}).get("hypotheses", [])) < 0.5:
+        out["reason"] = "Best hypothesis confidence is below 0.5"
+    else:
+        anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv.anomaly_id else None
+        finding = session.scalars(select(Finding).where(Finding.investigation_id == inv.id)
+                                  .order_by(Finding.id.desc())).first()
+        high = (finding is not None and severity(float(finding.confidence or 0),
+                 (finding.json or {}).get("impact", {}))["band"] == "high")
+        if not (anomaly is not None and abs(anomaly.z or 0) >= 3) and not high:
+            out["reason"] = "Only SEV1 signals or high-impact findings qualify"
+        else:
+            room = auto_budget_room(session, inv, budget)
+            out.update(room)
+            if not room["reason"]:
+                out["eligible"] = True
+                critical = f"SEV1 signal z={anomaly.z:.1f}" if anomaly is not None and abs(anomaly.z or 0) >= 3 else "High-severity finding"
+                best = guards.best_confidence((inv.checkpoint_json or {}).get("hypotheses", []))
+                out["reason"] = f"{critical}, best hypothesis confidence {best:.2f}; within daily and monthly caps"
+    return out
+
+
 def grant_extension(session: Session, inv: Investigation, by: str | None = None) -> dict:
     """The SYNCHRONOUS half of "continue with more budget": validate, write the
     granted headroom into the checkpoint, and mark the case running again. The
     caller runs Investigator.resume (off the request path in the API)."""
-    offer = extension_offer(session, inv)
+    if by == "auto":
+        from echolens.db.models import Product
+        # Persist this caller's final checkpoint, then serialize and reload the
+        # audit under the lock: another worker may already have granted it.
+        session.flush()
+        model, resource_id = (Product, inv.product_id) if inv.product_id is not None else (Investigation, inv.id)
+        if session.bind.dialect.name == "sqlite":
+            from sqlalchemy import update
+            session.execute(update(model).where(model.id == resource_id).values(id=model.id))
+        else:
+            session.execute(select(model.id).where(model.id == resource_id).with_for_update())
+        session.refresh(inv)
+    offer = automatic_extension_offer(session, inv) if by == "auto" else extension_offer(session, inv)
     if not offer["eligible"]:
         raise ValueError(offer["reason"])
     budget = _restored_budget(inv)
+    if by == "auto":
+        room = auto_budget_room(session, inv, budget)
+        if room["reason"]:
+            raise ValueError(room["reason"])
     steps = max(1, budget.iterations)
     tokens_per_step = budget.tokens / steps
     ckpt = dict(inv.checkpoint_json or {})
@@ -182,13 +294,19 @@ def grant_extension(session: Session, inv: Investigation, by: str | None = None)
     b["extra_wall_s"] = float(budget.extra_wall_s
                               + max(0.0, budget.prior_elapsed_s - budget.cap_wall_s())
                               + _EXTRA_WALL_S)
-    b["human_extensions"] = budget.human_extensions + 1
+    b["human_extensions"] = max(budget.human_extensions, offer["used"]) + 1
+    if by == "auto":
+        b["cost_usd"], b["tokens"] = budget.cost_usd, budget.tokens
+        b["auto_extensions"] = budget.auto_extensions + 1
+        b["cost_ceiling_usd"] = offer["cost_ceiling_usd"]
+        b["wall_ceiling_s"] = offer["wall_ceiling_s"]
     ckpt["budget"] = b
     inv.checkpoint_json = ckpt          # reassign: JSON columns don't track mutation
     # The audit record for History: when, which extension, and who granted it.
     inv.extensions_json = [*(inv.extensions_json or []),
                            {"at": datetime.now(timezone.utc).isoformat(),
-                            "n": b["human_extensions"], "steps": EXTENSION_STEPS, "by": by}]
+                            "n": b["human_extensions"], "steps": EXTENSION_STEPS, "by": by,
+                            **({"reason": offer["reason"]} if by == "auto" else {})}]
     prior_status = inv.status
     inv.status = "running"
     inv.paused = False

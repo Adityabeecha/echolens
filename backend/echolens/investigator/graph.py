@@ -17,8 +17,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from echolens.config import (
-    EXTENSION_CONFIDENCE,
-    EXTENSION_FACTOR,
     MAX_ACTIVE_HYPOTHESES,
     SEEDED_PRIOR_CONFIDENCE,
     SUPPORT_CONFIDENCE,
@@ -51,7 +49,8 @@ log = get_logger("investigator")
 
 # v15: the reviewer-granted budget fields, checkpointed and restored together.
 _GRANT_FIELDS = ("extra_iterations", "extra_tool_calls", "extra_tokens",
-                 "extra_cost_usd", "extra_wall_s", "human_extensions")
+                 "extra_cost_usd", "extra_wall_s", "human_extensions",
+                 "auto_extensions", "cost_ceiling_usd", "wall_ceiling_s")
 
 
 def _budget_grants(budget: Budget) -> dict:
@@ -113,6 +112,7 @@ class Investigator:
         except Exception:
             self._guidance = ""
 
+        self._owns_llm = llm is None
         if llm is None:
             from echolens.llm.openai_client import OpenAIClient
             llm = OpenAIClient(on_call=self._record_llm_call)
@@ -178,6 +178,19 @@ class Investigator:
 
     # ── nodes ──────────────────────────────────────────────────────────
 
+    def _automatic_budget_stop(self, state: InvState) -> bool:
+        if not self.budget.auto_extensions:
+            return False
+        from echolens.investigator.recover import auto_budget_room
+        room = auto_budget_room(self.session, self.inv, self.budget)
+        if room["cost_ceiling_usd"] > 0:
+            self.budget.cost_ceiling_usd = min(self.budget.cost_ceiling_usd, room["cost_ceiling_usd"])
+        reason = room["reason"] or ", ".join(guards.budget_exceeded(self.budget))
+        if not reason:
+            return False
+        state["over_budget"], state["budget_stop_reason"] = True, reason
+        return True
+
     def _plan(self, state: InvState) -> InvState:
         state["pending_tool"] = None
         state["pending_delegate"] = None
@@ -186,6 +199,8 @@ class Investigator:
         # executed a full iteration — two LLM calls and a tool result — and the
         # cap was merely OBSERVED to be blown afterwards, by an unbounded margin.
         # Refusing here means the ceiling is enforced rather than recorded.
+        if self._automatic_budget_stop(state):
+            return state
         if guards.budget_exceeded(self.budget):
             state["over_budget"] = True
             return state
@@ -250,6 +265,8 @@ class Investigator:
         return state
 
     def _delegate(self, state: InvState) -> InvState:
+        if self._automatic_budget_stop(state):
+            return state
         """v2.0: run a single-pass specialist and fold its analysis into the
         investigator's context (not as evidence — analysis only)."""
         from echolens.investigator.specialists import run_specialist
@@ -417,6 +434,8 @@ class Investigator:
         return state
 
     def _update(self, state: InvState) -> InvState:
+        if self._automatic_budget_stop(state):
+            return state
         last = state.get("last_tool")
         state["last_tool"] = None
         if not last:
@@ -582,6 +601,8 @@ class Investigator:
         proposed = state.get("proposed")
         state["proposed"] = None  # explicit: absent keys keep their old channel value
         status, reason = "running", ""
+        if state.get("budget_stop_reason"):
+            status, reason = "budget_exhausted", state["budget_stop_reason"]
 
         winner = guards.resolvable_hypothesis(state["hypotheses"], state["evidence"])
         if proposed:
@@ -607,19 +628,11 @@ class Investigator:
             exhausted = guards.budget_exceeded(self.budget)
             if exhausted:
                 best = guards.best_confidence(state["hypotheses"])
-                # v2.0: if we're close, grant ONE capped extension instead of quitting.
-                if not self.budget.extended and best >= EXTENSION_CONFIDENCE:
-                    self.budget.extended = True
-                    self.budget.extension_factor = EXTENSION_FACTOR
-                    self._trace("CHECK", {
-                        "text": f"Budget hit but best hypothesis is promising ({best:.2f} ≥ "
-                                f"{EXTENSION_CONFIDENCE}); granting a one-time {int((EXTENSION_FACTOR - 1) * 100)}% "
-                                "budget extension to try to close it.",
-                        "budget": self.budget.as_dict(),
-                    })
-                else:
-                    status, reason = guards.classify_end_state(state["hypotheses"])
-                    reason += f" (budget exhausted: {', '.join(exhausted)})"
+                status, reason = guards.classify_end_state(state["hypotheses"])
+                if status == "needs_human":
+                    status = "budget_exhausted"
+                reason += f" (budget exhausted: {', '.join(exhausted)})"
+
 
         if status == "resolved" and winner:
             # v5.0 counter-evidence duty: before confirming, actively try to REFUTE
@@ -749,6 +762,8 @@ class Investigator:
             # it only happens if there is still budget for it — this call carries
             # the largest prompt in the run (full hypotheses + full evidence) and
             # used to fire unconditionally after the caps were already blown.
+            if self.budget.auto_extensions and self._automatic_budget_stop(state):
+                break
             if attempt > 0 and guards.budget_exceeded(self.budget):
                 break
             try:
@@ -976,6 +991,25 @@ class Investigator:
         # Only a resolved case is truly closed; needs_human / insufficient_evidence
         # keep their outcome as the anomaly status so they still read as open work.
         self.anomaly.status = "closed" if final["status"] == "resolved" else final["status"]
+        # Drafting can add spend after the last loop checkpoint. Preserve it
+        # before considering a grant so it cannot be taken back on resume.
+        ckpt = dict(self.inv.checkpoint_json or {})
+        ckpt["budget"] = {**ckpt.get("budget", {}), "tokens": self.budget.tokens,
+                          "cost_usd": self.budget.cost_usd, "elapsed_s": self.budget.elapsed_s()}
+        self.inv.checkpoint_json = ckpt
         self.session.flush()
         self._final_state = final
+        if final["status"] == "budget_exhausted":
+            from echolens.investigator.recover import automatic_extension_offer, grant_extension
+            offer = automatic_extension_offer(self.session, self.inv)
+            if offer["eligible"]:
+                try:
+                    granted = grant_extension(self.session, self.inv, by="auto")
+                except ValueError as err:
+                    self._trace("CHECK", {"text": f"Automatic extension not granted: {err}."})
+                    return self.inv
+                return Investigator.resume(self.session, self.inv,
+                    llm=None if self._owns_llm else self.llm, on_step=self.on_step,
+                    reason=f"Automatic +{granted['steps']} steps: {offer['reason']}.")
+            self._trace("CHECK", {"text": f"Automatic extension not granted: {offer['reason']}."})
         return self.inv

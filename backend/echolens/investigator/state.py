@@ -30,6 +30,11 @@ class Budget:
     extra_cost_usd: float = 0.0
     extra_wall_s: float = 0.0
     human_extensions: int = 0
+    auto_extensions: int = 0
+    # Automatic grants can raise steps while retaining the stricter Settings
+    # dollar/time ceilings. Zero means no additional ceiling on legacy grants.
+    cost_ceiling_usd: float = 0.0
+    wall_ceiling_s: float = 0.0
 
     def elapsed_s(self) -> float:
         import time
@@ -55,10 +60,12 @@ class Budget:
         return self.tier.max_tokens * self.extension_factor + self.extra_tokens
 
     def cap_cost_usd(self) -> float:
-        return self.tier.max_cost_usd * self.extension_factor + self.extra_cost_usd
+        cap = self.tier.max_cost_usd * self.extension_factor + self.extra_cost_usd
+        return min(cap, self.cost_ceiling_usd) if self.cost_ceiling_usd > 0 else cap
 
     def cap_wall_s(self) -> float:
-        return self.tier.max_wall_clock_s * self.extension_factor + self.extra_wall_s
+        cap = self.tier.max_wall_clock_s * self.extension_factor + self.extra_wall_s
+        return min(cap, self.wall_ceiling_s) if self.wall_ceiling_s > 0 else cap
 
     def as_dict(self) -> dict:
         tier = self.tier.name + (" +ext" if self.extended else "")
@@ -89,4 +96,5 @@ class InvState(TypedDict, total=False):
     pending_delegate: dict | None  # {specialist, focus} — v2.0 delegation
     last_tool: dict | None      # {name, args, result} or {name, args, error}
     proposed: dict | None       # plan's declared conclusion, validated by check
+    budget_stop_reason: str  # automatic continuation hit a current Settings cap
     over_budget: bool           # set by the pre-flight check in _plan

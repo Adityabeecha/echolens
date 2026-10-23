@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from queue import Empty, Queue
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from echolens.logging import get_logger
@@ -72,10 +73,13 @@ class SourceConfig:
     product_id: int | None = None
     state_id: int | None = None
     watermark: str | None = None
+    fetch_fn: Callable | None = None
 
     def build(self) -> Collector:
         collector = _BUILDERS[self.source](self.identifier, self.product)
         collector.product_id = self.product_id
+        if self.fetch_fn is not None:
+            collector._fetch_fn = self.fetch_fn
         return collector
 
 
@@ -271,6 +275,40 @@ def run_one(session: Session, cfg: SourceConfig, limit: int = 100,
     return _run_configs(
         session, [cfg], limit,
         COLLECTOR_TIMEOUT_S if timeout_s is None else timeout_s)[0]
+
+
+def reset_source(session: Session, source: str, identifier: str,
+                 product_id: int | None, *, limit: int = 300,
+                 fetch_fn=None) -> CollectResult:
+    """Replay one configured source's normal backfill without deleting feedback.
+
+    The conditional update reserves the source and clears its cursor atomically.
+    Commit that claim before the bounded fetch path so other requests see it and
+    concurrent resets cannot both start. Existing scoped ingestion dedup remains
+    responsible for preserving previously collected rows.
+    """
+    if source not in _BUILDERS:
+        raise ValueError(f"unknown source '{source}'")
+    state = session.scalars(select(CollectorState).where(
+        CollectorState.source == source,
+        CollectorState.identifier == identifier,
+        CollectorState.product_id == product_id,
+        CollectorState.enabled == True)).first()  # noqa: E712
+    if state is None:
+        raise LookupError("no such source")
+
+    claimed = session.execute(update(CollectorState).where(
+        CollectorState.id == state.id,
+        CollectorState.enabled == True,  # noqa: E712
+        CollectorState.status != "running",
+    ).values(watermark=None, status="running", last_error=None,
+             last_run_at=datetime.now(timezone.utc), items_last_run=0))
+    if claimed.rowcount != 1:
+        raise RuntimeError("source is already collecting or running")
+    cfg = SourceConfig(state.source, state.identifier, state.product,
+                       state.product_id, state.id, None, fetch_fn)
+    session.commit()
+    return run_one(session, cfg, limit=limit)
 
 
 def source_health(session: Session, product: str | None = None) -> list[dict]:

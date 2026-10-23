@@ -35,6 +35,25 @@ PRIORITY_MANUAL = 60
 LIVE_STATUSES = ("queued", "running")
 
 
+# Shared by Settings and critical-case continuations. Product overrides layer
+# over workspace settings; a displayed cap and an enforced cap must agree.
+DEFAULT_MONTHLY_BUDGET = 25.0
+
+
+def effective_limits(session: Session, product_id: int | None = None) -> dict:
+    from echolens.config import BUDGET_TIERS, ORCHESTRATOR_DAILY_INVESTIGATIONS, ORCHESTRATOR_DAILY_COST_USD
+    from echolens.db.models import Product, Setting
+    row = session.get(Setting, "limits", populate_existing=True)
+    defaults = {"daily_investigations": ORCHESTRATOR_DAILY_INVESTIGATIONS,
+                "per_case_budget": BUDGET_TIERS["standard"].max_cost_usd,
+                "per_case_wall_min": BUDGET_TIERS["standard"].max_wall_clock_s // 60,
+                "daily_cost_budget": ORCHESTRATOR_DAILY_COST_USD,
+                "monthly_budget": DEFAULT_MONTHLY_BUDGET}
+    merged = {**defaults, **(row.value if row else {})}
+    product = session.get(Product, product_id, populate_existing=True) if product_id is not None else None
+    return {**merged, **(product.limits_json or {})} if product else merged
+
+
 def _severity_priority(anomaly: AnomalyEvent | None) -> int:
     if anomaly is None:
         return PRIORITY_MANUAL

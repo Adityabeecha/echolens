@@ -436,6 +436,27 @@ class Finding(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class SentAlert(Base):
+    """Successful incident delivery, scoped to one product/channel/24h window.
+
+    Member ids let a later, stronger signal join an already delivered incident
+    without changing its identity and sending the same incident again.
+    """
+    __tablename__ = "sent_alerts"
+    __table_args__ = (UniqueConstraint("incident_key", "window_start", "channel", "kind",
+                                      name="uq_sent_alert_window"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int | None] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), nullable=True, index=True)
+    incident_key: Mapped[str] = mapped_column(String(96), index=True)
+    window_start: Mapped[datetime] = mapped_column(index=True)
+    channel: Mapped[str] = mapped_column(String(16))
+    kind: Mapped[str] = mapped_column(String(16))  # instant|digest
+    member_ids: Mapped[list] = mapped_column(JSON, default=list)
+    finding_ids: Mapped[list] = mapped_column(JSON, default=list)
+
+
 class Recommendation(Base):
     __tablename__ = "recommendations"
 

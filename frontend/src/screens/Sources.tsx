@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api, canReview, isAdmin } from "../api";
-import { ago } from "../format";
-import { useAsync } from "../hooks";
+import { ago, count, duration, plural } from "../format";
+import { useAsync, useDialog } from "../hooks";
 import { C, MEASURE, R, S, T, mono } from "../theme";
 import { Centered, EmptyState, ErrorState, GhostButton, Label, ScreenHeader } from "../ui";
 
@@ -23,7 +23,28 @@ export function Sources({ onAddProduct, productName }: {
   const [showImport, setShowImport] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [resetTarget, setResetTarget] = useState<{ source: string; identifier: string } | null>(null);
+  const resetDialog = useDialog(() => setResetTarget(null), !!resetTarget, !busy);
   const reviewer = canReview();
+  const admin = isAdmin();
+
+  const resetSource = async () => {
+    if (!resetTarget || busy || !isAdmin()) return;
+    const { source, identifier } = resetTarget;
+    setBusy(`reset-${source}-${identifier}`);
+    setMsg(null);
+    try {
+      const r = await api.collectorsReset(source, identifier);
+      setMsg(r.error ? `Re-sync failed: ${r.error}` :
+        `Re-synced ${identifier}: ${count(r.inserted)} new ${plural(r.inserted, "item")}, ${count(r.skipped_duplicate)} ${plural(r.skipped_duplicate, "duplicate")} skipped from ${count(r.fetched)} fetched in ${duration(r.duration_seconds)}.`);
+      reload();
+    } catch (e) {
+      setMsg(String(e).replace("Error: ", ""));
+    } finally {
+      setBusy(null);
+      setResetTarget(null);
+    }
+  };
 
   const retry = async (source: string, identifier: string) => {
     setBusy(`retry-${identifier}`);
@@ -94,11 +115,43 @@ export function Sources({ onAddProduct, productName }: {
           ) : undefined
         }
       />
+      {resetTarget && admin && (
+        <div className="el-overlay-scrim" onClick={() => !busy && setResetTarget(null)}
+          style={{ position: "fixed", inset: 0, background: "var(--el-scrim)", zIndex: 60,
+            display: "flex", alignItems: "center", justifyContent: "center", padding: S[5] }}>
+          <div ref={resetDialog} className="el-overlay-panel" role="dialog" aria-modal="true"
+            aria-labelledby="source-reset-title" aria-describedby="source-reset-description"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "100%", maxWidth: 480, background: C.card, border: `1px solid ${C.border3}`,
+              borderRadius: R.overlay, padding: `${S[5]} ${S[6]}`, boxShadow: "var(--el-e4)" }}>
+            <h2 id="source-reset-title" style={{ margin: `0 0 ${S[3]}`, fontSize: T.lg }}>
+              Re-sync from scratch?
+            </h2>
+            <div style={{ fontFamily: mono, fontSize: T.sm, color: C.text3, overflowWrap: "anywhere" }}>
+              {resetTarget.identifier}
+            </div>
+            <p id="source-reset-description" style={{ fontSize: T.base, color: C.muted, lineHeight: "var(--el-lh-normal)" }}>
+              This clears this source's collection watermark and replays its normal backfill.
+              Existing feedback is kept. Previously collected items are deduplicated, so the replay adds no duplicates.
+            </p>
+            {busy && <div role="status" style={{ color: C.accent, fontSize: T.sm }}>Re-syncing this source…</div>}
+            <div style={{ display: "flex", gap: S[2], justifyContent: "flex-end", marginTop: S[4] }}>
+              <button onClick={() => setResetTarget(null)} disabled={!!busy} className="el-btn"
+                style={{ background: "transparent", color: C.muted, border: `1px solid ${C.border3}`,
+                  borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base }}>Cancel</button>
+              <button onClick={resetSource} disabled={!!busy} className="el-btn el-btn--primary"
+                style={{ borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base }}>
+                {busy ? "Re-syncing…" : "Re-sync from scratch"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>
         {showConnect && reviewer && <ConnectForm onDone={() => { setShowConnect(false); reload(); }} />}
         {showImport && reviewer && <ImportForm onDone={(m) => { setShowImport(false); setMsg(m); reload(); }} />}
         {msg && (
-          <div style={{ maxWidth: MEASURE, marginBottom: S[3], padding: `${S[2]} ${S[3]}`, border: `1px solid ${C.border3}`, borderRadius: R.control, background: C.card, color: C.text3, fontSize: T.base }}>
+          <div role="status" aria-live="polite" style={{ maxWidth: MEASURE, marginBottom: S[3], padding: `${S[2]} ${S[3]}`, border: `1px solid ${C.border3}`, borderRadius: R.control, background: C.card, color: C.text3, fontSize: T.base }}>
             {msg}
           </div>
         )}
@@ -161,6 +214,15 @@ export function Sources({ onAddProduct, productName }: {
                       className="el-btn"
                       style={{ marginTop: S[1], background: "transparent", color: C.accent, border: `1px solid ${C.accent}55`, borderRadius: R.control, padding: `${S[1]} ${S[2]}`, fontSize: T.xs }}>
                       {busy === `retry-${s.identifier}` ? "Retrying…" : "Retry now"}
+                    </button>
+                  )}
+                  {admin && s.source && s.identifier && (
+                    <button onClick={() => setResetTarget({ source: s.source!, identifier: s.identifier! })}
+                      disabled={!!busy || s.status === "Syncing…"} className="el-btn"
+                      style={{ marginTop: S[1], marginLeft: S[1], background: "transparent", color: C.muted,
+                        border: `1px solid ${C.border3}`, borderRadius: R.control,
+                        padding: `${S[1]} ${S[2]}`, fontSize: T.xs }}>
+                      Re-sync from scratch
                     </button>
                   )}
                 </div>
