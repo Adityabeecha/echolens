@@ -16,6 +16,8 @@ _SessionLocal: sessionmaker | None = None
 # makes new *tables* but never ALTERs existing ones, so we add these by hand.
 # Nullable-only, so it is safe and idempotent on a populated dev database.
 _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
+    ("fix_watches", "fixed_in_version", "VARCHAR"),
+    ("fix_watches", "release_seen_at", "TIMESTAMP"),
     ("investigations", "reopens_investigation_id", "INTEGER"),
     ("investigations", "checkpoint_json", "JSON"),
     ("investigations", "data_notes", "JSON"),

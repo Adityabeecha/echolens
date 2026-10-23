@@ -4,6 +4,7 @@ import { withToast } from "../../components/Toast";
 import { when } from "../../format";
 import { C, MEASURE, R, S, T, mono } from "../../theme";
 import { BeforeAfterChart, EmptyState, Label } from "../../ui";
+import { FollowupPanel, ReplyPanel } from "./ReplyPanel";
 
 interface Props {
   inv: Investigation;
@@ -15,6 +16,10 @@ const FIX_META: Record<string, { label: string; color: string; body: string }> =
   issue_open: {
     label: "Issue open", color: C.info,
     body: "The issue is filed and open. When it closes, EchoLens starts a 14-day watch on the complaints it was meant to stop."
+  },
+  waiting_for_release: {
+    label: "Waiting for release", color: C.info,
+    body: "The issue closed, but the fix isn't judged until the fixed version reaches users — the watch starts at the first review on it."
   },
   watching: {
     label: "In verification", color: C.accent,
@@ -62,6 +67,20 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
   const fix = f.fix;
   const meta = fix ? FIX_META[fix.status] : null;
   const canCreate = canReview() && inv.status === "resolved";
+  const thin = ["insufficient_evidence", "needs_human", "budget_exhausted"].includes(inv.status);
+  const [version, setVersion] = useState(fix?.fixed_in_version ?? "");
+  const versionOpen = !!fix && ["issue_open", "waiting_for_release", "watching"].includes(fix.status);
+
+  const saveVersion = async () => {
+    setBusy("version");
+    const r = await withToast(() => api.setFixedVersion(f.id, version.trim() || null), {
+      success: (res) => res.fixed_in_version
+        ? `Watching for v${res.fixed_in_version} to reach users.` : "Version cleared.",
+      failure: "Couldn't save the version"
+    });
+    setBusy(null);
+    if (r) await onReload();
+  };
 
   const copyIssue = async () => {
     setBusy("copy");
@@ -168,6 +187,37 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
               <div style={{ fontSize: T.base, color: C.text3, marginTop: S[2], lineHeight: "var(--el-lh-normal)" }}>
                 {meta.body}
               </div>
+              {fix.status === "waiting_for_release" && fix.fixed_in_version && (
+                <div style={{ fontSize: T.sm, color: C.text2, marginTop: S[2] }}>
+                  Waiting for v{fix.fixed_in_version} to reach users
+                  {fix.release && fix.release.state !== "not_seen"
+                    ? ` — ${fix.release.review_count} of ${fix.release.needed_reviews} reviews so far (or ${fix.release.needed_days} days after the first).`
+                    : " — no reviews on it yet."}
+                </div>
+              )}
+              {versionOpen && canReview() && (
+                <div style={{ marginTop: S[3] }}>
+                  <label style={{ fontSize: T.sm, color: C.muted, display: "block", marginBottom: S[1] }}
+                    htmlFor="fixed-in-version">Fixed in version</label>
+                  <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
+                    <input id="fixed-in-version" value={version} placeholder="e.g. 3.2.1"
+                      onChange={(e) => setVersion(e.target.value)}
+                      style={{ background: C.bg, color: C.text2, border: `1px solid ${C.border3}`,
+                               borderRadius: R.control, padding: `${S[1]} ${S[2]}`, fontSize: T.base,
+                               fontFamily: mono, width: 130 }} />
+                    <button className="el-btn" style={ghost} onClick={saveVersion}
+                      disabled={!!busy || version.trim() === (fix.fixed_in_version ?? "")}>
+                      {busy === "version" ? "Saving…" : "Save"}
+                    </button>
+                  </div>
+                  {fix.version_hint && (
+                    <div style={{ fontSize: T.xs, color: C.dim, marginTop: S[1], lineHeight: "var(--el-lh-normal)" }}>
+                      Mobile fixes reach users days after the issue closes. Set the version and the
+                      watch starts when it does, instead of judging the fix too early.
+                    </div>
+                  )}
+                </div>
+              )}
               {fix.chart && <BeforeAfterChart chart={fix.chart} />}
             </div>
             {fix.status === "confirmed" && (
@@ -178,6 +228,9 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
             )}
           </>
         )}
+
+        {thin && <FollowupPanel findingId={f.id} />}
+        {inv.status === "resolved" && <ReplyPanel findingId={f.id} />}
       </div>
     </div>
   );
