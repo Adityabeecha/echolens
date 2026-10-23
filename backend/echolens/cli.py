@@ -212,6 +212,33 @@ def cmd_resume(_args) -> int:
     return 0
 
 
+def cmd_watchdog(_args) -> int:
+    """End cases with no progress for 15 minutes (see recover.end_zombies)."""
+    init_db()
+    from echolens.investigator.recover import ZOMBIE_AFTER_MINUTES, end_zombies
+    with session_scope() as session:
+        ended = end_zombies(session)
+    console.print(f"[green]Watchdog:[/] ended {len(ended)} case(s) with no progress for "
+                  f"{ZOMBIE_AFTER_MINUTES} minutes: {ended}")
+    return 0
+
+
+def cmd_worker(args) -> int:
+    """Claim and run investigations from the DB until stopped (see worker.py)."""
+    init_db()
+    from echolens.worker import run_worker, worker_name
+    name = args.name or worker_name()
+    console.print(f"[green]Worker[/] {name} polling every {args.poll}s — Ctrl-C to stop")
+    try:
+        done = run_worker(name, poll_s=args.poll,
+                          max_iterations=1 if args.once else None)
+    except KeyboardInterrupt:
+        return 0
+    if args.once:
+        console.print(f"did {done} unit(s) of work")
+    return 0
+
+
 def cmd_createuser(args) -> int:
     init_db()
     from echolens.auth import create_user, password_problem
@@ -293,6 +320,11 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("embed", help="backfill embeddings so semantic search activates")
     sub.add_parser("resume", help="resume investigations interrupted by a crash")
     sub.add_parser("preflight", help="check production config before deploying")
+    sub.add_parser("watchdog", help="end cases stuck with no progress for 15 minutes")
+    p_wrk = sub.add_parser("worker", help="run queued investigations (RUN_INVESTIGATIONS_IN_WEB=false)")
+    p_wrk.add_argument("--poll", type=float, default=5.0, help="seconds between idle polls")
+    p_wrk.add_argument("--name", default=None, help="worker id shown in /health (default host:pid)")
+    p_wrk.add_argument("--once", action="store_true", help="do at most one unit of work, then exit")
 
     p_usr = sub.add_parser("createuser", help="create an auth user")
     p_usr.add_argument("email")
@@ -315,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
         "triage": cmd_triage, "eval": cmd_eval, "serve": cmd_serve,
         "connect": cmd_connect, "collect": cmd_collect, "embed": cmd_embed,
         "resume": cmd_resume, "createuser": cmd_createuser, "preflight": cmd_preflight,
-        "mcp": cmd_mcp,
+        "mcp": cmd_mcp, "watchdog": cmd_watchdog, "worker": cmd_worker,
     }[args.command](args)
 
 

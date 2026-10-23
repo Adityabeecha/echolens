@@ -312,6 +312,174 @@ def portfolio(session: Session, as_of: datetime | None = None,
     }
 
 
+# ── stored rows: /portfolio without recomputing the whole board ─────────
+#
+# Each product's row needs theme lifecycles, two review-rate windows over the
+# whole corpus, the queue and the collectors. At live scale (7 products, ~9k
+# reviews, a pooled remote DB) recomputing all of it on every open of "All
+# products" was the slowest screen in the app. Rows are now stored (one
+# Setting per product, with computed_at) and recomputed when:
+#   * the product's data changed — a cheap fingerprint (grouped counts and max
+#     ids, a handful of queries for every product at once) no longer matches;
+#   * the row is older than SUMMARY_TTL (rates drift with the clock) — at most
+#     MAX_REFRESH_PER_REQUEST such rows per request, oldest first;
+#   * there is no row yet.
+# The worker refreshes stale rows in the background, so a request rarely pays.
+
+SUMMARY_TTL = timedelta(minutes=10)
+MAX_REFRESH_PER_REQUEST = 2
+_SUMMARY_KEY = "portfolio_row"
+
+
+def _summary_key(pid: int) -> str:
+    return f"{_SUMMARY_KEY}:{pid}"
+
+
+def _fingerprints(session: Session, products: list[Product]) -> dict[int, list]:
+    """What a product's row depends on, cheaply: counts, newest ids and
+    statuses, for every product in ONE statement (a UNION ALL of grouped
+    selects, every value cast to text so the branches line up on Postgres)."""
+    from sqlalchemy import String, case, cast, literal, union_all
+
+    from echolens.db.models import CollectorState
+
+    ids = [p.id for p in products]
+    names = {p.name: p.id for p in products}
+    fp: dict[int, list] = {pid: [] for pid in ids}
+    if not ids:
+        return fp
+
+    def t(col):
+        return cast(col, String)
+
+    blank = literal("")
+    parts = [
+        select(literal("reviews"), t(Review.product), t(func.count(Review.id)),
+               t(func.max(Review.id)), blank, blank)
+        .where(Review.product.in_(list(names))).group_by(Review.product),
+        select(literal("cases"), t(Investigation.product_id), t(func.count(Investigation.id)),
+               t(func.max(Investigation.id)),
+               t(func.sum(case((Investigation.status == "resolved", 1), else_=0))),
+               t(func.max(Investigation.resolved_at)))
+        .where(Investigation.product_id.in_(ids)).group_by(Investigation.product_id),
+        select(literal("watch"), t(FixWatch.product_id), t(FixWatch.status),
+               t(func.count(FixWatch.id)), blank, blank)
+        .where(FixWatch.product_id.in_(ids)).group_by(FixWatch.product_id, FixWatch.status),
+        select(literal("signal"), t(AnomalyEvent.product_id), t(AnomalyEvent.status),
+               t(func.count(AnomalyEvent.id)), t(func.max(AnomalyEvent.id)), blank)
+        .where(AnomalyEvent.product_id.in_(ids))
+        .group_by(AnomalyEvent.product_id, AnomalyEvent.status),
+        select(literal("source"), t(CollectorState.product_id), t(CollectorState.status),
+               t(CollectorState.last_run_at), blank, blank)
+        .where(CollectorState.product_id.in_(ids)),
+    ]
+    for kind, key, *values in session.execute(union_all(*parts)).all():
+        pid = names.get(key) if kind == "reviews" else (int(key) if key and key.isdigit() else None)
+        if pid in fp:
+            fp[pid].append([kind, *("" if v is None else str(v) for v in values)])
+    # Sorted lists: the stored copy round-trips through JSON.
+    return {pid: sorted(v, key=str) for pid, v in fp.items()}
+
+
+def refresh_summaries(session: Session, products: list[Product], now: datetime | None = None,
+                      fingerprints: dict[int, list] | None = None,
+                      existing: dict | None = None) -> dict[int, dict]:
+    """Recompute and store these products' rows. Returns {product_id: stored}."""
+    from echolens.db.models import Setting
+
+    now = now or datetime.now(timezone.utc)
+    if not products:
+        return {}
+    fingerprints = fingerprints or _fingerprints(session, products)
+    board = _load_board(session, products, now)
+    if existing is None:
+        keys = [_summary_key(p.id) for p in products]
+        existing = {s.key: s for s in session.scalars(select(Setting).where(Setting.key.in_(keys)))}
+    out = {}
+    for p in products:
+        stored = {"row": product_snapshot(session, p, now, board[p.id]),
+                  "computed_at": now.isoformat(), "fingerprint": fingerprints.get(p.id, [])}
+        row = existing.get(_summary_key(p.id))
+        if row is None:
+            session.add(Setting(key=_summary_key(p.id), value=stored))
+        else:
+            row.value = stored
+        out[p.id] = stored
+    session.flush()
+    return out
+
+
+def _is_stale(stored, fingerprint, now: datetime) -> tuple[bool, str]:
+    if not isinstance(stored, dict) or "row" not in stored:
+        return True, "missing"
+    if stored.get("fingerprint") != fingerprint:
+        return True, "changed"
+    try:
+        at = datetime.fromisoformat(stored["computed_at"])
+    except (KeyError, TypeError, ValueError):
+        return True, "missing"
+    return (now - aware_utc(at) > SUMMARY_TTL), "old"
+
+
+def _stored_rows(session: Session, products: list[Product]) -> dict:
+    """{key: Setting} for these products' stored rows (one query)."""
+    from echolens.db.models import Setting
+    keys = [_summary_key(p.id) for p in products]
+    if not keys:
+        return {}
+    return {s.key: s for s in session.scalars(select(Setting).where(Setting.key.in_(keys))).all()}
+
+
+def stale_products(session: Session, now: datetime | None = None) -> list[Product]:
+    """Products whose stored row is missing, changed or older than SUMMARY_TTL —
+    what the worker refreshes in the background."""
+    now = now or datetime.now(timezone.utc)
+    products = list(visible_products(session))
+    stored = {k: s.value for k, s in _stored_rows(session, products).items()}
+    fps = _fingerprints(session, products)
+    return [p for p in products
+            if _is_stale(stored.get(_summary_key(p.id)), fps.get(p.id, []), now)[0]]
+
+
+def stored_portfolio(session: Session, demo_only: bool = False, now: datetime | None = None,
+                     max_refresh: int = MAX_REFRESH_PER_REQUEST) -> dict:
+    """The same payload as `portfolio`, served from stored rows (see above),
+    each row carrying `computed_at` and `updated_min_ago`."""
+    now = now or datetime.now(timezone.utc)
+    products = list(visible_products(session, demo_only))
+    settings_rows = _stored_rows(session, products)
+    stored = {k: s.value for k, s in settings_rows.items()}
+    fps = _fingerprints(session, products)
+    must, old = [], []
+    for p in products:
+        stale, why = _is_stale(stored.get(_summary_key(p.id)), fps.get(p.id, []), now)
+        if stale:
+            (old if why == "old" else must).append(p)
+    old.sort(key=lambda p: stored[_summary_key(p.id)].get("computed_at", ""))
+    todo = must + old[:max_refresh]
+    fresh = refresh_summaries(session, todo, now, fps, settings_rows) if todo else {}
+    rows = []
+    for p in products:
+        item = fresh.get(p.id) or stored[_summary_key(p.id)]
+        try:
+            at = aware_utc(datetime.fromisoformat(item["computed_at"]))
+        except (KeyError, TypeError, ValueError):
+            at = now
+        rows.append({**item["row"], "computed_at": at.isoformat(),
+                     "updated_min_ago": max(0, int((now - at).total_seconds() // 60))})
+    rows.sort(key=lambda r: (-r["score"], r["product"]))
+    on_fire = [r for r in rows if r["band"] == "on_fire"]
+    return {
+        "generated": now.date().isoformat(),
+        "products": rows,
+        "total_products": len(rows),
+        "needs_attention": len([r for r in rows if r["band"] in ("on_fire", "attention")]),
+        "verdict": _verdict(rows, on_fire),
+        "updated_min_ago": max((r["updated_min_ago"] for r in rows), default=0),
+        "refreshed": [p.name for p in todo],
+    }
+
+
 def _verdict(rows: list[dict], on_fire: list[dict]) -> str:
     """The one line the PM reads first."""
     if not rows:

@@ -74,9 +74,22 @@ async def lifespan(_app: FastAPI):
 
 
 def _recover_running_bg() -> None:
-    """Resume interrupted investigations without blocking API availability."""
+    """End zombie cases, then resume interrupted ones, without blocking API
+    availability. The watchdog goes first: a case with no progress for 15
+    minutes is ended rather than resumed into the same hang. In worker mode the
+    web process resumes nothing — a worker may be running those cases."""
+    from echolens.investigator import recover
+    try:  # its own try: a watchdog failure must not also cancel the resume
+        with session_scope() as s:
+            ended = recover.end_zombies(s)
+        if ended:
+            log.warning("startup_watchdog", ended=ended)
+    except Exception as err:
+        log.error("startup_watchdog_failed", error=str(err))
     try:
-        from echolens.investigator.recover import resume_running
+        resume_running = recover.resume_running
+        if not settings.run_investigations_in_web:
+            return
         with session_scope() as s:
             recovered = resume_running(s)
         if recovered:
@@ -426,25 +439,65 @@ def _drain_queue_bg(product_id: int | None) -> None:
     pressing the button twice cannot run the same item twice or blow past the
     cap by racing.
     """
-    from echolens.orchestrator import queue as q
-
     with _queue_worker_lock:
         if product_id in _queue_worker_active:
             return
         _queue_worker_active.add(product_id)
     try:
-        while True:
+        # Every drain starts by ending zombies, so a case that died holding a
+        # slot cannot keep its signal out of the queue it is about to drain.
+        try:
+            from echolens.investigator.recover import end_zombies
             with session_scope() as session:
-                limit = _daily_limit(session, product_id)
-                row = q.claim_next(session, product_id, limit)
-                if row is None:
-                    return  # queue empty, or today's budget is gone
-                queue_id = row.id
-                investigation_id, tier = _open_claimed(session, row, product_id)
-            _run_claimed_bg(queue_id, investigation_id, tier)
+                end_zombies(session)
+        except Exception as err:
+            log.error("drain_watchdog_failed", error=str(err))
+        while _drain_one(product_id):
+            pass
     finally:
         with _queue_worker_lock:
             _queue_worker_active.discard(product_id)
+
+
+def _drain_one(product_id: int | None) -> bool:
+    """Claim and run ONE queued item; False when the queue is empty or today's
+    budget is gone. The web drain loops on it; the worker calls it per poll."""
+    from echolens.orchestrator import queue as q
+    with session_scope() as session:
+        limit = _daily_limit(session, product_id)
+        row = q.claim_next(session, product_id, limit)
+        if row is None:
+            return False
+        queue_id = row.id
+        investigation_id, tier = _open_claimed(session, row, product_id)
+    _run_claimed_bg(queue_id, investigation_id, tier)
+    return True
+
+
+def _job_targets() -> dict:
+    """Background work by name — the same functions whether a web thread or
+    `echolens worker` runs them. Only these names can be enqueued."""
+    return {"run": _run_investigation_bg, "claimed": _run_claimed_bg,
+            "extend": _extend_investigation_bg, "resume": _resume_investigation_bg,
+            "challenge": _run_challenge_bg, "slack_challenge": _slack_challenge_bg}
+
+
+def _spawn(kind: str, *args) -> None:
+    """Start investigation work: a daemon thread here (RUN_INVESTIGATIONS_IN_WEB,
+    the default), or a worker_jobs row for `echolens worker` to claim."""
+    target = _job_targets()[kind]
+    if settings.run_investigations_in_web:
+        threading.Thread(target=target, args=args, daemon=True).start()
+        return
+    from echolens.worker import enqueue_job
+    with session_scope() as session:
+        enqueue_job(session, kind, list(args))
+
+
+def _spawn_drain(product_id: int | None) -> None:
+    """Drain the queue now — in worker mode the worker polls it instead."""
+    if settings.run_investigations_in_web:
+        threading.Thread(target=_drain_queue_bg, args=(product_id,), daemon=True).start()
 
 
 def _open_claimed(session, row, product_id: int | None) -> tuple[int, str]:
@@ -1036,13 +1089,19 @@ def delete_product(product_id: int, confirm: str = "",
 @app.get("/health")
 def health() -> dict:
     ok = True
+    work: dict = {"investigations_run_in": "web" if settings.run_investigations_in_web
+                  else "worker"}
     try:
         with session_scope() as s:
             s.execute(select(AnomalyEvent).limit(1))
+            if not settings.run_investigations_in_web:
+                # Worker mode: is anything actually draining the work?
+                from echolens.worker import worker_status
+                work.update(worker_status(s))
     except Exception:
         ok = False
     return {"db": ok, "llm_key_present": bool(settings.openai_api_key),
-            "model": settings.echolens_model}
+            "model": settings.echolens_model, **work}
 
 
 @app.post("/collect/run")
@@ -1889,7 +1948,7 @@ def queue_themes(request: Request, body: QueueThemes,
         view = queue_view(session, pid, limit)
 
     if queued:
-        threading.Thread(target=_drain_queue_bg, args=(pid,), daemon=True).start()
+        _spawn_drain(pid)
     deferred = len([q for q in view["queued"] if q["status"] == "deferred"])
     parts = []
     if queued:
@@ -1948,8 +2007,7 @@ def queue_run_now(request: Request, queue_id: int, product_id: int | None = None
         if claimed is None:
             raise HTTPException(409, "that item is already running or finished")
         investigation_id, tier = _open_claimed(session, claimed, pid)
-    threading.Thread(target=_run_claimed_bg, args=(queue_id, investigation_id, tier),
-                     daemon=True).start()
+    _spawn("claimed", queue_id, investigation_id, tier)
     return {"status": "started", "queue_id": queue_id, "investigation_id": investigation_id,
             "estimate": estimate, "override_by": who}
 
@@ -2003,13 +2061,20 @@ def _product_intents(session, product: str | None, days: int = 90) -> dict:
     from echolens.intent import count_intents, empty_counts
     if not product:
         return {"product": None, "days": days, "total": 0, "counts": empty_counts()}
+    from echolens.memo import fingerprinted, review_fingerprint
     now = reference_now(session, product)
-    rows = session.execute(select(Review.text, Review.rating).where(
-        Review.product == product,
-        Review.created_at >= (now - timedelta(days=days)).replace(tzinfo=None))
-        .limit(20000)).all()
-    counts = count_intents((t, r) for t, r in rows)
-    return {"product": product, "days": days, "total": len(rows), "counts": counts}
+    since = (now - timedelta(days=days)).replace(tzinfo=None)
+
+    def compute():
+        # Up to 20k review TEXTS through a regex classifier — /cases ran this on
+        # every open. Now only when the window's reviews actually change.
+        rows = session.execute(select(Review.text, Review.rating).where(
+            Review.product == product, Review.created_at >= since).limit(20000)).all()
+        return len(rows), count_intents((t, r) for t, r in rows)
+
+    total, counts = fingerprinted(session, ("intents", product, days, str(since)),
+                                  review_fingerprint(session, product, since), compute)
+    return {"product": product, "days": days, "total": total, "counts": dict(counts)}
 
 
 @app.post("/import/reviews")
@@ -2327,7 +2392,7 @@ def anomalies_triage(request: Request, run: bool = False, product_id: int | None
     # request returns immediately (no proxy timeout that left cases stuck as
     # "pending triage") and the rows are visible to the worker sessions.
     for inv_id, tier in to_run:
-        threading.Thread(target=_run_investigation_bg, args=(inv_id, tier), daemon=True).start()
+        _spawn("run", inv_id, tier)
     return {
         "decisions": out,
         "started_investigations": [i for i, _ in to_run],
@@ -2393,8 +2458,7 @@ def start_investigation(request: Request, body: NewCase,
         session.flush()
         investigation_id, anomaly_id = inv.id, anomaly.id
 
-    threading.Thread(target=_run_investigation_bg,
-                     args=(investigation_id, body.tier), daemon=True).start()
+    _spawn("run", investigation_id, body.tier)
     return {"status": "started", "investigation_id": investigation_id, "anomaly_id": anomaly_id}
 
 
@@ -2673,7 +2737,7 @@ def extend_investigation(request: Request, inv_id: int, product_id: int | None =
         except ValueError as err:
             raise HTTPException(422, str(err))
         note = extension_trace_note(granted["prior_status"], granted["steps"])
-    threading.Thread(target=_extend_investigation_bg, args=(inv_id, note), daemon=True).start()
+    _spawn("extend", inv_id, note)
     return {"status": "extending", "id": inv_id, "by": user["email"], **granted}
 
 
@@ -2696,7 +2760,7 @@ def resume_investigation(inv_id: int, product_id: int | None = None,
         if inv.status != "running":
             raise HTTPException(422, f"cannot resume a {inv.status} investigation")
         inv.paused = False
-    threading.Thread(target=_resume_investigation_bg, args=(inv_id,), daemon=True).start()
+    _spawn("resume", inv_id)
     return {"status": "resuming", "id": inv_id}
 
 
@@ -2836,7 +2900,7 @@ def review_finding(finding_id: int, body: ReviewBody, product_id: int | None = N
             reopened_id = reopened.id
             note = body.note
     if body.action == "challenge":
-        threading.Thread(target=_run_challenge_bg, args=(reopened_id, note), daemon=True).start()
+        _spawn("challenge", reopened_id, note)
         return {"status": "challenged", "reopened_investigation_id": reopened_id, "by": user["email"]}
     raise HTTPException(422, "action must be approve or challenge")
 
@@ -3325,7 +3389,7 @@ async def slack_act(request: Request) -> dict:
         if not note.strip():
             raise HTTPException(422, "a challenge needs a note")
         if is_slack:
-            threading.Thread(target=_slack_challenge_bg, args=(finding_id, note), daemon=True).start()
+            _spawn("slack_challenge", finding_id, note)
             return {"status": "challenge_started", "finding_id": finding_id}
         reopened = await run_in_threadpool(_do_challenge, finding_id, note)
         return {"status": "challenged", "reopened_investigation_id": reopened}
@@ -3750,7 +3814,7 @@ def _chat_respond(body: "ChatBody", user: dict, on_step=None) -> dict:
         anomaly.status = "investigating"
         session.flush()
         inv_id = inv.id
-    threading.Thread(target=_run_investigation_bg, args=(inv_id, "standard"), daemon=True).start()
+    _spawn("run", inv_id, "standard")
     return _chat_finish({
         "type": "investigation", "investigation_id": inv_id,
         "basis": {"kind": "investigation_started", "case_id": inv_id,
@@ -3909,10 +3973,11 @@ def brief_send(user: dict = Depends(require_role("reviewer"))) -> dict:
 def portfolio_view(user: dict = Depends(current_user)) -> dict:
     """Ranked cross-product attention board. Deliberately NOT product-scoped —
     this is the screen you open before you know which product to open."""
-    from echolens.portfolio import portfolio, transfer_stats
+    from echolens.portfolio import stored_portfolio, transfer_stats
     with session_scope() as session:
         demo_only = _guest_locked(user)
-        return {**portfolio(session, demo_only=demo_only),
+        # Stored rows, recomputed only when stale (portfolio.stored_portfolio).
+        return {**stored_portfolio(session, demo_only=demo_only),
                 # Cross-product transfer learning compares real products, so it
                 # is withheld from a demo visitor rather than filtered to one.
                 "transfer": None if demo_only else transfer_stats(session)}

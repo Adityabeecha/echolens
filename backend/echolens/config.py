@@ -133,6 +133,12 @@ class Settings(BaseSettings):
     bootstrap_admin_password: str = ""
     seed_on_start: bool = False
 
+    # Where investigations run. True (the default, and how every existing
+    # deploy works): as background threads inside the web process. False: the
+    # API only records the work and a separate `echolens worker` process claims
+    # and runs it, so a web restart or a slow request cannot strand a case.
+    run_investigations_in_web: bool = True
+
     # ── public demo mode ────────────────────────────────────────────────
     # When true, a request with NO token is admitted as a `viewer` instead of
     # being rejected with a 401. Viewers can read every screen; they cannot
