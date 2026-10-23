@@ -47,6 +47,23 @@ def _n(count: int, noun: str, plural: str | None = None) -> str:
     return f"{count} {noun}" if count == 1 else f"{count} {plural or noun + 's'}"
 
 
+# The attention score reads "higher = needs you more", the opposite of every
+# quality score a PM has seen. Users are shown HEALTH (100 − attention, higher
+# is healthier) with labels that read the right way round; the attention score
+# itself still does the ranking.
+HEALTH_LABELS = {
+    "healthy": "Healthy",
+    "watch": "Watch",
+    "attention": "Needs attention",
+    "on_fire": "Needs you today",
+}
+
+
+def health(score: float) -> float:
+    """Health shown to users: 100 − attention, floored at 0."""
+    return round(max(0.0, 100.0 - score), 1)
+
+
 def _band(score: float) -> tuple[str, str]:
     for threshold, key, label in BANDS:
         if score >= threshold:
@@ -242,6 +259,8 @@ def product_snapshot(session: Session, product: Product, now: datetime,
         "score": round(score, 1),
         "band": band,
         "band_label": band_label,
+        "health": health(score),
+        "health_label": HEALTH_LABELS[band],
         "reasons": reasons,
         "headline": (reasons[0]["text"] if reasons
                      else ("no data collected yet" if not sources else "nothing demanding attention")),

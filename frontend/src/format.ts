@@ -42,6 +42,18 @@ export function age(days: number | null | undefined): string {
   return months === 1 ? "1 month old" : `${months} months old`;
 }
 
+/** "12 min ago" · "3 h ago" · "2 days ago", from an age in minutes. */
+export function ago(minutes: number | null | undefined): string {
+  if (minutes == null || !Number.isFinite(Number(minutes))) return "never";
+  const m = Math.max(0, Math.round(Number(minutes)));
+  if (m < 1) return "just now";
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} h ago`;
+  const d = Math.floor(h / 24);
+  return d === 1 ? "1 day ago" : `${d} days ago`;
+}
+
 /** A date the reader can place, from an ISO string. */
 export function when(iso: string | null | undefined): string {
   if (!iso) return "—";

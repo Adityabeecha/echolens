@@ -431,6 +431,50 @@ export interface SourcesResp {
   }[];
   available: string[];
   product?: string | null;
+  last_synced?: Freshness;
+}
+
+// Today overview: the context drawn around the score.
+export interface Freshness {
+  last_synced_at: string | null;
+  age_minutes: number | null;
+  sources: number;
+  stale_after_hours: number;
+  stale: boolean;
+}
+export interface ReleaseMarker {
+  version: string;
+  released_at: string;
+  label: string;
+}
+export interface RatingPart {
+  theme_id: string;
+  label: string;
+  contribution: number;
+  recent_share_pct: number | null;
+  recent_reviews: number | null;
+  case_id: number | null;
+}
+export interface RatingBreakdown {
+  estimate: boolean;
+  method: string;
+  window: { recent_days: number; prior_days: number };
+  recent_reviews: number;
+  prior_reviews: number;
+  rating_now: number | null;
+  rating_prior: number | null;
+  delta: number | null;
+  dropped: boolean;
+  parts: RatingPart[];
+  summary: string | null;
+  reason: string | null;
+}
+export interface Overview {
+  product: string | null;
+  product_id: number | null;
+  releases: ReleaseMarker[];
+  rating_breakdown: RatingBreakdown;
+  freshness: Freshness;
 }
 
 // v3.0 onboarding + health snapshot
@@ -719,6 +763,9 @@ export interface PortfolioProduct {
   score: number;
   band: "on_fire" | "attention" | "watch" | "healthy";
   band_label: string;
+  /** 100 − score: what users see. Higher is healthier; `score` still ranks. */
+  health: number;
+  health_label: string;
   reasons: PortfolioReason[];
   headline: string;
   top_problem: { investigation_id: number; summary: string; band: string; sev_score: number } | null;
@@ -934,6 +981,7 @@ export const api = {
   resume: (id: number) => post(scoped(`/investigations/${id}/resume`)),
   escalate: (id: number) => post(scoped(`/investigations/${id}/escalate`)),
   sources: () => get<SourcesResp>(scoped("/sources")),
+  overview: () => get<Overview>(scoped("/today/overview")),
   // Not scoped: which source types exist is global, not per-product.
   availableSources: () => get<AvailableSourcesResp>("/sources/available"),
   fixwatch: () => get<FixWatchResp>(scoped("/fixwatch")),

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, canReview, isAdmin } from "../api";
+import { ago } from "../format";
 import { useAsync } from "../hooks";
 import { C, MEASURE, R, S, T, mono } from "../theme";
 import { Centered, EmptyState, ErrorState, GhostButton, Label, ScreenHeader } from "../ui";
@@ -102,7 +103,19 @@ export function Sources({ onAddProduct, productName }: {
           </div>
         )}
 
-        <Label style={{ marginBottom: S[3] }}>CONNECTED</Label>
+        <div style={{ display: "flex", alignItems: "baseline", gap: S[3], marginBottom: S[3],
+                      maxWidth: MEASURE }}>
+          <Label>CONNECTED</Label>
+          {data?.last_synced && data.last_synced.sources > 0 && (
+            <span title={data.last_synced.last_synced_at ?? undefined}
+              style={{ marginLeft: "auto", fontFamily: mono, fontSize: T.xs,
+                       color: data.last_synced.stale ? C.accent : C.faint }}>
+              {data.last_synced.last_synced_at
+                ? `Last synced ${ago(data.last_synced.age_minutes)}`
+                : "Not synced yet"}
+            </span>
+          )}
+        </div>
         {data && data.connected.length === 0 && (
           <div style={{ maxWidth: MEASURE, padding: `${S[10]} ${S[6]}`, border: `1px dashed ${C.border4}`, borderRadius: R.card, textAlign: "center" }}>
             <div style={{ fontSize: T.md, fontWeight: 600, color: C.text3 }}>

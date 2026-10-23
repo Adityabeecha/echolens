@@ -1696,6 +1696,16 @@ def snapshot(product: str | None = None, product_id: int | None = None,
         return health_snapshot(session, product=product, days=days)
 
 
+@app.get("/today/overview")
+def today_overview_view(product_id: int | None = None,
+                  user: dict = Depends(current_user)) -> dict:
+    """What Today draws around the score: releases inside the charted window,
+    the rating-drop breakdown (an estimate), and when sources last synced."""
+    from echolens.overview import overview
+    with session_scope() as session:
+        return overview(session, _scope(session, product_id, user))
+
+
 @app.post("/search/embed")
 def search_embed(product_id: int | None = None,
                  user: dict = Depends(require_role("admin"))) -> dict:
@@ -3295,7 +3305,9 @@ def sources(product_id: int | None = None, user: dict = Depends(current_user)) -
                     {"icon": "⌥", "name": "GitHub issues (demo)", "detail": "synthetic Lumo dataset",
                      "status": "Healthy", "lastPull": "seeded", "volume": f"{n_issues + n_releases} items"},
                 ]
+        from echolens.overview import freshness
         return {"connected": connected, "product": prod.name if prod else None,
+                "last_synced": freshness(session, prod),
                 "available": ["Zendesk export", "Discord community", "In-app feedback"]}
 
 
