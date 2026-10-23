@@ -4,6 +4,7 @@ import { sourceLabel } from "../format";
 import { useDialog } from "../hooks";
 import { C, R, S, T, mono } from "../theme";
 import { Icon } from "./Icon";
+import { TranslationNote } from "../screens/case/Inspector";
 
 /**
  * `children`, when given, replaces the default body — the case detail passes its
@@ -73,6 +74,7 @@ export function EvidenceSheet({ evidence, onClose, children }: {
         <div style={{ padding: 16, background: C.bgRaised, border: `1px solid ${C.border}`, borderRadius: R.control, fontSize: T.base, lineHeight: "var(--el-lh-normal)", color: C.text2 }}>
           “{evidence.snippet}”
         </div>
+        {evidence.translation && <TranslationNote translation={evidence.translation} defaultOpen />}
         <div style={{ fontSize: T.sm, color: C.muted, lineHeight: "var(--el-lh-normal)" }}>
           <div>
             <span style={{ color: C.faint }}>Ref</span> — {evidence.ref}

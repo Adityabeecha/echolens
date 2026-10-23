@@ -213,14 +213,16 @@ def test_reply_drafts_target_matching_negative_reviews_in_the_window():
     assert "English" in out["translation_note"]
 
 
-def test_non_english_reviews_are_flagged_not_translated():
+def test_non_english_reviews_get_an_english_draft_marked_for_translation():
     s = _session()
     _, f = _finding(s)
     _rev(s, "es", CLOSE - timedelta(days=1), "La batería se agota muy rápido, battery drain horrible")
     _watch_closed(s, f)
     out = reply_drafts(s, f)
     row = out["drafts"][0]
-    assert row["language"] == "non_english" and row["draft"] is None and row["note"]
+    assert row["language"] == "non_english" and row["lang"] == "es"
+    assert row["draft"] and not row["machine_translated"]
+    assert row["note"] == "Reviewer wrote in Spanish — translate before posting."
 
 
 def test_llm_reword_is_optional_injectable_and_guarded():

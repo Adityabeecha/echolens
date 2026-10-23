@@ -4,7 +4,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from echolens.db.models import Review
+from echolens.textkit import needs_translation
 from echolens.tools._util import cap_items, match_score, parse_date, snippet, terms_of
+from echolens.translate import analysis_text
 
 
 def search_reviews(
@@ -40,7 +42,9 @@ def search_reviews(
 
     rows = session.scalars(stmt).all()
     terms = terms_of(query)
-    scored = [(match_score(r.text, terms), r) for r in rows]
+    # Matched on the English translation when there is one; the snippet below
+    # is always the original text, so evidence quotes stay verbatim.
+    scored = [(match_score(analysis_text(r), terms), r) for r in rows]
     matched = sorted(
         (sr for sr in scored if sr[0] > 0),
         key=lambda sr: (-sr[0], sr[1].created_at, sr[1].ext_id),
@@ -49,7 +53,7 @@ def search_reviews(
     # v1.0: append semantically-close reviews the keywords missed (no-op until
     # the corpus is embedded — keyword results are never dropped or reordered).
     from echolens.search.semantic import augment
-    ranked += augment(query, rows, set(ranked), lambda r: r.text, limit or 8)
+    ranked += augment(query, rows, set(ranked), analysis_text, limit or 8)
     items, total = cap_items(ranked, limit)
     return {
         "total_matches": total,
@@ -62,6 +66,8 @@ def search_reviews(
                 "version": r.version,
                 "os": r.os_version,
                 "snippet": snippet(r.text),
+                # Only for non-English rows: says what language the quote is in.
+                **({"lang": r.lang} if needs_translation(r.lang) else {}),
             }
             for r in items
         ],

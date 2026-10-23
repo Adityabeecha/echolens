@@ -36,6 +36,7 @@ from echolens.logging import get_logger
 from echolens.search.embedder import cosine, get_embedder
 from echolens.textkit import STOPWORDS, tokenize
 from echolens.timeutil import aware_utc
+from echolens.translate import analysis_text
 
 log = get_logger("themes.discover")
 
@@ -461,7 +462,10 @@ def discover_themes(session: Session, product: str | None = None, *, llm=None,
         return {"themes": [], "product": product, "reviews_considered": len(rows),
                 "clustered": 0, "other": len(rows), "days": days, "engine": "none"}
 
-    texts = [r.text or "" for r in rows]
+    # Clustered and labelled on the English translation when there is one;
+    # verbatims quote the original, as written.
+    texts = [analysis_text(r) for r in rows]
+    originals = [r.text or "" for r in rows]
     banned = banned_terms(product, package_name)
     own = product_terms(product, package_name)
     dates_of = lambda members: [d for d in (aware_utc(rows[m].created_at) for m in members) if d]
@@ -471,11 +475,12 @@ def discover_themes(session: Session, product: str | None = None, *, llm=None,
         vectors = get_embedder().embed(texts)
         prepared = []
         for c in cluster_reviews(vectors):
-            verbatims = representatives(c, vectors, texts)
+            verbatims = representatives(c, vectors, originals)
             if not verbatims:
                 continue
             d = dates_of(c.members)
             prepared.append({"count": len(c.members), "verbatims": verbatims,
+                             "fallback": representatives(c, vectors, texts, k=1)[0],
                              "members": c.members,
                              "first_seen": min(d).date().isoformat() if d else None,
                              "last_seen": max(d).date().isoformat() if d else None,
@@ -496,7 +501,8 @@ def discover_themes(session: Session, product: str | None = None, *, llm=None,
                 continue  # a group of one is not a theme
             d = dates_of(members)
             prepared.append({"count": len(members),
-                             "verbatims": [" ".join(texts[m].split()) for m in members[:3]],
+                             "verbatims": [" ".join(originals[m].split()) for m in members[:3]],
+                             "fallback": " ".join(texts[members[0]].split()),
                              "members": members,
                              "first_seen": min(d).date().isoformat() if d else None,
                              "last_seen": max(d).date().isoformat() if d else None,
@@ -520,7 +526,8 @@ def discover_themes(session: Session, product: str | None = None, *, llm=None,
         # customer wrote rather than a synthesized guess.
         fallback = not statement or confidence < MIN_LABEL_CONFIDENCE             or not is_usable_statement(statement, banned, own)
         if fallback:
-            statement = _truncate(c["verbatims"][0])
+            # In English: a translated review's own words, not the original.
+            statement = _truncate(c.get("fallback") or c["verbatims"][0])
             source = "verbatim"
         else:
             statement = _truncate(statement)
@@ -543,7 +550,7 @@ def discover_themes(session: Session, product: str | None = None, *, llm=None,
             "trend": c["trend"],
             # What the reviews in this theme are FOR (bug / request / confusion…),
             # from the same members the count came from.
-            "intents": count_intents((rows[m].text, rows[m].rating)
+            "intents": count_intents((texts[m], rows[m].rating)
                                      for m in c.get("members") or []),
         })
 

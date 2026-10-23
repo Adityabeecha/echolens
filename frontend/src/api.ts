@@ -282,6 +282,14 @@ export interface Evidence {
   contradicts: string[];
   /** v15: set when a reviewer struck this item as not supporting the finding. */
   rejected?: { at: string; user_id: number | null; note: string } | null;
+  /** Set when the quoted review is not in English. `snippet` stays the
+   *  original; `text_en` is null until the review has been translated. */
+  translation?: EvidenceTranslation | null;
+}
+export interface EvidenceTranslation {
+  lang: string;
+  lang_name: string;
+  text_en: string | null;
 }
 export interface Impact {
   terms: string[];
@@ -324,8 +332,17 @@ export interface ReplyDraft {
   version: string | null;
   created_at: string | null;
   excerpt: string;
+  /** The review in English, when it was written in another language and translated. */
+  excerpt_en?: string | null;
   language: "en" | "non_english";
+  /** Detected language code and its name ("es", "Spanish"). */
+  lang?: string;
+  lang_name?: string;
+  /** Always English. */
   draft: string | null;
+  /** The draft in the reviewer's language — machine-translated, never checked. */
+  draft_translated?: string | null;
+  machine_translated?: boolean;
   note: string | null;
 }
 export interface ReplyDrafts {
@@ -1329,6 +1346,10 @@ export const api = {
   // Not scoped: which source types exist is global, not per-product.
   availableSources: () => get<AvailableSourcesResp>("/sources/available"),
   fixwatch: () => get<FixWatchResp>(scoped("/fixwatch")),
+  /** Translate this product's non-English reviews now (reviewer). */
+  translateReviews: () =>
+    post<{ detected: number; translated: number; pending: number; stopped: string | null;
+           note?: string; product: string }>(scoped("/translate")),
   comments: (invId: number) =>
     get<CommentsResp>(scoped(`/investigations/${invId}/comments`)),
   postComment: (invId: number, body: string, parentId?: number) =>

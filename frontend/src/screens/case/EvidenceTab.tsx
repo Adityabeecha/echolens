@@ -2,6 +2,7 @@ import { Evidence, Investigation } from "../../api";
 import { plural, sourceLabel } from "../../format";
 import { C, MEASURE, R, S, T, mono } from "../../theme";
 import { EmptyState, Label } from "../../ui";
+import { TranslationNote } from "./Inspector";
 
 /** Every citation this case rests on, in one table. */
 export function EvidenceTab({ inv, onOpenEvidence }: {
@@ -71,6 +72,7 @@ export function EvidenceTab({ inv, onOpenEvidence }: {
               <span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>{sourceLabel(e.source)}</span>
               <span style={{ fontSize: T.sm, color: C.text3, lineHeight: "var(--el-lh-snug)" }}>
                 “{e.snippet}”
+                {e.translation && <TranslationNote translation={e.translation} />}
               </span>
               <span style={{ fontSize: T.sm, color: e.contradicts.length ? C.bad : C.good }}>
                 {e.supports.join(", ") ||

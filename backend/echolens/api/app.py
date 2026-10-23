@@ -280,8 +280,9 @@ def _investigation_dict(session, inv: Investigation) -> dict:
         "history": case_history(session, inv),
         "hypotheses": [{"id": h.hid, "statement": h.statement, "confidence": h.confidence,
                         "status": h.status, **h.json} for h in hyps],
-        "evidence": [{"id": e.eid, "source": e.source, "ref": e.ref, "snippet": e.snippet,
-                      "retrieved_by": e.retrieved_by, **e.json} for e in evs],
+        "evidence": _with_translations(session, inv, [
+            {"id": e.eid, "source": e.source, "ref": e.ref, "snippet": e.snippet,
+             "retrieved_by": e.retrieved_by, **e.json} for e in evs]),
         "finding": None if finding is None else {
             "id": finding.id, "status": finding.status, **finding.json,
             **_finding_extras(session, finding, recs, inv.status)},
@@ -292,6 +293,22 @@ def _investigation_dict(session, inv: Investigation) -> dict:
         "product_decision": None if finding is None else _decision_view(session, finding.id),
         "extension": _extension_view(session, inv),
     }
+
+
+def _with_translations(session, inv: Investigation, evidence: list[dict]) -> list[dict]:
+    """Attach {lang, lang_name, text_en} to evidence quoting a non-English
+    review. The snippet itself is never touched — it stays verbatim."""
+    from echolens.db.models import Product
+    from echolens.translate import translations_for
+    try:
+        prod = session.get(Product, inv.product_id) if inv.product_id else None
+        found = translations_for(session, [e["ref"] for e in evidence],
+                                 prod.name if prod else None)
+    except Exception as err:  # a presentation extra must never break the case
+        log.warning("evidence_translations_failed", investigation_id=inv.id, error=str(err))
+        return evidence
+    return [{**e, "translation": found[e["ref"]]} if e["ref"] in found else e
+            for e in evidence]
 
 
 def _decision_view(session, finding_id: int) -> dict | None:
@@ -1083,11 +1100,49 @@ def collectors_run(product_id: int | None = None,
     with session_scope() as session:
         prod = _scope(session, product_id, user)
         results = run_all(session, product_id=(prod.id if prod else None))
-        return {"results": [
+        translation = _translate_after_collect(session, prod, user)
+        return {"translation": translation, "results": [
             {"source": r.source, "identifier": r.identifier, "fetched": r.fetched,
              "inserted": r.inserted, "error": r.error,
              "duration_seconds": r.duration_s} for r in results],
                 "duration_seconds": round(time.monotonic() - started, 2)}
+
+
+def _translate_product(session, prod, user: dict | None) -> dict:
+    """Detect languages, then translate what is pending — with a live model
+    only when a key is set and the caller may spend. Capped per run and by the
+    product's `daily_translation_usd` limit; spend is recorded with its id."""
+    from echolens.translate import metered_client, translate_reviews
+    llm = (metered_client(session, prod.id)
+           if prod is not None and settings.openai_api_key and _may_spend(user) else None)
+    daily = _limits(session, prod.id if prod else None).get("daily_translation_usd")
+    return translate_reviews(session, prod, llm, daily_usd=daily)
+
+
+def _translate_after_collect(session, prod, user: dict | None) -> dict | None:
+    if prod is None:
+        return None
+    try:
+        return _translate_product(session, prod, user)
+    except Exception as err:  # translation is an extra; collection already succeeded
+        log.warning("translate_after_collect_failed", product_id=prod.id, error=str(err))
+        return None
+
+
+@app.post("/translate")
+@limiter.limit("6/minute")  # may spend on a model
+def translate_now(request: Request, product_id: int | None = None,
+                  user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Translate this product's non-English reviews now (on demand). Analysis
+    reads the translations; quotes keep the original text."""
+    with session_scope() as session:
+        prod = _scope(session, product_id, user)
+        if prod is None:
+            raise HTTPException(404, "no product to translate")
+        out = _translate_product(session, prod, user)
+        if not settings.openai_api_key:
+            out["note"] = "No model key is configured, so nothing was translated."
+        return {**out, "product": prod.name}
 
 
 class RetryBody(BaseModel):
@@ -1227,6 +1282,11 @@ def _onboard_bg(product: str, product_id: int | None = None) -> None:
         with session_scope() as session:
             run_all(session, limit=300, product_id=product_id,
                     timeout_s=ONBOARD_TIMEOUT_SECONDS)
+        # Before the scan, so the first themes already count translated reviews.
+        with session_scope() as session:
+            from echolens.db.models import Product
+            prod = session.get(Product, product_id) if product_id is not None else None
+            _translate_after_collect(session, prod, None)
         with session_scope() as session:
             scan(session, product=product, product_id=product_id)
         log.info("onboard_backfill_done", product=product)
