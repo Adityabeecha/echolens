@@ -58,8 +58,10 @@ def client(monkeypatch):
 
 @pytest.fixture()
 def no_trackers(monkeypatch):
-    for key in ("github_token", "linear_api_key", "linear_team_id", "jira_base_url",
-                "jira_email", "jira_api_token", "jira_project_key"):
+    # github_default_repo too: Settings reads the developer's .env, and a
+    # GITHUB_DEFAULT_REPO there means "no repo connected" finds one.
+    for key in ("github_token", "github_default_repo", "linear_api_key", "linear_team_id",
+                "jira_base_url", "jira_email", "jira_api_token", "jira_project_key"):
         monkeypatch.setattr(settings, key, "", raising=False)
 
 
