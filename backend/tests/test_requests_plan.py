@@ -367,3 +367,94 @@ def test_ticket_endpoint_requires_reviewer(client):
         assert client.get(f"/requests/{slug}/spec?product_id={client.pid}").status_code == 200
     finally:
         client.app.dependency_overrides.clear()
+
+
+# ── spec fix: repeated quotes, source labels, cache version ─────────────
+
+REPEATED = "Good overall, wish it had a desktop version."
+
+
+def _desktop_corpus(s, name="Desky", repeats=80, variants=12):
+    p = Product(name=name)
+    s.add(p)
+    s.flush()
+    rows = [(REPEATED.lower() + "  " if i % 4 == 0 else REPEATED, 3, i % 70) for i in range(repeats)]
+    rows += [(f"I wish it had a desktop version for {w}", 4, 5)
+             for w in ("work", "school", "my mac", "linux", "windows", "the office", "travel",
+                       "writing", "coding", "teaching", "research", "drawing")[:variants]]
+    for i, (t, r, ago) in enumerate(rows):
+        s.add(Review(source="play_store", ext_id=f"{name}{i}", rating=r, text=t, product=name,
+                     created_at=NOW - timedelta(days=ago)))
+    s.flush()
+    return p, find_request(s, p.id, f"request-p{p.id}-desktop")
+
+
+def _section(md, title):
+    return md.split(f"## {title}")[1].split("\n## ")[0]
+
+
+def test_identical_quotes_are_grouped_with_a_count(s):
+    p, theme = _desktop_corpus(s)
+    assert theme is not None and len(theme["reviews"]) == 92
+    md = build_spec(theme, p.name)["markdown"]
+    evidence = _section(md, "Evidence")
+    lines = [l for l in evidence.splitlines() if l.startswith("- “")]
+    assert len(lines) == 10                                    # at most 10 distinct
+    top = lines[0]
+    assert top.startswith(f"- “{REPEATED}”") and "×80" in top and "3★" in top
+    first = (NOW - timedelta(days=69)).date().isoformat()
+    last = (NOW - timedelta(days=0)).date().isoformat()
+    assert f"{first} → {last}" in top and top.endswith("Play Store")
+    assert evidence.count("desktop version.”") == 1           # case/space variants merged
+    assert "92 requesting reviews, 13 distinct quotes" in evidence
+    assert "…and 3 more distinct quotes (3 reviews)" in evidence
+    problem = _section(md, "Problem")
+    assert problem.count(REPEATED) == 1 and "(×80)" in problem
+    assert 2 <= problem.count("> “") <= 3
+    assert "**92** distinct reviews" in md                    # total kept in the header
+
+
+def test_grouped_quotes_are_still_real_and_guarded(s):
+    p, theme = _desktop_corpus(s)
+    md = build_spec(theme, p.name)["markdown"]
+    texts = [r["text"] for r in theme["reviews"]]
+    assert all(any(q in t for t in texts) for q in quotes_in(md))
+    ok = {**GOOD, "user_stories": [f'As a user, I want this, so that "{REPEATED}" is history.',
+                                   GOOD["user_stories"][1]]}
+    check_rewrite(ok, texts)
+    bad = {**GOOD, "user_stories": ['As a user, I want this, so that "a desktop app now" ships.',
+                                    GOOD["user_stories"][1]]}
+    with pytest.raises(ValueError, match="not in the evidence"):
+        check_rewrite(bad, texts)
+
+
+def test_source_labels_are_human():
+    from echolens.prd import source_label
+    assert [source_label(x) for x in ("play_store", "app_store", "github", "csv", "csv_reviews")] \
+        == ["Play Store", "App Store", "GitHub", "CSV import", "CSV import"]
+    assert source_label("something_new") == "Something New"
+
+
+def test_spec_never_shows_raw_source_enums(s):
+    p, theme = _theme(s)
+    md = build_spec(theme, p.name)["markdown"]
+    assert "play_store" not in md and "Play Store" in _section(md, "Evidence")
+
+
+def test_old_cached_spec_is_rebuilt(s):
+    import hashlib
+    import json
+    from echolens.db.models import Setting
+    from echolens.prd import get_spec
+    p, theme = _desktop_corpus(s)
+    slug = theme["slug"]
+    key = f"request_spec:{p.id}:{hashlib.sha1(slug.encode()).hexdigest()[:20]}"
+    # What the previous version cached: no version in the fingerprint.
+    old_fp = json.dumps([sorted(r["id"] for r in theme["reviews"]), theme["statement"], False])
+    s.add(Setting(key=key, value={"fingerprint": old_fp,
+                                  "spec": {"markdown": "STALE " + REPEATED * 80}}))
+    s.flush()
+    spec = get_spec(s, p.id, p.name, slug)
+    assert not spec["cached"] and "STALE" not in spec["markdown"] and "×80" in spec["markdown"]
+    again = get_spec(s, p.id, p.name, slug)
+    assert again["cached"] and again["markdown"] == spec["markdown"]
