@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from echolens.db.models import Post
 from echolens.tools._util import cap_items, match_score, parse_date, snippet, terms_of
@@ -15,7 +15,9 @@ def search_reddit(
     product: str | None = None,
     limit: int | None = None,
 ) -> dict:
-    stmt = select(Post)
+    # The embedding is never needed here: semantic.augment reads it for a
+    # bounded set of ids. Loading it per row was ~1 KB of JSON each.
+    stmt = select(Post).options(defer(Post.embedding))
     if product:
         stmt = stmt.where(Post.product == product)
     if subreddit:
@@ -32,7 +34,8 @@ def search_reddit(
     )
     ranked = [p for _, p in matched]
     from echolens.search.semantic import augment
-    ranked += augment(query, rows, set(ranked), lambda p: p.text_snippet, limit or 8)
+    ranked += augment(query, rows, set(ranked), lambda p: p.text_snippet, limit or 8,
+                      session=session, model=Post)
     items, total = cap_items(ranked, limit)
     return {
         "total_matches": total,

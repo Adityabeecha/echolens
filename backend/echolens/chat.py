@@ -29,17 +29,15 @@ RANK_MARKERS = (
 
 def _knowledge(session: Session, product_id: int | None = None) -> list[tuple[Finding, Investigation]]:
     """Every finding in THIS product backed by a real cause."""
-    stmt = select(Finding)
+    # One join, not one session.get per finding: Ask's statement count grew with
+    # the number of cases on record.
+    stmt = (select(Finding, Investigation)
+            .join(Investigation, Investigation.id == Finding.investigation_id)
+            .where((Investigation.status == "resolved") | (Finding.status == "approved"))
+            .order_by(Finding.id))
     if product_id is not None:
         stmt = stmt.where(Finding.product_id == product_id)
-    out = []
-    for f in session.scalars(stmt).all():
-        inv = session.get(Investigation, f.investigation_id)
-        if inv is None:
-            continue
-        if inv.status == "resolved" or f.status == "approved":
-            out.append((f, inv))
-    return out
+    return [(f, inv) for f, inv in session.execute(stmt).all()]
 
 
 def retrieve(session: Session, message: str, k: int = 4,
@@ -66,14 +64,13 @@ def _open_problems(session: Session, product_id: int | None = None) -> list[tupl
         fw = fw.where(FixWatch.product_id == product_id)
         inv_stmt = inv_stmt.where(Investigation.product_id == product_id)
     confirmed = {w.investigation_id for w in session.scalars(fw).all()}
-    rows = []
-    for inv in session.scalars(inv_stmt).all():
-        if inv.id in confirmed:
-            continue
-        f = session.scalars(select(Finding).where(
-            Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
-        if f is not None:
-            rows.append((f, inv))
+    invs = [i for i in session.scalars(inv_stmt).all() if i.id not in confirmed]
+    latest: dict[int, Finding] = {}
+    if invs:
+        for f in session.scalars(select(Finding).where(
+                Finding.investigation_id.in_([i.id for i in invs])).order_by(Finding.id)).all():
+            latest[f.investigation_id] = f          # ascending: newest wins
+    rows = [(latest[i.id], i) for i in invs if i.id in latest]
     rows.sort(key=lambda fi: -(fi[0].json or {}).get("impact", {}).get("impact_score", 0.0))
     return rows
 

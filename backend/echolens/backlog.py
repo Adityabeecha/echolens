@@ -175,8 +175,12 @@ def historical_fix_days(session: Session, product_id: int | None) -> float | Non
     if product_id is not None:
         stmt = stmt.where(FixWatch.product_id == product_id)
     spans = []
-    for w in session.scalars(stmt).all():
-        inv = session.get(Investigation, w.investigation_id)
+    watches = session.scalars(stmt).all()
+    ids = list({w.investigation_id for w in watches})
+    invs = {i.id: i for i in session.scalars(select(Investigation).where(
+        Investigation.id.in_(ids))).all()} if ids else {}   # one query, not one per fix
+    for w in watches:
+        inv = invs.get(w.investigation_id)
         if inv is None or not inv.created_at or not w.fix_date:
             continue
         days = (aware_utc(w.fix_date) - aware_utc(inv.created_at)).days
@@ -185,9 +189,12 @@ def historical_fix_days(session: Session, product_id: int | None) -> float | Non
     return round(statistics.median(spans), 1) if spans else None
 
 
+_UNSET = object()
+
+
 def estimate_effort(session: Session, finding: Finding,
                     product_id: int | None = None,
-                    history: float | None = None) -> dict:
+                    history: float | None = None, watch=_UNSET, issue=_UNSET) -> dict:
     """Effort for one backlog item, with its basis attached.
 
     Order of preference: what the linked issue's labels say, then what fixes on
@@ -195,14 +202,16 @@ def estimate_effort(session: Session, finding: Finding,
     reported as unknown rather than filled with a default that would quietly
     reorder the backlog.
     """
-    watch = session.scalars(select(FixWatch).where(
-        FixWatch.finding_id == finding.id).order_by(FixWatch.id.desc())).first()
+    if watch is _UNSET:      # a list caller passes the watch it already loaded
+        watch = session.scalars(select(FixWatch).where(
+            FixWatch.finding_id == finding.id).order_by(FixWatch.id.desc())).first()
     if watch is not None:
         # ext_id is repo-qualified ("owner/repo#123"), so match on the suffix —
         # a bare "#123" lookup silently found nothing and every item fell
         # through to "effort unknown".
-        issue = session.scalars(select(Issue).where(
-            Issue.ext_id.like(f"%#{watch.issue_number}"))).first()
+        if issue is _UNSET:
+            issue = session.scalars(select(Issue).where(
+                Issue.ext_id.like(f"%#{watch.issue_number}"))).first()
         days, basis = _label_effort(issue.labels if issue else None)
         if days is not None:
             return {"days": days, "basis": basis, "known": True}
@@ -288,24 +297,57 @@ def backlog(session: Session, product_id: int | None = None,
     if product_id is not None:
         inv_stmt = inv_stmt.where(Investigation.product_id == product_id)
 
-    from echolens.review import decision_dict, decision_hides, latest_decision
+    from echolens.review import decision_dict, decision_hides, latest_decisions
+
+    # Everything per case loaded once for the whole list: this ran five
+    # queries PER resolved case (finding, decision, watch, evidence, anomaly),
+    # so Plan's statement count grew with the case count.
+    invs = [i for i in session.scalars(inv_stmt).all() if i.id not in fixed]
+    inv_ids = [i.id for i in invs]
+    latest: dict[int, Finding] = {}
+    refs: dict[int, list[str]] = {}
+    anomalies: dict[int, AnomalyEvent] = {}
+    if inv_ids:
+        for f in session.scalars(select(Finding).where(
+                Finding.investigation_id.in_(inv_ids)).order_by(Finding.id)).all():
+            latest[f.investigation_id] = f            # ascending: newest wins
+        for inv_id, ref in session.execute(select(EvidenceRow.investigation_id, EvidenceRow.ref)
+                                           .where(EvidenceRow.investigation_id.in_(inv_ids))
+                                           .order_by(EvidenceRow.id)).all():
+            refs.setdefault(inv_id, []).append(ref)
+        a_ids = [i.anomaly_id for i in invs if i.anomaly_id]
+        if a_ids:
+            anomalies = {a.id: a for a in session.scalars(select(AnomalyEvent).where(
+                AnomalyEvent.id.in_(a_ids))).all()}
+    finding_ids = [f.id for f in latest.values()]
+    decisions = latest_decisions(session, finding_ids)
+    watch_of: dict[int, FixWatch] = {}
+    if finding_ids:
+        for w in session.scalars(select(FixWatch).where(
+                FixWatch.finding_id.in_(finding_ids)).order_by(FixWatch.id)).all():
+            watch_of[w.finding_id] = w                # ascending: newest wins
+    # The linked issues' labels, for effort — one query for every watch.
+    issue_of: dict[int, Issue] = {}
+    numbers = sorted({w.issue_number for w in watch_of.values() if w.issue_number is not None})
+    if numbers:
+        from sqlalchemy import or_
+        for issue in session.scalars(select(Issue).where(
+                or_(*[Issue.ext_id.like(f"%#{n}") for n in numbers])).order_by(Issue.id)).all():
+            tail = issue.ext_id.rsplit("#", 1)[-1]
+            if tail.isdigit():
+                issue_of.setdefault(int(tail), issue)  # first match, as .first() did
 
     items = []
     set_aside = []
-    for inv in session.scalars(inv_stmt).all():
-        if inv.id in fixed:
-            continue        # already verified fixed — not backlog
-        finding = session.scalars(select(Finding).where(
-            Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
+    for inv in invs:
+        finding = latest.get(inv.id)
         if finding is None:
             continue
         # v15: the product decision outranks the ranking. Won't-fix leaves the
         # backlog for good; parked leaves it until its revisit date. Both are
         # reported back (not silently dropped) so the plan can say what it is
         # NOT proposing and why.
-        decision = latest_decision(session, finding.id)
-        if decision is not None and decision.decision == "cleared":
-            decision = None
+        decision = decisions.get(finding.id)      # `cleared` already counts as none
         if decision_hides(decision, now):
             set_aside.append({"investigation_id": inv.id, "finding_id": finding.id,
                               "summary": finding.summary,
@@ -329,7 +371,9 @@ def backlog(session: Session, product_id: int | None = None,
         # hasn't accumulated matching reviews yet.
         score = sev["score"] * (volume + 1) * persistence * (1 - rate)
 
-        effort = estimate_effort(session, finding, product_id, history)
+        watch = watch_of.get(finding.id)
+        effort = estimate_effort(session, finding, product_id, history, watch=watch,
+                                 issue=issue_of.get(watch.issue_number) if watch else None)
         ov = overrides.get(str(inv.id), {})
         if "effort_days" in ov:
             # The PM's number wins and counts as known: dividing by it is the
@@ -346,9 +390,8 @@ def backlog(session: Session, product_id: int | None = None,
         seg_factor = seg["factor"] if seg else 1.0
         value = score * impact_factor * seg_factor
         recovery = rating_recovery(impact, conf)
-        evidence = [e.ref for e in session.scalars(select(EvidenceRow).where(
-            EvidenceRow.investigation_id == inv.id)).all()]
-        anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv.anomaly_id else None
+        evidence = refs.get(inv.id, [])
+        anomaly = anomalies.get(inv.anomaly_id) if inv.anomaly_id else None
 
         items.append({
             "kind": "bug",
@@ -486,22 +529,39 @@ def request_themes(session: Session, product_id: int | None,
     prod = session.get(Product, product_id) if product_id is not None else None
     if prod is None:
         return []
+    import copy
+    from datetime import timedelta
+
+    from echolens.memo import fingerprinted, review_fingerprint
+
     now = as_of or reference_now(session, prod.name)
-    rows = _candidates(session, prod.name, WINDOW_DAYS, now)
-    groups = group_requests([r.text or "" for r in rows],
-                            banned_terms(prod.name, prod.package_name))[:REQUEST_LIMIT]
-    themes: list[dict] = []
-    for i, g in enumerate(groups):
-        reviews = []
-        for m in g["members"]:
-            r = rows[m]
-            day = aware_utc(r.created_at)
-            reviews.append({"id": r.id, "ext_id": r.ext_id, "source": r.source,
-                            "rating": r.rating, "text": " ".join((r.text or "").split()),
-                            "date": day.date().isoformat() if day else None})
-        themes.append({"slug": f"request-p{prod.id}-{_slug(g['phrase']) or f'request-{i + 1}'}",
-                       "phrase": g["phrase"], "statement": _statement(g["phrase"]),
-                       "reviews": reviews})
+
+    def compute() -> list[dict]:
+        rows = _candidates(session, prod.name, WINDOW_DAYS, now)
+        groups = group_requests([r.text or "" for r in rows],
+                                banned_terms(prod.name, prod.package_name))[:REQUEST_LIMIT]
+        out: list[dict] = []
+        for i, g in enumerate(groups):
+            reviews = []
+            for m in g["members"]:
+                r = rows[m]
+                day = aware_utc(r.created_at)
+                reviews.append({"id": r.id, "ext_id": r.ext_id, "source": r.source,
+                                "rating": r.rating, "text": " ".join((r.text or "").split()),
+                                "date": day.date().isoformat() if day else None})
+            out.append({"slug": f"request-p{prod.id}-{_slug(g['phrase']) or f'request-{i + 1}'}",
+                        "phrase": g["phrase"], "statement": _statement(g["phrase"]),
+                        "reviews": reviews})
+        return out
+
+    # Classifying every 3-5 star review in the window ran on each Plan load (and
+    # on each Drop/Add, which re-renders the plan). Recomputed now only when
+    # those reviews change; overrides below are applied fresh every time.
+    since = (now - timedelta(days=WINDOW_DAYS)).replace(tzinfo=None)
+    themes = copy.deepcopy(fingerprinted(
+        session, ("request_themes", prod.id, str(now)),
+        (review_fingerprint(session, prod.name, since, min_rating=3), prod.package_name),
+        compute))
 
     overrides = get_overrides(session, prod.id)
     by_slug = {t["slug"]: t for t in themes}

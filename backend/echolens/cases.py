@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from echolens.db.models import (
     AnomalyEvent, Finding, FindingDecision, FixWatch, Investigation, Product,
-    QueuedInvestigation, Review, ReviewFeedback, TriageDecision)
+    QueuedInvestigation, Review, ReviewFeedback, TraceStep, TriageDecision)
 from echolens.impact import severity
 from echolens.timeutil import aware_utc
 
@@ -175,6 +175,9 @@ def derive_status(inv: Investigation, finding: Finding | None,
         return DISMISSED, "You challenged this finding; it was re-opened as a new case."
     if inv.status == "budget_exhausted":
         return NEEDS_HUMAN, "Budget ran out before a cause cleared the evidence bar."
+    if inv.status == "failed":   # ended by the zombie watchdog; its note says why
+        return NEEDS_HUMAN, ((inv.data_notes or [None])[-1]
+                             or "The investigation stopped before it finished.")
     if inv.status == "insufficient_evidence":
         return NEEDS_HUMAN, "Not enough evidence to name a cause — your call on what to do."
     if inv.status == "needs_human":
@@ -519,6 +522,12 @@ def case_history(session: Session, inv: Investigation) -> list[dict]:
         add(at, "extended",
             f"Given +{ext.get('steps', 5)} steps (extension {ext.get('n', '?')} "
             f"of {MAX_HUMAN_EXTENSIONS}).", by=ext.get("by"))
+
+    # The zombie watchdog's stop, from the FAIL step it wrote into the trace.
+    for step in session.scalars(select(TraceStep).where(
+            TraceStep.investigation_id == inv.id, TraceStep.kind == "FAIL")).all():
+        if (step.content_json or {}).get("code") == "watchdog":
+            add(step.created_at, "stopped", step.content_json.get("text", "Stopped."))
 
     # A re-opened child means this case's story continues elsewhere.
     child = session.scalars(select(Investigation).where(

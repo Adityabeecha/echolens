@@ -117,6 +117,32 @@ The retained workflows perform:
 
 Run each scheduled workflow manually once from the Actions tab to validate credentials.
 
+## 6. Worker (optional, recommended)
+
+By default investigations run as background threads inside the web container. A redeploy, an out-of-memory kill or a slow request then takes the case with it. Running them in a second service keeps the API responsive and lets either process restart without stranding work.
+
+1. In the same Northflank project, add a second service from the same repository, branch, build context (`backend`) and Dockerfile as the API. On a free or sandbox plan, check that your service allowance covers a second service.
+2. Give it **no public port** and no HTTP health check. It does not serve requests.
+3. Copy the API's environment variables (at least `ECHOLENS_DB_URL`, `OPENAI_API_KEY`, `JWT_SECRET`, `ECHOLENS_ENV=production`, and any tracker, Slack or email credentials), then add:
+
+| Variable | Value |
+|---|---|
+| `ECHOLENS_PROCESS` | `worker` |
+| `RUN_INVESTIGATIONS_IN_WEB` | `false` |
+
+4. On the **API** service, also set `RUN_INVESTIGATIONS_IN_WEB=false` and redeploy it. From then on the API only records work (`worker_jobs` rows and the investigation queue), and the worker claims and runs it.
+
+The container runs `echolens worker` when `ECHOLENS_PROCESS=worker`, and the API otherwise. To run it by hand: `echolens worker` (`--once` does one unit of work and exits; `--poll 5` sets the idle poll interval in seconds).
+
+Check it is alive with `GET /health` on the API. In worker mode it reports `investigations_run_in: "worker"`, `jobs_queued`, and `worker_last_seen` (refreshed on every poll). If `jobs_queued` keeps growing while `worker_last_seen` is old, the worker is down.
+
+Notes:
+
+- Claims are safe with more than one worker. A job or queue row is taken with a conditional `UPDATE … WHERE status='queued'`, and with `FOR UPDATE SKIP LOCKED` on Postgres, so two workers never run the same item.
+- A worker does not resume interrupted cases on startup, because two workers starting together would both resume them. Instead, the zombie watchdog ends any running case with no trace step for 15 minutes ("Stopped: no progress for 15 minutes — the worker may have restarted") and returns its signal to the queue. The watchdog runs on API startup, on every queue drain, every minute in the worker, and on demand with `echolens watchdog`.
+- The worker also refreshes the stored "All products" rows every minute, so `/portfolio` rarely recomputes anything itself.
+- To go back to in-process investigations, set `RUN_INVESTIGATIONS_IN_WEB=true` on the API (or remove it) and stop the worker. Jobs already queued in `worker_jobs` are then not run; drain them first.
+
 ## Security checklist
 
 - Set `ECHOLENS_ENV` explicitly (`production`, or `staging`) on every deployed environment. The app refuses to start outside local dev without an explicit value; `dev` disables authentication and must never be public.
