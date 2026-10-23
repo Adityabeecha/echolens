@@ -190,13 +190,28 @@ def backlog(session: Session, product_id: int | None = None,
     if product_id is not None:
         inv_stmt = inv_stmt.where(Investigation.product_id == product_id)
 
+    from echolens.review import decision_dict, decision_hides, latest_decision
+
     items = []
+    set_aside = []
     for inv in session.scalars(inv_stmt).all():
         if inv.id in fixed:
             continue        # already verified fixed — not backlog
         finding = session.scalars(select(Finding).where(
             Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
         if finding is None:
+            continue
+        # v15: the product decision outranks the ranking. Won't-fix leaves the
+        # backlog for good; parked leaves it until its revisit date. Both are
+        # reported back (not silently dropped) so the plan can say what it is
+        # NOT proposing and why.
+        decision = latest_decision(session, finding.id)
+        if decision is not None and decision.decision == "cleared":
+            decision = None
+        if decision_hides(decision, now):
+            set_aside.append({"investigation_id": inv.id, "finding_id": finding.id,
+                              "summary": finding.summary,
+                              "decision": decision_dict(decision, now)})
             continue
         fj = finding.json or {}
         impact = fj.get("impact", {}) or {}
@@ -245,6 +260,7 @@ def backlog(session: Session, product_id: int | None = None,
             "evidence_count": len(evidence),
             "theme": (anomaly.metric if anomaly else None),
             "defence": _defence(sev, volume, persistence, rate, effort, recovery, len(evidence)),
+            "decision": decision_dict(decision, now),
         })
 
     by_value = sorted(items, key=lambda i: -i["value_per_day"])
@@ -252,6 +268,7 @@ def backlog(session: Session, product_id: int | None = None,
         item["rank"] = rank
     return {
         "items": by_value,
+        "set_aside": set_aside,
         "resolution_rate": rate,
         "median_fix_days": history,
         "generated": now.date().isoformat(),
@@ -330,8 +347,14 @@ def quarter_plan(session: Session, product_id: int | None = None,
     capacity = float(capacity_days if capacity_days is not None else saved["capacity_days"])
 
     by_id = {i["investigation_id"]: i for i in board["items"]}
-    included_ids = [i for i in saved["included"] if i in by_id]
     excluded = set(saved["excluded"])
+    # v15: a "fix now" product decision is an inclusion made on the case
+    # itself; it goes in first, after the PM's own picks, unless excluded here.
+    fix_now = [i["investigation_id"] for i in board["items"]
+               if (i.get("decision") or {}).get("decision") == "fix_now"
+               and i["investigation_id"] not in excluded]
+    included_ids = [i for i in saved["included"] if i in by_id]
+    included_ids += [i for i in fix_now if i not in included_ids]
 
     chosen = [by_id[i] for i in included_ids]
     used = sum(i["effort"]["days"] for i in chosen)
@@ -352,6 +375,7 @@ def quarter_plan(session: Session, product_id: int | None = None,
     return {
         "proposed": chosen,
         "deferred": deferred,
+        "set_aside": board["set_aside"],
         "included": saved["included"],
         "excluded": saved["excluded"],
         "capacity_days": capacity,

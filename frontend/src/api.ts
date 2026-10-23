@@ -207,6 +207,25 @@ async function put<T>(path: string, body?: unknown): Promise<T> {
   return r.json();
 }
 
+async function patch<T>(path: string, body?: unknown): Promise<T> {
+  const r = await fetch(BASE + path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!r.ok) {
+    handle(r.status);
+    let detail = "";
+    try {
+      detail = (await r.json())?.detail ?? "";
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail || `${path} → ${r.status}`);
+  }
+  return r.json();
+}
+
 async function del<T>(path: string): Promise<T> {
   const r = await writeFetch(path, { method: "DELETE" });
   if (!r.ok) {
@@ -261,6 +280,8 @@ export interface Evidence {
   retrieved_by: string;
   supports: string[];
   contradicts: string[];
+  /** v15: set when a reviewer struck this item as not supporting the finding. */
+  rejected?: { at: string; user_id: number | null; note: string } | null;
 }
 export interface Impact {
   terms: string[];
@@ -323,6 +344,9 @@ export interface Finding {
   grounding_violations?: string[];
   /** The rejected text, kept for audit — never presented as the conclusion. */
   rejected_draft?: string;
+  /** v15: evidence a reviewer struck, and the flag raised when that broke the two-source rule. */
+  rejected_evidence?: { eid: string; user_id: number | null; at: string; note: string }[];
+  needs_review?: { reason: string; at: string; eid: string } | null;
 }
 export interface Recommendation {
   rank: number;
@@ -330,6 +354,43 @@ export interface Recommendation {
   impact: string;
   effort: string;
   rationale: string;
+}
+/** v15: what the team decided to DO about a finding (separate from whether it is true). */
+export type ProductDecisionKind = "fix_now" | "park" | "wont_fix";
+export interface ProductDecision {
+  decision: ProductDecisionKind;
+  revisit_by: string | null;
+  reason: string;
+  user_id: number | null;
+  at: string | null;
+  /** True while the decision keeps it out of the open-problem lists. */
+  hidden: boolean;
+}
+/** v15: whether a dead-end case can be continued with more budget. */
+export interface ExtensionOffer {
+  eligible: boolean;
+  reason: string;
+  steps: number;
+  estimate_usd: number;
+  spent_usd: number;
+  used: number;
+  remaining: number;
+}
+export interface ShareState {
+  active: boolean;
+  token: string | null;
+  created_at: string | null;
+  url: string | null;
+}
+export interface ShareBrief {
+  headline: string;
+  impact: string;
+  why: string;
+  quotes: { text: string; source: string }[];
+  actions: { action: string; impact: string; effort: string }[];
+  markdown: string;
+  product?: string | null;
+  shared_at?: string | null;
 }
 export interface HistoryEvent {
   at: string | null;
@@ -359,6 +420,8 @@ export interface Investigation {
   evidence: Evidence[];
   finding: Finding | null;
   recommendations: Recommendation[];
+  product_decision?: ProductDecision | null;
+  extension?: ExtensionOffer | null;
 }
 
 // v13: the unified case list. One lifecycle, one status vocabulary, one card —
@@ -384,6 +447,8 @@ export interface CaseRow {
   issue_url: string | null;
   issue_number: number | null;
   reopens_investigation_id: number | null;
+  /** v15: the product decision in force, if any. */
+  decision?: ProductDecision | null;
   position?: number;
   /** Weekly complaint volume, or null when there is nothing real to draw. */
   spark: number[] | null;
@@ -1039,6 +1104,34 @@ export const api = {
     post<{ question: string; answer: string; investigation_id: number }>(
       scoped(`/findings/${findingId}/followup`), { question }),
   pause: (id: number) => post(scoped(`/investigations/${id}/pause`)),
+  // v15 — single-case PM workflow
+  extend: (id: number) =>
+    post<ExtensionOffer & { status: string }>(scoped(`/investigations/${id}/extend`)),
+  decideFinding: (findingId: number, decision: ProductDecisionKind | "cleared",
+                  revisitBy?: string | null, reason = "") =>
+    post<{ product_decision: ProductDecision | null }>(scoped(`/findings/${findingId}/decision`), {
+      decision, revisit_by: revisitBy || null, reason
+    }),
+  rejectEvidence: (findingId: number, eid: string, note = "") =>
+    post<{ eid: string; two_source_ok: boolean | null; needs_review: boolean; message: string }>(
+      scoped(`/findings/${findingId}/evidence/${encodeURIComponent(eid)}/reject`), { note }),
+  editRecommendation: (findingId: number, rank: number, body: { effort?: string; impact?: string }) =>
+    patch<Recommendation>(scoped(`/findings/${findingId}/recommendations/${rank}`), body),
+  findingBrief: (findingId: number, link?: string) =>
+    get<ShareBrief>(scoped(`/findings/${findingId}/brief${link ? `?link=${encodeURIComponent(link)}` : ""}`)),
+  shareState: (findingId: number) => get<ShareState>(scoped(`/findings/${findingId}/share`)),
+  createShare: (findingId: number) => post<ShareState>(scoped(`/findings/${findingId}/share`)),
+  revokeShare: (findingId: number) => del<ShareState>(scoped(`/findings/${findingId}/share`)),
+  /** Public, unauthenticated: never sends the session token. */
+  publicShare: async (token: string): Promise<ShareBrief> => {
+    const r = await fetch(`${BASE}/share/${encodeURIComponent(token)}`);
+    if (!r.ok) {
+      let detail = "";
+      try { detail = (await r.json())?.detail ?? ""; } catch { /* ignore */ }
+      throw new Error(detail || `This link is not valid (${r.status}).`);
+    }
+    return r.json();
+  },
   resume: (id: number) => post(scoped(`/investigations/${id}/resume`)),
   escalate: (id: number) => post(scoped(`/investigations/${id}/escalate`)),
   sources: () => get<SourcesResp>(scoped("/sources")),

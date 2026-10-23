@@ -107,6 +107,10 @@ export function Today({
   const allOpenProblems = rows
     .filter((r) => ["resolved", "needs_review", "needs_human", "regressed"].includes(r.status))
     .filter((r) => r.id == null || !surfaced.has(r.id))
+    // A product decision closes the question for this list: won't-fix is out
+    // for good, parked is out until its revisit date (the server computes
+    // `hidden`, so the date logic lives in one place).
+    .filter((r) => !r.decision?.hidden)
     .sort((a, b) =>
       (b.severity_score ?? 0) - (a.severity_score ?? 0) ||
       (b.impact?.affected_pct ?? 0) - (a.impact?.affected_pct ?? 0));

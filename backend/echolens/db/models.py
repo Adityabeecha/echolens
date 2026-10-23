@@ -524,3 +524,42 @@ class LLMCall(Base):
     cost: Mapped[float] = mapped_column(Float, default=0.0)
     ms: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class FindingDecision(Base):
+    """v15: the PRODUCT decision on a finding, separate from its accuracy review.
+
+    Approve/Challenge answers "is this true?". This answers "what are we doing
+    about it?" — fix now, park until a date, or won't fix (by design, not worth
+    it). Append-only: the latest row is the decision in force, earlier rows are
+    the audit trail History reads back.
+    """
+    __tablename__ = "finding_decisions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    finding_id: Mapped[int] = mapped_column(ForeignKey("findings.id"), index=True)
+    investigation_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    decision: Mapped[str] = mapped_column(String(16))   # fix_now|park|wont_fix|cleared
+    revisit_by: Mapped[datetime | None] = mapped_column(nullable=True)  # park only
+    reason: Mapped[str] = mapped_column(Text, default="")
+    user_id: Mapped[int | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class ShareLink(Base):
+    """v15: a revocable, read-only public link to ONE finding's brief.
+
+    The token is the whole credential (secrets.token_urlsafe), so it is unique
+    and never derived from an id. Revoking sets revoked_at rather than deleting,
+    so "who shared this, and when was it pulled" stays answerable.
+    """
+    __tablename__ = "share_links"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    finding_id: Mapped[int] = mapped_column(ForeignKey("findings.id"), index=True)
+    product_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_by: Mapped[int | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    revoked_at: Mapped[datetime | None] = mapped_column(nullable=True)

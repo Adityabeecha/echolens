@@ -49,6 +49,14 @@ from echolens.tools.registry import TOOLS, run_tool
 
 log = get_logger("investigator")
 
+# v15: the reviewer-granted budget fields, checkpointed and restored together.
+_GRANT_FIELDS = ("extra_iterations", "extra_tool_calls", "extra_tokens",
+                 "extra_cost_usd", "extra_wall_s", "human_extensions")
+
+
+def _budget_grants(budget: Budget) -> dict:
+    return {k: getattr(budget, k) for k in _GRANT_FIELDS}
+
 
 def _collect_refs(node) -> set[str]:
     """All verbatim `ref` values present in a tool result — the only refs the
@@ -646,7 +654,12 @@ class Investigator:
                        "tokens": self.budget.tokens, "cost_usd": self.budget.cost_usd,
                        "elapsed_s": self.budget.elapsed_s(),
                        "extended": self.budget.extended,
-                       "extension_factor": self.budget.extension_factor},
+                       "extension_factor": self.budget.extension_factor,
+                       # v15: reviewer-granted headroom must survive the next
+                       # checkpoint, or a crash mid-extension would silently
+                       # take back what the human granted (and the per-case
+                       # grant cap could be reset by a restart).
+                       **_budget_grants(self.budget)},
             "executed_calls": sorted(self._executed_calls),
             "recent": self._recent[-6:],
         }
@@ -796,8 +809,11 @@ class Investigator:
 
     @classmethod
     def resume(cls, session: Session, investigation: Investigation, llm: LLMClient | None = None,
-               on_step=None) -> Investigation:
-        """Continue an interrupted investigation from its last checkpoint (v1.0)."""
+               on_step=None, reason: str | None = None) -> Investigation:
+        """Continue an interrupted investigation from its last checkpoint (v1.0).
+
+        `reason` replaces the default trace line — a reviewer-granted extension
+        (v15) is not an "interruption" and the trace must not call it one."""
         anomaly = session.get(AnomalyEvent, investigation.anomaly_id)
         inv = cls(session, anomaly, llm=llm, tier=investigation.budget_tier,
                   on_step=on_step, existing_investigation=investigation)
@@ -810,10 +826,14 @@ class Investigator:
         inv.budget.prior_elapsed_s = b.get("elapsed_s", 0.0)  # wall-clock survives restart
         inv.budget.extended = bool(b.get("extended", False))
         inv.budget.extension_factor = float(b.get("extension_factor", 1.0))
+        for k in _GRANT_FIELDS:
+            default = getattr(inv.budget, k)
+            setattr(inv.budget, k, type(default)(b.get(k, default) or 0))
         inv._executed_calls = set(ckpt.get("executed_calls", []))
         inv._recent = list(ckpt.get("recent", []))
-        inv._trace("THINK", {"text": f"Resumed after interruption at iteration {inv.budget.iterations}; "
-                                     "restored hypotheses and evidence from checkpoint."})
+        inv._trace("THINK", {"text": reason or (
+            f"Resumed after interruption at iteration {inv.budget.iterations}; "
+            "restored hypotheses and evidence from checkpoint.")})
         return inv.run(seed_state={
             "hypotheses": ckpt.get("hypotheses", []),
             "evidence": ckpt.get("evidence", []),

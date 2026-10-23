@@ -3,6 +3,7 @@ import { age, impactLine } from "../format";
 import { SEVERITY, primaryActionFor, statusMeta } from "../status";
 import { C, R, S, T, mono } from "../theme";
 import { Button, Spark } from "../ui";
+import { DecisionChip } from "../screens/case/CaseActions";
 
 /**
  * The one case card.
@@ -75,6 +76,7 @@ export function CaseCard({
               {row.id != null ? `Case #${row.id}` : "Queued"}
             </span>
             <StatusChip status={row.status} />
+            <DecisionChip decision={row.decision} />
             {sev && (
               <span style={{ fontFamily: mono, fontSize: T.micro,
                              letterSpacing: "var(--el-ls-wide)",

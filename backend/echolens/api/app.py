@@ -287,7 +287,27 @@ def _investigation_dict(session, inv: Investigation) -> dict:
             **_finding_extras(session, finding, recs, inv.status)},
         "recommendations": [{"rank": r.rank, "action": r.action, "impact": r.impact,
                              "effort": r.effort, "rationale": r.rationale} for r in recs],
+        # v15: the product decision in force (fix now / park / won't fix), and
+        # whether this dead-end case can be continued with more budget.
+        "product_decision": None if finding is None else _decision_view(session, finding.id),
+        "extension": _extension_view(session, inv),
     }
+
+
+def _decision_view(session, finding_id: int) -> dict | None:
+    from echolens.review import decision_dict, latest_decision
+    return decision_dict(latest_decision(session, finding_id))
+
+
+def _extension_view(session, inv: Investigation) -> dict | None:
+    if inv.status == "running":
+        return None
+    from echolens.investigator.recover import extension_offer
+    try:
+        return extension_offer(session, inv)
+    except Exception as err:  # a presentation extra must never break the case
+        log.warning("extension_offer_failed", investigation_id=inv.id, error=str(err))
+        return None
 
 
 def _finding_extras(session, finding, recs, status: str) -> dict:
@@ -891,7 +911,8 @@ def delete_product(product_id: int, confirm: str = "",
         AnomalyEvent, CollectorState, Comment, EvidenceRow, FeedbackEntry, Finding,
         FixWatch, HypothesisRow, Investigation, Issue, KnowledgeEdge, LLMCall, Mention,
         Post, Product, QueuedInvestigation, Recommendation, Release, Review,
-        ReviewFeedback, ReviewRequest, TraceStep, TriageDecision, User)
+        ReviewFeedback, ReviewRequest, TraceStep, TriageDecision, User,
+        FindingDecision, ShareLink)
     with session_scope() as session:
         p = session.get(Product, product_id)
         if p is None:
@@ -918,6 +939,10 @@ def delete_product(product_id: int, confirm: str = "",
         _purge(Mention, Mention.comment_id, comment_ids)
 
         _purge(ReviewFeedback, ReviewFeedback.finding_id, find_ids)
+        # v15: decisions and share links hang off findings. Deleting a product
+        # must also kill its public links, or a token would outlive its data.
+        _purge(FindingDecision, FindingDecision.finding_id, find_ids)
+        _purge(ShareLink, ShareLink.finding_id, find_ids)
         _purge(Recommendation, Recommendation.finding_id, find_ids)
         _purge(TraceStep, TraceStep.investigation_id, inv_ids)
         _purge(HypothesisRow, HypothesisRow.investigation_id, inv_ids)
@@ -2270,6 +2295,47 @@ def _resume_investigation_bg(inv_id: int) -> None:
             _try_notify(session, finding)
 
 
+def _extend_investigation_bg(inv_id: int, note: str) -> None:
+    """Run a reviewer-granted extension (v15). Same guard as every other
+    background run: a crash must not leave the case stuck at "running"."""
+    from echolens.investigator.graph import Investigator
+    from echolens.recommender.recommend import recommend
+    try:
+        with session_scope() as session:
+            inv = session.get(Investigation, inv_id)
+            if inv is None or inv.status != "running":
+                return
+            inv = Investigator.resume(session, inv, reason=note)
+            finding = session.scalars(select(Finding).where(
+                Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
+            if finding is not None:
+                recommend(session, finding)
+                _try_notify(session, finding)
+    except Exception as err:
+        log.error("extension_failed", investigation_id=inv_id, error=str(err))
+        _mark_investigation_failed(inv_id, str(err))
+
+
+@app.post("/investigations/{inv_id}/extend")
+@limiter.limit("6/minute")  # each extension spends money — same cap as starting a case
+def extend_investigation(request: Request, inv_id: int, product_id: int | None = None,
+                         user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Continue a dead-end case (budget ran out / not enough evidence) from its
+    checkpoint with EXTENSION_STEPS more steps. At most MAX_HUMAN_EXTENSIONS
+    per case; the response carries the estimate shown on the button."""
+    from echolens.investigator.recover import extension_trace_note, grant_extension
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        inv = _owned(session, Investigation, inv_id, p.id if p else None)
+        try:
+            granted = grant_extension(session, inv)
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        note = extension_trace_note(granted["prior_status"], granted["steps"])
+    threading.Thread(target=_extend_investigation_bg, args=(inv_id, note), daemon=True).start()
+    return {"status": "extending", "id": inv_id, "by": user["email"], **granted}
+
+
 @app.post("/investigations/{inv_id}/pause")
 def pause_investigation(inv_id: int, product_id: int | None = None,
                        user: dict = Depends(require_role("reviewer"))) -> dict:
@@ -2432,6 +2498,185 @@ def review_finding(finding_id: int, body: ReviewBody, product_id: int | None = N
         threading.Thread(target=_run_challenge_bg, args=(reopened_id, note), daemon=True).start()
         return {"status": "challenged", "reopened_investigation_id": reopened_id, "by": user["email"]}
     raise HTTPException(422, "action must be approve or challenge")
+
+
+# ── v15: product decisions, partial challenges, sharing ─────────────────
+
+class DecisionBody(BaseModel):
+    decision: str                       # fix_now | park | wont_fix | cleared
+    revisit_by: date | None = None      # park only
+    reason: str = Field("", max_length=2000)
+
+
+@app.post("/findings/{finding_id}/decision")
+def decide_finding(finding_id: int, body: DecisionBody, product_id: int | None = None,
+                   user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Record what the team is doing about a finding — separate from whether it
+    is true. Parked and won't-fix findings leave the open-problem lists."""
+    from echolens import review
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
+        revisit = (datetime.combine(body.revisit_by, datetime.min.time(), tzinfo=timezone.utc)
+                   if body.revisit_by else None)
+        try:
+            review.decide(session, finding, body.decision, revisit_by=revisit,
+                          reason=body.reason, user_id=user["id"])
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        return {"finding_id": finding_id, "product_decision": _decision_view(session, finding_id),
+                "by": user["email"]}
+
+
+class RejectEvidenceBody(BaseModel):
+    note: str = Field("", max_length=2000)
+    reason: str | None = None
+
+
+@app.post("/findings/{finding_id}/evidence/{eid}/reject")
+def reject_finding_evidence(finding_id: int, eid: str, body: RejectEvidenceBody,
+                            product_id: int | None = None,
+                            user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Partial challenge: "this quote doesn't support it". Re-checks the
+    two-source rule on what remains instead of re-opening the case."""
+    from echolens import review
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
+        if finding.status == "challenged":
+            raise HTTPException(422, "this finding was challenged and re-opened — review the new case")
+        try:
+            result = review.reject_evidence(session, finding, eid, note=body.note,
+                                            reason=body.reason, user_id=user["id"])
+        except LookupError as err:
+            raise HTTPException(404, str(err))
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        return {**result, "finding_status": finding.status, "by": user["email"]}
+
+
+class EditRecommendationBody(BaseModel):
+    effort: str | None = None
+    impact: str | None = None
+    note: str = Field("", max_length=2000)
+
+
+@app.patch("/findings/{finding_id}/recommendations/{rank}")
+def edit_finding_recommendation(finding_id: int, rank: int, body: EditRecommendationBody,
+                                product_id: int | None = None,
+                                user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Partial challenge: correct one action's effort/impact, nothing else."""
+    from echolens import review
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
+        try:
+            rec = review.edit_recommendation(session, finding, rank, effort=body.effort,
+                                             impact=body.impact, note=body.note,
+                                             user_id=user["id"])
+        except LookupError as err:
+            raise HTTPException(404, str(err))
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        return {"rank": rec.rank, "action": rec.action, "impact": rec.impact,
+                "effort": rec.effort, "by": user["email"]}
+
+
+@app.get("/findings/{finding_id}/brief")
+def finding_brief(finding_id: int, link: str | None = Query(None, max_length=500),
+                  product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    """Clean Markdown for Slack/Notion: headline, impact, a few user quotes,
+    recommended actions, a link. No evidence ids, no internal statuses."""
+    from echolens.exporting import share_brief
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
+        return share_brief(session, finding, link=link)
+
+
+def _active_share(session, finding_id: int):
+    from echolens.db.models import ShareLink
+    return session.scalars(select(ShareLink).where(
+        ShareLink.finding_id == finding_id, ShareLink.revoked_at.is_(None))
+        .order_by(ShareLink.id.desc())).first()
+
+
+def _share_dict(link) -> dict:
+    if link is None:
+        return {"active": False, "token": None, "created_at": None, "url": None}
+    base = settings.app_base_url.rstrip("/")
+    return {"active": True, "token": link.token,
+            "created_at": aware_utc(link.created_at).isoformat() if link.created_at else None,
+            "url": f"{base}/#/share/{link.token}" if base else None}
+
+
+@app.get("/findings/{finding_id}/share")
+def get_share_link(finding_id: int, product_id: int | None = None,
+                   user: dict = Depends(require_role("reviewer"))) -> dict:
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        _owned_finding(session, finding_id, p.id if p else None)
+        return _share_dict(_active_share(session, finding_id))
+
+
+@app.post("/findings/{finding_id}/share")
+def create_share_link(finding_id: int, product_id: int | None = None,
+                      user: dict = Depends(require_role("reviewer"))) -> dict:
+    """A read-only public link to this finding's brief. Idempotent: an active
+    link is returned rather than minting a second credential for one brief."""
+    import secrets
+    from echolens.db.models import ShareLink
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
+        link = _active_share(session, finding_id)
+        if link is None:
+            link = ShareLink(finding_id=finding.id, token=secrets.token_urlsafe(32),
+                             product_id=finding.product_id, created_by=user.get("id"))
+            session.add(link)
+            session.flush()
+        return _share_dict(link)
+
+
+@app.delete("/findings/{finding_id}/share")
+def revoke_share_link(finding_id: int, product_id: int | None = None,
+                      user: dict = Depends(require_role("reviewer"))) -> dict:
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        _owned_finding(session, finding_id, p.id if p else None)
+        from echolens.db.models import ShareLink
+        now = datetime.now(timezone.utc)
+        for link in session.scalars(select(ShareLink).where(
+                ShareLink.finding_id == finding_id, ShareLink.revoked_at.is_(None))).all():
+            link.revoked_at = now
+        return _share_dict(None)
+
+
+@app.get("/share/{token}")
+@limiter.limit("60/minute")  # public and unauthenticated — cap token guessing
+def public_share(token: str, request: Request) -> dict:
+    """The ONE unauthenticated read in the API: a shared brief, by token.
+
+    Returns the brief and nothing else — no ids, no product list, no case
+    links — so a leaked token exposes exactly what its sharer chose to share,
+    and revoking it ends that. Unknown and revoked tokens are the same 404.
+    """
+    from echolens.db.models import ShareLink
+    from echolens.exporting import share_brief
+    if not (16 <= len(token) <= 64):
+        raise HTTPException(404, "this link is not valid")
+    with session_scope() as session:
+        link = session.scalars(select(ShareLink).where(ShareLink.token == token)).first()
+        if link is None or link.revoked_at is not None:
+            raise HTTPException(404, "this link is not valid or has been revoked")
+        finding = session.get(Finding, link.finding_id)
+        if finding is None:
+            raise HTTPException(404, "this link is not valid or has been revoked")
+        brief = share_brief(session, finding)
+        from echolens.db.models import Product
+        prod = session.get(Product, finding.product_id) if finding.product_id else None
+        return {**brief, "product": prod.name if prod else None,
+                "shared_at": aware_utc(link.created_at).isoformat() if link.created_at else None}
 
 
 @app.get("/calibration")
@@ -2890,11 +3135,16 @@ def overview(product_id: int | None = None, user: dict = Depends(current_user)) 
             op_stmt = op_stmt.where(Investigation.product_id == pid)
         open_invs = session.scalars(op_stmt).all()
         open_findings = _latest_findings(session, [inv.id for inv in open_invs])
+        from echolens.review import decision_hides, latest_decisions
+        decisions = latest_decisions(session, [f.id for f in open_findings.values()])
         for inv in open_invs:
             if inv.id in confirmed_inv:
                 continue
             finding = open_findings.get(inv.id)
             if finding is None:
+                continue
+            # v15: parked (until its date) and won't-fix are decided, not open.
+            if decision_hides(decisions.get(finding.id)):
                 continue
             impact = (finding.json or {}).get("impact", {})
             open_problems.append({
@@ -3347,7 +3597,10 @@ def archive(product_id: int | None = None, user: dict = Depends(current_user)) -
             for fb, inv_id in session.execute(select(
                     ReviewFeedback, Finding.investigation_id).join(
                     Finding, Finding.id == ReviewFeedback.finding_id).where(
-                    Finding.investigation_id.in_([inv.id for inv in inv_rows])).order_by(
+                    Finding.investigation_id.in_([inv.id for inv in inv_rows]),
+                    # whole-finding verdicts only; partial challenges (v15) are not
+                    # an approve/challenge and must not relabel the row
+                    ReviewFeedback.action.in_(("approve", "challenge"))).order_by(
                     ReviewFeedback.id)).all():
                 feedback[inv_id] = fb
         for inv in inv_rows:
