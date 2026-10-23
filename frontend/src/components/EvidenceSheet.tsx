@@ -1,10 +1,18 @@
+import type { ReactNode } from "react";
 import { Evidence } from "../api";
 import { sourceLabel } from "../format";
 import { useDialog } from "../hooks";
 import { C, R, S, T, mono } from "../theme";
 import { Icon } from "./Icon";
 
-export function EvidenceSheet({ evidence, onClose }: { evidence: Evidence | null; onClose: () => void }) {
+/**
+ * `children`, when given, replaces the default body — the case detail passes its
+ * richer EvidenceDetail (linked causes, reject action) so the narrow-screen
+ * sheet and the wide-screen Inspector show one citation the same way.
+ */
+export function EvidenceSheet({ evidence, onClose, children }: {
+  evidence: Evidence | null; onClose: () => void; children?: ReactNode;
+}) {
   // Escape, focus-in on open, focus-return on close, and a Tab cycle that
   // stays inside the sheet.
   const ref = useDialog(onClose, !!evidence);
@@ -40,9 +48,19 @@ export function EvidenceSheet({ evidence, onClose }: { evidence: Evidence | null
           display: "flex",
           flexDirection: "column",
           gap: S[3],
-          boxShadow: "var(--el-e4)"
+          boxShadow: "var(--el-e4)",
+          overflowY: "auto"
         }}
       >
+        {children ? (
+          <>
+            <button aria-label="Close evidence" onClick={onClose}
+              style={{ alignSelf: "flex-end", background: "none", border: "none", color: C.muted }}>
+              <Icon name="close" size={15} />
+            </button>
+            {children}
+          </>
+        ) : (<>
         <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
           <span style={{ fontFamily: mono, fontSize: T.base, color: C.accent }}>{evidence.id}</span>
           <span style={{ fontFamily: mono, fontSize: T.micro, padding: `0 ${S[2]}`, border: `1px solid ${C.border3}`, borderRadius: R.sm, color: C.muted, textTransform: "uppercase" }}>
@@ -74,6 +92,7 @@ export function EvidenceSheet({ evidence, onClose }: { evidence: Evidence | null
         <div style={{ fontSize: T.xs, color: C.faint, fontStyle: "italic" }}>
           Raw source preserved verbatim. EchoLens never paraphrases evidence into the record. Press Esc to close.
         </div>
+        </>)}
       </div>
     </>
   );

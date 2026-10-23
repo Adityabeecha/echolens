@@ -6,6 +6,7 @@ import { SEVERITY } from "../../status";
 import { C, MEASURE, R, S, T, mono } from "../../theme";
 import { EmptyState, Label, Rich } from "../../ui";
 import { Icon } from "../../components/Icon";
+import { ExtendCard, ProductDecisionCard, RecommendationRow, ShareCard } from "./CaseActions";
 
 interface Props {
   inv: Investigation;
@@ -26,12 +27,19 @@ function Prose({ text, evidence, onOpenEvidence }: {
         const m = p.match(/^\[(ev_\d+)\]$/);
         if (!m) return <Rich key={i} text={p} />;
         const ev = evidence.find((e) => e.id === m[1]);
+        // A real button inside the <sup>: these are how a claim gets checked,
+        // so they must be reachable by keyboard and announced as controls.
         return (
-          <sup key={i} onClick={() => ev && onOpenEvidence(ev)}
-            style={{ fontFamily: mono, fontSize: T.micro, color: C.accent,
-                     padding: `0 ${S[1]}`, background: C.accentBg, borderRadius: R.sm,
-                     marginLeft: 2 }}>
-            {m[1]}
+          <sup key={i} style={{ marginLeft: 2 }}>
+            <button type="button" onClick={() => ev && onOpenEvidence(ev)} disabled={!ev}
+              className="el-btn el-btn--sm"
+              aria-label={ev ? `Open evidence ${m[1]}` : `${m[1]} (not found)`}
+              style={{ fontFamily: mono, fontSize: T.micro, color: ev?.rejected ? C.faint : C.accent,
+                       padding: `0 ${S[1]}`, background: C.accentBg, borderRadius: R.sm,
+                       minHeight: 0, lineHeight: "inherit",
+                       textDecoration: ev?.rejected ? "line-through" : undefined }}>
+              {m[1]}
+            </button>
           </sup>
         );
       })}
@@ -62,6 +70,7 @@ export function FindingTab({
           action="See the investigation trace"
           onAction={onOpenTrace}
         />
+        <div style={{ maxWidth: MEASURE }}><ExtendCard inv={inv} onReload={onReload} /></div>
       </div>
     );
   }
@@ -105,6 +114,14 @@ export function FindingTab({
             You challenged this finding. A fresh case is addressing it — see History for the link.
           </Banner>
         )}
+
+        {f.needs_review && !challenged && (
+          <Banner color={C.bad}>
+            <strong>Needs review again.</strong> {f.needs_review.reason}
+          </Banner>
+        )}
+
+        <ExtendCard inv={inv} onReload={onReload} />
 
         {f.grounding_violations && f.grounding_violations.length > 0 && (
           <div style={{ marginBottom: S[4], padding: `${S[3]} ${S[4]}`,
@@ -174,25 +191,17 @@ export function FindingTab({
             <Label style={{ margin: "26px 0 10px" }}>RECOMMENDED ACTIONS</Label>
             <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
               {inv.recommendations.map((ac) => (
-                <div key={ac.rank} style={{ display: "flex", alignItems: "center", gap: S[3],
-                                            padding: `${S[3]} ${S[4]}`, background: C.card,
-                                            border: `1px solid ${C.border2}`, borderRadius: R.control }}>
-                  <div style={{ width: 26, height: 26, borderRadius: R.control, background: C.hover,
-                                border: `1px solid ${C.border3}`, display: "flex",
-                                alignItems: "center", justifyContent: "center", fontFamily: mono,
-                                fontSize: T.sm, color: C.accent, flex: "none" }}>
-                    {ac.rank}
-                  </div>
-                  <div style={{ flex: 1, fontSize: T.base, fontWeight: 500, minWidth: 0 }}><Rich text={ac.action} /></div>
-                  <Tag color={C.good}>{ac.impact} impact</Tag>
-                  <Tag color={C.muted}>{ac.effort} effort</Tag>
-                </div>
+                <RecommendationRow key={ac.rank} rec={ac} findingId={challenged ? null : f.id}
+                                   onReload={onReload} />
               ))}
             </div>
           </>
         )}
 
         <WhyNotPanel inv={inv} onOpenEvidence={onOpenEvidence} />
+
+        <ProductDecisionCard inv={inv} onReload={onReload} />
+        <ShareCard inv={inv} />
 
         {reviewer && <FollowupCard findingId={f.id} addenda={f.addenda} onAdded={onReload} />}
 
@@ -223,7 +232,8 @@ export function FindingTab({
                 Challenge
               </button>
               <span style={{ fontSize: T.xs, color: C.faint }}>
-                challenging re-opens the investigation with your note
+                challenging re-opens the investigation with your note — to dispute one
+                quote, open it and reject just that item
               </span>
             </div>
           </div>
@@ -459,15 +469,6 @@ function ImpactStat({ label, value, sub, color, hint }: {
   );
 }
 
-function Tag({ children, color }: { children: React.ReactNode; color: string }) {
-  return (
-    <span style={{ fontFamily: mono, fontSize: T.micro, padding: `${S[1]} ${S[2]}`, borderRadius: R.sm,
-                   background: `${color}1a`, color, border: `1px solid ${color}4d`,
-                   whiteSpace: "nowrap" }}>
-      {children}
-    </span>
-  );
-}
 
 function Banner({ children, color, style }: {
   children: React.ReactNode; color: string; style?: React.CSSProperties;

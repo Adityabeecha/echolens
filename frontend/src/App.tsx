@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { Evidence, ProductRow, api, getToken, isAdmin, isGuest, onAuthError, setActiveProduct, setGuest, setRole, setToken } from "./api";
+import { ProductRow, api, getToken, isAdmin, isGuest, onAuthError, setActiveProduct, setGuest, setRole, setToken } from "./api";
 import { CaseTab, GLOBAL_SCREENS, Screen, caseTabFor } from "./nav";
 import { useRouter } from "./router";
 import { useWorkWatcher } from "./hooks";
 import { C, T, sans } from "./theme";
 import { Sidebar } from "./components/Sidebar";
-import { EvidenceSheet } from "./components/EvidenceSheet";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { NewCaseModal } from "./components/NewCaseModal";
 import { DeleteProductModal } from "./components/DeleteProductModal";
@@ -35,7 +34,6 @@ export default function App() {
   // everything the detector has ever noticed.
   const { route, navigate, back, backTarget, setParams } =
     useRouter({ screen: "today", productId: null });
-  const [evidence, setEvidence] = useState<Evidence | null>(null);
   const [newCaseOpen, setNewCaseOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   // "In the app" is either a real session or an accepted guest visit. A guest
@@ -344,7 +342,6 @@ export default function App() {
               onTab={setCaseTab}
               onBack={back}
               backLabel={backTarget?.label ?? "Cases"}
-              onOpenEvidence={setEvidence}
               onOpenCase={openCase}
               onReviewed={bumpReload}
               onGoCalibration={() => go("calibration")}
@@ -451,7 +448,6 @@ export default function App() {
         />
       )}
 
-      <EvidenceSheet evidence={evidence} onClose={() => setEvidence(null)} />
       {newCaseOpen && (
         <NewCaseModal
           onClose={() => setNewCaseOpen(false)}

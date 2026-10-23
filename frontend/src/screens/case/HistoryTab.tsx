@@ -14,6 +14,11 @@ const KIND: Record<string, { color: string; icon: string }> = {
   fix_shipped: { color: C.accent, icon: "shipped" },
   verified: { color: C.good, icon: "check" },
   regressed: { color: C.bad, icon: "warning" },
+  // v15: product decisions and partial challenges
+  decision: { color: C.info, icon: "diamond" },
+  evidence_rejected: { color: C.bad, icon: "close" },
+  rec_edited: { color: C.accent, icon: "retry" },
+  needs_review: { color: C.bad, icon: "warning" },
 };
 
 /**

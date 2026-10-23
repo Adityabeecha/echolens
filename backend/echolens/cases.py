@@ -477,7 +477,12 @@ def case_history(session: Session, inv: Investigation) -> list[dict]:
                     note=fb.note or "")
         if (f.json or {}).get("needs_review"):
             nr = f.json["needs_review"]
-            add(nr.get("at"), "needs_review", nr.get("reason", "The finding needs review again."))
+            at = nr.get("at")
+            try:  # stored as ISO text inside the finding's JSON
+                at = datetime.fromisoformat(at) if isinstance(at, str) else None
+            except ValueError:
+                at = None
+            add(at, "needs_review", nr.get("reason", "The finding needs review again."))
         for d in session.scalars(select(FindingDecision).where(
                 FindingDecision.finding_id == f.id).order_by(FindingDecision.id)).all():
             add(d.created_at, "decision", _decision_text(d), note=d.reason or "")
