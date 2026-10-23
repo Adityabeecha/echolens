@@ -66,6 +66,7 @@ export function HistoryTab({ inv, onOpenCase }: {
                 <div style={{ fontFamily: mono, fontSize: T.micro, color: C.faint,
                               letterSpacing: ".06em" }}>
                   {when(e.at)}
+                  {e.by && <span style={{ color: C.dim }}> · {e.by}</span>}
                 </div>
                 <div style={{ fontSize: T.base, color: C.text2, marginTop: S[1], lineHeight: "var(--el-lh-normal)" }}>
                   {e.text}

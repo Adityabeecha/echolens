@@ -6,6 +6,7 @@ import { when } from "../../format";
 import { C, MEASURE, R, S, T, mono } from "../../theme";
 import { BeforeAfterChart, EmptyState, Label } from "../../ui";
 import { FollowupPanel, ReplyPanel } from "./ReplyPanel";
+import { TrackerMenu } from "../../components/TrackerMenu";
 
 interface Props {
   inv: Investigation;
@@ -166,6 +167,12 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
                 <span style={{ fontSize: T.xs, color: C.dim }}>
                   Connect a GitHub repo in Sources to file issues from here.
                 </span>
+              )}
+              {/* Linear / Jira, when configured. GitHub keeps its own button
+                  above because only a GitHub close starts fix verification. */}
+              {canCreate && (
+                <TrackerMenu findingId={f.id} exclude={["github"]} disabled={!!busy}
+                  onFiled={() => { void onReload(); }} />
               )}
               {canReview() && (
                 <button onClick={notify} disabled={!!busy} className="el-btn" style={ghost}>

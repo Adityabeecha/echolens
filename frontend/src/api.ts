@@ -446,6 +446,8 @@ export interface HistoryEvent {
   text: string;
   case_id: number | null;
   note: string;
+  /** Who made it, for human decisions (email), when known. */
+  by?: string | null;
 }
 export interface Investigation {
   id: number;

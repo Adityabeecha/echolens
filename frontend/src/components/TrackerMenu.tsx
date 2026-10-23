@@ -11,6 +11,9 @@ interface Props {
   onFiled?: (result: TicketResult) => void;
   /** Disable every button (e.g. the case is not resolved yet). */
   disabled?: boolean;
+  /** Trackers the host screen already offers its own button for. When set,
+   *  an empty result renders nothing instead of the "not set up" hint. */
+  exclude?: TrackerId[];
 }
 
 /**
@@ -22,14 +25,15 @@ interface Props {
  * can't file (viewers, guests), and a one-line pointer to Settings when no
  * tracker is configured, rather than a button that can only fail.
  */
-export function TrackerMenu({ findingId, onFiled, disabled }: Props) {
+export function TrackerMenu({ findingId, onFiled, disabled, exclude }: Props) {
   const { data, error } = useAsync(() => api.trackers(), []);
   const [busy, setBusy] = useState<TrackerId | null>(null);
 
   if (!canReview() || error) return null;
   if (!data) return null;  // a split second; a spinner here would only flicker
-  const ready = data.trackers.filter((t) => t.configured);
+  const ready = data.trackers.filter((t) => t.configured && !exclude?.includes(t.id));
   if (ready.length === 0) {
+    if (exclude?.length) return null;
     return (
       <span style={{ fontSize: T.sm, color: C.dim }}>
         No issue tracker is set up. Settings lists what to configure.

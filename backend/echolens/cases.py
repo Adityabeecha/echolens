@@ -444,10 +444,11 @@ def case_history(session: Session, inv: Investigation) -> list[dict]:
     """
     events: list[dict] = []
 
-    def add(at, kind: str, text: str, case_id: int | None = None, note: str = ""):
+    def add(at, kind: str, text: str, case_id: int | None = None, note: str = "",
+            by: str | None = None):
         events.append({
             "at": aware_utc(at).isoformat() if at else None,
-            "kind": kind, "text": text, "case_id": case_id, "note": note,
+            "kind": kind, "text": text, "case_id": case_id, "note": note, "by": by,
         })
 
     add(inv.created_at, "opened",
@@ -486,9 +487,16 @@ def case_history(session: Session, inv: Investigation) -> list[dict]:
             except ValueError:
                 at = None
             add(at, "needs_review", nr.get("reason", "The finding needs review again."))
-        for d in session.scalars(select(FindingDecision).where(
-                FindingDecision.finding_id == f.id).order_by(FindingDecision.id)).all():
-            add(d.created_at, "decision", _decision_text(d), note=d.reason or "")
+        decisions = session.scalars(select(FindingDecision).where(
+            FindingDecision.finding_id == f.id).order_by(FindingDecision.id)).all()
+        # Who decided: the user is stored with every decision, so say so.
+        from echolens.db.models import User
+        ids = {d.user_id for d in decisions if d.user_id}
+        emails = ({u.id: u.email for u in session.scalars(
+            select(User).where(User.id.in_(ids))).all()} if ids else {})
+        for d in decisions:
+            add(d.created_at, "decision", _decision_text(d), note=d.reason or "",
+                by=emails.get(d.user_id))
 
     for w in session.scalars(select(FixWatch).where(
             FixWatch.investigation_id == inv.id).order_by(FixWatch.id)).all():
