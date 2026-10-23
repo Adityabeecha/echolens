@@ -6,11 +6,12 @@ import { Icon } from "../components/Icon";
 
 // Band → the colour that carries "how much does this need me". Semantic, kept
 // separate from the amber accent so a burning product can't be confused with a
-// primary action.
+// primary action. Labels describe HEALTH (higher is better), which is the
+// number shown; rows are still ranked by the attention score behind it.
 const BAND: Record<string, { color: string; label: string }> = {
   on_fire: { color: C.bad, label: "NEEDS YOU TODAY" },
-  attention: { color: C.accent, label: "WORTH A LOOK" },
-  watch: { color: C.info, label: "TRENDING" },
+  attention: { color: C.accent, label: "NEEDS ATTENTION" },
+  watch: { color: C.info, label: "WATCH" },
   healthy: { color: C.good, label: "HEALTHY" }
 };
 
@@ -170,6 +171,17 @@ function ProductRow({ p, onOpen, onOpenInvestigation }: {
     >
       {/* severity stripe — state as form, not just words */}
       <div style={{ width: 3, borderRadius: R.sm, background: band.color, flex: "none" }} />
+      <div style={{ flex: "none", width: 64, textAlign: "center" }}
+           title={`Health ${Math.round(p.health)} of 100 — 100 minus the attention score`}>
+        <div className="el-num" style={{ fontSize: T.lg, fontWeight: 700, color: band.color,
+                                          lineHeight: 1 }}>
+          {Math.round(p.health)}
+        </div>
+        <div style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, marginTop: S[1],
+                      lineHeight: "var(--el-lh-snug)" }}>
+          Health · higher is better
+        </div>
+      </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: S[2], flexWrap: "wrap" }}>
           <button
