@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections import Counter
 
 from sqlalchemy.orm import Session
 
@@ -32,8 +33,13 @@ from echolens.logging import get_logger
 
 log = get_logger("prd")
 
-MAX_EVIDENCE = 12
+MAX_EVIDENCE = 10        # distinct quotes listed under Evidence
+PROBLEM_QUOTES = 3       # distinct quotes in the Problem section
 QUOTE_CHARS = 280
+# Bump when the rendered spec changes shape, so cached specs are rebuilt.
+# 2: identical quotes grouped with a count; human source labels.
+SPEC_VERSION = 2
+_SOURCE_OVERRIDES = {"csv": "CSV import", "csv_reviews": "CSV import"}
 # Limits on a model rewrite. Past these it is padding, not a better spec.
 STORIES = (2, 4)
 CRITERIA = (3, 6)
@@ -103,6 +109,74 @@ def _criteria(phrase: str, n: int, confused: int) -> list[str]:
     return out
 
 
+def source_label(source: str | None) -> str:
+    """"Play Store", not "play_store" — the channel names the rest of the app
+    uses (feedback.channel_meta), with imports named the way the UI names them."""
+    from echolens.feedback import channel_meta
+    if not source:
+        return ""
+    return _SOURCE_OVERRIDES.get(source) or channel_meta(source)["label"]
+
+
+def _norm_quote(text: str) -> str:
+    """What makes two quotes "the same": case, spacing, quote marks and the
+    punctuation around the sentence do not count."""
+    t = _plain(text).lower().replace('"', "")
+    return t.strip(" .,!?;:-–—…")
+
+
+def quote_groups(reviews: list[dict]) -> list[dict]:
+    """One entry per distinct quote: {text, count, ratings, first, last, sources},
+    most repeated first. Text is a review's own words, verbatim — the spelling
+    most of the group used, the first one seen on a tie.
+
+    A popular request is often the same sentence posted dozens of times (store
+    prompts, copy-paste). Listing each one buried every other voice; a count
+    says the same thing in one line. Quotes that open with the same words are
+    a second phrasing at best, so they sort after wording not yet shown.
+    """
+    by_key: dict[str, dict] = {}
+    for r in reviews:
+        key = _norm_quote(r.get("text") or "")
+        if not key:
+            continue
+        g = by_key.get(key)
+        if g is None:
+            g = by_key[key] = {"count": 0, "ratings": [], "dates": [], "sources": [],
+                               "spellings": Counter()}
+        g["count"] += 1
+        g["spellings"][" ".join(r["text"].split())] += 1
+        if r.get("rating"):
+            g["ratings"].append(r["rating"])
+        if r.get("date"):
+            g["dates"].append(r["date"])
+        if r.get("source") and r["source"] not in g["sources"]:
+            g["sources"].append(r["source"])
+    for g in by_key.values():
+        g["text"] = g.pop("spellings").most_common(1)[0][0]
+    ranked = sorted(by_key.values(), key=lambda g: -g["count"])
+    distinct, repeats, openings = [], [], set()
+    for g in ranked:
+        opening = _norm_quote(g["text"])[:60]
+        (repeats if opening in openings else distinct).append(g)
+        openings.add(opening)
+    out = distinct + repeats
+    for g in out:
+        g["first"], g["last"] = (min(g["dates"]), max(g["dates"])) if g["dates"] else (None, None)
+    return out
+
+
+def _quote_meta(g: dict) -> str:
+    """3★ · ×80 · 2026-07-26 → 2026-10-13 · Play Store"""
+    lo, hi = (min(g["ratings"]), max(g["ratings"])) if g["ratings"] else (None, None)
+    rating = "" if lo is None else f"{lo}★" if lo == hi else f"{lo}–{hi}★"
+    when = "" if not g["first"] else (g["first"] if g["first"] == g["last"]
+                                      else f"{g['first']} → {g['last']}")
+    bits = [rating, f"×{g['count']}" if g["count"] > 1 else "", when,
+            ", ".join(source_label(s) for s in g["sources"])]
+    return " · ".join(b for b in bits if b)
+
+
 def _facts(theme: dict) -> dict:
     reviews = theme["reviews"]
     demand = request_demand(reviews)
@@ -120,9 +194,11 @@ def template_sections(theme: dict, product: str | None) -> dict:
     name = product or "the app"
     confused = f["intents"].get("ux_confusion", 0)
 
+    groups = quote_groups(theme["reviews"])
     problem = [f"{n} {'review asks' if n == 1 else 'reviews ask'} for {phrase}, "
                f"which {name} does not offer today. In their words:", ""]
-    problem += [f"> {quote(r['text'])}" for r in theme["reviews"][:2] if r["text"]]
+    problem += [f"> {quote(g['text'])}" + (f" (×{g['count']})" if g["count"] > 1 else "")
+                for g in groups[:PROBLEM_QUOTES]]
 
     breakdown = " · ".join(f"{s}★ ×{f['ratings'].count(s)}" for s in (5, 4, 3)
                            if f["ratings"].count(s))
@@ -154,15 +230,17 @@ def template_sections(theme: dict, product: str | None) -> dict:
     questions.append(f"- What does engineering estimate? The plan assumes {DEFAULT_EFFORT:g} "
                      "engineer-days until someone sets it.")
 
-    evidence = []
-    for r in theme["reviews"][:MAX_EVIDENCE]:
-        if not r["text"]:
-            continue
-        meta = " · ".join(x for x in (f"{r['rating']}★" if r.get("rating") else "",
-                                      r.get("date") or "", r.get("source") or "") if x)
-        evidence.append(f"- {quote(r['text'])} — {meta}")
-    if len(theme["reviews"]) > MAX_EVIDENCE:
-        evidence.append(f"- …and {len(theme['reviews']) - MAX_EVIDENCE} more.")
+    shown = groups[:MAX_EVIDENCE]
+    evidence = [f"{n} requesting {'review' if n == 1 else 'reviews'}, "
+                f"{len(groups)} distinct {'quote' if len(groups) == 1 else 'quotes'}"
+                + (f" (the {len(shown)} most repeated below)." if len(groups) > len(shown) else "."),
+                ""]
+    evidence += [f"- {quote(g['text'])} — {_quote_meta(g)}" for g in shown]
+    if len(groups) > len(shown):
+        rest = groups[len(shown):]
+        k = sum(g["count"] for g in rest)
+        evidence.append(f"- …and {len(rest)} more distinct "
+                        f"{'quote' if len(rest) == 1 else 'quotes'} ({k} {'review' if k == 1 else 'reviews'}).")
 
     return {"problem": problem, "who": who,
             "stories": _stories(phrase, name, happy, confused),
@@ -281,7 +359,7 @@ def get_spec(session: Session, product_id: int, product: str | None, slug: str, 
     theme = find_request(session, product_id, slug)
     if theme is None:
         return None
-    fp = json.dumps([sorted(r["id"] for r in theme["reviews"]), theme["statement"],
+    fp = json.dumps([SPEC_VERSION, sorted(r["id"] for r in theme["reviews"]), theme["statement"],
                      llm is not None])
     key = f"request_spec:{product_id}:{hashlib.sha1(slug.encode()).hexdigest()[:20]}"
     row = session.get(Setting, key)
