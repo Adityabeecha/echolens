@@ -6,6 +6,10 @@ App Store Connect; there is deliberately no store client in this module. The
 default wording is a deterministic template. An LLM may reword it only when one
 is passed in (injectable, like the other integrations), and its output is
 rejected in favour of the template if it is empty, too long, or promises things.
+
+A reviewer who wrote in another language still gets the English draft, marked
+"translate before posting". With an LLM, a translated draft is added beside it,
+labelled machine-translated — never silently substituted.
 """
 from __future__ import annotations
 
@@ -19,15 +23,16 @@ from echolens.db.models import (
     Finding, FixWatch, HypothesisRow, Investigation, Product, Review)
 from echolens.detector.detect import reference_now
 from echolens.fixwatch import _terms_for, product_name_of
-from echolens.textkit import parse_version
+from echolens.textkit import language_name, needs_translation, parse_version
 from echolens.timeutil import aware_utc
 from echolens.tools._util import match_score
+from echolens.translate import analysis_text, review_lang
 
 REPLY_MAX_CHARS = 350        # Play Store's developer-reply limit; also a sane App Store length
 MAX_DRAFTS = 50
 DEFAULT_WINDOW_DAYS = 30
-TRANSLATION_NOTE = ("Drafts are in English. Reviews that look non-English are flagged "
-                    "instead of translated — reply to those in the reviewer's language.")
+TRANSLATION_NOTE = ("Drafts are in English. A review in another language is marked with "
+                    "its language — translate the draft before posting it there.")
 
 # Words an English review nearly always contains. A review of four or more words
 # with none of them, or one that is mostly non-ASCII, is flagged as non-English.
@@ -98,7 +103,9 @@ def affected_reviews(session: Session, finding: Finding, watch: FixWatch | None,
     target = parse_version(fixed_version)
     out, skipped = [], 0
     for r in session.scalars(stmt).all():
-        if terms and match_score(r.text or "", terms) == 0:
+        # The English translation when there is one, so a Spanish complaint
+        # about the same problem is someone to reply to as well.
+        if terms and match_score(analysis_text(r), terms) == 0:
             continue
         rv = parse_version(r.version)
         if target is not None and rv is not None and rv >= target:
@@ -148,6 +155,24 @@ def _reword(llm, base: str, review_text: str) -> str:
     return text
 
 
+def _translate_draft(llm, base: str, lang_name: str) -> str | None:
+    """The English draft in the reviewer's language, or None if the model's
+    answer is unusable (empty, too long, or just the English back)."""
+    try:
+        res = llm.complete_json(
+            f"Translate this app-store developer reply into {lang_name}. Keep every fact, "
+            f"stay under {REPLY_MAX_CHARS} characters, and add nothing.",
+            base,
+            {"type": "object", "properties": {"reply": {"type": "string"}}, "required": ["reply"]},
+            "reply_translator")
+        text = " ".join(str((res.parsed or {}).get("reply", "")).split())
+    except Exception:
+        return None
+    if not text or len(text) > REPLY_MAX_CHARS or text == base or _PROMISE.search(text):
+        return None
+    return text
+
+
 def reply_drafts(session: Session, finding: Finding, llm=None) -> dict:
     """The "reply to affected reviewers" panel's data. DRAFT ONLY."""
     inv = session.get(Investigation, finding.investigation_id)
@@ -162,16 +187,31 @@ def reply_drafts(session: Session, finding: Finding, llm=None) -> dict:
     base = draft_reply(topic, fixed_version, confirmed)
     drafts = []
     for r in reviews[:MAX_DRAFTS]:
-        non_en = looks_non_english(r.text or "")
-        text = None if non_en else (_reword(llm, base, r.text) if llm is not None else base)
+        lang = review_lang(r)
+        non_en = needs_translation(lang) or looks_non_english(r.text or "")
+        name = language_name(lang) if needs_translation(lang) else "another language"
+        translated = _translate_draft(llm, base, name) if non_en and llm is not None else None
+        text = base if non_en else (_reword(llm, base, r.text) if llm is not None else base)
+        if translated:
+            note = (f"Machine-translated into {name} — have someone who reads {name} "
+                    "check it before posting.")
+        elif non_en:
+            note = f"Reviewer wrote in {name} — translate before posting."
+        else:
+            note = None
         drafts.append({
             "review_id": r.id, "ext_id": r.ext_id, "rating": r.rating, "version": r.version,
             "created_at": aware_utc(r.created_at).isoformat() if r.created_at else None,
+            # Always the reviewer's own words; the translation travels beside it.
             "excerpt": (r.text or "")[:240],
+            "excerpt_en": (r.text_en or "")[:240] or None if non_en else None,
             "language": "non_english" if non_en else "en",
+            "lang": lang if non_en else "en",
+            "lang_name": name if non_en else "English",
             "draft": text,
-            "note": ("Looks non-English — not drafted. Reply in the reviewer's language."
-                     if non_en else None),
+            "draft_translated": translated,
+            "machine_translated": bool(translated),
+            "note": note,
         })
     return {
         "finding_id": finding.id, "mode": "fixed" if confirmed else ("shipped" if fixed_version else "investigating"),

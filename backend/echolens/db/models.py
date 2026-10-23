@@ -38,6 +38,11 @@ class Review(Base):
     embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # v1.0: which tracked product/app this row belongs to (package name)
     product: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    # Detected language ("en", "es", "und" = undetermined) and, for non-English
+    # reviews, an English translation. Analysis reads text_en when present;
+    # quotes always show `text`, verbatim.
+    lang: Mapped[str | None] = mapped_column(String(8), nullable=True, index=True)
+    text_en: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class Issue(Base):

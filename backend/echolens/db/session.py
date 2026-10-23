@@ -51,6 +51,9 @@ _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("investigation_queue", "override_estimate_usd", "FLOAT"),
     # budget extensions, for the case History
     ("investigations", "extensions_json", "JSON"),
+    # review translation: detected language + cached English text
+    ("reviews", "lang", "VARCHAR"),
+    ("reviews", "text_en", "TEXT"),
 ]
 
 

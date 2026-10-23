@@ -29,7 +29,9 @@ export function ReplyPanel({ findingId }: { findingId: number }) {
 
   if (loading) return null;
   if (error || !data) return null;
-  const drafted = data.drafts.filter((d) => d.draft);
+  // "Copy all" is for the English reviewers; a draft for someone who wrote in
+  // another language needs translating first, so it is copied on its own.
+  const drafted = data.drafts.filter((d) => d.draft && d.language === "en");
   const intro =
     data.mode === "fixed" ? "The fix is verified. Let the people who complained know."
     : data.mode === "shipped" ? "A fix has shipped. Let the people who complained know."
@@ -79,7 +81,15 @@ export function ReplyPanel({ findingId }: { findingId: number }) {
                     <div style={{ fontSize: T.sm, color: C.muted, margin: `${S[1]} 0`, fontStyle: "italic" }}>
                       “{d.excerpt}”
                     </div>
-                    {d.draft ? (
+                    {d.excerpt_en && (
+                      <div style={{ fontSize: T.sm, color: C.dim, margin: `0 0 ${S[1]}` }}>
+                        <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint }}>
+                          TRANSLATED FROM {(d.lang_name ?? "").toUpperCase()}
+                        </span>{" "}
+                        {d.excerpt_en}
+                      </div>
+                    )}
+                    {d.draft && (
                       <div style={{ display: "flex", gap: S[2], alignItems: "flex-start" }}>
                         <div style={{ flex: 1, fontSize: T.base, color: C.text2, lineHeight: "var(--el-lh-normal)" }}>
                           {d.draft}
@@ -88,9 +98,22 @@ export function ReplyPanel({ findingId }: { findingId: number }) {
                           Copy
                         </button>
                       </div>
-                    ) : (
-                      <div style={{ fontSize: T.sm, color: C.accent }}>{d.note}</div>
                     )}
+                    {d.draft_translated && (
+                      <div style={{ display: "flex", gap: S[2], alignItems: "flex-start", marginTop: S[2] }}>
+                        <div style={{ flex: 1, fontSize: T.base, color: C.text2, lineHeight: "var(--el-lh-normal)" }}>
+                          <div style={{ fontFamily: mono, fontSize: T.micro, color: C.accent, marginBottom: S[1] }}>
+                            MACHINE-TRANSLATED · {(d.lang_name ?? "").toUpperCase()}
+                          </div>
+                          {d.draft_translated}
+                        </div>
+                        <button className="el-btn" style={ghost}
+                          onClick={() => copy(d.draft_translated!, "Translated draft copied — check it before posting.")}>
+                          Copy
+                        </button>
+                      </div>
+                    )}
+                    {d.note && <div style={{ fontSize: T.sm, color: C.accent, marginTop: S[1] }}>{d.note}</div>}
                   </li>
                 ))}
               </ul>

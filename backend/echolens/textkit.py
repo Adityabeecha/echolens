@@ -43,6 +43,98 @@ def is_probably_english(text: str | None) -> bool:
     return latin / len(letters) >= 0.6
 
 
+# ── language detection ──────────────────────────────────────────────────
+#
+# Good enough to decide "translate this or not", not a linguistics library.
+# Non-Latin scripts are identified by Unicode block; Latin-script languages by
+# which function words (and a few telltale letters) the text contains. A text
+# too short or too ambiguous to call is "und" — undetermined — and is left
+# alone rather than sent to translation on a guess.
+
+UNDETERMINED = "und"
+
+LANG_NAMES = {
+    "en": "English", "es": "Spanish", "pt": "Portuguese", "fr": "French",
+    "de": "German", "it": "Italian", "nl": "Dutch", "tr": "Turkish",
+    "id": "Indonesian", "pl": "Polish", "ru": "Russian", "uk": "Ukrainian",
+    "ar": "Arabic", "hi": "Hindi", "ja": "Japanese", "zh": "Chinese",
+    "ko": "Korean", "th": "Thai", "el": "Greek", "he": "Hebrew",
+}
+
+# (language, first codepoint, last codepoint). Any kana makes it Japanese even
+# though Japanese also uses Han characters, so that is checked first.
+_SCRIPTS = [
+    ("ja", 0x3040, 0x30FF), ("ko", 0xAC00, 0xD7AF), ("ko", 0x1100, 0x11FF),
+    ("zh", 0x4E00, 0x9FFF), ("ru", 0x0400, 0x04FF), ("ar", 0x0600, 0x06FF),
+    ("hi", 0x0900, 0x097F), ("th", 0x0E00, 0x0E7F), ("el", 0x0370, 0x03FF),
+    ("he", 0x0590, 0x05FF),
+]
+
+_FUNCTION_WORDS: dict[str, set[str]] = {
+    "en": set("the and is it my to of this that in on for not but was you with have are so "
+              "when just very can after since it's i'm i".split()),
+    "es": set("el la los las que y en un una es por con para no muy pero mi lo se del al "
+              "como más está desde cuando también porque".split()),
+    "pt": set("o os as que e em um uma é não com para muito mas meu do da dos das no na "
+              "está quando também porque".split()),
+    "fr": set("le la les des et est un une que pas pour avec ne je il mais très sur dans "
+              "du au ce cette depuis".split()),
+    "de": set("der die das und ist nicht ich ein eine mit es zu auf für sehr aber den dem "
+              "wenn seit auch".split()),
+    "it": set("il lo la gli le di che è un una non per con mi molto ma del della sono "
+              "quando anche".split()),
+    "nl": set("de het een en is niet ik van op met voor maar heel als dat zijn ook".split()),
+    "tr": set("ve bir bu çok için ama ile değil ben gibi daha neden".split()),
+    "id": set("dan yang ini itu tidak saya dengan untuk sangat tapi ada ke bisa".split()),
+    "pl": set("i w nie się na to jest że z do jak ale bardzo".split()),
+}
+
+# Letters that all but settle it. Worth two function words each.
+_TELLTALE = {"es": "ñ¿¡", "pt": "ãõ", "de": "ß", "tr": "ğşı", "pl": "łąęśżźćń"}
+_LATIN_WORD_RE = re.compile(r"[^\W\d_]+(?:'[^\W\d_]+)?")
+
+
+def detect_language(text: str | None) -> str:
+    """An ISO 639-1 code for `text`, or "und" when it cannot be called."""
+    letters = [c for c in (text or "") if c.isalpha()]
+    if len(letters) < 3:
+        return UNDETERMINED
+    script: Counter[str] = Counter()
+    for c in letters:
+        cp = ord(c)
+        for lang, lo, hi in _SCRIPTS:
+            if lo <= cp <= hi:
+                script[lang] += 1
+                break
+    if sum(script.values()) / len(letters) >= 0.3:
+        if script["ja"]:
+            return "ja"
+        lang = script.most_common(1)[0][0]
+        if lang == "ru" and any(c in "іїєґ" for c in (text or "").lower()):
+            return "uk"
+        return lang
+
+    low = (text or "").lower()
+    words = _LATIN_WORD_RE.findall(low)
+    scores = {lang: sum(1 for w in words if w in fw) for lang, fw in _FUNCTION_WORDS.items()}
+    for lang, chars in _TELLTALE.items():
+        if any(c in low for c in chars):
+            scores[lang] += 2
+    best = max(scores, key=lambda k: (scores[k], k == "en"))
+    if scores[best] == 0 or (scores[best] < 2 and len(words) >= 6):
+        return UNDETERMINED
+    # English wins ties: a mostly-English review with one "de" in it is English.
+    return "en" if scores["en"] >= scores[best] else best
+
+
+def language_name(code: str | None) -> str:
+    return LANG_NAMES.get(code or "", code or "an unknown language")
+
+
+def needs_translation(code: str | None) -> bool:
+    return bool(code) and code not in ("en", UNDETERMINED)
+
+
 def parse_version(value: str | None) -> tuple[int, int, int] | None:
     """Extract (major, minor, patch) from a version string, tolerating prefixes
     and suffixes ('v3.2', '3.2.0-beta', 'build 3.2'). Returns None if there is

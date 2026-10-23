@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Evidence, Hypothesis, Investigation, api, canReview } from "../../api";
+import { Evidence, EvidenceTranslation, Hypothesis, Investigation, api, canReview } from "../../api";
 import { withToast } from "../../components/Toast";
 import { describeToolCall, sourceLabel } from "../../format";
 import { useTrace } from "../../hooks";
@@ -83,6 +83,7 @@ export function EvidenceDetail({ evidence, inv, onReload }: {
                            textDecorationColor: C.ghost }}>
         “{evidence.snippet}”
       </blockquote>
+      {evidence.translation && <TranslationNote translation={evidence.translation} defaultOpen />}
 
       <div style={{ fontSize: T.sm, color: C.muted, lineHeight: "var(--el-lh-normal)",
                     display: "flex", flexDirection: "column", gap: S[1] }}>
@@ -304,6 +305,41 @@ function EvidenceIndex({ inv, onPick }: { inv: Investigation; onPick: (e: Eviden
           </div>
         </button>
       ))}
+    </div>
+  );
+}
+
+/**
+ * The English beside a quote written in another language. The quote above it
+ * is the evidence, verbatim; this is a reading aid, so it says where it came
+ * from and can be folded away.
+ */
+export function TranslationNote({ translation, defaultOpen = false }: {
+  translation: EvidenceTranslation;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  if (!translation.text_en) {
+    return (
+      <div style={{ fontSize: T.xs, color: C.faint }}>
+        Written in {translation.lang_name} — not translated yet.
+      </div>
+    );
+  }
+  return (
+    <div style={{ fontSize: T.sm, color: C.muted, lineHeight: "var(--el-lh-normal)" }}>
+      <button className="el-btn" aria-expanded={open}
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        style={{ fontFamily: mono, fontSize: T.micro, color: C.dim, letterSpacing: ".04em" }}>
+        <Icon name={open ? "chevronDown" : "chevronRight"} size={11} />
+        Translated from {translation.lang_name}
+      </button>
+      {open && (
+        <div style={{ marginTop: S[1], paddingLeft: S[3], borderLeft: `2px solid ${C.border3}`,
+                      color: C.text3, overflowWrap: "anywhere" }}>
+          {translation.text_en}
+        </div>
+      )}
     </div>
   );
 }

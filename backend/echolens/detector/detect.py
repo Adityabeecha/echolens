@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from echolens.db.models import AnomalyEvent, Issue, Post, Review
 from echolens.tools._util import match_score, terms_of
+from echolens.translate import analysis_text
 
 AS_OF = datetime(2026, 7, 17, tzinfo=timezone.utc)  # fallback only
 RECENT_DAYS = 7
@@ -360,10 +361,12 @@ def detect_theme_surges(session: Session, as_of: datetime | None = None,
     # demo default and are dropped once a real operator configures their terms.
     extra = settings.extra_theme_terms
     theme_terms = ([(t, f"'{t}' complaints") for t in extra] if extra
-                   else _derived_terms([r.text for r in reviews if (r.rating or 5) <= 2]))
+                   else _derived_terms([analysis_text(r) for r in reviews if (r.rating or 5) <= 2]))
     for term, label in theme_terms:
         terms = terms_of(term)
-        series = _share_series(reviews, lambda r: r.text, lambda r: r.created_at.date(),
+        # English translation when there is one, so a Spanish complaint about
+        # the same theme counts toward its surge.
+        series = _share_series(reviews, analysis_text, lambda r: r.created_at.date(),
                                terms, start, as_of, negatives_only=True)
         baseline, recent = _split_by_date(series, as_of, win.recent)
         # A baseline of fewer than two observed days cannot establish normal.

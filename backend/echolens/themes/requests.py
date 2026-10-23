@@ -32,6 +32,7 @@ from echolens.themes.discover import (
     MIN_CLUSTER_SIZE, MIN_LABEL_CONFIDENCE, WINDOW_DAYS, _trend, _truncate,
     banned_terms, is_usable_statement, label_clusters, product_terms)
 from echolens.timeutil import aware_utc
+from echolens.translate import analysis_text
 
 MIN_RATING = 3
 
@@ -128,7 +129,7 @@ def _candidates(session: Session, product: str | None, days: int,
     if product:
         stmt = stmt.where(Review.product == product)
     return [r for r in session.scalars(stmt).all()
-            if (r.text or "").strip() and classify(r.text, r.rating) == FEATURE_REQUEST]
+            if (r.text or "").strip() and classify(analysis_text(r), r.rating) == FEATURE_REQUEST]
 
 
 def discover_requests(session: Session, product: str | None = None, *, llm=None,
@@ -143,7 +144,10 @@ def discover_requests(session: Session, product: str | None = None, *, llm=None,
     if len(rows) < MIN_CLUSTER_SIZE:
         return {**base, "requests": [], "engine": "none"}
 
-    texts = [r.text or "" for r in rows]
+    # Grouped on the English translation when there is one; verbatims quote
+    # the original.
+    texts = [analysis_text(r) for r in rows]
+    originals = [r.text or "" for r in rows]
     banned = banned_terms(product, package_name)
     own = product_terms(product, package_name)
     prepared = []
@@ -152,7 +156,7 @@ def discover_requests(session: Session, product: str | None = None, *, llm=None,
         dates = [d for d in (aware_utc(rows[m].created_at) for m in members) if d]
         verbatims: list[str] = []
         for m in members:
-            t = " ".join(texts[m].split())
+            t = " ".join(originals[m].split())
             if t and not any(t[:60].lower() == v[:60].lower() for v in verbatims):
                 verbatims.append(t)
             if len(verbatims) >= 3:
@@ -161,7 +165,7 @@ def discover_requests(session: Session, product: str | None = None, *, llm=None,
         prepared.append({
             "phrase": g["phrase"], "count": len(members), "verbatims": verbatims,
             "avg_rating": round(sum(ratings) / len(ratings), 1) if ratings else None,
-            "intents": count_intents((rows[m].text, rows[m].rating) for m in members),
+            "intents": count_intents((texts[m], rows[m].rating) for m in members),
             "first_seen": min(dates).date().isoformat() if dates else None,
             "last_seen": max(dates).date().isoformat() if dates else None,
             "trend": _trend(dates, now),
