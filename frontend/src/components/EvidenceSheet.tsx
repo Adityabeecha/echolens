@@ -1,4 +1,5 @@
 import { Evidence } from "../api";
+import { sourceLabel } from "../format";
 import { useDialog } from "../hooks";
 import { C, R, S, T, mono } from "../theme";
 import { Icon } from "./Icon";
@@ -45,7 +46,7 @@ export function EvidenceSheet({ evidence, onClose }: { evidence: Evidence | null
         <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
           <span style={{ fontFamily: mono, fontSize: T.base, color: C.accent }}>{evidence.id}</span>
           <span style={{ fontFamily: mono, fontSize: T.micro, padding: `0 ${S[2]}`, border: `1px solid ${C.border3}`, borderRadius: R.sm, color: C.muted, textTransform: "uppercase" }}>
-            {evidence.source}
+            {sourceLabel(evidence.source)}
           </span>
           <button aria-label="Close evidence" onClick={onClose} style={{ marginLeft: "auto", background: "none", border: "none", color: C.muted, fontSize: T.lg }}>
             <Icon name="close" size={15} />

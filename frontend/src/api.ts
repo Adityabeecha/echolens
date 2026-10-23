@@ -659,6 +659,8 @@ export interface BacklogItem {
   defence: string;
 }
 export interface QuarterPlan {
+  included?: number[];
+  excluded?: number[];
   proposed: BacklogItem[];
   deferred: BacklogItem[];
   capacity_days: number;

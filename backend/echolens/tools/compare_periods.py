@@ -53,8 +53,8 @@ def compare_periods(
 ) -> dict:
     """Deterministic before/after stats: means, delta %, z-score of the
     after-mean against the before-period distribution."""
-    before = _daily_series(session, metric, parse_date(before_from), parse_date(before_to), product)
-    after = _daily_series(session, metric, parse_date(after_from), parse_date(after_to), product)
+    before = _daily_series(session, metric, parse_date(before_from), parse_date(before_to, end_of_day=True), product)
+    after = _daily_series(session, metric, parse_date(after_from), parse_date(after_to, end_of_day=True), product)
     if not before or not after:
         return {"metric": metric, "error": "one of the periods has no data"}
 

@@ -680,3 +680,24 @@ export function Skeleton({ rows = 3, height = 74 }: { rows?: number; height?: nu
     </div>
   );
 }
+
+/**
+ * Prose with `backticked` identifiers rendered as code, and long tokens allowed
+ * to wrap so they cannot push a card past a phone's width.
+ */
+export function Rich({ text }: { text: string }) {
+  return (
+    <span style={{ overflowWrap: "anywhere" }}>
+      {text.split(/(`[^`]+`)/g).map((part, i) =>
+        part.length > 2 && part.startsWith("`") && part.endsWith("`") ? (
+          <code key={i} style={{ fontFamily: mono, fontSize: "0.92em", padding: "0 4px",
+                                 borderRadius: 4, background: C.hover, color: C.text2,
+                                 overflowWrap: "anywhere" }}>
+            {part.slice(1, -1)}
+          </code>
+        ) : (
+          <span key={i}>{part}</span>
+        ))}
+    </span>
+  );
+}

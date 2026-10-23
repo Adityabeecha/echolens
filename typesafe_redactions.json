@@ -1,0 +1,293 @@
+[
+  {
+    "filename": "backend/echolens/api/app.py",
+    "omitted_lines": [
+      662,
+      705,
+      931,
+      952,
+      1143,
+      1224,
+      1391,
+      1433,
+      1438,
+      1507,
+      1540,
+      1558,
+      1613,
+      1739,
+      1757,
+      1774,
+      1791,
+      1807,
+      1823,
+      1839,
+      1905,
+      1915,
+      1928,
+      2043,
+      2081,
+      2156,
+      2185,
+      2195,
+      2284,
+      2328,
+      2333,
+      2415,
+      2574,
+      2576,
+      2602,
+      2623,
+      3086
+    ]
+  },
+  {
+    "filename": "backend/echolens/auth.py",
+    "omitted_lines": [
+      19,
+      21,
+      28,
+      98
+    ]
+  },
+  {
+    "filename": "backend/echolens/calibration.py",
+    "omitted_lines": [
+      4,
+      44,
+      159
+    ]
+  },
+  {
+    "filename": "backend/echolens/cli.py",
+    "omitted_lines": [
+      285
+    ]
+  },
+  {
+    "filename": "backend/echolens/config.py",
+    "omitted_lines": [
+      46,
+      111,
+      129,
+      148
+    ]
+  },
+  {
+    "filename": "backend/echolens/db/models.py",
+    "omitted_lines": [
+      185,
+      195,
+      412,
+      460
+    ]
+  },
+  {
+    "filename": "backend/echolens/investigator/graph.py",
+    "omitted_lines": [
+      617,
+      711,
+      806
+    ]
+  },
+  {
+    "filename": "backend/echolens/investigator/recover.py",
+    "omitted_lines": [
+      25
+    ]
+  },
+  {
+    "filename": "backend/echolens/investigator/state.py",
+    "omitted_lines": [
+      39
+    ]
+  },
+  {
+    "filename": "backend/echolens/review.py",
+    "omitted_lines": [
+      5
+    ]
+  },
+  {
+    "filename": "backend/tests/conftest.py",
+    "omitted_lines": [
+      28
+    ]
+  },
+  {
+    "filename": "backend/tests/test_api.py",
+    "omitted_lines": [
+      58
+    ]
+  },
+  {
+    "filename": "backend/tests/test_audit_2026_07_27.py",
+    "omitted_lines": [
+      91,
+      366,
+      387
+    ]
+  },
+  {
+    "filename": "backend/tests/test_auth.py",
+    "omitted_lines": [
+      28,
+      29,
+      45,
+      46
+    ]
+  },
+  {
+    "filename": "backend/tests/test_delete_cascade.py",
+    "omitted_lines": [
+      59,
+      60
+    ]
+  },
+  {
+    "filename": "backend/tests/test_fixes.py",
+    "omitted_lines": [
+      81
+    ]
+  },
+  {
+    "filename": "backend/tests/test_guest_and_google.py",
+    "omitted_lines": [
+      59,
+      66,
+      86,
+      102,
+      104,
+      111,
+      118,
+      119,
+      127,
+      140,
+      141,
+      148,
+      151,
+      529,
+      556
+    ]
+  },
+  {
+    "filename": "backend/tests/test_review.py",
+    "omitted_lines": [
+      2
+    ]
+  },
+  {
+    "filename": "backend/tests/test_v14_batch4.py",
+    "omitted_lines": [
+      96
+    ]
+  },
+  {
+    "filename": "backend/tests/test_v4.py",
+    "omitted_lines": [
+      114,
+      185,
+      192,
+      208,
+      216,
+      242
+    ]
+  },
+  {
+    "filename": "backend/tests/test_v5_collab.py",
+    "omitted_lines": [
+      39,
+      40
+    ]
+  },
+  {
+    "filename": "docker-compose.yml",
+    "omitted_lines": [
+      9,
+      31
+    ]
+  },
+  {
+    "filename": "frontend/src/api.ts",
+    "omitted_lines": [
+      8,
+      46,
+      48,
+      78,
+      885
+    ]
+  },
+  {
+    "filename": "frontend/src/components/NewCaseModal.tsx",
+    "omitted_lines": [
+      35,
+      36
+    ]
+  },
+  {
+    "filename": "frontend/src/screens/Backlog.tsx",
+    "omitted_lines": [
+      30,
+      52,
+      115,
+      177,
+      190
+    ]
+  },
+  {
+    "filename": "frontend/src/screens/case/DiscussionTab.tsx",
+    "omitted_lines": [
+      9,
+      106
+    ]
+  },
+  {
+    "filename": "frontend/src/screens/case/FindingTab.tsx",
+    "omitted_lines": [
+      71,
+      197,
+      205,
+      207,
+      211
+    ]
+  },
+  {
+    "filename": "frontend/src/screens/Cases.tsx",
+    "omitted_lines": [
+      93,
+      185,
+      301,
+      412
+    ]
+  },
+  {
+    "filename": "frontend/src/screens/Login.tsx",
+    "omitted_lines": [
+      113,
+      191
+    ]
+  },
+  {
+    "filename": "frontend/src/screens/Onboarding.tsx",
+    "omitted_lines": [
+      130,
+      556
+    ]
+  },
+  {
+    "filename": "frontend/src/screens/Sources.tsx",
+    "omitted_lines": [
+      25,
+      75,
+      97,
+      98,
+      144
+    ]
+  },
+  {
+    "filename": "frontend/src/screens/Today.tsx",
+    "omitted_lines": [
+      363
+    ]
+  }
+]

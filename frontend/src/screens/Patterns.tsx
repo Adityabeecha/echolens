@@ -44,9 +44,18 @@ export function Patterns({ onGoMemory, onGoCases }: Props) {
 
         {data.patterns.length === 0 ? (
           <EmptyState
-            title={`No proven patterns for ${data.product || "this product"} yet`}
-            body="A pattern is earned, not assumed: it appears once a fix ships and EchoLens confirms the complaints actually stopped. Resolve a case and file the fix, and the first one lands here."
-            action="Go to Cases"
+            title="No verified fixes yet"
+            body={<>
+              A pattern is added only after a fix ships and the complaints actually stop. Next step:
+              open a resolved case and mark its fix as shipped — EchoLens then watches the reviews
+              and records the pattern if it worked.
+              <div style={{ marginTop: S[3], fontSize: T.sm, color: C.dim }}>
+                Want what EchoLens suspects before any fix is proven?{" "}
+                <button onClick={onGoMemory} className="el-btn"
+                  style={{ color: C.accent, fontSize: T.sm }}>See Product memory →</button>
+              </div>
+            </>}
+            action="Open resolved cases"
             onAction={onGoCases}
           />
         ) : (

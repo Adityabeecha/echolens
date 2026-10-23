@@ -488,6 +488,10 @@ class LLMCall(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     investigation_id: Mapped[int | None] = mapped_column(ForeignKey("investigations.id"), index=True)
+    # Calls made OUTSIDE a case (chat, triage, theme discovery, the feedback
+    # graph) have no investigation to attribute them to; without this they
+    # were invisible to per-product costs and to the monthly budget.
+    product_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
     agent: Mapped[str] = mapped_column(String(32))  # investigator.plan, orchestrator, ...
     model: Mapped[str] = mapped_column(String(64), default="")
     tokens_in: Mapped[int] = mapped_column(Integer, default=0)
