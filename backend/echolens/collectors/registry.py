@@ -20,7 +20,7 @@ from echolens.logging import get_logger
 from echolens.collectors.base import Collector, CollectResult
 from echolens.config import settings
 from echolens.db.models import CollectorState
-from echolens.collectors.app_store import AppStoreCollector
+from echolens.collectors.app_store import AppStoreCollector, parse_app_id
 from echolens.collectors.chrome_web_store import ChromeWebStoreCollector
 from echolens.collectors.github import GitHubCollector
 from echolens.collectors.github_extra import (
@@ -49,7 +49,7 @@ SOURCE_INFO: dict[str, dict[str, str]] = {
     "play_store": {"label": "Play Store",
                    "hint": "package name, e.g. com.spotify.music"},
     "app_store": {"label": "App Store",
-                  "hint": "numeric App Store id, e.g. 324684580"},
+                  "hint": "numeric App Store id or apps.apple.com URL, e.g. 324684580"},
     "chrome_web_store": {"label": "Chrome Web Store",
                          "hint": "32-character extension id from the store URL"},
     "github": {"label": "GitHub Issues", "hint": "owner/repo"},
@@ -95,6 +95,8 @@ def add_source(session: Session, source: str, identifier: str, product: str | No
                product_id: int | None = None) -> CollectorState:
     if source not in _BUILDERS:
         raise ValueError(f"unknown source '{source}' (have {list(_BUILDERS)})")
+    if source == "app_store":
+        identifier = parse_app_id(identifier)
     existing = session.scalars(select(CollectorState).where(
         CollectorState.source == source, CollectorState.identifier == identifier,
         CollectorState.product == (product or identifier))).first()

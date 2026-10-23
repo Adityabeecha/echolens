@@ -535,6 +535,7 @@ def discover_themes(session: Session, product: str | None = None, *, llm=None,
             "label_source": source,
             "label_confidence": round(confidence, 2),
             "count": c["count"],
+            "_review_ids": [rows[m].id for m in c["members"]],
             "verbatims": c["verbatims"],
             "first_seen": c["first_seen"],
             "last_seen": c["last_seen"],
@@ -584,8 +585,22 @@ def _fingerprint(session: Session, product: str | None, days: int, as_of: dateti
 def cached_themes(session: Session, product: str | None, *, llm=None, days: int = WINDOW_DAYS,
                   as_of: datetime | None = None, limit: int = 8,
                   package_name: str | None = None, force: bool = False) -> dict:
-    """discover_themes with a per-(product, window) cache in the settings table."""
+    """Cached raw evidence, presented as short deterministic UI theme titles."""
+    from echolens.themes.titles import display_themes
+    from echolens.db.models import Product
+    from echolens.orchestrator.queue import find_existing
     from echolens.detector.detect import reference_now
+
+    def present(raw: dict) -> dict:
+        # The API resolves stored work using the single displayed slug. Prefer
+        # an already-handled variant when merging so its case link survives.
+        preferred = set()
+        if product and len(raw.get("themes", [])) > 1:
+            tracked = session.scalars(select(Product).where(Product.name == product)).first()
+            if tracked is not None:
+                preferred = {t["slug"] for t in raw["themes"]
+                             if find_existing(session, tracked.id, f"theme-p{tracked.id}-{t['slug']}")}
+        return display_themes(raw, preferred_slugs=preferred)
 
     now = as_of or reference_now(session, product)
     key = f"themes:{product or '_'}:{days}:{limit}:{package_name or '_'}"
@@ -596,7 +611,7 @@ def cached_themes(session: Session, product: str | None, *, llm=None, days: int 
         if row and isinstance(row.value, dict) and row.value.get("fingerprint") == fp:
             cached = dict(row.value.get("result") or {})
             cached["cached"] = True
-            return cached
+            return present(cached)
 
     result = discover_themes(session, product, llm=llm, days=days, as_of=now,
                              limit=limit, package_name=package_name)
@@ -607,4 +622,4 @@ def cached_themes(session: Session, product: str | None, *, llm=None, days: int 
         row.value = {"fingerprint": fp, "result": result}
     session.flush()
     result["cached"] = False
-    return result
+    return present(result)

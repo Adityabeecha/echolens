@@ -1,12 +1,14 @@
 # EchoLens v1.0 — local production-like stack.
 #   docker compose up --build
 # Then the app is at http://localhost (Nginx → backend + static frontend).
+# LOCAL USE ONLY: set POSTGRES_PASSWORD and JWT_SECRET in your shell or a .env
+# file next to this one; the defaults below are not safe for anything public.
 services:
   db:
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: echolens
-      POSTGRES_PASSWORD: echolens
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-echolens}
       POSTGRES_DB: echolens
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -28,7 +30,7 @@ services:
     build: ./backend
     environment:
       ECHOLENS_ENV: production
-      ECHOLENS_DB_URL: postgresql://echolens:echolens@db:5432/echolens
+      ECHOLENS_DB_URL: postgresql://echolens:${POSTGRES_PASSWORD:-echolens}@db:5432/echolens
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       JWT_SECRET: ${JWT_SECRET:-change-me-in-prod}
       ECHOLENS_LOG_JSON: "1"

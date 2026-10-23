@@ -73,9 +73,15 @@ def _load(session: Session, product_ids: list[int] | None, now) -> dict:
 
 
 def _resolution_rate(d: dict) -> float:
-    resolved = d["invs"]
-    confirmed = [w for w in d["watches"] if w.status == "confirmed"]
-    return round(len(confirmed) / len(resolved), 3) if resolved else 0.0
+    """Same rule as backlog.resolution_rate — DISTINCT resolved cases with a
+    confirmed fix, clamped to [0, 1] — computed from the rows already loaded
+    instead of re-querying both tables per product."""
+    resolved_ids = {inv.id for inv in d["invs"]}
+    if not resolved_ids:
+        return 0.0
+    confirmed_ids = {w.investigation_id for w in d["watches"]
+                     if w.status == "confirmed" and w.investigation_id in resolved_ids}
+    return round(min(1.0, len(confirmed_ids) / len(resolved_ids)), 3)
 
 
 def _fix_next(d: dict, resolution_rate: float, now) -> dict | None:
@@ -131,10 +137,14 @@ def _compose(d: dict, now) -> dict:
     # reads as a failing grade the data cannot support. Say so instead.
     resolved_total = len(d["invs"])
     headline = (f"This week: {_n(len(new_problems), 'new problem')}, "
-                f"{_n(len(fixes_verified), 'fix')} verified, "
+                f"{_n(len(fixes_verified), 'fix', 'fixes')} verified, "
                 f"{_n(len(regressions), 'regression')}.")
-    if resolved_total:
+    # Nor is "0% … verified" a week after the first case resolved: no fix
+    # could have shipped and been measured yet, so the line read as failure.
+    if rate > 0:
         headline += f" {int(rate * 100)}% of resolved cases have a verified fix."
+    elif resolved_total >= 3:
+        headline += f" None of {resolved_total} resolved cases has a verified fix yet."
     lines = [headline]
     for p in new_problems[:2]:
         lines.append(f"• New: {p['summary']} (case #{p['investigation_id']}).")

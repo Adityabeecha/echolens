@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Evidence, Hypothesis, Investigation, TraceStep, api, canReview } from "../../api";
 import { withToast } from "../../components/Toast";
-import { money } from "../../format";
+import { dedupeEvidenceIds, money, sourceLabel } from "../../format";
 import { useTrace } from "../../hooks";
 import { C, R, S, T, KIND_COLOR, mono } from "../../theme";
 import { Bar, Label } from "../../ui";
@@ -175,12 +175,12 @@ export function TraceTab({ inv, onOpenEvidence, onReload }: Props) {
         <div>
           <Label style={{ marginBottom: S[2] }}>SOURCES TOUCHED</Label>
           <div style={{ display: "flex", flexDirection: "column", gap: S[2], fontSize: T.sm }}>
-            {["play_store", "github", "release_notes", "reddit"].map((src) => {
+            {["play_store", "github", "release_notes"].map((src) => {
               const n = sourcesTouched.get(src) ?? 0;
               return (
                 <div key={src} style={{ display: "flex", justifyContent: "space-between",
                                         color: n ? C.text3 : C.ghost }}>
-                  <span>{src.replace("_", " ")}</span>
+                  <span>{sourceLabel(src)}</span>
                   <span style={{ fontFamily: mono, color: n ? C.good : C.ghost }}>
                     {n ? `${n} ev` : "—"}
                   </span>
@@ -322,7 +322,7 @@ function TraceRow({ step, last, selHyp, onOpenEvidence, evidence }: {
         <div style={{ padding: `${S[3]} ${S[3]}`, background: C.card, border: `1px solid ${C.border2}`,
                       borderRadius: R.control }}>
           {step.kind === "THINK" && (
-            <div style={{ fontSize: T.base, lineHeight: "var(--el-lh-normal)", color: C.text3 }}>{c.text}</div>
+            <div style={{ fontSize: T.base, lineHeight: "var(--el-lh-normal)", color: C.text3 }}>{dedupeEvidenceIds(c.text)}</div>
           )}
           {step.kind === "TOOL" && (
             <>
@@ -339,10 +339,10 @@ function TraceRow({ step, last, selHyp, onOpenEvidence, evidence }: {
                 <span style={{ fontFamily: mono, fontSize: T.xs, color: C.accent }}>{c.id}</span>
                 <span style={{ fontFamily: mono, fontSize: T.micro, padding: `0 ${S[2]}`,
                                border: `1px solid ${C.border3}`, borderRadius: R.sm, color: C.muted }}>
-                  {c.source}
+                  {sourceLabel(c.source)}
                 </span>
                 <span style={{ fontFamily: mono, fontSize: T.micro, color: C.good, marginLeft: "auto" }}>
-                  supports {(c.supports ?? []).join(", ")}
+                  supports {Array.from(new Set(c.supports ?? [])).join(", ")}
                 </span>
               </div>
               <button className="el-btn"
@@ -367,7 +367,7 @@ function TraceRow({ step, last, selHyp, onOpenEvidence, evidence }: {
             <>
               <div style={{ fontFamily: mono, fontSize: T.sm,
                             color: c.good === false ? C.bad : C.good }}>{c.code}</div>
-              <div style={{ fontSize: T.sm, color: C.muted, marginTop: S[1] }}>{c.text}</div>
+              <div style={{ fontSize: T.sm, color: C.muted, marginTop: S[1] }}>{dedupeEvidenceIds(c.text)}</div>
             </>
           )}
           {step.kind === "FAIL" && (
@@ -379,7 +379,7 @@ function TraceRow({ step, last, selHyp, onOpenEvidence, evidence }: {
                             fontFamily: mono, fontSize: T.xs, color: C.bad }}>
                 <Icon name="close" size={11} style={{ display: "inline" }} /> {c.error}
               </div>
-              <div style={{ fontSize: T.sm, color: C.muted, marginTop: S[1] }}>{c.text}</div>
+              <div style={{ fontSize: T.sm, color: C.muted, marginTop: S[1] }}>{dedupeEvidenceIds(c.text)}</div>
             </>
           )}
           {step.kind === "SPEC" && (
@@ -394,7 +394,7 @@ function TraceRow({ step, last, selHyp, onOpenEvidence, evidence }: {
                   </span>
                 ) : null}
               </div>
-              <div style={{ fontSize: T.base, lineHeight: "var(--el-lh-normal)", color: C.text3 }}>{c.text}</div>
+              <div style={{ fontSize: T.base, lineHeight: "var(--el-lh-normal)", color: C.text3 }}>{dedupeEvidenceIds(c.text)}</div>
             </>
           )}
           {step.kind === "REFUTE" && (
@@ -410,7 +410,7 @@ function TraceRow({ step, last, selHyp, onOpenEvidence, evidence }: {
                   {c.contradicted ? "counter-evidence found" : "hypothesis survived"}
                 </span>
               </div>
-              <div style={{ fontSize: T.base, lineHeight: "var(--el-lh-normal)", color: C.text3 }}>{c.text}</div>
+              <div style={{ fontSize: T.base, lineHeight: "var(--el-lh-normal)", color: C.text3 }}>{dedupeEvidenceIds(c.text)}</div>
             </>
           )}
           {step.kind === "CHECK" && (

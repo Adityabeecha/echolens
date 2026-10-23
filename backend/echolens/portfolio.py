@@ -97,7 +97,8 @@ def _load_board(session: Session, products: list[Product], now: datetime) -> dic
 
     ids = [p.id for p in products]
     data = {pid: {"watches": [], "resolved": [], "latest": {}, "untriaged": 0,
-                  "sources": [], "chronic": [], "rates": (None, None)} for pid in ids}
+                  "sources": [], "chronic": [], "rates": (None, None),
+                  "has_reviews": False} for pid in ids}
     if not ids:
         return data
     for w in session.scalars(select(FixWatch).where(FixWatch.product_id.in_(ids))).all():
@@ -136,6 +137,10 @@ def _load_board(session: Session, products: list[Product], now: datetime) -> dic
             .group_by(Review.product)).all():
         data[names[name]]["rates"] = (_rate(rec_n or 0, rec_neg or 0),
                                       _rate(base_n or 0, base_neg or 0))
+    # Whether ANY feedback exists (not just in the last 7 days), for has_data.
+    for name in session.scalars(select(Review.product).where(
+            Review.product.in_(list(names))).distinct()).all():
+        data[names[name]]["has_reviews"] = True
 
     for s in session.scalars(select(CollectorState).where(
             CollectorState.product_id.in_(ids))).all():
@@ -247,7 +252,10 @@ def product_snapshot(session: Session, product: Product, now: datetime,
         "negative_rate_pct": round(100 * recent, 1) if recent is not None else None,
         "negative_rate_delta_pct": round(100 * delta, 1) if has_rate else None,
         "confirmed_fixes": len(confirmed_inv),
-        "has_data": bool(sources) or bool(recent),
+        # Whether ANY feedback exists, not whether the last 7 days had some: the
+        # old test (`bool(recent)`) told a product with 3,000 older reviews
+        # "No feedback has been collected" beside a 12-week rating chart.
+        "has_data": bool(sources) or data["has_reviews"],
     }
 
 

@@ -203,7 +203,7 @@ class GitHubActivityCollector(FeedbackCollector):
         if not text:
             return None
         return {
-            "native_id": f"pr:{num}",
+            "native_id": f"pr:{self.identifier}:{num}",
             "text": text,
             "created_at": iso_dt(item.get("merged_at")),
             "status": "merged",

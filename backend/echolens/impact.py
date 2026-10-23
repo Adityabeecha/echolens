@@ -7,6 +7,8 @@ the trust chain (every claim → evidence) is unchanged.
 """
 from __future__ import annotations
 
+import re
+
 import statistics
 from datetime import timedelta
 
@@ -26,6 +28,20 @@ _GENERIC = {
     "drop", "case", "investigation", "cause", "causes", "drives", "driving",
     "users", "user", "update", "issue", "issues", "report", "reports", "feedback",
     "week", "version",
+    # Finding-narration words. A real finding produced the terms
+    # ['supported', 'release', 'introduced', 'broadly', 'reported', 'battery'];
+    # these feed FixWatch matching and the pattern library, so verbs like these
+    # matched unrelated complaints.
+    "supported", "rejected", "hypothesis", "introduced", "introduces", "introduce",
+    "broadly", "broad", "reported", "reporting", "recent", "recently", "release",
+    "released", "releases", "regression", "regressed", "affecting", "affects",
+    "affected", "caused", "causing", "linked", "likely", "widespread", "since",
+    "after", "before", "new", "change", "changes", "changed", "app", "apps",
+    "evidence", "finding", "confidence", "rising", "rise", "increase", "increased",
+    "negatives", "baseline", "recent", "vs",
+    "surged", "surge", "surging", "rose", "jumped", "spiked", "consistent", "always",
+    "likely", "possibly", "probably", "suggests", "supports", "indicates", "shows",
+    "began", "begins", "started", "worsened", "worse", "mechanism", "specific",
 }
 
 RECENT_DAYS = 7
@@ -38,10 +54,17 @@ BASELINE_DAYS = 28
 def theme_terms(anomaly, finding_json: dict) -> list[str]:
     """The complaint keywords to measure impact against, drawn from the finding
     summary + supported hypothesis + anomaly, minus structural words."""
-    parts = [finding_json.get("summary", ""), finding_json.get("prose", "")[:300],
-             getattr(anomaly, "description", "") or "", getattr(anomaly, "metric", "") or ""]
+    # The detector's own theme ("'battery drain' complaints …") is the most
+    # reliable signal of what complaints to match, so its words lead.
+    description = getattr(anomaly, "description", "") or ""
+    quoted = " ".join(re.findall(r"['‘“\"]([^'’”\"]{3,40})['’”\"]", description))
+    parts = [quoted, finding_json.get("summary", ""), finding_json.get("prose", "")[:300],
+             description, getattr(anomaly, "metric", "") or ""]
     seen: list[str] = []
     for tok in tokenize(" ".join(parts)):
+        tok = tok.strip("'\"‘’“”")
+        if not tok or tok.isdigit() or tok.replace(".", "").isdigit():
+            continue
         if tok not in _GENERIC and tok not in seen:
             seen.append(tok)
     return seen[:6] or tokenize(finding_json.get("summary", ""))[:3]

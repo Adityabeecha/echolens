@@ -51,6 +51,7 @@ def _fake_openai(fake, **kw):
 def _client(monkeypatch, reject_temperature: bool):
     fake = _FakeCompletions(reject_temperature)
     monkeypatch.setattr(oc, "OpenAI", lambda **kw: _fake_openai(fake, **kw))
+    monkeypatch.setattr(oc, "_NO_TEMPERATURE_MODELS", set())
     c = oc.OpenAIClient(model="test-model")
     return c, fake
 
@@ -150,3 +151,14 @@ def test_backoff_stops_at_the_total_deadline(monkeypatch):
 def test_one_stuck_call_cannot_outlast_the_quick_tier(monkeypatch):
     from echolens.config import BUDGET_TIERS
     assert oc.MAX_TOTAL_CALL_S < BUDGET_TIERS["quick"].max_wall_clock_s
+
+
+def test_a_new_client_remembers_the_refusal(monkeypatch):
+    # Every flow builds a fresh client; the refusal must not be re-learned
+    # with a wasted 400 on each one.
+    c, fake = _client(monkeypatch, reject_temperature=True)
+    c.complete_json("s", "u", {"type": "object"}, "agent")
+    before = len(fake.calls)
+    oc.OpenAIClient(model="test-model").complete_json("s", "u", {"type": "object"}, "agent")
+    assert len(fake.calls) == before + 1
+    assert "temperature" not in fake.calls[before]
