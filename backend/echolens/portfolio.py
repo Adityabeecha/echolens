@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from echolens.db.models import (
     AnomalyEvent, Finding, FixWatch, Investigation, Product, Review)
 from echolens.impact import severity
-from echolens.themes import CHRONIC_DAYS, theme_lifecycle
+from echolens.themes import CHRONIC_DAYS
 from echolens.timeutil import aware_utc
 
 # What each signal is worth. Tuned so one live SEV1 outranks a pile of chronic
@@ -68,7 +68,10 @@ def _negative_rate(session: Session, product: str | None, start, end) -> float |
         .where(Review.product == product,
                Review.created_at >= start, Review.created_at < end)
     ).one()
-    total, negatives = row[0] or 0, row[1] or 0
+    return _rate(row[0] or 0, row[1] or 0)
+
+
+def _rate(total: int, negatives: int) -> float | None:
     # None, not 0.0, when the window is too thin to be a rate. A single review
     # used to award the FULL trend weight and print "negative reviews up 75 pts"
     # as fact; and an empty window scored 0.0, indistinguishable from a genuine
@@ -78,26 +81,88 @@ def _negative_rate(session: Session, product: str | None, start, end) -> float |
     return negatives / total
 
 
-def product_snapshot(session: Session, product: Product, now: datetime) -> dict:
-    """One product's attention score plus the reasons behind it."""
+def _load_board(session: Session, products: list[Product], now: datetime) -> dict[int, dict]:
+    """Every input the attention score reads, for all products at once.
+
+    product_snapshot used to run ~10 queries PER product (watches, resolved
+    cases, findings, two theme queries plus one get() per finding, the queue,
+    two rate windows, collectors), so the board grew linearly with the
+    portfolio. Here each table is read once with `product_id IN (...)` and the
+    two rate windows come from one GROUP BY.
+    """
+    from sqlalchemy import case
+
+    from echolens.db.models import CollectorState
+    from echolens.themes import theme_lifecycles
+
+    ids = [p.id for p in products]
+    data = {pid: {"watches": [], "resolved": [], "latest": {}, "untriaged": 0,
+                  "sources": [], "chronic": [], "rates": (None, None)} for pid in ids}
+    if not ids:
+        return data
+    for w in session.scalars(select(FixWatch).where(FixWatch.product_id.in_(ids))).all():
+        data[w.product_id]["watches"].append(w)
+    resolved = session.scalars(select(Investigation).where(
+        Investigation.product_id.in_(ids), Investigation.status == "resolved")).all()
+    by_id = {inv.id: inv for inv in resolved}
+    for inv in resolved:
+        data[inv.product_id]["resolved"].append(inv)
+    if by_id:
+        for finding in session.scalars(select(Finding).where(
+                Finding.investigation_id.in_(list(by_id))).order_by(Finding.id)).all():
+            data[by_id[finding.investigation_id].product_id]["latest"][
+                finding.investigation_id] = finding
+    for pid, themes in theme_lifecycles(session, ids, now).items():
+        data[pid]["chronic"] = [t for t in themes if t["status"] == "chronic"]
+    for pid, n in session.execute(select(AnomalyEvent.product_id, func.count(AnomalyEvent.id)).where(
+            AnomalyEvent.product_id.in_(ids), AnomalyEvent.status == "pending",
+            AnomalyEvent.merged_into_id.is_(None)).group_by(AnomalyEvent.product_id)).all():
+        data[pid]["untriaged"] = n
+
+    # Both rate windows for every product in one pass: [now-35d, now-7d) is the
+    # baseline, [now-7d, now) the recent week — same bounds as _negative_rate.
+    split, start = now - timedelta(days=7), now - timedelta(days=35)
+    is_recent = Review.created_at >= split
+    is_neg = Review.rating <= 2
+    names = {p.name: p.id for p in products}
+    for name, rec_n, rec_neg, base_n, base_neg in session.execute(
+            select(Review.product,
+                   func.sum(case((is_recent, 1), else_=0)),
+                   func.sum(case((is_recent & is_neg, 1), else_=0)),
+                   func.sum(case((~is_recent, 1), else_=0)),
+                   func.sum(case((~is_recent & is_neg, 1), else_=0)))
+            .where(Review.product.in_(list(names)),
+                   Review.created_at >= start, Review.created_at < now)
+            .group_by(Review.product)).all():
+        data[names[name]]["rates"] = (_rate(rec_n or 0, rec_neg or 0),
+                                      _rate(base_n or 0, base_neg or 0))
+
+    for s in session.scalars(select(CollectorState).where(
+            CollectorState.product_id.in_(ids))).all():
+        data[s.product_id]["sources"].append(s)
+    return data
+
+
+def product_snapshot(session: Session, product: Product, now: datetime,
+                     data: dict | None = None) -> dict:
+    """One product's attention score plus the reasons behind it.
+
+    `data` is this product's slice of `_load_board`; the board passes it in so
+    ranking N products costs the same queries as ranking one.
+    """
+    if data is None:
+        data = _load_board(session, [product], now)[product.id]
     pid = product.id
     reasons: list[dict] = []
     score = 0.0
 
     # ── live problems, weighted by severity ────────────────────────────
-    watches = session.scalars(select(FixWatch).where(FixWatch.product_id == pid)).all()
+    watches = data["watches"]
     confirmed_inv = {w.investigation_id for w in watches if w.status == "confirmed"}
     high = medium = 0
     top_problem = None
-    resolved = session.scalars(select(Investigation).where(
-            Investigation.product_id == pid,
-            Investigation.status == "resolved")).all()
-    latest: dict[int, Finding] = {}
-    resolved_ids = [inv.id for inv in resolved]
-    if resolved_ids:
-        for finding in session.scalars(select(Finding).where(
-                Finding.investigation_id.in_(resolved_ids)).order_by(Finding.id)).all():
-            latest[finding.investigation_id] = finding
+    resolved = data["resolved"]
+    latest: dict[int, Finding] = data["latest"]
     for inv in resolved:
         if inv.id in confirmed_inv:
             continue
@@ -130,24 +195,21 @@ def product_snapshot(session: Session, product: Product, now: datetime) -> dict:
                         "text": f"{_n(len(regressed), 'fix', 'fixes')} regressed after shipping"})
 
     # ── chronic themes ─────────────────────────────────────────────────
-    chronic = [t for t in theme_lifecycle(session, now, pid) if t["status"] == "chronic"]
+    chronic = data["chronic"]
     if chronic:
         score += W_CHRONIC * len(chronic)
         reasons.append({"kind": "chronic", "weight": round(W_CHRONIC * len(chronic), 1),
                         "text": f"{_n(len(chronic), 'complaint theme')} unresolved for over {CHRONIC_DAYS} days"})
 
     # ── queue depth ────────────────────────────────────────────────────
-    untriaged = session.scalars(select(AnomalyEvent).where(
-        AnomalyEvent.product_id == pid, AnomalyEvent.status == "pending",
-        AnomalyEvent.merged_into_id.is_(None))).all()
+    untriaged = data["untriaged"]
     if untriaged:
-        score += W_UNTRIAGED * len(untriaged)
-        reasons.append({"kind": "untriaged", "weight": round(W_UNTRIAGED * len(untriaged), 1),
-                        "text": f"{_n(len(untriaged), 'signal')} waiting for triage"})
+        score += W_UNTRIAGED * untriaged
+        reasons.append({"kind": "untriaged", "weight": round(W_UNTRIAGED * untriaged, 1),
+                        "text": f"{_n(untriaged, 'signal')} waiting for triage"})
 
     # ── trend: is sentiment getting worse? ─────────────────────────────
-    recent = _negative_rate(session, product.name, now - timedelta(days=7), now)
-    baseline = _negative_rate(session, product.name, now - timedelta(days=35), now - timedelta(days=7))
+    recent, baseline = data["rates"]
     has_rate = recent is not None and baseline is not None
     delta = round(recent - baseline, 4) if has_rate else 0.0
     if has_rate and baseline > 0 and delta > 0.02:
@@ -158,9 +220,7 @@ def product_snapshot(session: Session, product: Product, now: datetime) -> dict:
                     f"({int(round(baseline * 100))}% → {int(round(recent * 100))}%)"})
 
     # ── can we even see this product right now? ────────────────────────
-    from echolens.db.models import CollectorState
-    sources = session.scalars(select(CollectorState).where(
-        CollectorState.product_id == pid)).all()
+    sources = data["sources"]
     stale = [s for s in sources if s.status == "error"
              or (s.last_run_at and (now - (aware_utc(s.last_run_at) or now)).days >= 2)]
     if stale:
@@ -183,7 +243,7 @@ def product_snapshot(session: Session, product: Product, now: datetime) -> dict:
         "top_problem": top_problem,
         "open_problems": high + medium,
         "regressions": len(regressed),
-        "untriaged": len(untriaged),
+        "untriaged": untriaged,
         "negative_rate_pct": round(100 * recent, 1) if recent is not None else None,
         "negative_rate_delta_pct": round(100 * delta, 1) if has_rate else None,
         "confirmed_fixes": len(confirmed_inv),
@@ -204,8 +264,9 @@ def portfolio(session: Session, as_of: datetime | None = None,
               demo_only: bool = False) -> dict:
     """Every product the caller may see, ranked by how much it needs them today."""
     now = as_of or datetime.now(timezone.utc)
-    rows = [product_snapshot(session, p, now)
-            for p in visible_products(session, demo_only)]
+    products = visible_products(session, demo_only)
+    board = _load_board(session, products, now)
+    rows = [product_snapshot(session, p, now, board[p.id]) for p in products]
     rows.sort(key=lambda r: (-r["score"], r["product"]))
     on_fire = [r for r in rows if r["band"] == "on_fire"]
     return {
@@ -241,15 +302,17 @@ def portfolio_brief(session: Session, as_of: datetime | None = None,
     second-worst problem on your biggest app can outrank the worst problem on
     your smallest.
     """
-    from echolens.brief import weekly_brief
+    from echolens.brief import weekly_briefs
 
     now = as_of or datetime.now(timezone.utc)
     since = now - timedelta(days=7)
     board = portfolio(session, now, demo_only)
 
     per_product, problems, fixes, regressions = [], [], [], []
-    for p in visible_products(session, demo_only):
-        b = weekly_brief(session, now, p.id)
+    products = visible_products(session, demo_only)
+    briefs = weekly_briefs(session, [p.id for p in products], now)
+    for p in products:
+        b = briefs[p.id]
         per_product.append({"product": p.name, "product_id": p.id, "brief": b})
         for np in b["new_problems"]:
             problems.append({**np, "product": p.name, "product_id": p.id})

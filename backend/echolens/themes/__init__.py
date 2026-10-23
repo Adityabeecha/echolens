@@ -22,19 +22,53 @@ CHRONIC_DAYS = 60
 def theme_lifecycle(session: Session, as_of: datetime | None = None,
                     product_id: int | None = None) -> list[dict]:
     now = as_of or datetime.now(timezone.utc)
-    fw = select(FixWatch).where(FixWatch.status == "confirmed")
-    fstmt = select(Finding)
+    fw = select(FixWatch.investigation_id).where(FixWatch.status == "confirmed")
     if product_id is not None:
         fw = fw.where(FixWatch.product_id == product_id)
-        fstmt = fstmt.where(Finding.product_id == product_id)
-    confirmed = {w.investigation_id for w in session.scalars(fw).all()}
+    confirmed = set(session.scalars(fw).all())
+    return _lifecycle(_resolved_rows(session, None if product_id is None else [product_id]),
+                      confirmed, now)
 
+
+def theme_lifecycles(session: Session, product_ids: list[int],
+                     as_of: datetime | None = None) -> dict[int, list[dict]]:
+    """`theme_lifecycle` for many products in two queries, not two per product.
+
+    The portfolio board and brief called theme_lifecycle once per product, and
+    each call fetched every finding's investigation and anomaly one row at a
+    time, so those pages cost O(products x findings) round trips.
+    """
+    now = as_of or datetime.now(timezone.utc)
+    if not product_ids:
+        return {}
+    confirmed: dict[int, set[int]] = {pid: set() for pid in product_ids}
+    for pid, inv_id in session.execute(
+            select(FixWatch.product_id, FixWatch.investigation_id).where(
+                FixWatch.status == "confirmed", FixWatch.product_id.in_(product_ids))).all():
+        confirmed[pid].add(inv_id)
+    rows: dict[int, list] = {pid: [] for pid in product_ids}
+    for row in _resolved_rows(session, product_ids):
+        rows[row[0].product_id].append(row)
+    return {pid: _lifecycle(rows[pid], confirmed[pid], now) for pid in product_ids}
+
+
+def _resolved_rows(session: Session, product_ids: list[int] | None):
+    """(finding, investigation, anomaly) for every finding on a resolved case,
+    in ONE joined query. This was a session.get() per finding for the
+    investigation and another for its anomaly."""
+    stmt = (select(Finding, Investigation, AnomalyEvent)
+            .join(Investigation, Investigation.id == Finding.investigation_id)
+            .outerjoin(AnomalyEvent, AnomalyEvent.id == Investigation.anomaly_id)
+            .where(Investigation.status == "resolved")
+            .order_by(Finding.id))
+    if product_ids is not None:
+        stmt = stmt.where(Finding.product_id.in_(product_ids))
+    return session.execute(stmt).all()
+
+
+def _lifecycle(rows, confirmed: set[int], now: datetime) -> list[dict]:
     groups: dict[str, dict] = {}
-    for f in session.scalars(fstmt).all():
-        inv = session.get(Investigation, f.investigation_id)
-        if inv is None or inv.status != "resolved":
-            continue
-        anomaly = session.get(AnomalyEvent, inv.anomaly_id)
+    for f, inv, anomaly in rows:
         terms = theme_terms(anomaly, f.json or {})
         key = terms[0] if terms else "other"
         created = aware_utc(inv.created_at) or now

@@ -26,41 +26,66 @@ def _recent(dt, since) -> bool:
     return dt is not None and dt >= since
 
 
-def _resolved_invs(session: Session, product_id: int | None):
-    stmt = select(Investigation).where(Investigation.status == "resolved")
-    if product_id is not None:
-        stmt = stmt.where(Investigation.product_id == product_id)
-    return session.scalars(stmt).all()
+def _load(session: Session, product_ids: list[int] | None, now) -> dict:
+    """Everything a brief reads, for one or many products, in a fixed number of
+    queries. `None` means the whole workspace, filed under the key None.
+
+    The brief used to re-query resolved cases three times and watches three
+    times per product, and the portfolio brief ran all of that once per product
+    on top, so the page grew by ~10 statements for every product added.
+    """
+    from echolens.themes import theme_lifecycle, theme_lifecycles
+
+    keys = [None] if product_ids is None else list(product_ids)
+    data = {k: {"invs": [], "latest": {}, "watches": [], "regressions": [], "chronic": []}
+            for k in keys}
+
+    def key(pid):
+        return None if product_ids is None else pid
+
+    inv_stmt = select(Investigation).where(Investigation.status == "resolved")
+    w_stmt = select(FixWatch)
+    reg_stmt = select(AnomalyEvent).where(AnomalyEvent.type == "regression")
+    if product_ids is not None:
+        inv_stmt = inv_stmt.where(Investigation.product_id.in_(product_ids))
+        w_stmt = w_stmt.where(FixWatch.product_id.in_(product_ids))
+        reg_stmt = reg_stmt.where(AnomalyEvent.product_id.in_(product_ids))
+    invs = session.scalars(inv_stmt).all()
+    by_id = {}
+    for inv in invs:
+        data[key(inv.product_id)]["invs"].append(inv)
+        by_id[inv.id] = inv
+    if by_id:
+        for finding in session.scalars(select(Finding).where(
+                Finding.investigation_id.in_(list(by_id))).order_by(Finding.id)).all():
+            inv = by_id[finding.investigation_id]
+            data[key(inv.product_id)]["latest"][inv.id] = finding
+    for w in session.scalars(w_stmt).all():
+        data[key(w.product_id)]["watches"].append(w)
+    for a in session.scalars(reg_stmt).all():
+        data[key(a.product_id)]["regressions"].append(a)
+
+    lifecycles = ({None: theme_lifecycle(session, now, None)} if product_ids is None
+                  else theme_lifecycles(session, list(product_ids), now))
+    for k, themes in lifecycles.items():
+        data[k]["chronic"] = [t for t in themes if t["status"] == "chronic"]
+    return data
 
 
-def _watches(session: Session, product_id: int | None):
-    stmt = select(FixWatch)
-    if product_id is not None:
-        stmt = stmt.where(FixWatch.product_id == product_id)
-    return session.scalars(stmt).all()
-
-
-def _resolution_rate(session: Session, product_id: int | None = None) -> float:
-    resolved = _resolved_invs(session, product_id)
-    confirmed = [w for w in _watches(session, product_id) if w.status == "confirmed"]
+def _resolution_rate(d: dict) -> float:
+    resolved = d["invs"]
+    confirmed = [w for w in d["watches"] if w.status == "confirmed"]
     return round(len(confirmed) / len(resolved), 3) if resolved else 0.0
 
 
-def _fix_next(session: Session, resolution_rate: float, now, product_id: int | None = None) -> dict | None:
+def _fix_next(d: dict, resolution_rate: float, now) -> dict | None:
     """Rank open problems by severity × volume × persistence × (1 − resolution)."""
-    confirmed = {w.investigation_id for w in _watches(session, product_id) if w.status == "confirmed"}
+    confirmed = {w.investigation_id for w in d["watches"] if w.status == "confirmed"}
     best, best_score = None, -1.0
-    invs = _resolved_invs(session, product_id)
-    latest: dict[int, Finding] = {}
-    ids = [inv.id for inv in invs]
-    if ids:
-        for finding in session.scalars(select(Finding).where(
-                Finding.investigation_id.in_(ids)).order_by(Finding.id)).all():
-            latest[finding.investigation_id] = finding
-    for inv in invs:
+    for inv in d["invs"]:
         if inv.id in confirmed:
             continue
-        f = latest.get(inv.id)
+        f = d["latest"].get(inv.id)
         if f is None:
             continue
         impact = (f.json or {}).get("impact", {})
@@ -76,23 +101,14 @@ def _fix_next(session: Session, resolution_rate: float, now, product_id: int | N
     return {"investigation_id": inv.id, "summary": f.summary, "score": round(best_score, 2)}
 
 
-def weekly_brief(session: Session, as_of: datetime | None = None,
-                 product_id: int | None = None) -> dict:
-    now = as_of or datetime.now(timezone.utc)
+def _compose(d: dict, now) -> dict:
     since = now - timedelta(days=7)
 
     new_problems = []
-    resolved_invs = _resolved_invs(session, product_id)
-    latest: dict[int, Finding] = {}
-    resolved_ids = [inv.id for inv in resolved_invs]
-    if resolved_ids:
-        for finding in session.scalars(select(Finding).where(
-                Finding.investigation_id.in_(resolved_ids)).order_by(Finding.id)).all():
-            latest[finding.investigation_id] = finding
-    for inv in resolved_invs:
+    for inv in d["invs"]:
         if not _recent(inv.created_at, since):
             continue
-        f = latest.get(inv.id)
+        f = d["latest"].get(inv.id)
         if f is not None:
             impact = (f.json or {}).get("impact", {})
             new_problems.append({"investigation_id": inv.id, "summary": f.summary,
@@ -100,24 +116,20 @@ def weekly_brief(session: Session, as_of: datetime | None = None,
     new_problems.sort(key=lambda p: -p["impact_score"])
 
     fixes_verified = [{"investigation_id": w.investigation_id, "metric": w.metric}
-                      for w in _watches(session, product_id)
+                      for w in d["watches"]
                       if w.status == "confirmed" and _recent(w.confirmed_at, since)]
-    reg_stmt = select(AnomalyEvent).where(AnomalyEvent.type == "regression")
-    if product_id is not None:
-        reg_stmt = reg_stmt.where(AnomalyEvent.product_id == product_id)
     regressions = [{"slug": a.slug, "parent_case_id": a.parent_case_id}
-                   for a in session.scalars(reg_stmt).all() if _recent(a.created_at, since)]
+                   for a in d["regressions"] if _recent(a.created_at, since)]
 
-    rate = _resolution_rate(session, product_id)
-    fix_next = _fix_next(session, rate, now, product_id)
+    rate = _resolution_rate(d)
+    fix_next = _fix_next(d, rate, now)
 
     # chronic themes (context for the brief)
-    from echolens.themes import theme_lifecycle
-    chronic = [t for t in theme_lifecycle(session, now, product_id) if t["status"] == "chronic"]
+    chronic = d["chronic"]
 
     # A "0% resolution rate" computed from zero cases is not a measurement; it
     # reads as a failing grade the data cannot support. Say so instead.
-    resolved_total = len(_resolved_invs(session, product_id))
+    resolved_total = len(d["invs"])
     headline = (f"This week: {_n(len(new_problems), 'new problem')}, "
                 f"{_n(len(fixes_verified), 'fix')} verified, "
                 f"{_n(len(regressions), 'regression')}.")
@@ -142,3 +154,18 @@ def weekly_brief(session: Session, as_of: datetime | None = None,
         "fix_next": fix_next,
         "lines": lines[:5],
     }
+
+
+def weekly_brief(session: Session, as_of: datetime | None = None,
+                 product_id: int | None = None) -> dict:
+    now = as_of or datetime.now(timezone.utc)
+    data = _load(session, None if product_id is None else [product_id], now)
+    return _compose(data[product_id], now)
+
+
+def weekly_briefs(session: Session, product_ids: list[int],
+                  as_of: datetime | None = None) -> dict[int, dict]:
+    """`weekly_brief` for many products with the same, fixed number of queries."""
+    now = as_of or datetime.now(timezone.utc)
+    data = _load(session, list(product_ids), now)
+    return {pid: _compose(data[pid], now) for pid in product_ids}

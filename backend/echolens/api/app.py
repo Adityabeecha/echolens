@@ -140,7 +140,23 @@ app.add_middleware(
 
 # ── serializers ────────────────────────────────────────────────────────
 
-def _anomaly_headline(session, a: AnomalyEvent) -> str:
+def _top_theme_surges(session, anomalies: list[AnomalyEvent]) -> dict:
+    """product_id -> its loudest theme surge, for every product that has a
+    negative-review spike in `anomalies`. One query instead of one per spike."""
+    pids = {a.product_id for a in anomalies if a.type == "negative_review_spike"}
+    if not pids:
+        return {}
+    out: dict = {}
+    stmt = select(AnomalyEvent).where(AnomalyEvent.type == "theme_volume_surge")
+    if None not in pids:
+        stmt = stmt.where(AnomalyEvent.product_id.in_(pids))
+    for t in session.scalars(stmt.order_by(AnomalyEvent.z.desc(), AnomalyEvent.id)).all():
+        out.setdefault(t.product_id, t)
+        out.setdefault(None, t)  # an unscoped spike takes the workspace's loudest
+    return out
+
+
+def _anomaly_headline(session, a: AnomalyEvent, top_themes: dict | None = None) -> str:
     """A PM-readable problem statement, not a metric name. The metric + z stay as
     secondary metadata on the card."""
     metric = (a.metric or "").strip()
@@ -160,10 +176,13 @@ def _anomaly_headline(session, a: AnomalyEvent) -> str:
         return "Average rating falling"
     if a.type == "negative_review_spike":
         # name the theme driving it when a matching theme surge was detected
-        stmt = select(AnomalyEvent).where(AnomalyEvent.type == "theme_volume_surge")
-        if a.product_id is not None:
-            stmt = stmt.where(AnomalyEvent.product_id == a.product_id)
-        theme = session.scalars(stmt.order_by(AnomalyEvent.z.desc())).first()
+        if top_themes is not None:
+            theme = top_themes.get(a.product_id)
+        else:
+            stmt = select(AnomalyEvent).where(AnomalyEvent.type == "theme_volume_surge")
+            if a.product_id is not None:
+                stmt = stmt.where(AnomalyEvent.product_id == a.product_id)
+            theme = session.scalars(stmt.order_by(AnomalyEvent.z.desc())).first()
         if theme is not None:
             label = (theme.metric or "").split(" share of")[0].strip()
             if label:
@@ -172,11 +191,11 @@ def _anomaly_headline(session, a: AnomalyEvent) -> str:
     return metric or "Signal detected"
 
 
-def _anomaly_dict(session, a: AnomalyEvent, td=None, inv=None) -> dict:
+def _anomaly_dict(session, a: AnomalyEvent, td=None, inv=None, top_themes=None) -> dict:
     return {
         "slug": a.slug, "type": a.type, "metric": a.metric, "delta": a.delta,
         "z": a.z, "window": a.window, "description": a.description, "status": a.status,
-        "headline": _anomaly_headline(session, a), "product_id": a.product_id,
+        "headline": _anomaly_headline(session, a, top_themes), "product_id": a.product_id,
         "triage": None if td is None else {
             "decision": td.decision, "reason": td.reason, "budget_tier": td.budget_tier,
             "merge_into_anomaly_id": td.merge_into_anomaly_id,
@@ -198,7 +217,8 @@ def _anomaly_dicts(session, anomalies: list[AnomalyEvent]) -> list[dict]:
     for row in session.scalars(select(Investigation).where(
             Investigation.anomaly_id.in_(ids)).order_by(Investigation.id)).all():
         investigations[row.anomaly_id] = row
-    return [_anomaly_dict(session, a, decisions.get(a.id), investigations.get(a.id))
+    top_themes = _top_theme_surges(session, anomalies)
+    return [_anomaly_dict(session, a, decisions.get(a.id), investigations.get(a.id), top_themes)
             for a in anomalies]
 
 
