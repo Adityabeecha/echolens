@@ -96,5 +96,5 @@ def test_ask_ranking_answers_from_signals_without_a_model(session):
     out = route(session, "What's our biggest unresolved complaint?")
     assert out["type"] == "answer"
     assert out.get("grounded") is True
-    assert "strongest signal" in out["text"]
+    assert "strongest incident" in out["text"]
     assert "investigated yet" in out["text"]

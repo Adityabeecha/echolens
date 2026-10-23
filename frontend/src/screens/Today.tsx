@@ -190,7 +190,7 @@ export function Today({
                   {loading
                     ? "Reading today's signals…"
                     : needsYou.length + staleSources.length === 0 && untriaged > 0
-                    ? `${untriaged} ${plural(untriaged, "signal")} waiting for triage`
+                    ? `${untriaged} ${plural(untriaged, "incident")} waiting for triage`
                     : needsYou.length + staleSources.length === 0
                     ? "Everything important is moving"
                     : `${needsYou.length + staleSources.length} ${plural(needsYou.length + staleSources.length, "decision")} waiting`}
@@ -233,7 +233,7 @@ export function Today({
               ) : needsYou.length === 0 && staleSources.length === 0 ? (
                 untriaged > 0 ? (
                   <ActionRow
-                    title={`${untriaged} ${plural(untriaged, "signal")} detected, not yet investigated`}
+                    title={`${untriaged} ${plural(untriaged, "incident")} detected, not yet investigated`}
                     detail="Spikes and rising complaints EchoLens noticed. Choose which become cases."
                     action="Review signals"
                     onAction={() => onGoCases("all")}
@@ -504,14 +504,14 @@ function ScoreStrip({
             style={{ fontSize: T.xl, fontWeight: 700, color: band.color, lineHeight: 1 }}>
             {Math.round(me.health)}
           </span>
-          {me.has_data && delta !== 0 && (
+          {me.has_data && delta != null && delta !== 0 && (
             <span
               title="Share of reviews that are negative, last 7 days vs the prior month"
               style={{ display: "inline-flex", alignItems: "center", gap: 2,
                        fontFamily: mono, fontSize: T.sm,
                        color: delta > 0 ? C.bad : C.good, whiteSpace: "nowrap" }}
             >
-              <Icon name={delta > 0 ? "arrowUp" : "arrowDown"} size={12} />
+              negative reviews <Icon name={delta > 0 ? "arrowUp" : "arrowDown"} size={12} />
               {Math.round(Math.abs(delta))} pts
             </span>
           )}

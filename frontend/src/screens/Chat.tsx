@@ -20,6 +20,7 @@ interface Turn {
   nextStep?: ChatNextStep | null;
   /** Set on an answer whose "Start an investigation" card was used. */
   launchedId?: number;
+  queued?: boolean;
   launchError?: string;
 }
 
@@ -129,6 +130,25 @@ export function Chat({ onOpenInvestigation, productName }: {
     }
   };
 
+  const startInvestigation = async (question: string, slug: string | undefined, fromTurn: number) => {
+    if (!slug) return send(question, true, fromTurn);
+    if (busy) return;
+    setBusy(true);
+    try {
+      const result = await api.queueThemes([slug], { [slug]: question });
+      if (!alive.current) return;
+      const item = result.queued[0] ?? result.already[0];
+      if (!item) throw new Error("No queue entry returned");
+      setTurns((t) => t.map((x, i) => i === fromTurn
+        ? { ...x, queued: true, launchedId: item.investigation_id ?? undefined, launchError: undefined } : x));
+    } catch {
+      if (alive.current) setTurns((t) => t.map((x, i) => i === fromTurn
+        ? { ...x, launchError: "Couldn't queue the investigation. Please try again." } : x));
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <ScreenHeader title="Ask" product={productName} subtitle="Answers grounded in your own cases" />
@@ -156,7 +176,7 @@ export function Chat({ onOpenInvestigation, productName }: {
         <div style={{ display: "flex", flexDirection: "column", gap: S[4], maxWidth: 720 }}>
           {turns.map((t, i) => (
             <Bubble key={i} turn={t} onOpenInvestigation={onOpenInvestigation}
-              onInvestigate={(q) => send(q, true, i)} onRetry={(q) => send(q)} busy={busy} />
+              onInvestigate={(q, slug) => startInvestigation(q, slug, i)} onRetry={(q) => send(q)} busy={busy} />
           ))}
           {busy && <Progress steps={steps} />}
         </div>
@@ -243,9 +263,10 @@ function BasisBadge({ basis, onOpen }: { basis: ChatBasis; onOpen: (id: number) 
 }
 
 /** The next step for an answer no case backs: start one, or see why you can't. */
-function InvestigateCard({ step, launchedId, launchError, busy, onStart, onOpen }: {
+function InvestigateCard({ step, launchedId, queued, launchError, busy, onStart, onOpen }: {
   step: ChatNextStep;
   launchedId?: number;
+  queued?: boolean;
   launchError?: string;
   busy: boolean;
   onStart: () => void;
@@ -263,6 +284,8 @@ function InvestigateCard({ step, launchedId, launchError, busy, onStart, onOpen 
           style={{ alignSelf: "flex-start", fontSize: T.sm }}>
           <Icon name="play" size={12} /> Case #{launchedId} is running — watch it live
         </button>
+      ) : queued ? (
+        <div role="status" style={{ fontSize: T.sm, color: C.muted }}>Queued for investigation. Track it in Cases.</div>
       ) : step.allowed ? (
         <button onClick={onStart} disabled={busy} className="el-btn el-btn--primary"
           style={{ alignSelf: "flex-start", borderRadius: R.control, padding: `${S[2]} ${S[3]}`,
@@ -284,7 +307,7 @@ function InvestigateCard({ step, launchedId, launchError, busy, onStart, onOpen 
 function Bubble({ turn, onOpenInvestigation, onInvestigate, onRetry, busy }: {
   turn: Turn;
   onOpenInvestigation: (id: number) => void;
-  onInvestigate?: (question: string) => void;
+  onInvestigate?: (question: string, slug?: string) => void;
   onRetry: (question: string) => void;
   busy: boolean;
 }) {
@@ -330,11 +353,11 @@ function Bubble({ turn, onOpenInvestigation, onInvestigate, onRetry, busy }: {
         </button>
       )}
       {!you && turn.nextStep && turn.question && onInvestigate && (
-        <InvestigateCard step={turn.nextStep} launchedId={turn.launchedId}
+        <InvestigateCard step={turn.nextStep} launchedId={turn.launchedId} queued={turn.queued}
           launchError={turn.launchError} busy={busy}
-          onStart={() => onInvestigate(turn.question!)} onOpen={onOpenInvestigation} />
+          onStart={() => onInvestigate(turn.nextStep!.question, turn.nextStep!.slug)} onOpen={onOpenInvestigation} />
       )}
-      {!you && !turn.nextStep && turn.canInvestigate && canReview() && turn.question && onInvestigate && (
+      {!you && turn.nextStep === undefined && turn.canInvestigate && canReview() && turn.question && onInvestigate && (
         turn.launchedId != null ? (
           <button onClick={() => onOpenInvestigation(turn.launchedId!)} className="el-btn el-btn--ghost"
             style={{ marginTop: S[2], fontSize: T.sm }}>

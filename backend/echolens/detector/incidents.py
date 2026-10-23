@@ -95,6 +95,56 @@ def group(anomalies: list[AnomalyEvent]) -> list[list[AnomalyEvent]]:
     return out
 
 
+def waiting_groups(session: Session, product_ids: list[int] | None = None) -> list[list[AnomalyEvent]]:
+    """The live Cases decisions, batched across products for portfolio/Ask.
+
+    Match signal_rows eligibility: no case, no live queue entry, no latest
+    ignore/merge decision, no muted theme. Do not use status=pending: status
+    alone neither excludes a queued pick nor captures every waiting signal.
+    """
+    from sqlalchemy import func
+    from echolens.db.models import Investigation, QueuedInvestigation, ThemeOverride
+    from echolens.themes.overrides import is_muted_slug
+
+    latest = (select(TriageDecision.decision)
+              .where(TriageDecision.anomaly_id == AnomalyEvent.id)
+              .order_by(TriageDecision.id.desc()).limit(1).scalar_subquery())
+    stmt = select(AnomalyEvent).where(
+        AnomalyEvent.merged_into_id.is_(None),
+        ~select(Investigation.id).where(Investigation.anomaly_id == AnomalyEvent.id).exists(),
+        ~select(QueuedInvestigation.id).where(
+            QueuedInvestigation.anomaly_id == AnomalyEvent.id,
+            QueuedInvestigation.status.in_(("queued", "running"))).exists(),
+        func.coalesce(latest, "").not_in(("ignore", "merge")))
+    overrides = select(ThemeOverride).where(ThemeOverride.muted == True)  # noqa: E712
+    if product_ids is not None:
+        stmt = stmt.where(AnomalyEvent.product_id.in_(product_ids))
+        overrides = overrides.where(ThemeOverride.product_id.in_(product_ids))
+    muted: dict[int, list[set[str]]] = {}
+    for o in session.scalars(overrides).all():
+        if o.product_id is not None:
+            muted.setdefault(o.product_id, []).append(slug_words(o.slug))
+    rows = [a for a in session.scalars(stmt).all()
+            if a.type not in THEMED or not is_muted_slug(a.slug, muted.get(a.product_id, []))]
+    groups = group(rows)
+    # Same severity thresholds as Cases; compare incidents and singletons together.
+    def strength(members):
+        z = members[0].z or 0.0
+        band = 3 if abs(z) >= 3 else 2 if abs(z) >= 2 else 1
+        return -band, -z, members[0].id
+    return sorted(groups, key=strength)
+
+
+def waiting_rows(session: Session, product_id: int | None = None) -> list[dict]:
+    """One lead/title/queue slug per incident, including standalone signals."""
+    from echolens.cases import _headline
+    return [{"id": members[0].id, "slug": members[0].slug,
+             "title": _headline(members[0]), "metric": members[0].metric,
+             "z": members[0].z, "members": [m.slug for m in members],
+             "member_topics": [f"{_headline(m)} {m.metric or ''}" for m in members]}
+            for members in waiting_groups(session, [product_id] if product_id is not None else None)]
+
+
 # ── intents per signal ──────────────────────────────────────────────────
 
 def _matcher(words: set[str]):

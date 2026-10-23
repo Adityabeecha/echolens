@@ -130,18 +130,7 @@ export function Cases({
   // share one selection and one commit, instead of two lists with two buttons.
   const signals = view.data?.signals ?? [];
   const SEV_RANK: Record<string, number> = { high: 3, medium: 2, low: 1 };
-  // Strongest first: severity band, then how far past normal (z).
-  // Two signals with the same title read as one signal listed twice (the demo
-  // seeds a 1-star spike the detector also finds), so keep only the strongest.
-  const seenTitles = new Set<string>();
-  const liveSignals = signals.filter((s) => !s.dismissed).sort((a, b) =>
-    (SEV_RANK[signalSeverity(b)] ?? 0) - (SEV_RANK[signalSeverity(a)] ?? 0) || b.z - a.z)
-    .filter((s) => {
-      const key = s.title.trim().toLowerCase();
-      if (seenTitles.has(key)) return false;
-      seenTitles.add(key);
-      return true;
-    });
+  const liveSignals = signals.filter((s) => !s.dismissed);
   const dismissedSignals = signals.filter((s) => s.dismissed);
   const allThemes = candidates.data?.candidates ?? [];
   const themes = allThemes.filter((c) => !c.existing);
@@ -162,6 +151,12 @@ export function Cases({
   const showIntent = (c?: IntentCounts | null) => intentMatches(c, intent);
   const visIncidents = incidents.filter((i) => showIntent(i.intents));
   const visSignals = loneSignals.filter((s) => showIntent(s.intents));
+  // One ordering across both shapes, using the incident lead's strongest z.
+  const detected = [
+    ...visIncidents.map((incident) => ({ z: incident.z, incident, signal: null })),
+    ...visSignals.map((signal) => ({ z: signal.z, signal, incident: null })),
+  ].sort((a, b) =>
+    SEV_RANK[signalSeverity(b)] - SEV_RANK[signalSeverity(a)] || b.z - a.z);
   const visThemes = themes.filter((t) => showIntent(t.intents));
   const visRequests = requests.filter((t) => showIntent(t.intents));
   const hiddenByIntent = intent
@@ -419,14 +414,13 @@ export function Cases({
                   </Label>
                   <div style={{ display: "flex", flexDirection: "column", gap: S[2],
                                 marginBottom: S[4] }}>
-                    {visIncidents.map((inc) => (
+                    {detected.map(({ incident: inc, signal: s }) => inc ? (
                       <IncidentCard key={inc.key} incident={inc}
                                     members={inc.members.map((m) => bySlug.get(m)).filter(
                                       (m): m is SignalRow => !!m)}
                                     selected={!!selected[inc.lead]}
                                     onToggle={() => toggle(inc.lead, inc.title)} />
-                    ))}
-                    {visSignals.map((s) => (
+                    ) : s && (
                       <SignalCard key={s.slug} signal={s} selected={!!selected[s.slug]}
                                   onToggle={() => toggle(s.slug, s.title)} />
                     ))}
@@ -581,7 +575,7 @@ function emptyBody(tab: string, filtered: boolean, product: string | null, signa
 }
 
 /** Signals carry no severity field; derive a band from z so the sort is meaningful. */
-function signalSeverity(s: SignalRow): string {
+function signalSeverity(s: { z: number }): string {
   const z = Math.abs(s.z);
   return z >= 3 ? "high" : z >= 2 ? "medium" : "low";
 }
@@ -681,7 +675,7 @@ function ThemeCard({ theme, selected, onToggle, menu }: {
                 aria-expanded={open}
                 style={{ fontFamily: mono, fontSize: T.micro, color: C.dim, padding: `0 ${S[1]}` }}>
                 <Icon name={open ? "chevronDown" : "chevronRight"} size={11} />
-                {open ? "hide examples" : `show ${theme.verbatims.length} example reviews`}
+                {open ? "hide examples" : `show ${theme.verbatims.length} example ${plural(theme.verbatims.length, "review")}`}
               </button>
             )}
           </div>

@@ -3369,6 +3369,14 @@ def _chat_next_step(resp: dict, user: dict, message: str) -> dict | None:
                   "Sign in with a reviewer account to open one.")
     elif not allowed:
         reason = "Starting an investigation needs reviewer access. Ask an admin to upgrade your role."
+    signals = resp.get("signals") or []
+    if basis.get("kind") == "signals" and signals:
+        lead = signals[0]
+        return {"kind": "investigate", "question": lead["title"], "slug": lead["slug"],
+                "allowed": allowed, "reason": reason}
+    from echolens.chat import RANK_MARKERS
+    if any(marker in message.lower() for marker in RANK_MARKERS):
+        return None  # A ranking question is not a topic to investigate.
     return {"kind": "investigate", "question": message.strip()[:300],
             "allowed": allowed, "reason": reason}
 

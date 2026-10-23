@@ -107,3 +107,46 @@ export function dedupeEvidenceIds(text: string | null | undefined): string {
   return text.replace(/ev_\d+(?:\s*,\s*ev_\d+)+/g, (run) =>
     Array.from(new Set(run.split(/\s*,\s*/))).join(", "));
 }
+
+
+/** A readable retrieval call; callers retain the original in a title/details. */
+export function describeToolCall(raw: string): string {
+  const match = raw.match(/^([a-z_]+)(?:\((.*)\))?$/s);
+  const name = match?.[1] ?? raw.split("(")[0].trim();
+  let args: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(match?.[2] ?? "{}");
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) args = parsed;
+  } catch { /* Historical bare or malformed calls still get a readable name. */ }
+  const names: Record<string, string> = {
+    search_reviews: "Search reviews", search_github_issues: "Search GitHub issues",
+    search_reddit: "Search Reddit", review_stats: "Count reviews",
+    compare_periods: "Compare periods", get_release_notes: "Read release notes",
+    compare_cohorts: "Compare cohorts", analyze_trend: "Analyze trend",
+  };
+  const words = name.replace(/_/g, " ");
+  let label = names[name] ?? words.charAt(0).toUpperCase() + words.slice(1);
+  const query = args.query ?? args.term;
+  if (typeof query === "string" && query.trim()) label += ` for '${query}'`;
+  const parts = [label];
+  if (typeof args.rating_min === "number" || typeof args.rating_max === "number") {
+    const lo = typeof args.rating_min === "number" ? args.rating_min : 1;
+    const hi = typeof args.rating_max === "number" ? args.rating_max : 5;
+    parts.push(lo === hi ? `${lo}\u2605` : `${lo}\u2013${hi}\u2605`);
+  }
+  const date = (value: unknown) => {
+    if (typeof value !== "string") return null;
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+  const start = date(args.date_from), end = date(args.date_to);
+  const day = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  if (start && end) {
+    const sameMonth = start.getUTCFullYear() === end.getUTCFullYear() && start.getUTCMonth() === end.getUTCMonth();
+    parts.push(`${day(start)}\u2013${sameMonth ? end.getUTCDate() : day(end)}`);
+  } else if (start) parts.push(`from ${day(start)}`);
+  else if (end) parts.push(`through ${day(end)}`);
+  if (args.version_prefix) parts.push(`version ${args.version_prefix}`);
+  if (args.os_version) parts.push(`OS ${args.os_version}`);
+  return parts.join(", ");
+}

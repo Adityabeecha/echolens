@@ -859,6 +859,12 @@ export interface QueueItem {
   status: "queued" | "deferred";
   note: string | null;
 }
+export interface QueueSelection {
+  status: "queued" | "already";
+  slug: string;
+  queue_id: number | null;
+  investigation_id: number | null;
+}
 export interface QueueView {
   running: { queue_id: number; title: string; investigation_id: number | null }[];
   queued: QueueItem[];
@@ -995,7 +1001,7 @@ export interface PortfolioProduct {
   regressions: number;
   untriaged: number;
   negative_rate_pct: number;
-  negative_rate_delta_pct: number;
+  negative_rate_delta_pct: number | null;
   confirmed_fixes: number;
   has_data: boolean;
 }
@@ -1061,6 +1067,8 @@ export interface ChatBasis {
 export interface ChatNextStep {
   kind: "investigate";
   question: string;
+  /** Queue this existing incident lead through the Cases path. */
+  slug?: string;
   allowed: boolean;
   reason: string | null;
 }
@@ -1195,7 +1203,7 @@ export const api = {
   feedCandidates: (refresh = false) =>
     get<CandidatesResp>(scoped(`/feed/candidates${refresh ? "?refresh=true" : ""}`)),
   queueThemes: (slugs: string[], statements: Record<string, string>, tier = "quick") =>
-    post<{ queued: unknown[]; already: unknown[]; queue: QueueView; summary: string }>(
+    post<{ queued: QueueSelection[]; already: QueueSelection[]; queue: QueueView; summary: string }>(
       "/queue/themes", { slugs, statements, tier, product_id: getActiveProduct() }),
   queue: () => get<QueueView>(scoped("/queue")),
   cancelQueued: (queueId: number) => del<{ cancelled: number }>(scoped(`/queue/${queueId}`)),
