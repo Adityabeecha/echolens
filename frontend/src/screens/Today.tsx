@@ -76,7 +76,10 @@ export function Today({
   // Detected but not yet triaged. Today used to say "Nothing needs you" while
   // Cases, on the same data, said "17 signals waiting for you".
   const untriaged = me?.untriaged ?? 0;
-  const needsYou = rows.filter((r) => statusMeta(r.status).needsYou);
+  // Most important first. The list used to keep the server's date order, so a
+  // weak low-severity case opened this morning could sit above a severe one:
+  // severity score, then how many users it touches, then recency.
+  const needsYou = rows.filter((r) => statusMeta(r.status).needsYou).sort(byUrgency);
   const running = rows.filter((r) => r.status === "running");
   const queued = rows.filter((r) => r.status === "queued");
 
@@ -838,6 +841,15 @@ function FixConfirmedCard({ fix, onOpenCase, onDismissed }: {
       </div>
     </div>
   );
+}
+
+/** Needs-you order: severity score, then affected share, then newest. Cases
+ *  without a measured severity sort after every measured one. */
+function byUrgency(a: CaseRow, b: CaseRow): number {
+  const sev = (r: CaseRow) => r.severity_score ?? -1;
+  const pct = (r: CaseRow) => r.impact?.affected_pct ?? -1;
+  const at = (r: CaseRow) => (r.opened_at ? Date.parse(r.opened_at) : 0);
+  return sev(b) - sev(a) || pct(b) - pct(a) || at(b) - at(a);
 }
 
 /** Turn "…case #12…" into a link, so the brief is navigable prose. */
