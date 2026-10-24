@@ -821,7 +821,9 @@ function FixConfirmedCard({ fix, onOpenCase, onDismissed }: {
       <div style={{ display: "flex", alignItems: "baseline", gap: S[2], flexWrap: "wrap" }}>
         <Icon name="check" size={14} style={{ color: C.good, flex: "none" }} />
         <button onClick={() => onOpenCase(fix.investigation_id, "resolved")} className="el-btn"
-          style={{ fontSize: T.md, fontWeight: 600, color: C.text, textAlign: "left" }}>
+          style={{ fontSize: T.md, fontWeight: 600, color: C.text, textAlign: "left",
+                   // .el-btn is nowrap; a long headline must wrap, not widen Today.
+                   whiteSpace: "normal", overflowWrap: "anywhere", flex: "1 1 0", minWidth: 0 }}>
           {fix.headline}
         </button>
         <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint }}>
