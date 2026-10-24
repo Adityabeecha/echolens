@@ -28,7 +28,7 @@ export function CaseCard({
   onOpen?: (row: CaseRow) => void;
   /** Runs the status-specific primary action. Falls back to opening the case. */
   onAction?: (row: CaseRow) => void;
-  /** One line, for dense action queues. */
+  /** Denser spacing for action queues. */
   compact?: boolean;
   busy?: boolean;
 }) {
@@ -58,12 +58,12 @@ export function CaseCard({
             <button type="button" onClick={open}
               // Space must activate the card without also scrolling the page.
               onKeyDown={(e) => { if (e.key === " ") { e.preventDefault(); open(); } }}
-              className={`el-case-title${compact ? " el-truncate" : ""}`}>
+              className="el-case-title el-ui-forms-case-title" title={row.title}>
               {row.title}
             </button>
           ) : (
             <div
-              className={compact ? "el-truncate" : undefined}
+              className="el-ui-forms-case-title" title={row.title}
               style={{
                 fontSize: compact ? T.base : T.md, fontWeight: 600, color: C.text,
                 lineHeight: "var(--el-lh-snug)"
