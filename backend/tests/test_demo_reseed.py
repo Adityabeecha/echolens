@@ -143,11 +143,20 @@ def test_refresh_is_a_noop_while_fresh_and_force_is_admin_only(Session_):
 def test_deleting_a_product_also_removes_its_theme_overrides(Session_):
     from fastapi.testclient import TestClient
     from echolens.api.app import app
+    from echolens.db.models import CaseMerge
     with Session_() as s:
         pid = _real_product(s)
+        a = s.scalars(select(AnomalyEvent).where(AnomalyEvent.product_id == pid)).one()
+        dup = Investigation(anomaly_id=a.id, status="merged", budget_tier="standard", product_id=pid)
+        s.add(dup)
+        s.flush()
+        keep = s.scalars(select(Investigation).where(Investigation.product_id == pid,
+                                                     Investigation.status == "resolved")).one()
+        s.add(CaseMerge(source_id=dup.id, target_id=keep.id))
         s.commit()
     r = TestClient(app).delete(f"/products/{pid}?confirm=Acme")
     assert r.status_code == 200, r.text
     with Session_() as s:
         assert s.scalar(select(func.count(ThemeOverride.id))) == 0
+        assert s.scalar(select(func.count(CaseMerge.id))) == 0
         assert s.scalar(select(func.count(Review.id))) == 0

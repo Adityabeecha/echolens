@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from echolens.db.models import (
-    AnomalyEvent, CollectorState, Comment, EvidenceRow, FeedbackEntry, Finding,
+    AnomalyEvent, CaseMerge, CollectorState, Comment, EvidenceRow, FeedbackEntry, Finding,
     FindingDecision, FixWatch, HypothesisRow, Investigation, Issue, KnowledgeEdge,
     LLMCall, Mention, Post, Product, QueuedInvestigation, Recommendation, Release,
     Review, ReviewFeedback, ReviewRequest, SavedView, SentAlert, ShareLink,
@@ -58,6 +58,9 @@ def purge_product_data(session: Session, product: Product) -> None:
     _purge(Comment, Comment.investigation_id, inv_ids)
     _purge(ReviewRequest, ReviewRequest.investigation_id, inv_ids)
     _purge(QueuedInvestigation, QueuedInvestigation.investigation_id, inv_ids)
+    # Merge links point at investigations from both ends.
+    _purge(CaseMerge, CaseMerge.source_id, inv_ids)
+    _purge(CaseMerge, CaseMerge.target_id, inv_ids)
     session.flush()
     for model in (FixWatch, Finding, Investigation, AnomalyEvent, CollectorState,
                   QueuedInvestigation, KnowledgeEdge, Comment, Mention, ReviewRequest, SavedView,

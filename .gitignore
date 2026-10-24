@@ -51,3 +51,11 @@ PRD.md
 ROADMAP.md
 echolens-ui-build/
 skills-lock.json
+
+# Working material that stays local: session backups and past review output
+memorytocontinue/
+typesafe_review_artifacts/
+typesafe_review_*.json
+typesafe_review_*.md
+typesafe_redactions.json
+TYPESAFE_REVIEW_SUMMARY.md
