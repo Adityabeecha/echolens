@@ -8,6 +8,16 @@ import { EmptyState, Label, Rich } from "../../ui";
 import { Icon } from "../../components/Icon";
 import { ExtendCard, ProductDecisionCard, RecommendationRow, ShareCard } from "./CaseActions";
 
+/** Labels the backend adds to a finding (investigator/graph.py): how strongly
+ *  the cause is supported, and claims removed from the prose as unproven. */
+interface SupportLabels {
+  support_level?: "supported" | "single_channel";
+  support_label?: string;
+  single_channel_note?: string;
+  working_hypotheses?: string[];
+  working_hypothesis_label?: string;
+}
+
 interface Props {
   inv: Investigation;
   onOpenEvidence: (e: Evidence) => void;
@@ -56,7 +66,7 @@ export function FindingTab({
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const f = inv.finding;
+  const f = inv.finding as (Investigation["finding"] & SupportLabels) | null;
   if (!f) {
     return (
       <div style={{ flex: 1, overflow: "auto", padding: `${S[6]} ${S[6]}` }}>
@@ -168,6 +178,18 @@ export function FindingTab({
         <div style={{ padding: `${S[5]} ${S[6]}`, background: C.card, border: `1px solid ${C.border2}`,
                       borderRadius: R.card }}>
           <Label style={{ letterSpacing: ".12em", marginBottom: S[3] }}>FINDING</Label>
+          {/* Never let a single-channel answer read as the full one. */}
+          {f.support_level === "single_channel" && (
+            <div style={{ marginBottom: S[3], fontSize: T.sm, color: C.text3,
+                          lineHeight: "var(--el-lh-normal)" }}>
+              <span style={{ display: "inline-block", marginRight: S[2], padding: `0 ${S[2]}`,
+                             borderRadius: R.pill, border: `1px solid ${C.accent}`,
+                             color: C.accent, fontWeight: 600 }}>
+                {f.support_label ?? "Supported (single channel)"}
+              </span>
+              {f.single_channel_note}
+            </div>
+          )}
           <div style={{ fontSize: T.xl, fontWeight: 700, lineHeight: "var(--el-lh-snug)",
                         letterSpacing: "-.01em" }}>
             <Rich text={f.summary} />
@@ -175,6 +197,18 @@ export function FindingTab({
           <div style={{ fontSize: T.md, lineHeight: "var(--el-lh-normal)", color: C.text3, marginTop: S[3] }}>
             <Prose text={f.prose} evidence={inv.evidence} onOpenEvidence={onOpenEvidence} />
           </div>
+          {f.working_hypotheses && f.working_hypotheses.length > 0 && (
+            <div style={{ marginTop: S[4], padding: `${S[3]} ${S[4]}`, borderRadius: R.control,
+                          border: `1px dashed ${C.border3}`, background: C.bgRaised }}>
+              <Label style={{ marginBottom: S[2] }}>
+                {(f.working_hypothesis_label ?? "Working hypothesis — not yet supported by evidence").toUpperCase()}
+              </Label>
+              <ul style={{ margin: 0, paddingLeft: S[5], fontSize: T.sm, color: C.muted,
+                           lineHeight: "var(--el-lh-normal)" }}>
+                {f.working_hypotheses.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            </div>
+          )}
           {inv.status !== "resolved" && f.what_would_settle_it && (
             <div style={{ marginTop: S[3], fontSize: T.sm, color: C.muted, lineHeight: "var(--el-lh-normal)" }}>
               <span style={{ color: C.text3 }}>What would settle it:</span> {f.what_would_settle_it}

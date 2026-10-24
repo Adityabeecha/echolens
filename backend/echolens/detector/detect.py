@@ -34,6 +34,16 @@ LOW_VOLUME_PER_DAY = 3
 LOW_VOLUME_RECENT_DAYS = 14
 LOW_VOLUME_BASELINE_DAYS = 56
 
+# Very small apps: under this many reviews a week even across the widened
+# 14d/56d windows, a z-score built from one or two reviews is an anecdote with
+# a number attached. Such signals are dropped, and a theme only surfaces as a
+# "low-volume watch" once WATCH_MIN_REVIEWS distinct reviews name it within
+# WATCH_DAYS — labelled as a watch, never as a measured spike.
+VERY_LOW_PER_WEEK = 10
+MIN_REVIEWS_BEHIND_SIGNAL = 3
+WATCH_DAYS = 14
+WATCH_MIN_REVIEWS = 3
+
 
 def reference_now(session: Session, product: str | None = None) -> datetime:
     """The 'now' we reason from: the latest review timestamp in the corpus. Works
@@ -154,6 +164,9 @@ class Candidate:
     window: str
     description: str
     severity: str = field(default="SEV3")
+    # How many reviews in the recent window the signal rests on. None for
+    # signals that are not built from reviews (issues, posts).
+    support: int | None = None
 
 
 def _severity(z: float) -> str:
@@ -251,6 +264,7 @@ def detect_volume_spike(session: Session, as_of: datetime | None = None,
         description=f"1-star reviews {delta:+.0%} vs trailing {win.baseline}d baseline "
                     f"(z={z}); recent window ends {as_of.date()}.{win.note}",
         severity=_severity(z),
+        support=int(sum(recent)),
     )
 
 
@@ -339,6 +353,7 @@ def detect_rating_drop(session: Session, as_of: datetime | None = None,
         description=f"Average rating fell from {mean_b:.2f}★ to {mean_r:.2f}★ over the last "
                     f"{win.recent} days (z={z}).{win.note}",
         severity=_severity(z),
+        support=sum(len(daily[d]) for d in daily if d > cutoff),
     )
 
 
@@ -375,12 +390,17 @@ def detect_theme_surges(session: Session, as_of: datetime | None = None,
         z, delta = _zscore(recent, baseline)
         if z < SEV3_Z or statistics.mean(recent) < 3:
             continue
+        cutoff = (as_of - timedelta(days=win.recent)).date()
+        hits = sum(1 for r in reviews
+                   if (r.rating or 5) <= 2 and cutoff < r.created_at.date() <= as_of.date()
+                   and match_score(analysis_text(r), terms) > 0)
         out.append(Candidate(
             slug=f"auto-theme-{term.replace(' ', '-')}", type="theme_volume_surge",
             metric=f"{label} share of negative reviews", delta=delta, z=z, window=f"{win.recent}d",
             description=f"{label}: {statistics.mean(recent):.0f}% of recent negatives vs "
                         f"{statistics.mean(baseline):.0f}% baseline (z={z}).{win.note}",
             severity=_severity(z),
+            support=hits,
         ))
 
     # POST_TERMS are Lumo-demo specific; skip them for a real configured product.
@@ -454,6 +474,79 @@ def detect_issue_velocity(session: Session, as_of: datetime | None = None,
             # noise gate exempts SEV1/SEV2 from the z check — so the floor
             # laundered a weak signal into one that bypassed the gate.
             severity=_severity(z),
+        ))
+    return out
+
+
+def very_low_volume(session: Session, as_of: datetime, win: Windows,
+                    product: str | None = None) -> bool:
+    """Under VERY_LOW_PER_WEEK reviews a week across the widened windows."""
+    if not win.low_volume:
+        return False
+    span = win.baseline + win.recent
+    stmt = select(func.count(Review.id)).where(
+        Review.created_at > as_of - timedelta(days=span), Review.created_at <= as_of)
+    if product:
+        stmt = stmt.where(Review.product == product)
+    n = session.scalar(stmt) or 0
+    return n / (span / 7) < VERY_LOW_PER_WEEK
+
+
+def _is_complaint(r: Review) -> bool:
+    from echolens.intent import BUG, UX_CONFUSION, classify
+    text = analysis_text(r)
+    return (r.rating or 5) <= 2 or classify(text, r.rating) in (BUG, UX_CONFUSION)
+
+
+def detect_low_volume_watch(session: Session, as_of: datetime | None = None,
+                            product: str | None = None,
+                            skip_terms: set[str] | None = None) -> list[Candidate]:
+    """A theme named by >= WATCH_MIN_REVIEWS distinct complaint reviews in the
+    last WATCH_DAYS. Counting, not a z-score: at this volume there is no
+    baseline to deviate from, so it says how many people said it — and that it
+    is a watch."""
+    from echolens.investigator.guards import normalise_quote
+    from echolens.textkit import top_themes, tokenize
+
+    as_of = as_of or reference_now(session, product)
+    start = as_of - timedelta(days=WATCH_DAYS)
+    stmt = select(Review).where(Review.created_at > start, Review.created_at <= as_of)
+    if product:
+        stmt = stmt.where(Review.product == product)
+    complaints = [r for r in session.scalars(stmt).all() if _is_complaint(r)]
+    # One person pasting the same words twice is one voice.
+    distinct: dict[str, Review] = {}
+    for r in complaints:
+        key = normalise_quote(analysis_text(r))
+        if key:
+            distinct.setdefault(key, r)
+    texts = {k: analysis_text(r) for k, r in distinct.items()}
+    if len(texts) < WATCH_MIN_REVIEWS:
+        return []
+
+    from echolens.config import settings
+    themes = (list(settings.extra_theme_terms) if settings.extra_theme_terms
+              else [t["label"] for t in top_themes(list(texts.values()), k=8)])
+    out: list[Candidate] = []
+    claimed: set[str] = set()
+    for term in themes:
+        words = set(tokenize(term))
+        if not words or words & claimed or term in (skip_terms or set()):
+            continue
+        terms = terms_of(term)
+        named = sum(1 for t in texts.values() if match_score(t, terms) > 0)
+        if named < WATCH_MIN_REVIEWS:
+            continue
+        claimed |= words
+        out.append(Candidate(
+            slug=f"auto-watch-{term.replace(' ', '-')}", type="low_volume_watch",
+            metric=f"'{term}' complaints (low-volume watch)", delta=0.0, z=0.0,
+            window=f"{WATCH_DAYS}d",
+            description=(f"Low-volume watch: {named} distinct reviews mention '{term}' in the last "
+                         f"{WATCH_DAYS} days. This product has fewer than {VERY_LOW_PER_WEEK} "
+                         "reviews a week, too few for a statistical baseline — this is a watch, "
+                         "not a measured spike."),
+            severity="SEV3", support=named,
         ))
     return out
 
@@ -540,6 +633,14 @@ def scan(session: Session, as_of: datetime | None = None, persist: bool = True,
         candidates.append(drop)
     candidates += detect_theme_surges(session, as_of, win, product)
     candidates += detect_issue_velocity(session, as_of, win, product)
+    if very_low_volume(session, as_of, win, product):
+        # A review-based z-score resting on one or two reviews is dropped; a
+        # theme named by enough distinct reviews surfaces as a labelled watch.
+        candidates = [c for c in candidates
+                      if c.support is None or c.support >= MIN_REVIEWS_BEHIND_SIGNAL]
+        surging = {c.slug[len("auto-theme-"):].replace("-", " ")
+                   for c in candidates if c.slug.startswith("auto-theme-")}
+        candidates += detect_low_volume_watch(session, as_of, product, skip_terms=surging)
     # Noise gate: a weak SEV3 signal (z below threshold) never becomes a case.
     #
     # `c.z >= MIN_CASE_Z`, not `abs(c.z)`. Absolute value let a strong DECLINE
@@ -552,8 +653,10 @@ def scan(session: Session, as_of: datetime | None = None, persist: bool = True,
     # issues in a week off a quiet repo scores 0.57). It is exempted BY TYPE
     # now: it used to buy the exemption by forcing severity=SEV2 on every
     # candidate, which also misreported how bad the signal was.
+    # low_volume_watch carries no z-score at all; its own bar (>= 3 distinct
+    # reviews in 14 days) already gated it.
     candidates = [c for c in candidates
-                  if c.type == "issue_velocity_surge"
+                  if c.type in ("issue_velocity_surge", "low_volume_watch")
                   or c.severity in ("SEV1", "SEV2")
                   or c.z >= MIN_CASE_Z]
     window_start = as_of - timedelta(days=win.recent)
@@ -571,8 +674,10 @@ def scan(session: Session, as_of: datetime | None = None, persist: bool = True,
 
         def unmuted(cands: list[Candidate]) -> list[Candidate]:
             return [c for c in cands
-                    if c.type not in ("theme_volume_surge", "issue_velocity_surge")
-                    or not is_muted_slug(c.slug, muted)]
+                    if c.type not in ("theme_volume_surge", "issue_velocity_surge",
+                                      "low_volume_watch")
+                    # A watch is muted like the theme it watches.
+                    or not is_muted_slug(c.slug.replace("auto-watch-", "auto-theme-", 1), muted)]
 
         if muted:
             candidates = unmuted(candidates)
