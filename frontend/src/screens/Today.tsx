@@ -404,7 +404,11 @@ export function Today({
 
             {/* ── e. what changed ───────────────────────────────────── */}
             <Section title="This week">
-              {brief.data && brief.data.lines.length > 0 ? (
+              {brief.data?.quiet ? (
+                <div style={{ fontSize: T.base, color: C.muted, padding: `${S[4]} ${S[5]}` }}>
+                  Quiet week — nothing new
+                </div>
+              ) : brief.data && brief.data.lines.length > 0 ? (
                 <div style={{ maxWidth: MEASURE, padding: `${S[4]} ${S[5]}`,
                               background: C.card, border: `1px solid ${C.border2}`,
                               borderRadius: R.card,
@@ -805,7 +809,8 @@ function FixConfirmedCard({ fix, onOpenCase, onDismissed }: {
   // The reply drafts live on the case's Engineering tab.
   const reply = () => {
     window.location.hash = formatRoute({ screen: "case", id: fix.investigation_id,
-                                         tab: "engineering", productId: getActiveProduct() });
+                                         tab: "engineering", productId: getActiveProduct(),
+                                         params: { replies: "1" } });
   };
   const dismiss = async () => {
     setBusy(true);

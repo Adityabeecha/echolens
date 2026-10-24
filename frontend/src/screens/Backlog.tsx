@@ -34,7 +34,7 @@ function defenceLine(i: BacklogItem): string {
   const bits = [`${i.severity.band} severity (${i.severity.score.toFixed(2)})`];
   if (i.volume) bits.push(`${i.volume} affected ${plural(i.volume, "review")}`);
   bits.push(`open · ${age(i.persistence_days)}`);
-  if (i.projected.confident) bits.push(`~${i.projected.stars.toFixed(2)}★ recoverable`);
+  if (i.projected.confident) bits.push(`prevents about ${i.projected.stars.toFixed(2)}★ of further drift (30-day rolling rating)`);
   bits.push(effortLabel(i));
   if (i.impact?.overridden) bits.push(`impact ×${i.impact.factor} (set by you)`);
   if (i.segment) bits.push(`×${i.segment.factor} ${i.segment.label.toLowerCase()} (set by you)`);
@@ -227,9 +227,9 @@ export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: P
                      color={plan.committed_days > plan.capacity_days ? C.bad : C.accent}
                      height={7} />
               </div>
-              <Stat label="PROJECTED RECOVERY"
-                    hint="Estimated rating gain if every item in this plan is fixed, based on each finding's share of recent negative reviews."
-                    value={plan.projected_stars > 0 ? `+${plan.projected_stars.toFixed(2)}★` : "—"}
+              <Stat label="FURTHER DRIFT PREVENTED"
+                    hint="Estimated further drift prevented in the 30-day rolling rating if these fixes reduce future complaints. Based on the observed drop, share of negative reviews and confidence. Existing low ratings remain until they age out; this is not an instant rating gain."
+                    value={plan.projected_stars > 0 ? `about ${plan.projected_stars.toFixed(2)}★` : "—"}
                     color={plan.projected_stars > 0 ? C.good : C.muted} />
               {kind !== "requests" && (
                 <Stat label="RESOLUTION RATE"
@@ -359,7 +359,7 @@ function Row({ item, inPlan, busy, canEdit, onToggle, onOpen, note, segments, on
           </button>
           {item.projected.confident && (
             <span style={{ fontFamily: mono, fontSize: T.micro, color: C.good }}>
-              +{item.projected.stars.toFixed(2)}★ if fixed
+              prevents about {item.projected.stars.toFixed(2)}★ of further drift (30-day rolling rating)
             </span>
           )}
         </div>

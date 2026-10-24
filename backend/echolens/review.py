@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from echolens.db.models import (
     AnomalyEvent,
+    CaseMerge,
     EvidenceRow,
     Finding,
     FindingDecision,
@@ -27,13 +28,26 @@ from echolens.llm.client import LLMClient
 from echolens.timeutil import aware_utc
 
 
+class MergedCaseError(ValueError):
+    pass
+
+
+def _reviewable(session: Session, finding: Finding) -> Investigation | None:
+    inv = session.scalars(select(Investigation).where(Investigation.id == finding.investigation_id)
+        .with_for_update().execution_options(populate_existing=True)).first()
+    if inv is not None and (inv.status == "merged" or session.scalars(select(CaseMerge).where(
+            CaseMerge.source_id == inv.id)).first() is not None):
+        raise MergedCaseError("This case was merged; review the destination case instead.")
+    return inv
+
+
 def approve(session: Session, finding: Finding, note: str = "", user_id: int | None = None) -> Finding:
+    inv = _reviewable(session, finding)
     session.add(ReviewFeedback(finding_id=finding.id, action="approve", note=note, user_id=user_id))
     finding.status = "approved"
     # A fresh approval is the re-review a struck-evidence flag asked for (v15).
     if (finding.json or {}).get("needs_review"):
         finding.json = {k: v for k, v in finding.json.items() if k != "needs_review"}
-    inv = session.get(Investigation, finding.investigation_id)
     if inv is not None:
         inv.status = "resolved"
         inv.resolved_at = datetime.now(timezone.utc)
@@ -49,19 +63,20 @@ CHALLENGE_REASONS = {"wrong_cause", "weak_evidence", "wrong_severity", "already_
 
 def record_challenge(session: Session, finding: Finding, note: str,
                      reason: str | None = None, user_id: int | None = None,
-                     tier: str | None = None) -> Investigation:
+                     tier: str | None = None, actual_cause: str | None = None) -> Investigation:
     """The SYNCHRONOUS part of a challenge: record the feedback, mark the finding
     challenged, and create the re-opened investigation ROW (running, not yet
     executed). Returns it so the API can respond immediately and run the loop in
     the background — a full investigation must not block the HTTP request."""
     if not note.strip():
         raise ValueError("a challenge requires a note explaining what to reconsider")
+    old_inv = _reviewable(session, finding)
     if reason is not None and reason not in CHALLENGE_REASONS:
         reason = None
     session.add(ReviewFeedback(finding_id=finding.id, action="challenge", note=note,
-                               user_id=user_id, reason=reason))
+                               user_id=user_id, reason=reason,
+                               actual_cause=(actual_cause or "").strip() or None))
     finding.status = "challenged"
-    old_inv = session.get(Investigation, finding.investigation_id)
     anomaly = session.get(AnomalyEvent, old_inv.anomaly_id)
     anomaly.status = "investigating"
     new_inv = Investigation(anomaly_id=anomaly.id, status="running", opened_by="challenge",
@@ -76,10 +91,11 @@ def record_challenge(session: Session, finding: Finding, note: str,
 def challenge(session: Session, finding: Finding, note: str,
               llm: LLMClient | None = None, on_step=None,
               tier: str | None = None, user_id: int | None = None,
-              reason: str | None = None) -> Investigation:
+              reason: str | None = None, actual_cause: str | None = None) -> Investigation:
     """Record the challenge AND run the re-investigation synchronously (used by
     tests and off-request background workers, never inside a request handler)."""
-    new_inv = record_challenge(session, finding, note, reason=reason, user_id=user_id, tier=tier)
+    new_inv = record_challenge(session, finding, note, reason=reason, user_id=user_id, tier=tier,
+                               actual_cause=actual_cause)
     anomaly = session.get(AnomalyEvent, new_inv.anomaly_id)
     from echolens.investigator.graph import Investigator
     return Investigator(

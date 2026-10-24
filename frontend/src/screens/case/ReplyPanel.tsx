@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import { withToast } from "../../components/Toast";
 import { when } from "../../format";
@@ -23,9 +23,15 @@ async function copy(text: string, ok: string) {
  * Draft only: nothing is posted anywhere. The team copies a draft and pastes it
  * into the store console themselves.
  */
-export function ReplyPanel({ findingId }: { findingId: number }) {
+export function ReplyPanel({ findingId, expand = false }: { findingId: number; expand?: boolean }) {
   const { data, error, loading } = useAsync(() => api.replyDrafts(findingId), [findingId]);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(expand);
+  const root = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!expand) return;
+    setOpen(true);
+    if (!loading) root.current?.scrollIntoView({ block: "start" });
+  }, [expand, loading, findingId]);
 
   if (loading) return null;
   if (error || !data) return null;
@@ -38,7 +44,7 @@ export function ReplyPanel({ findingId }: { findingId: number }) {
     : "These reviewers reported this problem. A holding reply tells them you saw it.";
 
   return (
-    <>
+    <section id="replies" ref={root}>
       <Label style={{ margin: "26px 0 10px" }}>REPLY TO AFFECTED REVIEWERS</Label>
       <div style={{ padding: S[4], background: C.card, border: `1px solid ${C.border2}`, borderRadius: R.card }}>
         {data.total === 0 ? (
@@ -121,7 +127,7 @@ export function ReplyPanel({ findingId }: { findingId: number }) {
           </>
         )}
       </div>
-    </>
+    </section>
   );
 }
 

@@ -64,6 +64,7 @@ export function FindingTab({
   const [challengeOpen, setChallengeOpen] = useState(false);
   const [note, setNote] = useState("");
   const [reason, setReason] = useState("");
+  const [actualCause, setActualCause] = useState("");
   const [busy, setBusy] = useState(false);
 
   const f = inv.finding as (Investigation["finding"] & SupportLabels) | null;
@@ -103,7 +104,7 @@ export function FindingTab({
     if (!note.trim()) return;
     setBusy(true);
     const r = await withToast(
-      () => api.review(f.id, "challenge", note, reason || undefined),
+      () => api.review(f.id, "challenge", note, reason || undefined, actualCause.trim() || undefined),
       { success: "Challenge recorded — a fresh case is re-investigating with your note.",
         failure: "Couldn't submit that challenge" });
     setBusy(false);
@@ -306,6 +307,19 @@ export function FindingTab({
                        fontFamily: "inherit", fontSize: T.base, padding: 10, resize: "vertical",
                        boxSizing: "border-box" }}
             />
+            <label htmlFor="actual-cause" style={{ display: "block", fontSize: T.sm, color: C.muted, marginTop: S[2] }}>
+              What actually caused it? (optional)
+            </label>
+            <textarea id="actual-cause" value={actualCause} maxLength={4000}
+              onChange={(e) => setActualCause(e.target.value)}
+              placeholder="Your team's explanation, if known"
+              style={{ width: "100%", height: 64, background: C.bgRaised,
+                       border: `1px solid ${C.border3}`, borderRadius: R.control, color: C.text,
+                       fontFamily: "inherit", fontSize: T.base, padding: 10, resize: "vertical",
+                       boxSizing: "border-box", marginTop: S[1] }} />
+            <div style={{ fontSize: T.xs, color: C.dim, marginTop: S[1] }}>
+              Saved as a human-provided prior for this theme, to be tested in future investigations.
+            </div>
             <button onClick={submitChallenge} disabled={!note.trim() || busy} className="el-btn el-btn--primary"
               style={{ marginTop: S[2], padding: `${S[2]} ${S[4]}`, borderRadius: R.control, border: "none",
                        background: C.accent, color: C.onAccent, fontSize: T.base, fontWeight: 600,
