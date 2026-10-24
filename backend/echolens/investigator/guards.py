@@ -137,9 +137,43 @@ def _fingerprint(text: str) -> str:
     return " ".join(words)
 
 
-def two_source_rule(hypothesis: dict, evidence: list[dict]) -> bool:
+def normalise_quote(text: str) -> str:
+    """Case, punctuation and spacing folded away: the identity of a quote.
+    "It works fine, no complaints" and "it works fine — no complaints!" are one
+    quote; reordering its words is not (that is the Jaccard check's job)."""
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).split())
+
+
+# ── evidence intake ─────────────────────────────────────────────────────
+
+# A happy review is not a complaint. The assessor could cite a 5★ "works
+# great, love the new sync" as SUPPORT for "the new sync drains battery", and
+# the two-source rule counted it like any other quote. Only these intents —
+# from echolens.intent, the same deterministic classifier the Cases screen
+# uses — carry a complaint cue a 4–5★ review needs before it can support a
+# problem hypothesis.
+COMPLAINT_INTENTS = frozenset({"bug", "ux_confusion"})
+POSITIVE_RATING_MIN = 4
+
+
+def positive_without_complaint(text: str | None, rating) -> bool:
+    """True for a 4–5★ review with no bug or confusion cue in it. Such a review
+    may be COUNTER-evidence for a problem hypothesis, never support for it."""
+    from echolens.intent import classify
+    if not isinstance(rating, int) or rating < POSITIVE_RATING_MIN:
+        return False
+    return classify(text, rating) not in COMPLAINT_INTENTS
+
+
+def two_source_rule(hypothesis: dict, evidence: list[dict],
+                    ignore_sources: frozenset[str] = frozenset()) -> bool:
     """`supported` requires >=2 independent evidence items from >=2 distinct
     sources (PRD §5.2). Anything less stays `active` at best.
+
+    `ignore_sources` are left out of the distinct-SOURCE count (the items still
+    count as items). A single-channel product passes {"release_notes",
+    "github_commits"}: a release note says what shipped, not that users are
+    hurting, so on its own it is not a second channel corroborating them.
 
     "Independent" now means textually distinct as well as differently-sourced.
     A vocal user who files a GitHub issue AND posts the same words as a review
@@ -186,18 +220,122 @@ def two_source_rule(hypothesis: dict, evidence: list[dict]) -> bool:
     # Case- and whitespace-insensitive: "github" and "GitHub" are one source,
     # and exact string equality counted them as two independent ones.
     return len({str(e["source"]).strip().lower()
-                for e in distinct}) >= MIN_DISTINCT_SOURCES
+                for e in distinct}
+               - set(ignore_sources)) >= MIN_DISTINCT_SOURCES
 
 
-def resolvable_hypothesis(hypotheses: list[dict], evidence: list[dict]) -> dict | None:
+def resolvable_hypothesis(hypotheses: list[dict], evidence: list[dict],
+                          ignore_sources: frozenset[str] = frozenset()) -> dict | None:
     """The hypothesis that satisfies confidence + two-source rule, if any."""
     for h in hypotheses:
         # A parked hypothesis is out of the active set; it cannot resolve the
         # case until the model brings it back.
         if h["status"] in ("rejected", "parked"):
             continue
-        if h["confidence"] >= SUPPORT_CONFIDENCE and two_source_rule(h, evidence):
+        if h["confidence"] >= SUPPORT_CONFIDENCE and two_source_rule(h, evidence, ignore_sources):
             return h
+    return None
+
+
+# ── single-channel products ─────────────────────────────────────────────
+#
+# A small app with only Play Store reviews connected can never meet the
+# two-source rule: there is no second channel to corroborate from. Refusing
+# every such case outright is honest but useless; granting them "supported" is
+# useful but dishonest. The middle is a DIFFERENT, labelled outcome —
+# "supported (single channel)" — with a hard confidence cap, reached only by a
+# stricter within-channel bar:
+#   A. >= 3 textually distinct reviews AND a release note published 0–14 days
+#      before at least one of them, or
+#   B. >= 5 textually distinct reviews spread over >= 3 different days or
+#      >= 3 different versions (not one bad afternoon, not one build).
+# Multi-channel products never take this path.
+
+SINGLE_CHANNEL_STATUS = "supported_single_channel"
+SINGLE_CHANNEL_LABEL = "Supported (single channel)"
+SINGLE_CHANNEL_CONFIDENCE_CAP = 0.75
+# Below the full bar (0.80) on purpose — the cap is 0.75 — but still clearly
+# better than a coin flip.
+SINGLE_CHANNEL_MIN_CONFIDENCE = 0.65
+SINGLE_CHANNEL_NON_FEEDBACK = frozenset({"release_notes", "github_commits"})
+REVIEW_SOURCES = frozenset({"play_store", "app_store"})
+RELEASE_MATCH_DAYS = 14
+
+
+def _distinct_quotes(items: list[dict]) -> list[dict]:
+    """Textually distinct items from ONE channel. Unlike two_source_rule, short
+    identical quotes collapse here: within a single source, the same five words
+    twice is one data point, not corroboration."""
+    out: list[dict] = []
+    seen_exact: set[str] = set()
+    seen_words: list[set[str]] = []
+    for e in items:
+        text = e.get("snippet", "")
+        exact = normalise_quote(text)
+        if not exact or exact in seen_exact:
+            continue
+        words = set(_fingerprint(text).split())
+        if len(words) >= MIN_CROSS_POST_WORDS and any(
+                len(words & p) / max(1, len(words | p)) >= CROSS_POST_SIMILARITY
+                for p in seen_words):
+            continue
+        seen_exact.add(exact)
+        seen_words.append(words)
+        out.append(e)
+    return out
+
+
+def _day(value) -> str | None:
+    return str(value)[:10] if value else None
+
+
+def single_channel_support(hypothesis: dict, evidence: list[dict]) -> str | None:
+    """The basis on which `hypothesis` meets the single-channel bar, or None."""
+    from datetime import date
+
+    by_id = {e["id"]: e for e in evidence}
+    items = [by_id[eid] for eid in hypothesis.get("evidence_for", []) if eid in by_id]
+    reviews = _distinct_quotes([e for e in items
+                                if str(e.get("source", "")).lower() in REVIEW_SOURCES])
+    releases = [e for e in items if str(e.get("source", "")).lower() == "release_notes"]
+
+    def parse(d):
+        try:
+            return date.fromisoformat(d) if d else None
+        except ValueError:
+            return None
+
+    review_days = [parse(_day((e.get("meta") or {}).get("date"))) for e in reviews]
+    if len(reviews) >= 3:
+        for rel in releases:
+            shipped = parse(_day((rel.get("meta") or {}).get("released_at")))
+            if shipped is None:
+                continue
+            if any(d is not None and 0 <= (d - shipped).days <= RELEASE_MATCH_DAYS
+                   for d in review_days):
+                return (f"{len(reviews)} distinct reviews, at least one within "
+                        f"{RELEASE_MATCH_DAYS} days after the {shipped.isoformat()} release")
+    if len(reviews) >= 5:
+        days = {d for d in review_days if d is not None}
+        versions = {(e.get("meta") or {}).get("version") for e in reviews} - {None, ""}
+        if len(days) >= 3 or len(versions) >= 3:
+            spread = (f"{len(days)} different days" if len(days) >= 3
+                      else f"{len(versions)} different versions")
+            return f"{len(reviews)} distinct reviews across {spread}"
+    return None
+
+
+def single_channel_winner(hypotheses: list[dict], evidence: list[dict]) -> tuple[dict, str] | None:
+    """(hypothesis, basis) for the first live hypothesis that clears the
+    single-channel bar at >= SINGLE_CHANNEL_MIN_CONFIDENCE."""
+    for h in hypotheses:
+        if h["status"] in ("rejected", "parked"):
+            continue
+        if h["confidence"] < SINGLE_CHANNEL_MIN_CONFIDENCE:
+            continue
+        basis = single_channel_support(h, evidence)
+        if basis:
+            return h, basis
     return None
 
 
@@ -240,6 +378,32 @@ def unsupported_claims(prose: str, evidence_ids: set[str]) -> list[str]:
         if not refs or not refs <= evidence_ids:
             violations.append(sentence.strip())
     return violations
+
+
+WORKING_HYPOTHESIS_LABEL = "Working hypothesis — not yet supported by evidence"
+_WHOLE_SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def strip_ungrounded(prose: str, evidence_ids: set[str]) -> tuple[str, list[str], bool]:
+    """Split a draft into what may be published and what may not.
+
+    Returns (kept prose, removed sentences, kept prose cites real evidence).
+    A sentence goes if ANY of its clauses is an uncited causal claim — the scan
+    is clause-level, removal is sentence-level, so no half-sentence is left
+    behind. One uncited sentence used to block the whole finding, discarding
+    every grounded sentence with it; now only the offending ones go, and the
+    caller shows them separately, labelled as unproven, never as conclusions.
+    """
+    kept: list[str] = []
+    removed: list[str] = []
+    for sentence in _WHOLE_SENTENCE.split(prose or ""):
+        s = sentence.strip()
+        if not s:
+            continue
+        (removed if unsupported_claims(s, evidence_ids) else kept).append(s)
+    grounded = any(set(EVIDENCE_REF.findall(s)) and set(EVIDENCE_REF.findall(s)) <= evidence_ids
+                   for s in kept)
+    return " ".join(kept), removed, grounded
 
 
 # ── user-facing text hygiene ────────────────────────────────────────────

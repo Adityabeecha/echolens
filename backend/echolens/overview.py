@@ -263,6 +263,26 @@ def overview(session: Session, product: Product | None) -> dict:
         "product": name,
         "product_id": product.id if product else None,
         "releases": releases_in_window(session, name, now),
-        "rating_breakdown": rating_breakdown(session, product, now),
+        "rating_breakdown": _cached_breakdown(session, product, now),
         "freshness": freshness(session, product),
     }
+
+
+def _cached_breakdown(session: Session, product: Product | None, now: datetime) -> dict:
+    """rating_breakdown reads the text of every review in its two windows and
+    matches each against the theme vocabulary — on every open of Today. It is
+    reused while the windows' reviews and the product's resolved cases are
+    unchanged (memo.fingerprinted; a 10-minute TTL bounds edits it cannot see)."""
+    from sqlalchemy import func
+
+    from echolens.memo import fingerprinted, review_fingerprint
+    pid = product.id if product else None
+    since = (now - timedelta(days=RECENT_DAYS + PRIOR_DAYS)).replace(tzinfo=None)
+    cases = select(func.count(Investigation.id), func.max(Investigation.id),
+                   func.max(Investigation.resolved_at)).where(Investigation.status == "resolved")
+    if pid is not None:
+        cases = cases.where(Investigation.product_id == pid)
+    fp = (review_fingerprint(session, product.name if product else None, since),
+          tuple(str(v) for v in session.execute(cases).one()))
+    return fingerprinted(session, ("rating_breakdown", pid, str(now)), fp,
+                         lambda: rating_breakdown(session, product, now))

@@ -132,6 +132,16 @@ class Settings(BaseSettings):
     bootstrap_admin_email: str = ""
     bootstrap_admin_password: str = ""
     seed_on_start: bool = False
+    # Rebuild the demo product (only `is_demo`) on startup when its newest
+    # review is over a week old, so a long-lived deploy's demo stays dated to
+    # today. Off by default: tests and local runs keep the data they seeded.
+    demo_refresh_on_start: bool = False
+
+    # Where investigations run. True (the default, and how every existing
+    # deploy works): as background threads inside the web process. False: the
+    # API only records the work and a separate `echolens worker` process claims
+    # and runs it, so a web restart or a slow request cannot strand a case.
+    run_investigations_in_web: bool = True
 
     # ── public demo mode ────────────────────────────────────────────────
     # When true, a request with NO token is admitted as a `viewer` instead of

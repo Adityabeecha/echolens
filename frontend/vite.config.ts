@@ -14,8 +14,11 @@ import react from "@vitejs/plugin-react";
  */
 function apiConnectCsp(apiBase: string | undefined): Plugin {
   let origin = "";
+  // Same repair as api.ts: a value without a scheme means https.
+  const raw = (apiBase ?? "").trim();
+  const base = raw && !raw.startsWith("/") && !/^https?:\/\//i.test(raw) ? `https://${raw}` : raw;
   try {
-    if (apiBase && /^https?:\/\//.test(apiBase)) origin = new URL(apiBase).origin;
+    if (base && /^https?:\/\//i.test(base)) origin = new URL(base).origin;
   } catch {
     origin = "";
   }
@@ -37,8 +40,15 @@ function apiConnectCsp(apiBase: string | undefined): Plugin {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "VITE_");
+  // With ECHOLENS_API_ORIGIN set, Vercel proxies /api/* to the API
+  // (build/vercel-output.mjs), so the app must call its own origin: a leftover
+  // VITE_API_BASE pointing at the API directly would bring back the
+  // cross-site cookie Safari drops.
+  const proxied = Boolean(process.env.ECHOLENS_API_ORIGIN?.trim());
+  const apiBase = proxied ? "/api" : env.VITE_API_BASE;
   return {
-    plugins: [react(), apiConnectCsp(env.VITE_API_BASE)],
+    plugins: [react(), apiConnectCsp(apiBase)],
+    define: proxied ? { "import.meta.env.VITE_API_BASE": JSON.stringify("/api") } : {},
     server: {
       proxy: {
         // Frontend calls /api/*; the backend serves routes without that prefix.

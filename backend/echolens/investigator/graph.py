@@ -8,6 +8,7 @@ Every step is persisted as a trace_steps row (THINK/TOOL/EVID/UPDT/FAIL/CHECK)
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import datetime, timezone
 from typing import Callable
@@ -71,6 +72,31 @@ def _collect_refs(node) -> set[str]:
         for item in node:
             refs |= _collect_refs(item)
     return refs
+
+
+def _items_by_ref(node, out: dict | None = None) -> dict[str, dict]:
+    """Each `ref` in a tool result mapped to the item that carries it, so intake
+    can judge a quote by what the TOOL returned (its rating, its full snippet),
+    not by the excerpt the assessor chose to copy."""
+    out = {} if out is None else out
+    if isinstance(node, dict):
+        if isinstance(node.get("ref"), str):
+            out.setdefault(node["ref"], node)
+        for v in node.values():
+            _items_by_ref(v, out)
+    elif isinstance(node, list):
+        for item in node:
+            _items_by_ref(item, out)
+    return out
+
+
+# Kept on each evidence item so the single-channel rule can count days,
+# versions and release timing without re-querying.
+_META_KEYS = ("rating", "date", "version", "released_at", "pr")
+
+# A cause that names a build. "Complaints hit every version at once" is what a
+# server-side outage looks like — and exactly what refutes a build-specific cause.
+_NAMES_A_VERSION = re.compile(r"\bv?\d+\.\d+|\b(?:release|version|build)\b", re.IGNORECASE)
 
 
 def _as_ids(value) -> list[str]:
@@ -138,6 +164,30 @@ class Investigator:
         # Enforced here (deterministic), not asked of the model — the agent has
         # no way to widen the blast radius by writing a different product arg.
         self._product_name = self._resolve_product_name()
+        # How many feedback channels this product has connected. Exactly one
+        # makes it a single-channel product: the two-source rule cannot be met
+        # by definition, so the only available answer is the labelled, capped
+        # "supported (single channel)" — and a release note no longer passes
+        # for a second channel. Unknown (no collectors, e.g. the synthetic
+        # demo) keeps today's rule exactly.
+        self._single_channel = len(self._connected_channels()) == 1
+        self._ignore_sources = (guards.SINGLE_CHANNEL_NON_FEEDBACK
+                                if self._single_channel else frozenset())
+
+    def _connected_channels(self) -> set[str]:
+        from echolens.db.models import CollectorState
+        pid, name = getattr(self.inv, "product_id", None), self._product_name
+        if pid is None and not name:
+            return set()
+        scope = []
+        if pid is not None:
+            scope.append(CollectorState.product_id == pid)
+        if name:
+            scope.append(CollectorState.product == name)
+        from sqlalchemy import or_
+        rows = self.session.scalars(select(CollectorState.source).where(
+            CollectorState.enabled == True, or_(*scope))).all()  # noqa: E712
+        return {str(s).strip().lower() for s in rows if s}
 
     def _resolve_product_name(self) -> str | None:
         """Display name of this case's product — the value stamped on corpus rows.
@@ -369,7 +419,7 @@ class Investigator:
             statement = p.get("statement", "")
             old = existing.get(hid) or by_statement.get(statement.strip().lower(), {})
             status = p.get("status", "active")
-            if status == "supported":  # only the check guard can grant this
+            if status in ("supported", guards.SINGLE_CHANNEL_STATUS):  # only the check guard grants these
                 status = "active"
             if status == "active":
                 active += 1
@@ -467,6 +517,7 @@ class Investigator:
             return state
 
         valid_refs = _collect_refs(last["result"])
+        by_ref = _items_by_ref(last["result"])
         retrieved_by = f"{last['name']}({json.dumps(last['args'], default=str)})"
         source = TOOLS[last["name"]].source
         known_h = {h["id"] for h in state["hypotheses"]}
@@ -482,6 +533,25 @@ class Investigator:
                 continue
             if ref in ref_to_eid:  # already on record; don't double-count
                 continue
+            supports = [h for h in _as_ids(item.get("supports")) if h in known_h]
+            contradicts = [h for h in _as_ids(item.get("contradicts")) if h in known_h]
+            found = by_ref.get(ref) or {}
+            # A happy review cannot support a problem. Judged on the tool's own
+            # copy of the review (rating + text), so the assessor cannot make
+            # it qualify by excerpting the one negative-sounding clause.
+            if (supports and source in guards.REVIEW_SOURCES
+                    and guards.positive_without_complaint(found.get("snippet"), found.get("rating"))):
+                self._trace("FAIL", {
+                    "code": f"evidence ref '{ref}'",
+                    "error": f"{found.get('rating')}★ review with no complaint cue cited as support "
+                             f"for {', '.join(supports)}",
+                    "text": ("Not accepted as SUPPORTING evidence: a positive review that "
+                             "describes no problem cannot support a problem hypothesis."
+                             + (" Kept as counter-evidence only." if contradicts else "")),
+                })
+                supports = []
+                if not contradicts:
+                    continue
             dup = self._near_duplicate(item.get("snippet", ""), source, state["evidence"])
             if dup:  # v5.0 quality: near-identical evidence merges, never double-counts
                 ref_to_eid[ref] = dup
@@ -493,9 +563,12 @@ class Investigator:
             ev = {
                 "id": eid, "source": source, "ref": ref,
                 "snippet": str(item.get("snippet") or "")[:400], "retrieved_by": retrieved_by,
-                "supports": [h for h in _as_ids(item.get("supports")) if h in known_h],
-                "contradicts": [h for h in _as_ids(item.get("contradicts")) if h in known_h],
+                "supports": supports,
+                "contradicts": contradicts,
             }
+            meta = {k: found[k] for k in _META_KEYS if found.get(k) is not None}
+            if meta:
+                ev["meta"] = meta
             state["evidence"].append(ev)
             ref_to_eid[ref] = eid
             for h in state["hypotheses"]:
@@ -506,7 +579,8 @@ class Investigator:
             self.session.add(EvidenceRow(
                 investigation_id=self.inv.id, eid=eid, source=source, ref=ref,
                 snippet=ev["snippet"], retrieved_by=retrieved_by,
-                json={"supports": ev["supports"], "contradicts": ev["contradicts"]},
+                json={"supports": ev["supports"], "contradicts": ev["contradicts"],
+                      **({"meta": ev["meta"]} if ev.get("meta") else {})},
             ))
             self._trace("EVID", {"id": eid, "source": source.upper(), "ref": ref,
                                  "text": ev["snippet"], "supports": ev["supports"],
@@ -529,12 +603,15 @@ class Investigator:
                 h["confidence"] = max(0.0, min(1.0, float(upd["new_confidence"])))
             else:
                 continue  # no confidence signal in this update
-            if not guards.two_source_rule(h, state["evidence"]):
+            corroborated = guards.two_source_rule(h, state["evidence"], self._ignore_sources)
+            if not corroborated:
                 # deterministic cap: no near-certainty without cross-source corroboration
                 h["confidence"] = min(h["confidence"], 0.75)
             new_status = upd.get("new_status", h["status"])
-            if new_status == "supported" and not guards.two_source_rule(h, state["evidence"]):
+            if new_status == "supported" and not corroborated:
                 new_status = "active"  # guard: two-source rule not met
+            if new_status == guards.SINGLE_CHANNEL_STATUS:
+                new_status = "active"  # only the check guard can grant it
             h["status"] = new_status
             if new_status == "rejected" and old_status != "rejected":
                 newly_rejected.append(h["id"])
@@ -552,8 +629,18 @@ class Investigator:
     def _near_duplicate(snippet: str, source: str, evidence: list[dict]) -> str | None:
         """v5.0: is this snippet a near-duplicate of same-source evidence already on
         record? Token-set overlap (Jaccard ≥ 0.9, a cheap cosine proxy) so a rephrased
-        one-line rant doesn't inflate the count. Returns the existing eid or None."""
+        one-line rant doesn't inflate the count. Returns the existing eid or None.
+
+        An EXACT (normalised) repeat from the same source merges whatever its
+        length. The Jaccard check skips snippets under three tokens — too short to
+        judge similarity — and that exemption let "It works fine, no complaints"
+        (two tokens once stopwords go) be cited twice as two data points."""
         from echolens.textkit import tokenize
+        exact = guards.normalise_quote(snippet)
+        if exact:
+            for e in evidence:
+                if e["source"] == source and guards.normalise_quote(e["snippet"]) == exact:
+                    return e["id"]
         a = set(tokenize(snippet))
         if len(a) < 3:
             return None
@@ -587,7 +674,7 @@ class Investigator:
                 continue
             old = h["confidence"]
             h["confidence"] = min(1.0, h["confidence"] + 0.1 * len(triggers))
-            if not guards.two_source_rule(h, state["evidence"]):
+            if not guards.two_source_rule(h, state["evidence"], self._ignore_sources):
                 h["confidence"] = min(h["confidence"], 0.75)
             if h["confidence"] != old:
                 self._trace("UPDT", {
@@ -604,7 +691,15 @@ class Investigator:
         if state.get("budget_stop_reason"):
             status, reason = "budget_exhausted", state["budget_stop_reason"]
 
-        winner = guards.resolvable_hypothesis(state["hypotheses"], state["evidence"])
+        winner = guards.resolvable_hypothesis(state["hypotheses"], state["evidence"],
+                                              self._ignore_sources)
+        # The full bar is out of reach on a single-channel product; the
+        # stricter within-channel bar can still yield the LABELLED outcome.
+        single = None
+        if winner is None and self._single_channel:
+            single = guards.single_channel_winner(state["hypotheses"], state["evidence"])
+            if single:
+                winner = single[0]
         if proposed:
             want = proposed.get("status")
             if want == "resolved":
@@ -618,6 +713,9 @@ class Investigator:
                     })
             elif want in ("insufficient_evidence", "needs_human"):
                 status, reason = want, proposed.get("reason", "")
+        elif single:
+            status, reason = "resolved", (f"{winner['id']} is {guards.SINGLE_CHANNEL_LABEL.lower()} "
+                                          f"at {winner['confidence']:.2f}: {single[1]}")
         elif winner:
             status, reason = "resolved", f"{winner['id']} meets the two-source rule at {winner['confidence']:.2f}"
 
@@ -643,7 +741,19 @@ class Investigator:
                 if self._attempt_refutation(winner):
                     status = "needs_human"
                     reason = "a refutation query surfaced counter-evidence against the leading cause"
-            if status == "resolved":
+            if status == "resolved" and single:
+                # A distinct status and a hard cap — never the full "supported".
+                winner["status"] = guards.SINGLE_CHANNEL_STATUS
+                winner["confidence"] = min(winner["confidence"], guards.SINGLE_CHANNEL_CONFIDENCE_CAP)
+                if "single channel" not in reason:
+                    reason = f"{guards.SINGLE_CHANNEL_LABEL.lower()}: {single[1]}. {reason}".strip()
+                self._trace("CHECK", {"text": (
+                    f"{guards.SINGLE_CHANNEL_LABEL}: only one feedback channel is connected, so "
+                    f"{winner['id']} cannot be corroborated independently. It meets the "
+                    f"within-channel bar ({single[1]}); confidence capped at "
+                    f"{guards.SINGLE_CHANNEL_CONFIDENCE_CAP:.2f}.")})
+                self._persist_hypotheses(state["hypotheses"])
+            elif status == "resolved":
                 winner["status"] = "supported"
                 self._persist_hypotheses(state["hypotheses"])
 
@@ -712,9 +822,25 @@ class Investigator:
             elif ratio is not None and ratio >= 1.5:
                 detail = f"'{query}' is {ratio}× more common in {top} than the next version — cause survives refutation."
             elif ratio is not None:
-                detail = (f"'{query}' is spread roughly evenly across versions (ratio {ratio}) — "
-                          "this UNDERCUTS a version-specific cause.")
-                contradicted = True
+                onset = self._simultaneous_onset(query)
+                if onset and not _NAMES_A_VERSION.search(winner["statement"]):
+                    # An outage hits every installed version on the same day, so
+                    # an even spread is its signature, not a contradiction.
+                    detail = (f"'{query}' is spread evenly across versions (ratio {ratio}), but it "
+                              f"began on {onset['date']} on {onset['versions_with_onset']} of "
+                              f"{onset['versions_active']} active versions within 48 h (each at "
+                              "≥3× its prior daily rate). All versions at once is what a "
+                              "server-side or back-end cause looks like, so the spread does NOT "
+                              "undercut it — cause survives refutation.")
+                elif onset:
+                    detail = (f"'{query}' began on {onset['date']} on {onset['versions_with_onset']} of "
+                              f"{onset['versions_active']} active versions at once — the signature of a "
+                              "server-side cause, which UNDERCUTS a cause tied to one build.")
+                    contradicted = True
+                else:
+                    detail = (f"'{query}' is spread roughly evenly across versions (ratio {ratio}) — "
+                              "this UNDERCUTS a version-specific cause.")
+                    contradicted = True
             else:
                 detail = f"No cohort separation available for '{query}'; refutation inconclusive."
         except Exception as err:  # never let the adversarial check crash the run
@@ -724,6 +850,17 @@ class Investigator:
             "query": query, "hypothesis": winner["id"], "contradicted": contradicted,
         })
         return contradicted
+
+    def _simultaneous_onset(self, term: str) -> dict | None:
+        """tools/onset.py's verdict when it says simultaneous, else None. Any
+        failure is None: the refutation then behaves exactly as it did."""
+        from echolens.tools.onset import simultaneous_onset
+        try:
+            res = simultaneous_onset(self.session, term=term, product=self._product_name)
+        except Exception as err:
+            log.warning("onset_check_failed", error=str(err))
+            return None
+        return res if res.get("simultaneous") else None
 
     # ── persistence helpers ────────────────────────────────────────────
 
@@ -793,6 +930,24 @@ class Investigator:
         # guard that detects a violation and publishes it anyway is not a guard.
         violations = finding.get("grounding_violations") if finding else None
         if violations:
+            # Partial publication first: drop only the uncited sentences. If what
+            # is left still cites real evidence it is published, and the dropped
+            # claims travel beside it under an explicit "not yet supported" label
+            # — never in the prose, never as a conclusion. Only when nothing
+            # grounded survives does the whole finding stay blocked, as before.
+            kept, removed, grounded = guards.strip_ungrounded(finding.get("prose", ""), evidence_ids)
+            if grounded:
+                finding = {k: v for k, v in finding.items() if k != "grounding_violations"}
+                finding["prose"] = kept
+                finding["working_hypotheses"] = removed
+                finding["working_hypothesis_label"] = guards.WORKING_HYPOTHESIS_LABEL
+                self._trace("CHECK", {"text": (
+                    f"Claim-grounding scan removed {len(removed)} uncited causal "
+                    f"sentence{'s' if len(removed) != 1 else ''} from the finding. The rest is "
+                    "grounded and published; the removed claims are shown separately as a "
+                    "working hypothesis, not as conclusions.")})
+                violations = None
+        if violations:
             state["status"] = "needs_human"
             state["status_reason"] = "claim-grounding scan flagged uncited causal claims"
             finding = {
@@ -818,6 +973,31 @@ class Investigator:
                 "checked": sorted({e["source"] for e in state["evidence"]}),
                 "what_would_settle_it": "Re-run with a larger budget or additional sources.",
             }
+        return self._label_support(state, finding)
+
+    def _label_support(self, state: InvState, finding: dict) -> dict:
+        """Say in the payload HOW STRONGLY the cause is supported. A
+        single-channel answer must never read as the full one, whatever the
+        drafted text says, so the label and the cap are applied here in code."""
+        if state["status"] != "resolved":
+            return finding
+        single = next((h for h in state["hypotheses"]
+                       if h["status"] == guards.SINGLE_CHANNEL_STATUS), None)
+        if single is None:
+            if any(h["status"] == "supported" for h in state["hypotheses"]):
+                finding["support_level"] = "supported"
+            return finding
+        basis = guards.single_channel_support(single, state["evidence"]) or "within-channel bar met"
+        cap = guards.SINGLE_CHANNEL_CONFIDENCE_CAP
+        finding["support_level"] = "single_channel"
+        finding["support_label"] = guards.SINGLE_CHANNEL_LABEL
+        finding["support_basis"] = basis
+        finding["single_channel_note"] = (
+            "Only one feedback channel is connected for this product, so this cause could not be "
+            f"corroborated by an independent source. It rests on {basis}.")
+        finding["confidence"] = min(float(finding.get("confidence") or single["confidence"]), cap)
+        if not finding.get("supported_hypothesis"):
+            finding["supported_hypothesis"] = single["id"]
         return finding
 
     # ── run ────────────────────────────────────────────────────────────
@@ -886,6 +1066,8 @@ class Investigator:
             # "complaints started 3 days ago" is correct on live data (not a frozen date).
             "today": reference_now(self.session).date().isoformat(),
         }
+        if self._single_channel:
+            trigger["single_channel"] = True
         if self.context_note:
             trigger["reviewer_challenge"] = self.context_note
             self._trace("THINK", {

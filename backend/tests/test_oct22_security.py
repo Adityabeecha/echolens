@@ -97,3 +97,11 @@ def test_slack_clicks_verified_by_signing_secret(monkeypatch):
     good = tc.post("/integrations/slack/act", content=body,
                    headers=hdr | {"x-slack-signature": sig(body, ts)})
     assert good.status_code != 401  # past auth; finding 999999 doesn't exist
+
+
+def test_bare_postgres_url_names_the_installed_driver():
+    from echolens.db.session import _with_driver
+    assert _with_driver("postgresql://u:p@h:6543/db") == "postgresql+psycopg2://u:p@h:6543/db"
+    assert _with_driver("postgres://u:p@h/db") == "postgresql+psycopg2://u:p@h/db"
+    assert _with_driver("postgresql+psycopg2://u@h/db") == "postgresql+psycopg2://u@h/db"
+    assert _with_driver("sqlite://") == "sqlite://"

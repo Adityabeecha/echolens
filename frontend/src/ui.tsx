@@ -1,6 +1,7 @@
 import { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react";
 import { Icon, IconName } from "./components/Icon";
 import { C, MEASURE, R, S, T, mono } from "./theme";
+import { lastFailure } from "./requestState";
 
 // Small monospace uppercase section label used across the design.
 //
@@ -691,7 +692,7 @@ export function EmptyState({
 
 /** A failure the reader can act on, rather than a dead end. */
 export function ErrorState({
-  title = "Can't reach EchoLens",
+  title,
   detail,
   onRetry
 }: {
@@ -699,6 +700,13 @@ export function ErrorState({
   detail?: string;
   onRetry?: () => void;
 }) {
+  // Every screen's loader is timed out by the api layer; when that is what
+  // happened, say so rather than blaming a backend that may just be slow.
+  const timedOut = lastFailure() === "timeout";
+  title = title ?? (timedOut ? "Request timed out" : "Can't reach EchoLens");
+  if (!detail && timedOut) {
+    detail = "Request timed out — the server took too long to answer. Retry in a moment.";
+  }
   return (
     <div className="el-error-state"
       role="alert"

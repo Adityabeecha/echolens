@@ -282,6 +282,29 @@ class QueuedInvestigation(Base):
     override_estimate_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
+class WorkerJob(Base):
+    """Work the web process hands to a separate `echolens worker`.
+
+    With RUN_INVESTIGATIONS_IN_WEB=false the API no longer starts a thread per
+    investigation; it records the call here and returns. A worker claims a row
+    with one conditional UPDATE (status queued -> running), so two workers can
+    never run the same job, and runs the same function the thread would have.
+    """
+    __tablename__ = "worker_jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # run|claimed|extend|resume|challenge|slack_challenge — see api/app.py _job_targets
+    kind: Mapped[str] = mapped_column(String(32))
+    args: Mapped[list] = mapped_column(JSON, default=list)
+    # queued|running|done|failed
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    claimed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class ThemeOverride(Base):
     """A person's correction to a discovered theme, per product.
 
@@ -336,6 +359,8 @@ class FixWatch(Base):
     # rather than at issue close, because a mobile release takes days to reach users.
     fixed_in_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     release_seen_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    shipped_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    shipped_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
@@ -480,6 +505,18 @@ class ReviewFeedback(Base):
     # v5.0 challenge autopsy: structured reason category (wrong_cause|weak_evidence|
     # wrong_severity|already_knew) so failure modes roll up into visible weak spots.
     reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    actual_cause: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class CaseMerge(Base):
+    """A duplicate's evidence stays on its case; this link makes it related."""
+    __tablename__ = "case_merges"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("investigations.id", ondelete="CASCADE"), unique=True)
+    target_id: Mapped[int] = mapped_column(ForeignKey("investigations.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 

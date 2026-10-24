@@ -274,7 +274,7 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
           </div>
         )}
         <div style={{ color: C.faint, fontSize: T.xs, marginTop: S[2] }}>
-          {repo.trim() ? "Discussions requires a configured GitHub token." : "Enter a GitHub repo above to choose what to pull."}
+          {repo.trim() ? "Discussions require a configured GitHub token." : "Enter a GitHub repo above to choose what to pull."}
         </div>
       </fieldset>
 
@@ -283,9 +283,9 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
         {showAdditional ? "Hide additional sources" : "+ Additional sources"}
       </button>
       {showAdditional && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: S[4], padding: S[4], background: C.card, border: `1px solid ${C.border2}`, borderRadius: R.card }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(230px, 100%), 1fr))", gap: S[4], padding: S[4], background: C.card, border: `1px solid ${C.border2}`, borderRadius: R.card }}>
           <AdditionalField label="App Store app ID" placeholder="e.g. 324684580" value={additional.app_store} onChange={(value) => setAdditional((current) => ({ ...current, app_store: value }))} />
-          <AdditionalField label="Chrome extension ID" placeholder="e.g. aapbdbdomjkkjkaonfhkkikfgjllcleb" value={additional.chrome_web_store} onChange={(value) => setAdditional((current) => ({ ...current, chrome_web_store: value }))} />
+          <AdditionalField label="Chrome extension ID" placeholder="32-character ID" value={additional.chrome_web_store} onChange={(value) => setAdditional((current) => ({ ...current, chrome_web_store: value }))} />
           <AdditionalField label="Hacker News search" placeholder="e.g. your product or company name" value={additional.hacker_news} onChange={(value) => setAdditional((current) => ({ ...current, hacker_news: value }))} />
           <AdditionalField label="Stack Overflow tag" placeholder="e.g. your-product" value={additional.stack_overflow} onChange={(value) => setAdditional((current) => ({ ...current, stack_overflow: value }))} />
           <div style={{ gridColumn: "1 / -1", color: C.faint, fontSize: T.sm }}>All additional sources are optional.</div>

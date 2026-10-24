@@ -266,7 +266,9 @@ function Tag({ children, color }: { children: React.ReactNode; color: string }) 
 
 /** The app URL for a hash route, from wherever the app is being served. */
 function appUrl(hash: string): string {
-  return `${window.location.origin}${window.location.pathname}${hash}`;
+  // From the site root: the app uses clean paths now, and main.tsx turns a
+  // root hash link into the matching path.
+  return `${window.location.origin}/${hash}`;
 }
 
 export function shareUrl(s: ShareState): string | null {

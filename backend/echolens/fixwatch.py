@@ -159,6 +159,13 @@ def link_issue(session: Session, finding: Finding, repo: str, issue_number: int,
         FixWatch.investigation_id == finding.investigation_id)).first()
     if existing:
         return existing
+    manual = session.scalars(select(FixWatch).where(
+        FixWatch.finding_id == finding.id, FixWatch.repo == "",
+        FixWatch.issue_number == 0).order_by(FixWatch.id.desc())).first()
+    if manual is not None:
+        manual.repo, manual.issue_number, manual.issue_url = repo, issue_number, issue_url
+        session.flush()
+        return manual
     inv = session.get(Investigation, finding.investigation_id)
     anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv else None
     watch = FixWatch(
@@ -197,6 +204,44 @@ def on_issue_closed(session: Session, repo: str, issue_number: int,
     watch.baseline_rate = _rate(session, watch.terms,
                                 fix_date - timedelta(days=watch.window_days), fix_date, product)
     session.flush()
+    return watch
+
+
+def mark_shipped(session: Session, finding: Finding, shipped_at: datetime,
+                 version: str | None = None, note: str = "") -> FixWatch:
+    """Start the same verification for a human-reported release, with or without a ticket."""
+    version = (version or "").strip().lstrip("vV") or None
+    if version is not None and parse_version(version) is None:
+        raise ValueError("not a version number")
+    inv = session.get(Investigation, finding.investigation_id)
+    if inv is None or inv.status != "resolved" or finding.status == "challenged":
+        raise ValueError("Only a resolved case can have a fix marked shipped.")
+    watch = session.scalars(select(FixWatch).where(
+        FixWatch.finding_id == finding.id).order_by(FixWatch.id.desc())).first()
+    if watch is None:
+        anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv.anomaly_id else None
+        # Empty repo / issue 0 is the manual marker; existing NOT NULL schemas work too.
+        watch = FixWatch(finding_id=finding.id, investigation_id=inv.id,
+                         repo="", issue_number=0, issue_url="", terms=_terms_for(session, finding),
+                         metric=anomaly.metric if anomaly else "", product_id=inv.product_id)
+        session.add(watch)
+        session.flush()
+    watch.shipped_at = aware_utc(shipped_at)
+    watch.shipped_note = note.strip() or None
+    watch.fix_date = watch.shipped_at
+    watch.fixed_in_version = version
+    watch.release_seen_at = None
+    watch.post_rate = None
+    watch.confirmed_at = None
+    watch.chart_json = None
+    watch.status = WAITING if version else "watching"
+    product = product_name_of(session, watch.product_id)
+    watch.baseline_rate = _rate(session, watch.terms,
+                                watch.fix_date - timedelta(days=watch.window_days),
+                                watch.fix_date, product)
+    session.flush()
+    if version:
+        _advance_waiting(session, watch, watch.shipped_at)
     return watch
 
 
@@ -291,7 +336,8 @@ def before_after(session: Session, watch: FixWatch) -> dict:
         "metric": watch.metric, "terms": watch.terms,
         # Why the window starts where it does: a release sighting, or issue close.
         "fixed_in_version": watch.fixed_in_version,
-        "window_start": "first_review_on_fixed_version" if watch.release_seen_at else "issue_closed",
+        **({"window_start": "first_review_on_fixed_version"} if watch.release_seen_at else
+           {} if watch.shipped_at else {"window_start": "issue_closed"}),
     }
 
 
@@ -389,7 +435,8 @@ def _reopen(session: Session, watch: FixWatch) -> str:
     watch.chart_json = before_after(session, watch)
     orig = session.get(Investigation, watch.investigation_id)
     finding = session.get(Finding, watch.finding_id)
-    note = (f"A fix was shipped (issue #{watch.issue_number} closed) but '{watch.metric}' "
+    origin = f"issue #{watch.issue_number} closed" if watch.issue_number else "marked shipped by the team"
+    note = (f"A fix was shipped ({origin}) but '{watch.metric}' "
             f"complaints persist (baseline {watch.baseline_rate} → {watch.post_rate}/day). "
             f"Prior cause: {finding.summary if finding else 'unknown'}. Re-investigate what the fix missed.")
     _start_followup(session, orig, note, slug=f"fix-persists-{watch.id}",

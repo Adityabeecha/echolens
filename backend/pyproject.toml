@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "langgraph>=0.2",
     "openai>=1.40",
-    "sqlalchemy>=2.0",
+    "sqlalchemy>=2.0,<2.1",  # 2.1 changed the default Postgres driver; see db/session._with_driver
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "python-dotenv>=1.0",

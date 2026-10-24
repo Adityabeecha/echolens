@@ -7,7 +7,7 @@ needs_human rather than left orphaned.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -54,6 +54,80 @@ def resume_running(session: Session, llm: LLMClient | None = None, on_step=None)
             session.flush()
         acted.append(inv.id)
     return acted
+
+
+# ── zombie watchdog ─────────────────────────────────────────────────────
+#
+# A case whose worker died (a redeploy, an OOM kill on a free-tier box, a hung
+# provider call) stayed "running" forever: the UI polled it indefinitely and
+# the anomaly behind it could never be investigated again. resume_running only
+# helps when THIS process restarts and the case has a checkpoint. The watchdog
+# is the backstop: no new trace step for ZOMBIE_AFTER means nobody is working
+# on it, so it is ended honestly and its signal goes back to the queue.
+
+ZOMBIE_AFTER_MINUTES = 15
+ZOMBIE_REASON = (f"Stopped: no progress for {ZOMBIE_AFTER_MINUTES} minutes — "
+                 "the worker may have restarted")
+
+
+def end_zombies(session: Session, as_of: datetime | None = None,
+                stale_after_minutes: int = ZOMBIE_AFTER_MINUTES) -> list[int]:
+    """End every running case with no trace step (or, with none, no start) in
+    the last `stale_after_minutes`. Returns the ids ended.
+
+    Paused cases are skipped: a reviewer's hold is not a crash. The end itself
+    is one conditional UPDATE that only matches while the case is still running
+    AND still has no recent step, so a worker that writes a step at the last
+    moment — in this process or another — keeps its case.
+    """
+    from sqlalchemy import and_, exists, func, update
+
+    from echolens.db.models import AnomalyEvent, QueuedInvestigation, TraceStep
+
+    now = as_of or datetime.now(timezone.utc)
+    # Naive UTC, the way the timestamps are stored on both SQLite and Postgres.
+    cutoff = (now - timedelta(minutes=stale_after_minutes)).astimezone(timezone.utc).replace(tzinfo=None)
+    last_step = (select(TraceStep.investigation_id, func.max(TraceStep.created_at).label("at"))
+                 .group_by(TraceStep.investigation_id).subquery())
+    rows = session.execute(
+        select(Investigation.id, Investigation.created_at, last_step.c.at)
+        .outerjoin(last_step, last_step.c.investigation_id == Investigation.id)
+        .where(Investigation.status == "running", Investigation.paused.is_not(True))).all()
+    ended: list[int] = []
+    for inv_id, created, step_at in rows:
+        last = step_at or created
+        if last is not None and last.replace(tzinfo=None) > cutoff:
+            continue                          # it moved recently: alive
+        recent = exists().where(and_(TraceStep.investigation_id == inv_id,
+                                     TraceStep.created_at > cutoff))
+        res = session.execute(update(Investigation)
+                              .where(Investigation.id == inv_id,
+                                     Investigation.status == "running",
+                                     Investigation.paused.is_not(True), ~recent)
+                              .values(status="failed", resolved_at=now)
+                              .execution_options(synchronize_session=False))
+        if res.rowcount != 1:
+            continue                          # someone else ended or advanced it
+        inv = session.get(Investigation, inv_id)
+        session.refresh(inv)
+        inv.data_notes = [*(inv.data_notes or []), ZOMBIE_REASON + "."]
+        seq = session.scalar(select(func.max(TraceStep.seq)).where(
+            TraceStep.investigation_id == inv_id))
+        session.add(TraceStep(investigation_id=inv_id, seq=(seq if seq is not None else -1) + 1,
+                              kind="FAIL", content_json={"code": "watchdog", "text": ZOMBIE_REASON,
+                                                         "error": "no progress"}))
+        anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv.anomaly_id else None
+        if anomaly is not None and anomaly.status == "investigating":
+            anomaly.status = "pending"        # its signal can be investigated again
+        for q in session.scalars(select(QueuedInvestigation).where(
+                QueuedInvestigation.investigation_id == inv_id,
+                QueuedInvestigation.status == "running")).all():
+            q.status, q.finished_at, q.note = "failed", now, ZOMBIE_REASON
+        session.flush()
+        ended.append(inv_id)
+        log.warning("zombie_case_ended", investigation_id=inv_id,
+                    last_activity=last.isoformat() if last else None)
+    return ended
 
 
 # ── v15: continue a dead-end case with more budget ──────────────────────
