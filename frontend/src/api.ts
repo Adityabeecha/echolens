@@ -510,6 +510,8 @@ export interface FixStatus {
   post_rate: number | null;
   /** The app version carrying the fix; the watch window opens when it reaches users. */
   fixed_in_version?: string | null;
+  shipped_at?: string | null;
+  shipped_note?: string | null;
   /** True while no version is set, so the UI can suggest setting one. */
   version_hint?: boolean;
   release?: ReleaseState;
@@ -602,6 +604,7 @@ export interface HistoryEvent {
   note: string;
   /** Who made it, for human decisions (email), when known. */
   by?: string | null;
+  actual_cause?: string | null;
 }
 export interface Investigation {
   id: number;
@@ -618,6 +621,8 @@ export interface Investigation {
   paused: boolean;
   escalated: boolean;
   reopens_investigation_id: number | null;
+  merged_into_id?: number | null;
+  related_evidence?: { source_case_id: number; id: string; source: string; ref: string; snippet: string }[];
   data_notes: string[];
   history: HistoryEvent[];
   hypotheses: Hypothesis[];
@@ -1327,6 +1332,7 @@ export interface ChatResponse {
   next_step?: ChatNextStep | null;
 }
 export interface WeeklyBrief {
+  quiet?: boolean;
   generated: string;
   resolution_rate: number;
   new_problems: { investigation_id: number; summary: string; impact_score: number }[];
@@ -1461,11 +1467,14 @@ export const api = {
       ...body,
       product_id: getActiveProduct(),
     }),
-  review: (findingId: number, action: "approve" | "challenge", note = "", reason?: string) =>
+  mergeCase: (sourceId: number, targetId: number) =>
+    post<{ status: string; merged_into_id: number }>(scoped(`/investigations/${sourceId}/merge`), { target_id: targetId }),
+  review: (findingId: number, action: "approve" | "challenge", note = "", reason?: string, actualCause?: string) =>
     post<{ status: string; reopened_investigation_id?: number }>(scoped(`/findings/${findingId}/review`), {
       action,
       note,
       reason,
+      actual_cause: actualCause,
     }),
   calibration: () => get<Calibration>(scoped("/calibration")),
   patterns: () => get<{ patterns: Pattern[]; product?: string | null }>(scoped("/patterns")),
@@ -1695,6 +1704,9 @@ export const api = {
   setFixedVersion: (findingId: number, version: string | null) =>
     put<{ status: string; fixed_in_version: string | null; release: ReleaseState }>(
       scoped(`/findings/${findingId}/fixed-version`), { version }),
+  markFixShipped: (findingId: number, body: { version: string | null; date: string; note: string }) =>
+    post<{ status: string; fixed_in_version: string | null; release: ReleaseState }>(
+      scoped(`/findings/${findingId}/fix-shipped`), body),
   replyDrafts: (findingId: number) =>
     get<ReplyDrafts>(scoped(`/findings/${findingId}/reply-drafts`)),
   followupQuestions: (findingId: number) =>

@@ -228,10 +228,10 @@ def estimate_effort(session: Session, finding: Finding,
 
 
 def rating_recovery(impact: dict, confidence: float) -> dict:
-    """Rating stars this fix could plausibly return.
+    """Further drift this fix could plausibly prevent in a 30-day rolling rating.
 
     Deliberately conservative and deliberately explained. `rating_impact` is the
-    drop already observed on this theme; recovery assumes fixing it recovers the
+    drop already observed on this theme; prevention estimates the
     share of that drop the theme actually accounts for, discounted by how sure
     we are of the cause. A number a PM will quote in a planning meeting has to
     show its working or it should not be shown at all.
@@ -245,8 +245,10 @@ def rating_recovery(impact: dict, confidence: float) -> dict:
     stars = round(lost * share * conf, 2)
     return {
         "stars": stars,
-        "basis": (f"{lost:.2f}★ lost on this theme × {share:.0%} of negatives "
-                  f"× {conf:.0%} confidence"),
+        "basis": (f"Prevents about {stars:.2f}★ of further drift (30-day rolling rating): "
+                  f"{lost:.2f}★ lost (observed drop) × {share:.0%} of negatives "
+                  f"× {conf:.0%} confidence. Assumes future complaints fall after the fix; "
+                  "existing low ratings remain until they age out of the window."),
         "confident": stars >= 0.05,
     }
 
@@ -449,7 +451,7 @@ def _defence(sev, volume, persistence, rate, effort, recovery, n_evidence,
         bits.append(f"{volume} affected reviews")
     bits.append(f"open {persistence}d")
     if recovery["confident"]:
-        bits.append(f"~{recovery['stars']:.2f}★ recoverable")
+        bits.append(f"prevents about {recovery['stars']:.2f}★ of further drift (30-day rolling rating)")
     bits.append(f"{effort['days']:g}d effort ({effort['basis']})")
     if impact_factor is not None:
         bits.append(f"impact x{impact_factor:g} (set by you)")

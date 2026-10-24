@@ -327,6 +327,7 @@ def _investigation_dict(session, inv: Investigation) -> dict:
         # v13: the case's own audit trail, so History is a tab rather than a
         # thing that happened somewhere you can no longer see.
         "history": _extension_history(session, inv),
+        **_merge_view(session, inv),
         "hypotheses": [{"id": h.hid, "statement": h.statement, "confidence": h.confidence,
                         "status": h.status, **h.json} for h in hyps],
         "evidence": _with_translations(session, inv, [
@@ -365,6 +366,12 @@ def _decision_view(session, finding_id: int) -> dict | None:
     return decision_dict(latest_decision(session, finding_id))
 
 
+def _merge_view(session, inv: Investigation) -> dict:
+    from echolens.cases import merged_into, related_evidence
+    return {"merged_into_id": merged_into(session, inv.id) if inv.status == "merged" else None,
+            "related_evidence": related_evidence(session, inv)}
+
+
 def _extension_history(session, inv):
     events = case_history(session, inv)
     reasons = {ext.get("at"): ext.get("reason", "") for ext in inv.extensions_json or []
@@ -401,7 +408,9 @@ def _finding_extras(session, finding, recs, status: str) -> dict:
         fix = {"status": watch.status, "issue_number": watch.issue_number,
                "issue_url": watch.issue_url, "chart": watch.chart_json,
                "baseline_rate": watch.baseline_rate, "post_rate": watch.post_rate,
-               "fixed_in_version": watch.fixed_in_version}
+               "fixed_in_version": watch.fixed_in_version,
+               "shipped_at": aware_utc(watch.shipped_at).isoformat() if watch.shipped_at else None,
+               "shipped_note": watch.shipped_note}
         if watch.status in ("issue_open", "watching") and not watch.fixed_in_version:
             fix["version_hint"] = True   # UI nudges: set the version so the window starts at release
         if watch.fixed_in_version and watch.status in ("issue_open", "waiting_for_release"):
@@ -2502,6 +2511,25 @@ def get_investigation(inv_id: int, product_id: int | None = None,
         return _investigation_dict(session, inv)
 
 
+class MergeCaseBody(BaseModel):
+    target_id: int = Field(gt=0)
+
+
+@app.post("/investigations/{inv_id}/merge")
+def merge_case(inv_id: int, body: MergeCaseBody, product_id: int | None = None,
+               user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.cases import merge_cases
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        source = _owned(session, Investigation, inv_id, p.id if p else None)
+        target = _owned(session, Investigation, body.target_id, p.id if p else None)
+        try:
+            link = merge_cases(session, source, target, user_id=user["id"])
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        return {"status": "merged", "merged_into_id": link.target_id}
+
+
 # ── v5.0 collaboration ──────────────────────────────────────────────────
 
 class CommentBody(BaseModel):
@@ -2873,6 +2901,7 @@ class ReviewBody(BaseModel):
     action: str  # approve | challenge
     note: str = ""
     reason: str | None = None  # v5.0 structured challenge category
+    actual_cause: str | None = Field(default=None, max_length=4000)
 
 
 @app.post("/findings/{finding_id}/review")
@@ -2883,7 +2912,10 @@ def review_finding(finding_id: int, body: ReviewBody, product_id: int | None = N
         p = _scope(session, product_id, user)
         finding = _owned_finding(session, finding_id, p.id if p else None)
         if body.action == "approve":
-            review.approve(session, finding, body.note, user_id=user["id"])
+            try:
+                review.approve(session, finding, body.note, user_id=user["id"])
+            except review.MergedCaseError as err:
+                raise HTTPException(409, str(err))
             return {"status": "approved", "finding_id": finding_id, "by": user["email"]}
         if body.action == "challenge":
             if not body.note.strip():
@@ -2891,8 +2923,12 @@ def review_finding(finding_id: int, body: ReviewBody, product_id: int | None = N
             # Create the re-opened row synchronously, then run the loop in the
             # background so the HTTP request returns immediately (a full
             # investigation can take many minutes — it must not block the request).
-            reopened = review.record_challenge(session, finding, body.note,
-                                               reason=body.reason, user_id=user["id"])
+            try:
+                reopened = review.record_challenge(session, finding, body.note,
+                                                   reason=body.reason, user_id=user["id"],
+                                                   actual_cause=body.actual_cause)
+            except review.MergedCaseError as err:
+                raise HTTPException(409, str(err))
             reopened_id = reopened.id
             note = body.note
     if body.action == "challenge":
@@ -3503,6 +3539,30 @@ class FixedVersionBody(BaseModel):
     version: str | None = Field(default=None, max_length=32)   # empty/None clears it
 
 
+class FixShippedBody(FixedVersionBody):
+    shipped_date: date = Field(alias="date", default_factory=lambda: datetime.now(timezone.utc).date())
+    note: str = Field(default="", max_length=4000)
+
+
+@app.post("/findings/{finding_id}/fix-shipped")
+def finding_fix_shipped(finding_id: int, body: FixShippedBody, product_id: int | None = None,
+                        user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.fixwatch import mark_shipped, release_state
+    if body.shipped_date > datetime.now(timezone.utc).date():
+        raise HTTPException(422, "The shipped date cannot be in the future.")
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
+        try:
+            watch = mark_shipped(session, finding,
+                datetime.combine(body.shipped_date, datetime.min.time(), tzinfo=timezone.utc),
+                version=body.version, note=body.note)
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        return {"status": watch.status, "fixed_in_version": watch.fixed_in_version,
+                "release": release_state(session, watch)}
+
+
 @app.put("/findings/{finding_id}/fixed-version")
 def finding_fixed_version(finding_id: int, body: FixedVersionBody, product_id: int | None = None,
                           user: dict = Depends(require_role("reviewer"))) -> dict:
@@ -3931,7 +3991,7 @@ def brief_view(product_id: int | None = None, user: dict = Depends(current_user)
 @app.post("/brief/send")
 def brief_send(user: dict = Depends(require_role("reviewer"))) -> dict:
     """Compose and deliver the weekly brief to Slack/email (scheduled, unprompted)."""
-    from echolens.brief import weekly_brief
+    from echolens.brief import delivery_brief, weekly_brief
     from echolens.db.models import Product
     from echolens.notify import _send_email, _send_slack, deep_link
     with session_scope() as session:
@@ -3943,6 +4003,9 @@ def brief_send(user: dict = Depends(require_role("reviewer"))) -> dict:
             b = portfolio_brief(session)
         else:
             b = weekly_brief(session)
+        b = delivery_brief(b)
+    if b["quiet"]:
+        return {"sent": {"slack": False, "email": False}, "skipped": "quiet_week", "brief": b}
 
     def _linkify(text: str) -> str:
         import re

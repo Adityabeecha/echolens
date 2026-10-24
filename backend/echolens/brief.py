@@ -37,13 +37,15 @@ def _load(session: Session, product_ids: list[int] | None, now) -> dict:
     from echolens.themes import theme_lifecycle, theme_lifecycles
 
     keys = [None] if product_ids is None else list(product_ids)
-    data = {k: {"invs": [], "latest": {}, "watches": [], "regressions": [], "chronic": []}
+    data = {k: {"invs": [], "latest": {}, "watches": [], "regressions": [], "chronic": [],
+                "pending": [], "decisions": {}}
             for k in keys}
 
     def key(pid):
         return None if product_ids is None else pid
 
-    inv_stmt = select(Investigation).where(Investigation.status == "resolved")
+    inv_stmt = select(Investigation).where(Investigation.status.in_(
+        ("resolved", "needs_human", "insufficient_evidence", "budget_exhausted", "failed")))
     w_stmt = select(FixWatch)
     reg_stmt = select(AnomalyEvent).where(AnomalyEvent.type == "regression")
     if product_ids is not None:
@@ -53,13 +55,18 @@ def _load(session: Session, product_ids: list[int] | None, now) -> dict:
     invs = session.scalars(inv_stmt).all()
     by_id = {}
     for inv in invs:
-        data[key(inv.product_id)]["invs"].append(inv)
+        bucket = "invs" if inv.status == "resolved" else "pending"
+        data[key(inv.product_id)][bucket].append(inv)
         by_id[inv.id] = inv
     if by_id:
         for finding in session.scalars(select(Finding).where(
                 Finding.investigation_id.in_(list(by_id))).order_by(Finding.id)).all():
             inv = by_id[finding.investigation_id]
             data[key(inv.product_id)]["latest"][inv.id] = finding
+    from echolens.review import latest_decisions
+    decisions = latest_decisions(session, [f.id for d in data.values() for f in d["latest"].values()])
+    for d in data.values():
+        d["decisions"] = decisions
     for w in session.scalars(w_stmt).all():
         data[key(w.product_id)]["watches"].append(w)
     for a in session.scalars(reg_stmt).all():
@@ -93,14 +100,16 @@ def _fix_next(d: dict, resolution_rate: float, now) -> dict | None:
     """Rank open problems by severity × volume × persistence × (1 − resolution)."""
     confirmed = {w.investigation_id for w in d["watches"] if w.status == "confirmed"}
     best, best_score = None, -1.0
-    for inv in d["invs"]:
+    from echolens.review import decision_hides
+    for inv in d["invs"] + d["pending"]:
         if inv.id in confirmed:
             continue
         f = d["latest"].get(inv.id)
-        if f is None:
+        if f is not None and (f.status == "challenged" or
+                              decision_hides(d["decisions"].get(f.id), now)):
             continue
-        impact = (f.json or {}).get("impact", {})
-        sev = severity(float(f.confidence or 0.0), impact)["score"]
+        impact = (f.json or {}).get("impact", {}) if f else {}
+        sev = severity(float(f.confidence or 0.0), impact)["score"] if f else 0.0
         volume = impact.get("affected_volume", 0) or 0
         persistence = max(1, (now - (aware_utc(inv.created_at) or now)).days)
         score = sev * (volume + 1) * persistence * (1 - resolution_rate)
@@ -109,7 +118,9 @@ def _fix_next(d: dict, resolution_rate: float, now) -> dict | None:
     if best is None:
         return None
     f, inv = best
-    return {"investigation_id": inv.id, "summary": f.summary, "score": round(best_score, 2)}
+    return {"investigation_id": inv.id,
+            "summary": f.summary if f else "This case needs human review",
+            "score": round(best_score, 2)}
 
 
 def _compose(d: dict, now) -> dict:
@@ -136,21 +147,34 @@ def _compose(d: dict, now) -> dict:
     fix_next = _fix_next(d, rate, now)
 
     # chronic themes (context for the brief)
-    chronic = d["chronic"]
+    from echolens.review import decision_hides
+    confirmed = {w.investigation_id for w in d["watches"] if w.status == "confirmed"}
+    attention_ids = set()
+    for inv in d["invs"] + d["pending"]:
+        f = d["latest"].get(inv.id)
+        if inv.id not in confirmed and (f is None or (f.status != "challenged" and
+                not decision_hides(d["decisions"].get(f.id), now))):
+            attention_ids.add(inv.id)
+    chronic = [t for t in d["chronic"] if attention_ids.intersection(t["cases"])]
 
     # A "0% resolution rate" computed from zero cases is not a measurement; it
     # reads as a failing grade the data cannot support. Say so instead.
     resolved_total = len(d["invs"])
-    headline = (f"This week: {_n(len(new_problems), 'new problem')}, "
-                f"{_n(len(fixes_verified), 'fix', 'fixes')} verified, "
-                f"{_n(len(regressions), 'regression')}.")
+    sections = []
+    if new_problems:
+        sections.append(_n(len(new_problems), "new problem"))
+    if fixes_verified:
+        sections.append(f"{_n(len(fixes_verified), 'fix', 'fixes')} verified")
+    if regressions:
+        sections.append(_n(len(regressions), "regression"))
+    headline = "This week: " + ", ".join(sections) + "." if sections else ""
     # Nor is "0% … verified" a week after the first case resolved: no fix
     # could have shipped and been measured yet, so the line read as failure.
-    if rate > 0:
+    if headline and rate > 0:
         headline += f" {int(rate * 100)}% of resolved cases have a verified fix."
-    elif resolved_total >= 3:
+    elif headline and resolved_total >= 3:
         headline += f" None of {resolved_total} resolved cases has a verified fix yet."
-    lines = [headline]
+    lines = [headline] if headline else []
     for p in new_problems[:2]:
         lines.append(f"• New: {p['summary']} (case #{p['investigation_id']}).")
     if chronic:
@@ -167,6 +191,7 @@ def _compose(d: dict, now) -> dict:
         "regressions": regressions,
         "chronic_themes": chronic,
         "fix_next": fix_next,
+        "quiet": not lines,
         "lines": lines[:5],
     }
 
@@ -184,3 +209,17 @@ def weekly_briefs(session: Session, product_ids: list[int],
     now = as_of or datetime.now(timezone.utc)
     data = _load(session, list(product_ids), now)
     return {pid: _compose(data[pid], now) for pid in product_ids}
+
+
+def delivery_brief(brief: dict) -> dict:
+    """Apply the same quiet-week policy to the portfolio scheduled delivery."""
+    if "per_product" not in brief:
+        return brief
+    lines = []
+    for item in brief["per_product"]:
+        for line in item["brief"]["lines"]:
+            lines.append(f"{item['product']}: {line}")
+    for transfer in brief.get("transfers", []):
+        lines.append(f"Reused {transfer['from_product']}'s verified fix on {transfer['product']} "
+                     f"(case #{transfer['investigation_id']}).")
+    return {**brief, "quiet": not lines, "lines": lines[:6]}

@@ -10,6 +10,7 @@ const KIND: Record<string, { color: string; icon: string }> = {
   approved: { color: C.good, icon: "check" },
   challenged: { color: C.bad, icon: "close" },
   reopen: { color: C.info, icon: "retry" },
+  merged: { color: C.info, icon: "arrowRight" },
   issue: { color: C.info, icon: "keyboard" },
   fix_shipped: { color: C.accent, icon: "shipped" },
   verified: { color: C.good, icon: "check" },
@@ -88,10 +89,31 @@ export function HistoryTab({ inv, onOpenCase }: {
                     “{e.note}”
                   </div>
                 )}
+                {e.actual_cause && (
+                  <div style={{ fontSize: T.sm, color: C.text3, marginTop: S[2], lineHeight: "var(--el-lh-normal)" }}>
+                    <strong>Human-provided cause (not evidence):</strong> {e.actual_cause}
+                  </div>
+                )}
               </div>
             </div>
           );
         })}
+        {(inv.related_evidence?.length ?? 0) > 0 && (
+          <div style={{ marginTop: S[4], padding: S[4], border: `1px solid ${C.border2}`, borderRadius: R.card }}>
+            <div style={{ fontSize: T.base, color: C.text2 }}>Related evidence from merged cases</div>
+            <div style={{ fontSize: T.sm, color: C.dim, marginTop: S[1] }}>
+              Linked to the original record. This does not add support to this case's finding.
+            </div>
+            {inv.related_evidence!.map((e) => (
+              <div key={`${e.source_case_id}:${e.id}`} style={{ marginTop: S[3] }}>
+                <div style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>
+                  case #{e.source_case_id} · {e.id} · {e.source} · {e.ref}
+                </div>
+                <div style={{ fontSize: T.sm, color: C.text3, marginTop: S[1] }}>{e.snippet}</div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

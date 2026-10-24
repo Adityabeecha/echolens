@@ -359,6 +359,8 @@ class FixWatch(Base):
     # rather than at issue close, because a mobile release takes days to reach users.
     fixed_in_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     release_seen_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    shipped_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    shipped_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
@@ -503,6 +505,18 @@ class ReviewFeedback(Base):
     # v5.0 challenge autopsy: structured reason category (wrong_cause|weak_evidence|
     # wrong_severity|already_knew) so failure modes roll up into visible weak spots.
     reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    actual_cause: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class CaseMerge(Base):
+    """A duplicate's evidence stays on its case; this link makes it related."""
+    __tablename__ = "case_merges"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("investigations.id", ondelete="CASCADE"), unique=True)
+    target_id: Mapped[int] = mapped_column(ForeignKey("investigations.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 

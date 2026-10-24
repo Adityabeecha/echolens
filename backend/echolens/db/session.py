@@ -18,6 +18,9 @@ _SessionLocal: sessionmaker | None = None
 _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("fix_watches", "fixed_in_version", "VARCHAR"),
     ("fix_watches", "release_seen_at", "TIMESTAMP"),
+    ("fix_watches", "shipped_at", "TIMESTAMP"),
+    ("fix_watches", "shipped_note", "TEXT"),
+    ("review_feedback", "actual_cause", "TEXT"),
     ("llm_calls", "product_id", "INTEGER"),
     ("investigations", "reopens_investigation_id", "INTEGER"),
     ("investigations", "checkpoint_json", "JSON"),

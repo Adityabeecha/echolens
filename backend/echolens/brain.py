@@ -98,6 +98,28 @@ def _confidence(supports: int, refutes: int) -> float:
 # ── mining: build edges from confirmed findings ─────────────────────────
 
 
+def human_cause_priors(session: Session, product_id: int | None) -> list[dict]:
+    """Human corrections for investigation seeding only; never mine these as verified edges."""
+    from echolens.db.models import ReviewFeedback
+
+    rows = session.execute(select(ReviewFeedback, Finding, Investigation, AnomalyEvent)
+        .join(Finding, Finding.id == ReviewFeedback.finding_id)
+        .join(Investigation, Investigation.id == Finding.investigation_id)
+        .join(AnomalyEvent, AnomalyEvent.id == Investigation.anomaly_id)
+        .where(Investigation.product_id == product_id, Investigation.status != "merged",
+               ReviewFeedback.action == "challenge", ReviewFeedback.actual_cause.is_not(None))
+        .order_by(ReviewFeedback.id.desc())).all()
+    out, seen = [], set()
+    for feedback, finding, inv, anomaly in rows:
+        if finding.id in seen or not (feedback.actual_cause or "").strip():
+            continue
+        seen.add(finding.id)
+        out.append({"case_id": inv.id, "cause": feedback.actual_cause,
+                    "theme": f"{anomaly.metric} {anomaly.description}",
+                    "source": "human_provided", "at": feedback.created_at})
+    return out
+
+
 def rebuild(session: Session, product_id: int | None = None) -> dict:
     """(Re)derive the edge set for a product from its confirmed fixes.
 

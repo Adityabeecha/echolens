@@ -24,7 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from echolens.db.models import (
-    AnomalyEvent, Finding, FindingDecision, FixWatch, Investigation, Product,
+    AnomalyEvent, CaseMerge, EvidenceRow, Finding, FindingDecision, FixWatch, Investigation, Product,
     QueuedInvestigation, Review, ReviewFeedback, TraceStep, TriageDecision)
 from echolens.impact import severity
 from echolens.timeutil import aware_utc
@@ -152,6 +152,8 @@ def derive_status(inv: Investigation, finding: Finding | None,
     Order matters: verification outranks the investigation's own verdict,
     because "we shipped a fix and it came back" is the more recent truth.
     """
+    if inv.status == "merged":
+        return "merged", "Merged into another case; its evidence is linked as related."
     if inv.status == "running":
         return RUNNING, "Investigating now."
     # A case the dedupe migration retired is not a live case. Without this branch
@@ -233,6 +235,75 @@ def _headline(a: AnomalyEvent) -> str:
     return (a.description or metric or "Signal detected").strip()
 
 
+def merged_into(session: Session, case_id: int) -> int | None:
+    """Canonical destination, including when a merge target was later merged too."""
+    destination, seen = None, {case_id}
+    while True:
+        link = session.scalars(select(CaseMerge).where(CaseMerge.source_id == case_id)).first()
+        if link is None or link.target_id in seen:
+            return destination
+        destination = case_id = link.target_id
+        seen.add(case_id)
+
+
+def merge_cases(session: Session, source: Investigation, target: Investigation,
+                user_id: int | None = None) -> CaseMerge:
+    if source.id == target.id:
+        raise ValueError("A case cannot be merged into itself.")
+    def product_id(inv):
+        anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv.product_id is None and inv.anomaly_id else None
+        return inv.product_id if inv.product_id is not None else anomaly.product_id if anomaly else None
+
+    if product_id(source) != product_id(target):
+        raise ValueError("Cases must belong to the same product.")
+    # Lock in a stable order so simultaneous opposite merges cannot create a cycle.
+    session.scalars(select(Investigation).where(Investigation.id.in_([source.id, target.id]))
+                    .order_by(Investigation.id).with_for_update()
+                    .execution_options(populate_existing=True)).all()
+    existing = session.scalars(select(CaseMerge).where(CaseMerge.source_id == source.id)).first()
+    if existing is not None:
+        if existing.target_id == target.id:
+            return existing
+        raise ValueError("This case has already been merged.")
+    from echolens.review import decision_hides, latest_decision
+    for inv in (source, target):
+        finding = session.scalars(select(Finding).where(
+            Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
+        watch = session.scalars(select(FixWatch).where(
+            FixWatch.investigation_id == inv.id).order_by(FixWatch.id.desc())).first()
+        status, _ = derive_status(inv, finding, watch)
+        if status not in (NEEDS_REVIEW, NEEDS_HUMAN, RESOLVED, REGRESSED):
+            raise ValueError("Only open, finished cases can be merged; wait for running work to finish.")
+        if finding and decision_hides(latest_decision(session, finding.id)):
+            raise ValueError("Only open cases can be merged.")
+    link = CaseMerge(source_id=source.id, target_id=target.id, user_id=user_id)
+    session.add(link)
+    source.status = "merged"
+    source.product_id = target.product_id = product_id(target)
+    for watch in session.scalars(select(FixWatch).where(FixWatch.investigation_id == source.id)).all():
+        watch.status = "merged"
+    session.flush()
+    return link
+
+
+def related_evidence(session: Session, inv: Investigation) -> list[dict]:
+    """Read linked duplicates' evidence without promoting it to this case's proof."""
+    links = session.execute(select(CaseMerge.source_id, CaseMerge.target_id)
+        .join(Investigation, Investigation.id == CaseMerge.source_id)
+        .where(Investigation.product_id == inv.product_id)).all()
+    related, frontier = set(), {inv.id}
+    while frontier:
+        children = {source for source, target in links if target in frontier} - related - {inv.id}
+        related.update(children)
+        frontier = children
+    if not related:
+        return []
+    return [{"source_case_id": e.investigation_id, "id": e.eid, "source": e.source,
+             "ref": e.ref, "snippet": e.snippet}
+            for e in session.scalars(select(EvidenceRow).where(
+                EvidenceRow.investigation_id.in_(related)).order_by(EvidenceRow.id)).all()]
+
+
 def case_rows(session: Session, product_id: int | None,
               as_of: datetime | None = None) -> list[dict]:
     """Every case for a product, newest first, in the shared card shape."""
@@ -240,7 +311,8 @@ def case_rows(session: Session, product_id: int | None,
     product = session.get(Product, product_id) if product_id is not None else None
     spark = _SparkIndex(session, product.name if product else None, now)
 
-    stmt = select(Investigation).order_by(Investigation.id.desc())
+    stmt = select(Investigation).where(Investigation.status != "merged",
+        Investigation.id.not_in(select(CaseMerge.source_id))).order_by(Investigation.id.desc())
     if product_id is not None:
         stmt = stmt.where(Investigation.product_id == product_id)
     investigations = list(session.scalars(stmt).all())
@@ -456,6 +528,16 @@ def case_history(session: Session, inv: Investigation) -> list[dict]:
 
     add(inv.created_at, "opened",
         f"Case opened {'by you' if inv.opened_by == 'manual' else 'from a detected signal'}.")
+    from echolens.db.models import User
+    for link in session.scalars(select(CaseMerge).where(
+            (CaseMerge.source_id == inv.id) | (CaseMerge.target_id == inv.id))).all():
+        author = session.get(User, link.user_id) if link.user_id else None
+        destination = link.target_id if link.source_id == inv.id else link.source_id
+        text = (f"Merged into case #{link.target_id}; evidence linked as related."
+                if link.source_id == inv.id else
+                f"Case #{link.source_id} merged here; its evidence is linked as related, not additional proof.")
+        add(link.created_at, "merged", text, case_id=destination,
+            by=author.email if author else None)
     if inv.reopens_investigation_id:
         add(inv.created_at, "reopen",
             f"Re-opened from case #{inv.reopens_investigation_id} after a challenge.",
@@ -482,6 +564,8 @@ def case_history(session: Session, inv: Investigation) -> list[dict]:
                 add(fb.created_at, "challenged",
                     f"You challenged the finding{f' — {reason}' if reason else ''}.",
                     note=fb.note or "")
+                if fb.actual_cause:
+                    events[-1]["actual_cause"] = fb.actual_cause
         if (f.json or {}).get("needs_review"):
             nr = f.json["needs_review"]
             at = nr.get("at")
@@ -503,9 +587,11 @@ def case_history(session: Session, inv: Investigation) -> list[dict]:
 
     for w in session.scalars(select(FixWatch).where(
             FixWatch.investigation_id == inv.id).order_by(FixWatch.id)).all():
-        add(w.created_at, "issue", f"Issue #{w.issue_number} opened in {w.repo}.")
-        if w.fix_date:
-            add(w.fix_date, "fix_shipped", "The fix shipped — watching for a change.")
+        if w.issue_number:
+            add(w.created_at, "issue", f"Issue #{w.issue_number} opened in {w.repo}.")
+        if w.shipped_at or w.fix_date:
+            add(w.shipped_at or w.fix_date, "fix_shipped", "The fix shipped — watching for a change.",
+                note=w.shipped_note or "")
         if w.status == "confirmed" and w.confirmed_at:
             add(w.confirmed_at, "verified", "Verified fixed — the complaints stopped.")
         elif w.status == "regressed":

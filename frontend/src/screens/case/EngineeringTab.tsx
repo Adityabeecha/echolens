@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Investigation, api, canReview, getActiveProduct } from "../../api";
 import { useAsync } from "../../hooks";
 import { withToast } from "../../components/Toast";
@@ -21,11 +21,11 @@ const FIX_META: Record<string, { label: string; color: string; body: string }> =
   },
   waiting_for_release: {
     label: "Waiting for release", color: C.info,
-    body: "The issue closed, but the fix isn't judged until the fixed version reaches users — the watch starts at the first review on it."
+    body: "The fix isn't judged until the fixed version reaches users — the watch starts at the first review on it."
   },
   watching: {
     label: "In verification", color: C.accent,
-    body: "The issue closed. EchoLens is watching complaint volume for 14 days to see whether the fix actually worked."
+    body: "The fix shipped. EchoLens is watching complaint volume for 14 days to see whether the fix actually worked."
   },
   confirmed: {
     label: "Verified fixed", color: C.good,
@@ -60,6 +60,18 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
   const activeId = getActiveProduct() ?? prods.data?.active_product_id ?? null;
   const activeProduct = prods.data?.products.find((p) => p.id === activeId);
   const noRepo = !!activeProduct && !activeProduct.github_repo;
+  const fix = f?.fix;
+  const [version, setVersion] = useState(fix?.fixed_in_version ?? "");
+  const [shipOpen, setShipOpen] = useState(false);
+  const [shipDate, setShipDate] = useState(fix?.shipped_at?.slice(0, 10) ?? new Date().toISOString().slice(0, 10));
+  const [shipNote, setShipNote] = useState(fix?.shipped_note ?? "");
+  useEffect(() => { setVersion(fix?.fixed_in_version ?? ""); }, [f?.id, fix?.fixed_in_version]);
+  useEffect(() => {
+    setShipDate(fix?.shipped_at?.slice(0, 10) ?? new Date().toISOString().slice(0, 10));
+    setShipNote(fix?.shipped_note ?? "");
+  }, [f?.id, fix?.shipped_at, fix?.shipped_note]);
+  const repliesRequested = typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("replies") === "1";
 
   if (!f) {
     return (
@@ -72,11 +84,9 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
     );
   }
 
-  const fix = f.fix;
   const meta = fix ? FIX_META[fix.status] : null;
   const canCreate = canReview() && inv.status === "resolved";
   const thin = ["insufficient_evidence", "needs_human", "budget_exhausted"].includes(inv.status);
-  const [version, setVersion] = useState(fix?.fixed_in_version ?? "");
   const versionOpen = !!fix && ["issue_open", "waiting_for_release", "watching"].includes(fix.status);
 
   const saveVersion = async () => {
@@ -88,6 +98,15 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
     });
     setBusy(null);
     if (r) await onReload();
+  };
+
+  const markShipped = async () => {
+    setBusy("shipped");
+    const result = await withToast(() => api.markFixShipped(f.id, {
+      version: version.trim() || null, date: shipDate, note: shipNote.trim()
+    }), { success: "Fix marked shipped — verification started.", failure: "Couldn't mark the fix shipped" });
+    setBusy(null);
+    if (result) { setShipOpen(false); await onReload(); }
   };
 
   const copyIssue = async () => {
@@ -146,8 +165,7 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
                         borderRadius: R.card }}>
             <div style={{ fontSize: T.base, color: C.text3 }}>Not filed yet.</div>
             <div style={{ fontSize: T.sm, color: C.dim, marginTop: S[1], lineHeight: "var(--el-lh-normal)" }}>
-              Filing it links the fix to the complaints it should stop, so EchoLens can tell you
-              later whether it actually worked.
+              File a ticket to track the work, or mark the fix shipped below to start verification.
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: S[2], marginTop: S[3],
                           flexWrap: "wrap" }}>
@@ -168,8 +186,7 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
                   Connect a GitHub repo in Sources to file issues from here.
                 </span>
               )}
-              {/* Linear / Jira, when configured. GitHub keeps its own button
-                  above because only a GitHub close starts fix verification. */}
+              {/* Linear / Jira, when configured. */}
               {canCreate && (
                 <TrackerMenu findingId={f.id} exclude={["github"]} disabled={!!busy}
                   onFiled={() => { void onReload(); }} />
@@ -184,10 +201,49 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
         )}
 
         <Label style={{ margin: "26px 0 10px" }}>DID THE FIX WORK?</Label>
+        {canCreate && (
+          <div style={{ marginBottom: S[3] }}>
+            <button className="el-btn" style={ghost} aria-expanded={shipOpen}
+              onClick={() => setShipOpen((open) => !open)} disabled={!!busy}>
+              {fix?.shipped_at ? "Update shipped fix" : "Mark fix shipped"}
+            </button>
+            {shipOpen && (
+              <div style={{ marginTop: S[2], padding: S[4], background: C.card,
+                            border: `1px solid ${C.border2}`, borderRadius: R.card }}>
+                <div style={{ fontSize: T.sm, color: C.muted, marginBottom: S[3] }}>
+                  Start verification without a GitHub issue. Set a version to wait until it reaches users.
+                  {fix && fix.status !== "issue_open" && " Saving restarts verification for this release."}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: S[3] }}>
+                  <label style={{ fontSize: T.sm, color: C.muted }}>
+                    Version (optional)
+                    <input aria-label="Shipped version" value={version} maxLength={32} placeholder="e.g. 3.2.1"
+                      onChange={(e) => setVersion(e.target.value)} style={{ ...input, width: 150 }} />
+                  </label>
+                  <label style={{ fontSize: T.sm, color: C.muted }}>
+                    Shipped date
+                    <input type="date" value={shipDate} max={new Date().toISOString().slice(0, 10)}
+                      onChange={(e) => setShipDate(e.target.value)} style={input} />
+                  </label>
+                </div>
+                <label htmlFor="shipped-note" style={{ display: "block", fontSize: T.sm, color: C.muted, marginTop: S[3] }}>
+                  Note (optional)
+                </label>
+                <textarea id="shipped-note" value={shipNote} maxLength={4000}
+                  onChange={(e) => setShipNote(e.target.value)}
+                  style={{ ...input, width: "100%", minHeight: 64, resize: "vertical", boxSizing: "border-box" }} />
+                <button className="el-btn el-btn--primary" style={{ ...ghost, marginTop: S[3] }}
+                  onClick={markShipped} disabled={!!busy || !shipDate}>
+                  {busy === "shipped" ? "Saving…" : "Save shipped fix"}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         {!fix || !meta ? (
           <EmptyState
             title="Verification hasn't started"
-            body="Once a linked issue closes, EchoLens watches the complaints it was meant to stop and reports back here — verified, or not."
+            body="Mark the fix shipped, or close a linked issue. EchoLens watches the complaints it should stop and reports back here — verified, or not."
           />
         ) : (
           <>
@@ -251,7 +307,7 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
         )}
 
         {thin && <FollowupPanel findingId={f.id} />}
-        {inv.status === "resolved" && <ReplyPanel findingId={f.id} />}
+        {inv.status === "resolved" && <ReplyPanel findingId={f.id} expand={repliesRequested} />}
       </div>
     </div>
   );
@@ -260,4 +316,10 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
 const ghost: React.CSSProperties = {
   background: "transparent", color: C.text2, border: `1px solid ${C.border3}`,
   borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base
+};
+
+const input: React.CSSProperties = {
+  display: "block", marginTop: S[1], background: C.bg, color: C.text2,
+  border: `1px solid ${C.border3}`, borderRadius: R.control, padding: `${S[2]} ${S[3]}`,
+  fontSize: T.base, fontFamily: "inherit"
 };
