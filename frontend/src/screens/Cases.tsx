@@ -251,14 +251,11 @@ export function Cases({
         }
       />
 
-      <SavedViewsBar key={productId ?? "none"} productId={productId} params={{ ...params, q: search }}
-        onApply={(next) => { setSearch(next.q ?? ""); setParams(next); }} />
-
       {/* filter bar — every value here is in the URL */}
       <div className="el-case-filters" style={{ flex: "none", borderBottom: `1px solid ${C.border}`,
                     padding: `${S[3]} ${S[6]}`, display: "flex", alignItems: "center",
                     gap: S[2], flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: S[1], flexWrap: "wrap" }}>
+        <div className="el-ui-forms-case-tabs" role="group" aria-label="Case status">
           {CASE_TABS.map((t) => {
             const active = t.key === tab;
             const n = t.key === "all" ? counts.all : counts[t.key];
@@ -267,6 +264,7 @@ export function Cases({
                 key={t.key}
                 onClick={() => setParams({ tab: t.key === "all" ? null : t.key })}
                 className="el-btn"
+                aria-pressed={active}
                 style={{
                   background: active ? C.active : "transparent",
                   color: active ? C.text : C.muted,
@@ -285,24 +283,30 @@ export function Cases({
             );
           })}
         </div>
-        <div style={{ flex: 1 }} />
-        <Select label="Severity" value={sev} onChange={(v) => setParams({ sev: v })}
-                options={[["", "Any severity"], ...Object.entries(SEVERITY).map(
-                  ([k, m]) => [k, k === "unknown" ? "Severity unknown" : `${m.label} severity`] as [string, string])]} />
-        <Select label="Source" value={source} onChange={(v) => setParams({ source: v })}
-                options={[["", "Any source"], ...sources.map(
-                  (s) => [s, sourceLabel(s)] as [string, string])]} />
-        <Select label="Time range" value={range} onChange={(v) => setParams({ range: v })}
-                options={RANGES.map((r) => [r.key, r.label] as [string, string])} />
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search cases…"
-          aria-label="Search cases"
-          style={{ width: 200, background: C.card, border: `1px solid ${C.border3}`,
-                   borderRadius: R.control, color: C.text, fontFamily: sans, fontSize: T.sm,
-                   padding: `${S[2]} ${S[3]}` }}
-        />
+        <div className="el-ui-forms-case-controls">
+          <Select label="Severity" value={sev} onChange={(v) => setParams({ sev: v })}
+                  options={[["", "Any severity"], ...Object.entries(SEVERITY).map(
+                    ([k, m]) => [k, k === "unknown" ? "Severity unknown" : `${m.label} severity`] as [string, string])]} />
+          <Select label="Source" value={source} onChange={(v) => setParams({ source: v })}
+                  options={[["", "Any source"], ...sources.map(
+                    (s) => [s, sourceLabel(s)] as [string, string])]} />
+          <Select label="Time range" value={range} onChange={(v) => setParams({ range: v })}
+                  options={RANGES.map((r) => [r.key, r.label] as [string, string])} />
+          <Select label="Review intent (signals and themes)" value={intent}
+                  onChange={(v) => setParams({ intent: v || null })}
+                  options={INTENT_FILTERS.map((f) => [f.key, f.key ? f.label : "Any intent"] as [string, string])} />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search cases…"
+            aria-label="Search cases"
+            style={{ width: 200, minWidth: 0, background: C.card, border: `1px solid ${C.border3}`,
+                     borderRadius: R.control, color: C.text, fontFamily: sans, fontSize: T.sm,
+                     padding: `${S[2]} ${S[3]}` }}
+          />
+          <SavedViewsBar key={productId ?? "none"} productId={productId} params={{ ...params, q: search }}
+            onApply={(next) => { setSearch(next.q ?? ""); setParams(next); }} />
+        </div>
       </div>
 
       <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]} ${S[10]}` }}>
@@ -520,10 +524,12 @@ export function Cases({
 
       {/* one commit for any number of selections */}
       {reviewer && selectedCount > 0 && (
-        <div style={{ flex: "none", borderTop: `1px solid ${C.border2}`, background: C.bgRaised,
-                      padding: `${S[3]} ${S[6]}`, display: "flex", alignItems: "center", gap: S[4],
+        <div className="el-ui-forms-selection" role="group" aria-label="Selected signals and themes"
+          style={{ flex: "none", border: `1px solid ${C.border3}`, background: C.bgRaised,
+                      borderRadius: R.card, boxShadow: "var(--el-e3)",
+                      padding: `${S[3]} ${S[4]}`, display: "flex", alignItems: "center", gap: S[3],
                       flexWrap: "wrap" }}>
-          <span style={{ fontSize: T.base, color: C.text2 }}>
+          <span role="status" aria-live="polite" style={{ fontSize: T.base, color: C.text2 }}>
             <strong>{selectedCount}</strong> selected
           </span>
           <span style={{ fontFamily: mono, fontSize: T.xs, color: C.faint }}>
@@ -1118,8 +1124,7 @@ export function SavedViewsBar({ productId, params, onApply }: {
     }
   };
   return (
-    <div aria-label="Saved Cases views" style={{ flex: "none", padding: `${S[2]} ${S[6]}`,
-      borderBottom: `1px solid ${C.border}`, display: "flex", flexDirection: "column", gap: S[2] }}>
+    <div className="el-ui-forms-saved-views" aria-label="Saved Cases views" style={{ display: "flex", flexDirection: "column", gap: S[2], minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: S[2], flexWrap: "wrap" }}>
         {rows.map((view) => {
           const active = CASE_VIEW_FILTERS.every(k => (view.params[k] ?? "") === (current[k] ?? ""));

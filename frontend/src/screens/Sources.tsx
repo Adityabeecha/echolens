@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, canReview, isAdmin } from "../api";
-import { ago, count, duration, plural } from "../format";
+import { count, duration, plural, relativeWhen, when } from "../format";
 import { useAsync, useDialog } from "../hooks";
 import { C, MEASURE, R, S, T, mono } from "../theme";
 import { Centered, EmptyState, ErrorState, GhostButton, Label, ScreenHeader } from "../ui";
@@ -78,6 +78,26 @@ export function Sources({ onAddProduct, productName }: {
     }
   };
 
+  const translate = async () => {
+    if (!reviewer || busy) return;
+    setBusy("translate");
+    setMsg(null);
+    try {
+      const r = await api.translateReviews();
+      const { toast } = await import("../components/Toast");
+      const result = `Translated ${count(r.translated)} ${plural(r.translated, "review")}, ${count(r.pending)} pending${
+        r.stopped ? ` — stopped: ${r.stopped}` : ""
+      }.${r.note ? ` ${r.note}` : ""}`;
+      if (r.stopped) toast.info(result);
+      else toast.ok(result);
+      reload();
+    } catch (e) {
+      setMsg(`Couldn't translate reviews: ${String(e).replace("Error: ", "")}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   if (loading && !data) return <Centered>Loading sources…</Centered>;
   if (error && !data) {
     return (
@@ -99,6 +119,10 @@ export function Sources({ onAddProduct, productName }: {
               <button onClick={collect} disabled={!!busy} className="el-btn"
                 style={{ background: "transparent", color: C.muted, border: `1px solid ${C.border3}`, borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base }}>
                 {busy === "collect" ? "Collecting…" : "Collect now"}
+              </button>
+              <button onClick={translate} disabled={!!busy} className="el-btn"
+                style={{ background: "transparent", color: C.muted, border: `1px solid ${C.border3}`, borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base }}>
+                {busy === "translate" ? "Translating…" : "Translate non-English reviews"}
               </button>
               <GhostButton onClick={() => setShowConnect((s) => !s)}>+ Connect source</GhostButton>
               <button onClick={() => setShowImport((s) => !s)} className="el-btn"
@@ -160,11 +184,11 @@ export function Sources({ onAddProduct, productName }: {
                       maxWidth: MEASURE }}>
           <Label>CONNECTED</Label>
           {data?.last_synced && data.last_synced.sources > 0 && (
-            <span title={data.last_synced.last_synced_at ?? undefined}
+            <span
               style={{ marginLeft: "auto", fontFamily: mono, fontSize: T.xs,
                        color: data.last_synced.stale ? C.accent : C.faint }}>
               {data.last_synced.last_synced_at
-                ? `Last synced ${ago(data.last_synced.age_minutes)}`
+                ? <>Last synced <RelativeDate iso={data.last_synced.last_synced_at} /></>
                 : "Not synced yet"}
             </span>
           )}
@@ -184,7 +208,7 @@ export function Sources({ onAddProduct, productName }: {
           {data?.connected.map((s, i) => {
             const col = STATUS_COLOR[s.status] ?? C.muted;
             return (
-              <div key={`${i}-${s.name}-${s.detail}`} style={{ display: "grid", gridTemplateColumns: "minmax(180px,1.2fr) 120px minmax(140px,1fr) 120px", gap: S[3], alignItems: "center", padding: `${S[4]} ${S[4]}`, background: C.card, border: `1px solid ${C.border2}`, borderRadius: R.card }}>
+              <div key={`${i}-${s.name}-${s.detail}`} className="el-ui-forms-source-card" style={{ display: "grid", gap: S[3], alignItems: "center", padding: `${S[4]} ${S[4]}`, background: C.card, border: `1px solid ${C.border2}`, borderRadius: R.card }}>
                 <div style={{ display: "flex", alignItems: "center", gap: S[3], minWidth: 0 }}>
                   <div style={{ width: 30, height: 30, borderRadius: R.control, background: C.hover, border: `1px solid ${C.border3}`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: mono, fontSize: T.sm, color: C.accent, flex: "none" }}>
                     {s.icon}
@@ -200,11 +224,13 @@ export function Sources({ onAddProduct, productName }: {
                 </div>
                 <div title={s.why || undefined} style={{ minWidth: 0 }}>
                   <div style={{ fontSize: T.sm, color: s.error ? C.bad : s.stale ? C.accent : C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {s.why || s.lastPull}
+                    {s.why ? <SourceActivity text={s.why} lastPull={s.lastPull} /> : s.lastSuccess
+                      ? <>Last success <RelativeDate iso={s.lastSuccess} /></>
+                      : <SourceActivity text={s.lastPull} />}
                   </div>
-                  {s.lastSuccess && (
+                  {s.why && s.lastSuccess && (
                     <div style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, marginTop: 0 }}>
-                      last success {new Date(s.lastSuccess).toLocaleString()}
+                      Last success <RelativeDate iso={s.lastSuccess} />
                     </div>
                   )}
                   {(s.stale || s.error) && reviewer && s.source && s.identifier && (
@@ -248,6 +274,27 @@ export function Sources({ onAddProduct, productName }: {
   );
 }
 
+function RelativeDate({ iso }: { iso: string }) {
+  const date = new Date(iso);
+  const valid = Number.isFinite(date.getTime());
+  return (
+    <time dateTime={valid ? date.toISOString() : undefined}
+      title={valid ? `${when(iso)} · ${date.toLocaleTimeString()} (${iso})` : undefined}>
+      {relativeWhen(iso)}
+    </time>
+  );
+}
+
+function SourceActivity({ text, lastPull }: { text: string; lastPull?: string }) {
+  // Collector error times are UTC; lastPull supplies the date of the same run.
+  const day = lastPull?.match(/\d{4}-\d{2}-\d{2}/)?.[0];
+  const activity = day
+    ? text.replace(/^collector failed at (\d{2}:\d{2}):/, `Collector failed ${day}T$1:00Z:`)
+    : text;
+  return <>{activity.split(/(\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)?)/).map((part, i) =>
+    /^\d{4}-\d{2}-\d{2}/.test(part) ? <RelativeDate key={i} iso={part} /> : part)}</>;
+}
+
 function ConnectForm({ onDone }: { onDone: () => void }) {
   const [source, setSource] = useState("play_store");
   const [identifier, setIdentifier] = useState("");
@@ -280,20 +327,29 @@ function ConnectForm({ onDone }: { onDone: () => void }) {
   return (
     <div style={{ maxWidth: MEASURE, marginBottom: S[4], padding: 18, background: C.card, border: `1px solid ${C.border2}`, borderRadius: R.card }}>
       <div style={{ fontSize: T.md, fontWeight: 600, marginBottom: S[3] }}>Connect a data source</div>
-      <div style={{ display: "grid", gridTemplateColumns: "150px 1fr 1fr auto", gap: S[2], alignItems: "center" }}>
-        <select value={source} onChange={(e) => setSource(e.target.value)} style={input}
-          aria-label="Source type">
-          {options.length === 0
-            ? <option value="play_store">Play Store</option>
-            : options.map((o) => (
-              <option key={o.source} value={o.source}>{o.label}</option>
-            ))}
-        </select>
-        <input value={identifier} onChange={(e) => setIdentifier(e.target.value)} placeholder={hint}
-          aria-label="Source identifier" style={input} />
-        <input value={product} onChange={(e) => setProduct(e.target.value)}
-          aria-label="Product name (optional)" placeholder="product name (optional)"
-          style={input} />
+      <div className="el-ui-forms-source-fields">
+        <label className="el-ui-forms-source-field">
+          <span>Source type</span>
+          <select value={source} onChange={(e) => setSource(e.target.value)} style={input}
+            aria-label="Source type">
+            {options.length === 0
+              ? <option value="play_store">Play Store</option>
+              : options.map((o) => (
+                <option key={o.source} value={o.source}>{o.label}</option>
+              ))}
+          </select>
+        </label>
+        <label className="el-ui-forms-source-field">
+          <span>Source identifier</span>
+          <input value={identifier} onChange={(e) => setIdentifier(e.target.value)} placeholder={hint}
+            aria-label="Source identifier" style={input} />
+        </label>
+        <label className="el-ui-forms-source-field">
+          <span>Product name (optional)</span>
+          <input value={product} onChange={(e) => setProduct(e.target.value)}
+            aria-label="Product name (optional)" placeholder="product name (optional)"
+            style={input} />
+        </label>
         <button onClick={submit} disabled={!identifier.trim() || busy} className="el-btn el-btn--primary"
           style={{ borderRadius: R.control, padding: `${S[2]} ${S[4]}`, fontWeight: 600, fontSize: T.base, cursor: identifier.trim() ? "pointer" : "not-allowed", opacity: identifier.trim() ? 1 : 0.5 }}>
           {busy ? "…" : "Connect"}
@@ -310,7 +366,7 @@ function ConnectForm({ onDone }: { onDone: () => void }) {
 function ImportForm({ onDone }: { onDone: (msg: string) => void }) {
   const [file, setFile] = useState<File | null>(null);
   const [product, setProduct] = useState("");
-  const [sourceLabel, setSourceLabel] = useState("csv");
+  const [sourceLabel, setSourceLabel] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -319,7 +375,7 @@ function ImportForm({ onDone }: { onDone: (msg: string) => void }) {
     setBusy(true);
     setError(null);
     try {
-      const r = await api.importReviews(file, product.trim() || undefined, sourceLabel);
+      const r = await api.importReviews(file, product.trim() || undefined, sourceLabel.trim() || "CSV import");
       onDone(`Imported ${r.imported} reviews (${r.skipped} skipped) from ${file.name}. Run a scan under Signals in Cases to look for new problems.`);
     } catch (e) {
       setError(String(e).replace("Error: ", ""));
@@ -339,17 +395,26 @@ function ImportForm({ onDone }: { onDone: (msg: string) => void }) {
         plus optional <span style={{ fontFamily: mono, color: C.text3 }}>rating</span>,{" "}
         <span style={{ fontFamily: mono, color: C.text3 }}>date</span>, <span style={{ fontFamily: mono, color: C.text3 }}>version</span>.
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: S[2], alignItems: "center" }}>
-        <input type="file"
-          accept=".csv,.xlsx,.xlsm,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          aria-label="CSV or Excel file to import"
-          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-          style={{ ...input, padding: `${S[2]} ${S[2]}` }} />
-        <input value={product} onChange={(e) => setProduct(e.target.value)}
-          aria-label="Product name (optional)"
-          placeholder="product name (optional)" style={input} />
-        <input value={sourceLabel} onChange={(e) => setSourceLabel(e.target.value)} placeholder="source label (e.g. app_store)"
-          aria-label="Source label" style={input} />
+      <div className="el-ui-forms-source-fields">
+        <label className="el-ui-forms-source-field">
+          <span>CSV or Excel file</span>
+          <input type="file"
+            accept=".csv,.xlsx,.xlsm,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            aria-label="CSV or Excel file to import"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            style={{ ...input, padding: `${S[2]} ${S[2]}` }} />
+        </label>
+        <label className="el-ui-forms-source-field">
+          <span>Product name (optional)</span>
+          <input value={product} onChange={(e) => setProduct(e.target.value)}
+            aria-label="Product name (optional)"
+            placeholder="product name (optional)" style={input} />
+        </label>
+        <label className="el-ui-forms-source-field">
+          <span>Source label (optional)</span>
+          <input value={sourceLabel} onChange={(e) => setSourceLabel(e.target.value)} placeholder="e.g. App Store reviews"
+            aria-label="Source label" style={input} />
+        </label>
         <button onClick={submit} disabled={!file || busy} className="el-btn el-btn--primary"
           style={{ borderRadius: R.control, padding: `${S[2]} ${S[4]}`, fontWeight: 600, fontSize: T.base, cursor: file ? "pointer" : "not-allowed", opacity: file ? 1 : 0.5 }}>
           {busy ? "Importing…" : "Import"}

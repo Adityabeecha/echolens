@@ -2523,3 +2523,74 @@ html[data-theme="dark"] .el-shell nav.el-sidebar { background: var(--el-nav-bg) 
   .el-shell nav.el-sidebar.is-user-collapsed .el-nav-locked { justify-content: center; align-items: center; }
   .el-shell nav.el-sidebar.is-user-collapsed .el-nav-locked > svg { margin-top: 0; }
 }
+
+/* ui-forms */
+.el-ui-forms-case-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.el-case-filters .el-ui-forms-case-tabs {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  gap: var(--el-s1);
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding: var(--el-s1);
+}
+.el-ui-forms-case-tabs > button { flex: none; }
+.el-ui-forms-case-controls {
+  display: flex;
+  flex: 1 1 560px;
+  min-width: 0;
+  align-items: center;
+  gap: var(--el-s2);
+  flex-wrap: wrap;
+}
+.el-ui-forms-case-controls > input { flex: 1 1 160px; }
+.el-ui-forms-case-controls > select { min-width: 0; max-width: 100%; }
+.el-ui-forms-saved-views { flex: 1 1 auto; }
+.el-ui-forms-selection {
+  margin: var(--el-s3) var(--el-s6);
+  max-height: 40dvh;
+  overflow-y: auto;
+}
+.el-ui-forms-selection button { white-space: normal; }
+.el-ui-forms-source-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--el-s3);
+}
+.el-ui-forms-source-field {
+  display: flex;
+  flex: 1 1 180px;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--el-s2);
+  color: var(--el-text-2);
+  font-size: var(--el-fs-sm);
+  font-weight: 500;
+}
+.el-ui-forms-source-field > input,
+.el-ui-forms-source-field > select { min-width: 0; width: 100%; box-sizing: border-box; }
+.el-ui-forms-source-card { grid-template-columns: minmax(180px, 1.2fr) 120px minmax(140px, 1fr) 120px; }
+@media (max-width: 900px) {
+  .el-ui-forms-source-card { grid-template-columns: minmax(0, 1fr) auto; }
+}
+@media (max-width: 720px) {
+  .el-case-filters .el-ui-forms-case-tabs { flex: 1 1 100%; }
+  .el-ui-forms-case-controls { flex-basis: 100%; }
+  .el-ui-forms-case-controls > input,
+  .el-ui-forms-case-controls > select { flex: 1 1 130px; }
+  .el-ui-forms-saved-views { flex-basis: 100%; }
+  .el-ui-forms-selection { margin: var(--el-s2) var(--el-s4); }
+  .el-ui-forms-selection > button:last-child { flex: 1 1 100%; }
+}

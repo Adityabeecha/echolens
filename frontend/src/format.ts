@@ -62,6 +62,14 @@ export function when(iso: string | null | undefined): string {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
+/** Relative time from an ISO date; use when() for its exact-date tooltip. */
+export function relativeWhen(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const timestamp = new Date(iso).getTime();
+  if (!Number.isFinite(timestamp)) return "—";
+  return ago((Date.now() - timestamp) / 60_000);
+}
+
 export function count(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(Number(n))) return "—";
   return Number(n).toLocaleString();
