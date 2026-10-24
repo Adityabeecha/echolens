@@ -15,7 +15,7 @@ import { Toasts, clearToasts, toast } from "./components/Toast";
 import { Today } from "./screens/Today";
 import { Cases } from "./screens/Cases";
 import { CaseDetail } from "./screens/CaseDetail";
-import { Login } from "./screens/Login";
+import { Landing } from "./screens/Landing";
 import { Centered } from "./ui";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { FirstRunTour } from "./components/FirstRunTour";
@@ -257,7 +257,7 @@ export default function App() {
 
   if (!authed) return (
     <>
-      <Login onAuthed={() => setAuthed(true)} />
+      <Landing onAuthed={() => setAuthed(true)} />
       <div className="el-login-theme-toggle">
         <ThemeToggle mode={theme} onChange={setTheme} compact />
       </div>

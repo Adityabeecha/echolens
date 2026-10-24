@@ -104,9 +104,11 @@ def _bootstrap() -> None:
     try:
         with session_scope() as s:
             if settings.seed_on_start and s.scalar(select(Review).limit(1)) is None:
-                from echolens.synthetic.generate import generate
-                generate(s, anchor="today")
-                log.info("bootstrap_seeded")
+                # The corpus, the demo product and its history (cases, fixes,
+                # verdicts) — deterministic, no LLM. Only on an empty database.
+                from echolens.synthetic.demo_story import seed_demo
+                counts = seed_demo(s)
+                log.info("bootstrap_seeded", story=counts.get("story"))
             if settings.bootstrap_admin_email and settings.bootstrap_admin_password:
                 if s.scalar(select(User).limit(1)) is None:
                     create_user(s, settings.bootstrap_admin_email,
@@ -1049,11 +1051,11 @@ def health() -> dict:
 def collect_run(user: dict = Depends(require_role("admin"))) -> dict:
     """Dev convenience: seed the synthetic corpus if empty (real collectors are M3)."""
     from echolens.db.models import Review
-    from echolens.synthetic.generate import generate
+    from echolens.synthetic.demo_story import seed_demo
     with session_scope() as session:
         if session.scalar(select(Review).limit(1)) is not None:
             return {"status": "already_populated"}
-        counts = generate(session, anchor="today")
+        counts = seed_demo(session)
     return {"status": "seeded", "counts": counts}
 
 

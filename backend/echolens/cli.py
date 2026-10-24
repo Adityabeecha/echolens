@@ -41,9 +41,9 @@ def cmd_seed(_args) -> int:
         if session.query(Review).count() > 0:
             console.print("[yellow]Database already seeded — delete backend/echolens.db to regenerate.[/]")
             return 0
-        from echolens.synthetic.generate import generate
-        counts = generate(session, anchor="today")
-    console.print(f"[green]Seeded synthetic Lumo dataset:[/] {counts}")
+        from echolens.synthetic.demo_story import seed_demo
+        counts = seed_demo(session)
+    console.print(f"[green]Seeded the Lumo demo (corpus + history):[/] {counts}")
     return 0
 
 
