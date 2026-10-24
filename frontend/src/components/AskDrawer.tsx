@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useDialog } from "../hooks";
+import { formatRoute } from "../nav";
 import { AskConversation } from "../screens/Chat";
 import { C, S, T } from "../theme";
 import { Icon } from "./Icon";
@@ -54,6 +55,13 @@ export function AskDrawer({ productId, productName, onClose, onOpenInvestigation
                       borderBottom: `1px solid ${C.border}` }}>
           <h2 id="global-ask-title" style={{ margin: 0, fontSize: T.md, color: C.text }}>Ask</h2>
           <span style={{ color: C.dim, fontSize: T.sm, flex: 1 }}>{productName ?? "Workspace"}</span>
+          {/* The sidebar's Ask opens this drawer; the full page is still a real
+              route, reachable from here and by its URL. A plain link, so the
+              router handles it like any other navigation. */}
+          <a href={formatRoute({ screen: "ask", productId })} onClick={onClose}
+            className="el-btn el-btn--quiet el-btn--sm">
+            Open full page
+          </a>
           <button className="el-btn el-btn--ghost" onClick={onClose} aria-label="Close Ask" title="Close Ask (Esc)">
             <Icon name="close" size={16} />
           </button>

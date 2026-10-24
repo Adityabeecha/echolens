@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Route, SCREEN_LABEL, canonicalRoute, formatRoute, parseRoute } from "./nav";
+import {
+  GLOBAL_SCREENS, Route, SCREEN_LABEL, canonicalRoute, currentLocation, formatRoute, parseRoute,
+} from "./nav";
 
 /** How the previous entry should be described on a Back control. */
 export interface BackTarget {
@@ -8,7 +10,7 @@ export interface BackTarget {
 }
 
 /**
- * Hash router with an in-app history stack.
+ * History router (clean paths, see nav.ts) with an in-app history stack.
  *
  * Back is the real thing: it returns you to where you actually came from, and
  * names it. Previously every case screen hardcoded "back to the Case Feed",
@@ -16,7 +18,7 @@ export interface BackTarget {
  * the onboarding wizard.
  */
 export function useRouter(initial: Route) {
-  const [route, setRoute] = useState<Route>(() => parseRoute(window.location.hash) ?? initial);
+  const [route, setRoute] = useState<Route>(() => parseRoute(currentLocation()) ?? initial);
   // Parallel stack of where we've been. window.history can't be read back, and
   // we need the previous entry to label the Back control.
   const stack = useRef<Route[]>([]);
@@ -29,7 +31,7 @@ export function useRouter(initial: Route) {
 
   useEffect(() => {
     const onPop = () => {
-      const next = parseRoute(window.location.hash);
+      const next = parseRoute(currentLocation());
       if (!next) return;
       if (selfNav.current) {
         selfNav.current = false;
@@ -39,10 +41,24 @@ export function useRouter(initial: Route) {
       }
       setRoute(next);
     };
-    window.addEventListener("hashchange", onPop);
+    // A hash link inside the app (an old-style <a href="#/p/1/cases/3">, or code
+    // that still sets location.hash) is a forward navigation: swap the hash
+    // entry it just created for the clean path, so it costs one history entry.
+    // A hash route without a product means "this product" for scoped screens.
+    const onHash = () => {
+      const parsed = parseRoute(window.location.hash);
+      if (!parsed) return;
+      const prev = routeRef.current;
+      const next = canonicalRoute(parsed.productId == null && !GLOBAL_SCREENS.includes(parsed.screen)
+        ? { ...parsed, productId: prev.productId ?? null } : parsed);
+      stack.current.push(prev);
+      window.history.replaceState(null, "", formatRoute(next));
+      setRoute(next);
+    };
+    window.addEventListener("hashchange", onHash);
     window.addEventListener("popstate", onPop);
     return () => {
-      window.removeEventListener("hashchange", onPop);
+      window.removeEventListener("hashchange", onHash);
       window.removeEventListener("popstate", onPop);
     };
   }, []);
@@ -81,7 +97,7 @@ export function useRouter(initial: Route) {
     selfNav.current = true;
     if (opts?.replace) window.history.replaceState(null, "", url);
     else window.history.pushState(null, "", url);
-    // pushState doesn't fire hashchange; clear the guard ourselves.
+    // pushState doesn't fire popstate; clear the guard ourselves.
     selfNav.current = false;
   }, []);
 
@@ -139,7 +155,7 @@ export function useRouter(initial: Route) {
 
   // Keep the address bar honest even on first paint.
   useEffect(() => {
-    if (!parseRoute(window.location.hash)) {
+    if (!parseRoute(currentLocation())) {
       window.history.replaceState(null, "", formatRoute(route));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -65,6 +65,8 @@ async def lifespan(_app: FastAPI):
     with session_scope() as session:
         _expire_stuck_onboarding_sources(session, expire_all=True)
     _bootstrap()  # free-tier: seed + first admin from env, no shell needed
+    if settings.demo_refresh_on_start:
+        _start_demo_refresh_bg()
     # Resume interrupted work AFTER the app starts accepting requests. Recovery
     # used to run synchronously here, before ``yield``; a single 45-minute case
     # therefore kept the whole deployment unready and its proxy returned 503 to
@@ -74,15 +76,60 @@ async def lifespan(_app: FastAPI):
 
 
 def _recover_running_bg() -> None:
-    """Resume interrupted investigations without blocking API availability."""
+    """End zombie cases, then resume interrupted ones, without blocking API
+    availability. The watchdog goes first: a case with no progress for 15
+    minutes is ended rather than resumed into the same hang. In worker mode the
+    web process resumes nothing — a worker may be running those cases."""
+    from echolens.investigator import recover
+    try:  # its own try: a watchdog failure must not also cancel the resume
+        with session_scope() as s:
+            ended = recover.end_zombies(s)
+        if ended:
+            log.warning("startup_watchdog", ended=ended)
+    except Exception as err:
+        log.error("startup_watchdog_failed", error=str(err))
     try:
-        from echolens.investigator.recover import resume_running
+        resume_running = recover.resume_running
+        if not settings.run_investigations_in_web:
+            return
         with session_scope() as s:
             recovered = resume_running(s)
         if recovered:
             log.info("startup_recovery", investigations=recovered)
     except Exception as err:
         log.error("startup_recovery_failed", error=str(err))
+
+
+_demo_refresh_lock = threading.Lock()
+
+
+def _refresh_demo(force: bool = False) -> dict:
+    """Reseed the demo product when it is stale (or when forced). One at a
+    time: a second call while one runs is a no-op, not a second purge."""
+    from echolens.synthetic.demo_story import demo_is_stale, reseed_demo
+    if not _demo_refresh_lock.acquire(blocking=False):
+        return {"status": "running"}
+    try:
+        with session_scope() as s:
+            if not force and not demo_is_stale(s):
+                return {"status": "fresh"}
+            counts = reseed_demo(s)
+        log.info("demo_refreshed", counts=counts)
+        return {"status": "refreshed", "counts": counts}
+    except Exception as err:
+        log.error("demo_refresh_failed", error=str(err))
+        return {"status": "failed", "error": str(err)}
+    finally:
+        _demo_refresh_lock.release()
+
+
+def _start_demo_refresh_bg(force: bool = False) -> threading.Thread:
+    # Off the startup path: a reseed over the pooler takes a while, and the
+    # deploy must report ready meanwhile.
+    thread = threading.Thread(target=_refresh_demo, kwargs={"force": force},
+                              name="echolens-demo-refresh", daemon=True)
+    thread.start()
+    return thread
 
 
 def _start_recovery_bg() -> threading.Thread:
@@ -104,9 +151,11 @@ def _bootstrap() -> None:
     try:
         with session_scope() as s:
             if settings.seed_on_start and s.scalar(select(Review).limit(1)) is None:
-                from echolens.synthetic.generate import generate
-                generate(s, anchor="today")
-                log.info("bootstrap_seeded")
+                # The corpus, the demo product and its history (cases, fixes,
+                # verdicts) — deterministic, no LLM. Only on an empty database.
+                from echolens.synthetic.demo_story import seed_demo
+                counts = seed_demo(s)
+                log.info("bootstrap_seeded", story=counts.get("story"))
             if settings.bootstrap_admin_email and settings.bootstrap_admin_password:
                 if s.scalar(select(User).limit(1)) is None:
                     create_user(s, settings.bootstrap_admin_email,
@@ -278,6 +327,7 @@ def _investigation_dict(session, inv: Investigation) -> dict:
         # v13: the case's own audit trail, so History is a tab rather than a
         # thing that happened somewhere you can no longer see.
         "history": _extension_history(session, inv),
+        **_merge_view(session, inv),
         "hypotheses": [{"id": h.hid, "statement": h.statement, "confidence": h.confidence,
                         "status": h.status, **h.json} for h in hyps],
         "evidence": _with_translations(session, inv, [
@@ -316,6 +366,12 @@ def _decision_view(session, finding_id: int) -> dict | None:
     return decision_dict(latest_decision(session, finding_id))
 
 
+def _merge_view(session, inv: Investigation) -> dict:
+    from echolens.cases import merged_into, related_evidence
+    return {"merged_into_id": merged_into(session, inv.id) if inv.status == "merged" else None,
+            "related_evidence": related_evidence(session, inv)}
+
+
 def _extension_history(session, inv):
     events = case_history(session, inv)
     reasons = {ext.get("at"): ext.get("reason", "") for ext in inv.extensions_json or []
@@ -352,7 +408,9 @@ def _finding_extras(session, finding, recs, status: str) -> dict:
         fix = {"status": watch.status, "issue_number": watch.issue_number,
                "issue_url": watch.issue_url, "chart": watch.chart_json,
                "baseline_rate": watch.baseline_rate, "post_rate": watch.post_rate,
-               "fixed_in_version": watch.fixed_in_version}
+               "fixed_in_version": watch.fixed_in_version,
+               "shipped_at": aware_utc(watch.shipped_at).isoformat() if watch.shipped_at else None,
+               "shipped_note": watch.shipped_note}
         if watch.status in ("issue_open", "watching") and not watch.fixed_in_version:
             fix["version_hint"] = True   # UI nudges: set the version so the window starts at release
         if watch.fixed_in_version and watch.status in ("issue_open", "waiting_for_release"):
@@ -426,25 +484,65 @@ def _drain_queue_bg(product_id: int | None) -> None:
     pressing the button twice cannot run the same item twice or blow past the
     cap by racing.
     """
-    from echolens.orchestrator import queue as q
-
     with _queue_worker_lock:
         if product_id in _queue_worker_active:
             return
         _queue_worker_active.add(product_id)
     try:
-        while True:
+        # Every drain starts by ending zombies, so a case that died holding a
+        # slot cannot keep its signal out of the queue it is about to drain.
+        try:
+            from echolens.investigator.recover import end_zombies
             with session_scope() as session:
-                limit = _daily_limit(session, product_id)
-                row = q.claim_next(session, product_id, limit)
-                if row is None:
-                    return  # queue empty, or today's budget is gone
-                queue_id = row.id
-                investigation_id, tier = _open_claimed(session, row, product_id)
-            _run_claimed_bg(queue_id, investigation_id, tier)
+                end_zombies(session)
+        except Exception as err:
+            log.error("drain_watchdog_failed", error=str(err))
+        while _drain_one(product_id):
+            pass
     finally:
         with _queue_worker_lock:
             _queue_worker_active.discard(product_id)
+
+
+def _drain_one(product_id: int | None) -> bool:
+    """Claim and run ONE queued item; False when the queue is empty or today's
+    budget is gone. The web drain loops on it; the worker calls it per poll."""
+    from echolens.orchestrator import queue as q
+    with session_scope() as session:
+        limit = _daily_limit(session, product_id)
+        row = q.claim_next(session, product_id, limit)
+        if row is None:
+            return False
+        queue_id = row.id
+        investigation_id, tier = _open_claimed(session, row, product_id)
+    _run_claimed_bg(queue_id, investigation_id, tier)
+    return True
+
+
+def _job_targets() -> dict:
+    """Background work by name — the same functions whether a web thread or
+    `echolens worker` runs them. Only these names can be enqueued."""
+    return {"run": _run_investigation_bg, "claimed": _run_claimed_bg,
+            "extend": _extend_investigation_bg, "resume": _resume_investigation_bg,
+            "challenge": _run_challenge_bg, "slack_challenge": _slack_challenge_bg}
+
+
+def _spawn(kind: str, *args) -> None:
+    """Start investigation work: a daemon thread here (RUN_INVESTIGATIONS_IN_WEB,
+    the default), or a worker_jobs row for `echolens worker` to claim."""
+    target = _job_targets()[kind]
+    if settings.run_investigations_in_web:
+        threading.Thread(target=target, args=args, daemon=True).start()
+        return
+    from echolens.worker import enqueue_job
+    with session_scope() as session:
+        enqueue_job(session, kind, list(args))
+
+
+def _spawn_drain(product_id: int | None) -> None:
+    """Drain the queue now — in worker mode the worker polls it instead."""
+    if settings.run_investigations_in_web:
+        threading.Thread(target=_drain_queue_bg, args=(product_id,), daemon=True).start()
 
 
 def _open_claimed(session, row, product_id: int | None) -> tuple[int, str]:
@@ -958,12 +1056,8 @@ def product_deletion_preview(product_id: int, user: dict = Depends(current_user)
 def delete_product(product_id: int, confirm: str = "",
                    user: dict = Depends(require_role("admin"))) -> dict:
     """Delete a product and cascade its data. Requires ?confirm=<exact name>."""
-    from echolens.db.models import (
-        AnomalyEvent, CollectorState, Comment, EvidenceRow, FeedbackEntry, Finding,
-        FixWatch, HypothesisRow, Investigation, Issue, KnowledgeEdge, LLMCall, Mention,
-        Post, Product, QueuedInvestigation, Recommendation, Release, Review,
-        ReviewFeedback, ReviewRequest, TraceStep, TriageDecision, User,
-        FindingDecision, ShareLink, SavedView, SentAlert)
+    from echolens.db.models import Product, User
+    from echolens.db.purge import purge_product_data
     with session_scope() as session:
         p = session.get(Product, product_id)
         if p is None:
@@ -971,62 +1065,7 @@ def delete_product(product_id: int, confirm: str = "",
         if confirm.strip() != p.name:
             raise HTTPException(422, f"type the product name exactly to confirm deletion ('{p.name}')")
         name = p.name
-        inv_ids = [i.id for i in session.scalars(select(Investigation).where(
-            Investigation.product_id == product_id)).all()]
-        find_ids = [f.id for f in session.scalars(select(Finding).where(
-            Finding.product_id == product_id)).all()]
-        anom_ids = [a.id for a in session.scalars(select(AnomalyEvent).where(
-            AnomalyEvent.product_id == product_id)).all()]
-
-        def _purge(model, col, ids):
-            if ids:
-                for row in session.scalars(select(model).where(col.in_(ids))).all():
-                    session.delete(row)
-
-        # Mentions hang off comments, so they go first — deleting the comment
-        # out from under them is the same FK violation one level down.
-        comment_ids = [c.id for c in session.scalars(select(Comment).where(
-            Comment.product_id == product_id)).all()]
-        _purge(Mention, Mention.comment_id, comment_ids)
-
-        _purge(ReviewFeedback, ReviewFeedback.finding_id, find_ids)
-        # v15: decisions and share links hang off findings. Deleting a product
-        # must also kill its public links, or a token would outlive its data.
-        _purge(FindingDecision, FindingDecision.finding_id, find_ids)
-        _purge(ShareLink, ShareLink.finding_id, find_ids)
-        _purge(Recommendation, Recommendation.finding_id, find_ids)
-        _purge(TraceStep, TraceStep.investigation_id, inv_ids)
-        _purge(HypothesisRow, HypothesisRow.investigation_id, inv_ids)
-        _purge(EvidenceRow, EvidenceRow.investigation_id, inv_ids)
-        _purge(LLMCall, LLMCall.investigation_id, inv_ids)
-        # Spend with no case (chat, triage, themes, graph) is tagged by product.
-        _purge(LLMCall, LLMCall.product_id, [product_id])
-        _purge(TriageDecision, TriageDecision.anomaly_id, anom_ids)
-        # Anything that references an investigation must be gone before the
-        # investigations themselves, hence two ordered passes rather than one
-        # loop over every product-scoped model.
-        _purge(Comment, Comment.investigation_id, inv_ids)
-        _purge(ReviewRequest, ReviewRequest.investigation_id, inv_ids)
-        _purge(QueuedInvestigation, QueuedInvestigation.investigation_id, inv_ids)
-        for model in (FixWatch, Finding, Investigation, AnomalyEvent, CollectorState,
-                      QueuedInvestigation, KnowledgeEdge, Comment, Mention, ReviewRequest, SavedView,
-                      SentAlert):
-            for row in session.scalars(select(model).where(model.product_id == product_id)).all():
-                session.delete(row)
-        # Older collector rows were created before product_id was populated.
-        # They are still owned by their product name and must not survive a
-        # delete only to be inherited by a later product with the same name.
-        for row in session.scalars(select(CollectorState).where(
-                CollectorState.product == name, CollectorState.product_id.is_(None))).all():
-            session.delete(row)
-        # Corpus rows are keyed by product NAME, not id. FeedbackEntry was
-        # missing: every v2 source (Hacker News, Stack Overflow, GitHub
-        # Discussions, PRs/commits) lands there, so deleting a product left its
-        # entire non-store corpus behind, and a product recreated with the same
-        # name silently inherited it.
-        for model in (Review, Issue, Post, Release, FeedbackEntry):
-            for row in session.scalars(select(model).where(model.product == name)).all():
-                session.delete(row)
+        purge_product_data(session, p)
         for u in session.scalars(select(User).where(User.last_active_product_id == product_id)).all():
             u.last_active_product_id = None
         session.delete(p)
@@ -1036,25 +1075,50 @@ def delete_product(product_id: int, confirm: str = "",
 @app.get("/health")
 def health() -> dict:
     ok = True
+    work: dict = {"investigations_run_in": "web" if settings.run_investigations_in_web
+                  else "worker"}
     try:
         with session_scope() as s:
             s.execute(select(AnomalyEvent).limit(1))
+            if not settings.run_investigations_in_web:
+                # Worker mode: is anything actually draining the work?
+                from echolens.worker import worker_status
+                work.update(worker_status(s))
     except Exception:
         ok = False
     return {"db": ok, "llm_key_present": bool(settings.openai_api_key),
-            "model": settings.echolens_model}
+            "model": settings.echolens_model, **work}
 
 
 @app.post("/collect/run")
 def collect_run(user: dict = Depends(require_role("admin"))) -> dict:
     """Dev convenience: seed the synthetic corpus if empty (real collectors are M3)."""
     from echolens.db.models import Review
-    from echolens.synthetic.generate import generate
+    from echolens.synthetic.demo_story import seed_demo
     with session_scope() as session:
         if session.scalar(select(Review).limit(1)) is not None:
             return {"status": "already_populated"}
-        counts = generate(session, anchor="today")
+        counts = seed_demo(session)
     return {"status": "seeded", "counts": counts}
+
+
+@app.post("/demo/refresh")
+def demo_refresh(force: bool = False, user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Rebuild the demo product dated to today, in the background. Only the
+    `is_demo` product is touched. Without ?force=true it does nothing while the
+    demo is under a week old, so the scheduled workflow (a reviewer login) can
+    call it every run; forcing a rebuild of a fresh demo is admin-only."""
+    from echolens.synthetic.demo_story import demo_is_stale
+    if force and user.get("role") != "admin":
+        raise HTTPException(403, "forcing a demo rebuild needs the admin role")
+    if _demo_refresh_lock.locked():
+        return {"status": "running"}
+    if not force:
+        with session_scope() as s:
+            if not demo_is_stale(s):
+                return {"status": "fresh"}
+    _start_demo_refresh_bg(force=True)
+    return {"status": "started"}
 
 
 class ConnectSource(BaseModel):
@@ -1889,7 +1953,7 @@ def queue_themes(request: Request, body: QueueThemes,
         view = queue_view(session, pid, limit)
 
     if queued:
-        threading.Thread(target=_drain_queue_bg, args=(pid,), daemon=True).start()
+        _spawn_drain(pid)
     deferred = len([q for q in view["queued"] if q["status"] == "deferred"])
     parts = []
     if queued:
@@ -1948,8 +2012,7 @@ def queue_run_now(request: Request, queue_id: int, product_id: int | None = None
         if claimed is None:
             raise HTTPException(409, "that item is already running or finished")
         investigation_id, tier = _open_claimed(session, claimed, pid)
-    threading.Thread(target=_run_claimed_bg, args=(queue_id, investigation_id, tier),
-                     daemon=True).start()
+    _spawn("claimed", queue_id, investigation_id, tier)
     return {"status": "started", "queue_id": queue_id, "investigation_id": investigation_id,
             "estimate": estimate, "override_by": who}
 
@@ -2003,13 +2066,20 @@ def _product_intents(session, product: str | None, days: int = 90) -> dict:
     from echolens.intent import count_intents, empty_counts
     if not product:
         return {"product": None, "days": days, "total": 0, "counts": empty_counts()}
+    from echolens.memo import fingerprinted, review_fingerprint
     now = reference_now(session, product)
-    rows = session.execute(select(Review.text, Review.rating).where(
-        Review.product == product,
-        Review.created_at >= (now - timedelta(days=days)).replace(tzinfo=None))
-        .limit(20000)).all()
-    counts = count_intents((t, r) for t, r in rows)
-    return {"product": product, "days": days, "total": len(rows), "counts": counts}
+    since = (now - timedelta(days=days)).replace(tzinfo=None)
+
+    def compute():
+        # Up to 20k review TEXTS through a regex classifier — /cases ran this on
+        # every open. Now only when the window's reviews actually change.
+        rows = session.execute(select(Review.text, Review.rating).where(
+            Review.product == product, Review.created_at >= since).limit(20000)).all()
+        return len(rows), count_intents((t, r) for t, r in rows)
+
+    total, counts = fingerprinted(session, ("intents", product, days, str(since)),
+                                  review_fingerprint(session, product, since), compute)
+    return {"product": product, "days": days, "total": total, "counts": dict(counts)}
 
 
 @app.post("/import/reviews")
@@ -2327,7 +2397,7 @@ def anomalies_triage(request: Request, run: bool = False, product_id: int | None
     # request returns immediately (no proxy timeout that left cases stuck as
     # "pending triage") and the rows are visible to the worker sessions.
     for inv_id, tier in to_run:
-        threading.Thread(target=_run_investigation_bg, args=(inv_id, tier), daemon=True).start()
+        _spawn("run", inv_id, tier)
     return {
         "decisions": out,
         "started_investigations": [i for i, _ in to_run],
@@ -2393,8 +2463,7 @@ def start_investigation(request: Request, body: NewCase,
         session.flush()
         investigation_id, anomaly_id = inv.id, anomaly.id
 
-    threading.Thread(target=_run_investigation_bg,
-                     args=(investigation_id, body.tier), daemon=True).start()
+    _spawn("run", investigation_id, body.tier)
     return {"status": "started", "investigation_id": investigation_id, "anomaly_id": anomaly_id}
 
 
@@ -2440,6 +2509,25 @@ def get_investigation(inv_id: int, product_id: int | None = None,
         p = _scope(session, product_id, user)
         inv = _owned(session, Investigation, inv_id, p.id if p else None)
         return _investigation_dict(session, inv)
+
+
+class MergeCaseBody(BaseModel):
+    target_id: int = Field(gt=0)
+
+
+@app.post("/investigations/{inv_id}/merge")
+def merge_case(inv_id: int, body: MergeCaseBody, product_id: int | None = None,
+               user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.cases import merge_cases
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        source = _owned(session, Investigation, inv_id, p.id if p else None)
+        target = _owned(session, Investigation, body.target_id, p.id if p else None)
+        try:
+            link = merge_cases(session, source, target, user_id=user["id"])
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        return {"status": "merged", "merged_into_id": link.target_id}
 
 
 # ── v5.0 collaboration ──────────────────────────────────────────────────
@@ -2673,7 +2761,7 @@ def extend_investigation(request: Request, inv_id: int, product_id: int | None =
         except ValueError as err:
             raise HTTPException(422, str(err))
         note = extension_trace_note(granted["prior_status"], granted["steps"])
-    threading.Thread(target=_extend_investigation_bg, args=(inv_id, note), daemon=True).start()
+    _spawn("extend", inv_id, note)
     return {"status": "extending", "id": inv_id, "by": user["email"], **granted}
 
 
@@ -2696,7 +2784,7 @@ def resume_investigation(inv_id: int, product_id: int | None = None,
         if inv.status != "running":
             raise HTTPException(422, f"cannot resume a {inv.status} investigation")
         inv.paused = False
-    threading.Thread(target=_resume_investigation_bg, args=(inv_id,), daemon=True).start()
+    _spawn("resume", inv_id)
     return {"status": "resuming", "id": inv_id}
 
 
@@ -2813,6 +2901,7 @@ class ReviewBody(BaseModel):
     action: str  # approve | challenge
     note: str = ""
     reason: str | None = None  # v5.0 structured challenge category
+    actual_cause: str | None = Field(default=None, max_length=4000)
 
 
 @app.post("/findings/{finding_id}/review")
@@ -2823,7 +2912,10 @@ def review_finding(finding_id: int, body: ReviewBody, product_id: int | None = N
         p = _scope(session, product_id, user)
         finding = _owned_finding(session, finding_id, p.id if p else None)
         if body.action == "approve":
-            review.approve(session, finding, body.note, user_id=user["id"])
+            try:
+                review.approve(session, finding, body.note, user_id=user["id"])
+            except review.MergedCaseError as err:
+                raise HTTPException(409, str(err))
             return {"status": "approved", "finding_id": finding_id, "by": user["email"]}
         if body.action == "challenge":
             if not body.note.strip():
@@ -2831,12 +2923,16 @@ def review_finding(finding_id: int, body: ReviewBody, product_id: int | None = N
             # Create the re-opened row synchronously, then run the loop in the
             # background so the HTTP request returns immediately (a full
             # investigation can take many minutes — it must not block the request).
-            reopened = review.record_challenge(session, finding, body.note,
-                                               reason=body.reason, user_id=user["id"])
+            try:
+                reopened = review.record_challenge(session, finding, body.note,
+                                                   reason=body.reason, user_id=user["id"],
+                                                   actual_cause=body.actual_cause)
+            except review.MergedCaseError as err:
+                raise HTTPException(409, str(err))
             reopened_id = reopened.id
             note = body.note
     if body.action == "challenge":
-        threading.Thread(target=_run_challenge_bg, args=(reopened_id, note), daemon=True).start()
+        _spawn("challenge", reopened_id, note)
         return {"status": "challenged", "reopened_investigation_id": reopened_id, "by": user["email"]}
     raise HTTPException(422, "action must be approve or challenge")
 
@@ -3325,7 +3421,7 @@ async def slack_act(request: Request) -> dict:
         if not note.strip():
             raise HTTPException(422, "a challenge needs a note")
         if is_slack:
-            threading.Thread(target=_slack_challenge_bg, args=(finding_id, note), daemon=True).start()
+            _spawn("slack_challenge", finding_id, note)
             return {"status": "challenge_started", "finding_id": finding_id}
         reopened = await run_in_threadpool(_do_challenge, finding_id, note)
         return {"status": "challenged", "reopened_investigation_id": reopened}
@@ -3441,6 +3537,30 @@ def fixwatch_evaluate(product_id: int | None = None,
 
 class FixedVersionBody(BaseModel):
     version: str | None = Field(default=None, max_length=32)   # empty/None clears it
+
+
+class FixShippedBody(FixedVersionBody):
+    shipped_date: date = Field(alias="date", default_factory=lambda: datetime.now(timezone.utc).date())
+    note: str = Field(default="", max_length=4000)
+
+
+@app.post("/findings/{finding_id}/fix-shipped")
+def finding_fix_shipped(finding_id: int, body: FixShippedBody, product_id: int | None = None,
+                        user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.fixwatch import mark_shipped, release_state
+    if body.shipped_date > datetime.now(timezone.utc).date():
+        raise HTTPException(422, "The shipped date cannot be in the future.")
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        finding = _owned_finding(session, finding_id, p.id if p else None)
+        try:
+            watch = mark_shipped(session, finding,
+                datetime.combine(body.shipped_date, datetime.min.time(), tzinfo=timezone.utc),
+                version=body.version, note=body.note)
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        return {"status": watch.status, "fixed_in_version": watch.fixed_in_version,
+                "release": release_state(session, watch)}
 
 
 @app.put("/findings/{finding_id}/fixed-version")
@@ -3750,7 +3870,7 @@ def _chat_respond(body: "ChatBody", user: dict, on_step=None) -> dict:
         anomaly.status = "investigating"
         session.flush()
         inv_id = inv.id
-    threading.Thread(target=_run_investigation_bg, args=(inv_id, "standard"), daemon=True).start()
+    _spawn("run", inv_id, "standard")
     return _chat_finish({
         "type": "investigation", "investigation_id": inv_id,
         "basis": {"kind": "investigation_started", "case_id": inv_id,
@@ -3871,7 +3991,7 @@ def brief_view(product_id: int | None = None, user: dict = Depends(current_user)
 @app.post("/brief/send")
 def brief_send(user: dict = Depends(require_role("reviewer"))) -> dict:
     """Compose and deliver the weekly brief to Slack/email (scheduled, unprompted)."""
-    from echolens.brief import weekly_brief
+    from echolens.brief import delivery_brief, weekly_brief
     from echolens.db.models import Product
     from echolens.notify import _send_email, _send_slack, deep_link
     with session_scope() as session:
@@ -3883,6 +4003,9 @@ def brief_send(user: dict = Depends(require_role("reviewer"))) -> dict:
             b = portfolio_brief(session)
         else:
             b = weekly_brief(session)
+        b = delivery_brief(b)
+    if b["quiet"]:
+        return {"sent": {"slack": False, "email": False}, "skipped": "quiet_week", "brief": b}
 
     def _linkify(text: str) -> str:
         import re
@@ -3909,10 +4032,11 @@ def brief_send(user: dict = Depends(require_role("reviewer"))) -> dict:
 def portfolio_view(user: dict = Depends(current_user)) -> dict:
     """Ranked cross-product attention board. Deliberately NOT product-scoped —
     this is the screen you open before you know which product to open."""
-    from echolens.portfolio import portfolio, transfer_stats
+    from echolens.portfolio import stored_portfolio, transfer_stats
     with session_scope() as session:
         demo_only = _guest_locked(user)
-        return {**portfolio(session, demo_only=demo_only),
+        # Stored rows, recomputed only when stale (portfolio.stored_portfolio).
+        return {**stored_portfolio(session, demo_only=demo_only),
                 # Cross-product transfer learning compares real products, so it
                 # is withheld from a demo visitor rather than filtered to one.
                 "transfer": None if demo_only else transfer_stats(session)}

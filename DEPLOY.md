@@ -60,13 +60,36 @@ The endpoint must return HTTP `200` before connecting the frontend.
 2. Set Production Branch to `main`.
 3. Set Root Directory to `frontend`.
 4. Confirm Framework Preset is Vite.
-5. Confirm Build Command is `npm run build` and Output Directory is `dist`.
-6. Add `VITE_API_BASE` with the Northflank origin and no trailing slash.
+5. Leave Build Command and Output Directory to `frontend/vercel.json`: it runs `npm run build && node build/vercel-output.mjs` and serves `dist`.
+6. Choose how the browser reaches the API (below), and set that variable for Production (and Preview, if you use previews).
 7. Deploy and record the canonical Vercel origin.
+
+### Same-origin API proxy (recommended, and required for Safari)
+
+On `*.vercel.app` the frontend and the Northflank API are different sites. Safari (and Chrome with tracking protection) treats the API's session cookie as third-party and drops it, so sign-in appears to work and the next request returns `401`. The fix that costs nothing is to call the API through the frontend's own domain:
+
+| Where | Variable | Value |
+|---|---|---|
+| Vercel (build env) | `ECHOLENS_API_ORIGIN` | the Northflank origin, e.g. `https://api--echolens--abc123.code.run` (https, no path, no trailing slash) |
+| Vercel | `VITE_API_BASE` | **unset** (it is ignored when `ECHOLENS_API_ORIGIN` is set) |
+| Northflank | `SESSION_COOKIE_SAMESITE` | `lax` |
+| Northflank | `CORS_ORIGINS` | unchanged: the exact Vercel origin. It can stay strict, because the browser now only talks to its own origin. |
+
+`vercel.json` cannot read environment variables, so the proxy is written at build time: with `ECHOLENS_API_ORIGIN` set, `build/vercel-output.mjs` emits Vercel's Build Output API (`.vercel/output`), with the built files plus the rewrites and headers from `vercel.json`, and `/api/*` proxied to the API. Vercel deploys that output instead of `dist`. The app calls `/api/...` on its own origin. The Content-Security-Policy's `connect-src` becomes `'self'` plus Google sign-in, in both the header and the build-time `<meta>` policy. Changing the API origin needs a Vercel redeploy.
+
+Check it after deploying: `curl -i https://<your-app>.vercel.app/api/health` must return the API's JSON (not `index.html`), and signing in from Safari must keep you signed in after a reload. The live trace is an `EventSource` through the same proxy. If the proxy ever cuts a long stream, the trace view falls back to polling on its own.
+
+### Direct API origin (split sites)
+
+Leave `ECHOLENS_API_ORIGIN` unset and set `VITE_API_BASE` to the Northflank origin (no trailing slash). The browser then calls the API directly, so the session cookie is cross-site: Northflank needs `SESSION_COOKIE_SAMESITE=none` (see [Browser sessions](#browser-sessions-cookies-and-csrf)), and Safari users will not stay signed in unless both run under one custom domain.
 
 `frontend/vercel.json` supplies the SPA rewrite so client-side routes resolve to `index.html`, and the security headers for every page: a Content-Security-Policy (`frame-ancestors 'none'`, scripts from the site itself and Google Identity Services only, Google Fonts styles and fonts, `data:` images), `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin` and `X-Frame-Options: DENY`.
 
 The header's `connect-src` is static and therefore allows any `https:` origin. The build narrows it: `vite.config.ts` reads `VITE_API_BASE` at build time and injects a second policy as a `<meta>` tag whose `connect-src` is `'self'`, that exact API origin and Google sign-in. Browsers enforce both policies, so the effective allowlist is the intersection. Consequently `VITE_API_BASE` must be set for the build that is deployed, and changing the API origin requires a frontend rebuild, not just a backend change. If you add another origin the browser must call (an analytics endpoint, a second API), add it to both `frontend/vercel.json` and the plugin in `frontend/vite.config.ts`.
+
+### Clean URLs
+
+The app uses history paths (`/p/2/today`, `/p/2/cases/34/trace`, `/share/<token>`), not hash routes. Every path that is not a built file is rewritten to `index.html`, so deep links and refreshes work. Old hash links (`/#/p/2/today`, `/#/share/<token>`, `/#/cases/34`) from bookmarks, Slack and email are rewritten to the clean path when the page loads. `/costs` links open Settings → Costs.
 
 ## 4. Connect frontend and backend
 
@@ -110,12 +133,48 @@ Also add an Actions variable named `ECHOLENS_API` with the same backend origin. 
 
 The retained workflows perform:
 
-- `.github/workflows/collect.yml`: collect, scan, and triage every six hours.
+- `.github/workflows/collect.yml`: collect, scan, and triage every six hours. Its last step calls `POST /demo/refresh`, which rebuilds the demo product dated to today once its newest review is over a week old (otherwise it does nothing).
 - `.github/workflows/brief.yml`: send the weekly brief.
 - `.github/workflows/deploy.yml`: poll `/health` (up to about 10 minutes) after backend changes reach `main`.
 - `.github/workflows/ci.yml`: on every push and pull request to `main`, runs the backend tests (Python 3.11, SQLite) and the frontend `npm ci` + `npm run build` (Node 22).
 
 Run each scheduled workflow manually once from the Actions tab to validate credentials.
+
+### Keeping the demo current
+
+The demo seed only runs on an empty database, so an existing deploy keeps the demo it was first seeded with. Any of these rebuilds it. Each one touches only the product flagged `is_demo`, keeps its id, and never calls the LLM:
+
+- the scheduled `collect.yml` run (automatic, when the demo is over a week old);
+- `DEMO_REFRESH_ON_START=true` on Northflank: on each start, rebuild in the background if stale;
+- as an admin, `POST /demo/refresh?force=true` (or `echolens reseed-demo` from a shell) to rebuild now.
+
+Anything people added to the demo product (comments, verdicts, theme renames) is reset with it.
+
+## 6. Worker (optional, recommended)
+
+By default investigations run as background threads inside the web container. A redeploy, an out-of-memory kill or a slow request then takes the case with it. Running them in a second service keeps the API responsive and lets either process restart without stranding work.
+
+1. In the same Northflank project, add a second service from the same repository, branch, build context (`backend`) and Dockerfile as the API. On a free or sandbox plan, check that your service allowance covers a second service.
+2. Give it **no public port** and no HTTP health check. It does not serve requests.
+3. Copy the API's environment variables (at least `ECHOLENS_DB_URL`, `OPENAI_API_KEY`, `JWT_SECRET`, `ECHOLENS_ENV=production`, and any tracker, Slack or email credentials), then add:
+
+| Variable | Value |
+|---|---|
+| `ECHOLENS_PROCESS` | `worker` |
+| `RUN_INVESTIGATIONS_IN_WEB` | `false` |
+
+4. On the **API** service, also set `RUN_INVESTIGATIONS_IN_WEB=false` and redeploy it. From then on the API only records work (`worker_jobs` rows and the investigation queue), and the worker claims and runs it.
+
+The container runs `echolens worker` when `ECHOLENS_PROCESS=worker`, and the API otherwise. To run it by hand: `echolens worker` (`--once` does one unit of work and exits; `--poll 5` sets the idle poll interval in seconds).
+
+Check it is alive with `GET /health` on the API. In worker mode it reports `investigations_run_in: "worker"`, `jobs_queued`, and `worker_last_seen` (refreshed on every poll). If `jobs_queued` keeps growing while `worker_last_seen` is old, the worker is down.
+
+Notes:
+
+- Claims are safe with more than one worker. A job or queue row is taken with a conditional `UPDATE … WHERE status='queued'`, and with `FOR UPDATE SKIP LOCKED` on Postgres, so two workers never run the same item.
+- A worker does not resume interrupted cases on startup, because two workers starting together would both resume them. Instead, the zombie watchdog ends any running case with no trace step for 15 minutes ("Stopped: no progress for 15 minutes — the worker may have restarted") and returns its signal to the queue. The watchdog runs on API startup, on every queue drain, every minute in the worker, and on demand with `echolens watchdog`.
+- The worker also refreshes the stored "All products" rows every minute, so `/portfolio` rarely recomputes anything itself.
+- To go back to in-process investigations, set `RUN_INVESTIGATIONS_IN_WEB=true` on the API (or remove it) and stop the worker. Jobs already queued in `worker_jobs` are then not run; drain them first.
 
 ## Security checklist
 
@@ -151,7 +210,7 @@ Compare the browser origin with `CORS_ORIGINS` character for character. Update N
 
 ### The frontend calls `/api` on the Vercel domain
 
-`VITE_API_BASE` was missing during the build. Set it to the Northflank origin and redeploy Vercel.
+That is expected with the same-origin proxy. If `/api/health` on the Vercel domain returns `index.html` instead of the API's JSON, `ECHOLENS_API_ORIGIN` was missing (or not https) during the build: set it and redeploy Vercel. Without the proxy, `VITE_API_BASE` was missing during the build: set it to the Northflank origin and redeploy.
 
 ### Northflank starts but health checks fail
 

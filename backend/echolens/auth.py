@@ -114,7 +114,7 @@ def upsert_google_user(session, email: str, role: str) -> User:
         # Google while not on the allowlist must not be demoted to reviewer.
         if _RANK.get(role, 0) > _RANK.get(user.role, 0):
             user.role = role
-            session.flush()
+            session.flush()      # the after-commit hook drops the cached role
         return user
     user = User(email=email, password_hash=SSO_ONLY, role=role)
     session.add(user)
@@ -242,18 +242,89 @@ def principal_from_token(raw: str) -> dict:
     return principal_for(uid, payload)
 
 
+# The role lookup below ran on EVERY request — on a remote pooled database that
+# is a full round trip before any real work. Cached per user for
+# PRINCIPAL_TTL_S. The bound on revocation:
+#   * a role change or deletion made through this process (any ORM write to
+#     the user row) drops the entry the moment it commits — immediate;
+#   * one made elsewhere (another web process, the worker, the CLI, SQL by hand)
+#     takes effect within PRINCIPAL_TTL_S seconds — 30 s, versus the 24 h a
+#     token claim would have allowed.
+# Misses (unknown user) are never cached, so a deleted account is refused on
+# every request once its entry is gone.
+PRINCIPAL_TTL_S = 30
+_principals = None
+
+
+def _principal_cache():
+    global _principals
+    if _principals is None:
+        from echolens.memo import TTLCache
+        _principals = TTLCache(ttl=PRINCIPAL_TTL_S, maxsize=1000)
+    return _principals
+
+
+def _principal_key(uid: int):
+    # Keyed by database too: two databases (tests, a re-pointed deploy) each
+    # have a user 1, and one's role must never answer for the other's.
+    from echolens.db import session as db_session
+    from echolens.memo import db_token
+    return (db_token(db_session._engine) if db_session._engine is not None else None, int(uid))
+
+
+def invalidate_principal(uid: int | None) -> None:
+    """Forget one user's cached role (call after changing or deleting it)."""
+    if uid is not None:
+        _principal_cache().pop(_principal_key(uid))
+
+
 def principal_for(uid: int, payload: dict) -> dict:
-    """The caller's CURRENT role, from the database.
+    """The caller's CURRENT role, from the database (via a 30 s cache).
 
     The role used to come from the token claim, so a user who was demoted or
-    deleted kept their old powers until the token expired (24h by default).
-    One indexed lookup per request is the price of revocation that works."""
+    deleted kept their old powers until the token expired (24h by default)."""
+    cache = _principal_cache()
+    key = _principal_key(uid)
+    hit = cache.get(key)
+    if hit is not None:
+        return dict(hit)
     from echolens.db.session import session_scope
     with session_scope() as session:
         user = session.get(User, uid)
         if user is None:
             raise HTTPException(401, "account no longer exists")
-        return {"id": user.id, "email": user.email, "role": user.role}
+        principal = {"id": user.id, "email": user.email, "role": user.role}
+    cache.set(key, principal)
+    return dict(principal)
+
+
+def _watch_user_writes() -> None:
+    """Invalidate a cached principal when its user row is updated or deleted,
+    wherever in this process that happens. Collected per session and applied
+    AFTER commit, so a concurrent request cannot re-cache the old role from a
+    transaction that has not landed yet; a rollback simply drops the list."""
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session as _Session
+
+    def mark(_mapper, _conn, target):
+        sess = _Session.object_session(target)
+        if sess is not None and target.id is not None:
+            sess.info.setdefault("_principal_dirty", set()).add(target.id)
+
+    event.listen(User, "after_update", mark)
+    event.listen(User, "after_delete", mark)
+
+    @event.listens_for(_Session, "after_commit")
+    def _flush_principals(sess):
+        for uid in sess.info.pop("_principal_dirty", ()):
+            invalidate_principal(uid)
+
+    @event.listens_for(_Session, "after_rollback")
+    def _forget(sess):
+        sess.info.pop("_principal_dirty", None)
+
+
+_watch_user_writes()
 
 
 def require_role(minimum: str):

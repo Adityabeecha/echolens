@@ -213,7 +213,15 @@ def recent_confirmed_fixes(session: Session, product_id: int | None, user_id: in
         reply_count = 0
         # Reply drafts only exist for a resolved case; the count says the same.
         if finding is not None and inv is not None and inv.status == "resolved":
-            reply_count = len(affected_reviews(session, finding, w, w.fixed_in_version)[0])
+            # Matching every negative review in the window, per card, per open of
+            # Today: reused while those reviews and the watch are unchanged.
+            from echolens.fixwatch import product_name_of
+            from echolens.memo import fingerprinted, review_fingerprint
+            fp = (review_fingerprint(session, product_name_of(session, w.product_id), max_rating=2),
+                  w.status, w.fixed_in_version, str(w.fix_date), w.window_days, tuple(w.terms or ()))
+            reply_count = fingerprinted(
+                session, ("reply_count", w.id), fp,
+                lambda: len(affected_reviews(session, finding, w, w.fixed_in_version)[0]))
         out.append({
             "watch_id": w.id, "finding_id": w.finding_id, "investigation_id": w.investigation_id,
             "headline": fix_headline(w), "metric": w.metric, "drop_pct": _drop_pct(w),

@@ -347,23 +347,30 @@ def claim_next(session: Session, product_id: int | None, daily_limit: int,
                as_of: datetime | None = None) -> QueuedInvestigation | None:
     """Take the next item to run, or None when the budget is spent.
 
-    Claiming flips the row to 'running' inside the caller's transaction, so two
-    workers cannot pick up the same item.
+    The claim is one conditional UPDATE (`status='queued'` -> `running`) whose
+    row count says whether THIS caller won. Flipping the loaded object was only
+    safe inside one process: two worker processes both read the row as queued,
+    both set it running, and both ran it. Now the loser moves on to the next
+    candidate. (Postgres and SQLite alike — no locking dialect needed.)
     """
+    from sqlalchemy import update
+
     now = as_of or datetime.now(timezone.utc)
     # Reclaim anything a previous worker died holding, before deciding there is
     # nothing to run.
     requeue_abandoned(session, product_id, now)
     if investigations_today(session, product_id, now) >= daily_limit:
         return None
-    queue = pending(session, product_id)
-    if not queue:
-        return None
-    row = queue[0]
-    row.status = "running"
-    row.started_at = now
-    session.flush()
-    return row
+    for row in pending(session, product_id):
+        res = session.execute(
+            update(QueuedInvestigation)
+            .where(QueuedInvestigation.id == row.id, QueuedInvestigation.status == "queued")
+            .values(status="running", started_at=now)
+            .execution_options(synchronize_session=False))
+        if res.rowcount == 1:
+            session.refresh(row)
+            return row
+    return None
 
 
 def claim_override(session: Session, queue_id: int, *, user: str | None,
@@ -376,12 +383,21 @@ def claim_override(session: Session, queue_id: int, *, user: str | None,
     afterwards. Returns None when the row is no longer waiting (already
     running, finished or cancelled), so a double click cannot run it twice.
     """
+    from sqlalchemy import update
+
     now = as_of or datetime.now(timezone.utc)
     row = session.get(QueuedInvestigation, queue_id)
     if row is None or row.status != "queued":
         return None
-    row.status = "running"
-    row.started_at = now
+    # Conditional, like claim_next: a worker may be claiming this same row.
+    res = session.execute(
+        update(QueuedInvestigation)
+        .where(QueuedInvestigation.id == queue_id, QueuedInvestigation.status == "queued")
+        .values(status="running", started_at=now)
+        .execution_options(synchronize_session=False))
+    if res.rowcount != 1:
+        return None
+    session.refresh(row)
     row.override_by = user or "unknown"
     row.override_at = now
     row.override_estimate_usd = estimate_usd

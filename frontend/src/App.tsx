@@ -15,7 +15,7 @@ import { Toasts, clearToasts, toast } from "./components/Toast";
 import { Today } from "./screens/Today";
 import { Cases } from "./screens/Cases";
 import { CaseDetail } from "./screens/CaseDetail";
-import { Login } from "./screens/Login";
+import { Landing } from "./screens/Landing";
 import { Centered } from "./ui";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { FirstRunTour } from "./components/FirstRunTour";
@@ -28,7 +28,6 @@ import { persistSidebarCollapsed, resolveSidebarCollapsed } from "./sidebarState
 // rest load on first visit. A chunk that fails to load (a redeploy replaced
 // it) throws inside the ErrorBoundary below, which offers a way back.
 const Sources = lazy(() => import("./screens/Sources").then((m) => ({ default: m.Sources })));
-const Costs = lazy(() => import("./screens/Costs").then((m) => ({ default: m.Costs })));
 const Settings = lazy(() => import("./screens/Settings").then((m) => ({ default: m.Settings })));
 const Onboarding = lazy(() => import("./screens/Onboarding").then((m) => ({ default: m.Onboarding })));
 const Portfolio = lazy(() => import("./screens/Portfolio").then((m) => ({ default: m.Portfolio })));
@@ -257,7 +256,7 @@ export default function App() {
 
   if (!authed) return (
     <>
-      <Login onAuthed={() => setAuthed(true)} />
+      <Landing onAuthed={() => setAuthed(true)} />
       <div className="el-login-theme-toggle">
         <ThemeToggle mode={theme} onChange={setTheme} compact />
       </div>
@@ -407,16 +406,12 @@ export default function App() {
             </ScreenChunk>
           )}
 
-          {screen === "costs" && (
-            <ScreenChunk><Costs key={key} onGoSettings={() => go("settings")} /></ScreenChunk>
-          )}
-
           {screen === "settings" && (
             <ScreenChunk>
               <Settings
                 key={key}
                 product={activeProduct}
-                onGoCosts={() => go("costs")}
+                onGoCosts={() => setParams({ section: "costs" })}
                 onGoSources={() => go("sources")}
                 onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
                 onDeleteProduct={setDeleting}

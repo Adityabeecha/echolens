@@ -16,9 +16,12 @@ EXPOSE 8000
 # Migrations run in the app's lifespan (init_db). Honour $PORT when the platform
 # injects one, otherwise 8000 — the port Northflank should be told to expose.
 #
-# One worker on purpose: investigations run in background threads inside this
-# process and the collector scheduler is in-process too. Multiple workers would
-# mean multiple schedulers racing on the same database.
+# One uvicorn worker on purpose: the collector scheduler is in-process, and
+# with RUN_INVESTIGATIONS_IN_WEB=true (the default) so are investigations.
+# Multiple uvicorn workers would mean multiple schedulers racing on one DB.
+#
+# ECHOLENS_PROCESS=worker runs the investigation worker instead of the API —
+# the same image as a second service (DEPLOY.md, "Worker"). It serves no port.
 #
 # --proxy-headers: behind Northflank's load balancer every request arrives from
 # the proxy, so without this the rate limiter — which keys on the client IP —
@@ -30,4 +33,4 @@ EXPOSE 8000
 # --forwarded-allow-ips='*' is safe ONLY because the container is reachable
 # solely through that proxy. If the port is ever exposed directly, a client
 # could spoof X-Forwarded-For and dodge the rate limit entirely.
-CMD ["sh", "-c", "uvicorn echolens.api.app:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --proxy-headers --forwarded-allow-ips='*'"]
+CMD ["sh", "-c", "if [ \"$ECHOLENS_PROCESS\" = worker ]; then exec echolens worker; else exec uvicorn echolens.api.app:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --proxy-headers --forwarded-allow-ips='*'; fi"]

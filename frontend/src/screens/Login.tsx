@@ -11,7 +11,11 @@ import { GoogleButton } from "../components/GoogleButton";
 // Signing in is optional when the deployment allows guests: the primary action
 // is then "Explore the demo", and an account is what unlocks the controls that
 // spend money or change data.
-export function Login({ onAuthed }: { onAuthed: () => void }) {
+export function Login({ onAuthed, onBack }: {
+  onAuthed: () => void;
+  /** Back to the landing page, when Login was opened from it. */
+  onBack?: () => void;
+}) {
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
@@ -100,6 +104,12 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
       >
         <div className="el-login-form-content"
           style={{ width: "100%", display: "flex", flexDirection: "column", margin: "auto 0" }}>
+        {onBack && (
+          <button onClick={onBack} className="el-btn el-btn--sm"
+            style={{ alignSelf: "flex-start", color: C.dim, paddingLeft: 0, marginBottom: S[4] }}>
+            ← About EchoLens
+          </button>
+        )}
         {narrow && <Wordmark />}
 
         <h1 className="el-login-title" style={{ margin: 0, fontSize: T.xl, fontWeight: 700, letterSpacing: "-0.01em",
@@ -237,13 +247,7 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
 
 // ── left brand panel: the product's world ──────────────────────────────
 
-function BrandPanel() {
-  const steps: { tag: string; color: string; text: string; mono?: boolean }[] = [
-    { tag: "THINK", color: C.muted, text: "1-star reviews jumped 23% — three days after v3.2 shipped." },
-    { tag: "TOOL", color: C.info, text: 'search_reviews("battery drain", since="v3.2")', mono: true },
-    { tag: "EVID", color: C.accent, text: "“Phone dies by 2pm since the update.”  ev_003" },
-    { tag: "FOUND", color: C.good, text: "Background sync holds a wakelock — confidence 0.85." },
-  ];
+export function BrandPanel() {
   return (
     <div className="el-login-brand"
       style={{
@@ -282,48 +286,61 @@ function BrandPanel() {
         </div>
 
         {/* miniature reasoning trace */}
-        <div className="el-login-trace" style={{ marginTop: S[8], display: "flex", flexDirection: "column", gap: S[2] }}>
-          {steps.map((s, i) => (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: "56px 1fr", columnGap: S[3], alignItems: "start" }}>
-              <div
-                style={{
-                  fontFamily: mono,
-                  fontSize: T.micro,
-                  letterSpacing: ".05em",
-                  textAlign: "center",
-                  padding: `${S[1]} 0`,
-                  borderRadius: R.sm,
-                  border: `1px solid ${s.color}`,
-                  color: s.color,
-                  background: C.bg
-                }}
-              >
-                {s.tag}
-              </div>
-              <div
-                style={{
-                  fontSize: T.sm,
-                  lineHeight: "var(--el-lh-snug)",
-                  color: s.tag === "TOOL" ? C.info : C.text3,
-                  fontFamily: s.mono ? mono : sans,
-                  paddingTop: 2
-                }}
-              >
-                {s.text}
-              </div>
-            </div>
-          ))}
-          <div style={{ display: "flex", alignItems: "center", gap: S[2], marginTop: S[1], marginLeft: 68 }}>
-            <div style={{ width: 6, height: 6, borderRadius: "50%", background: C.accent, animation: "elPulse 1.4s infinite" }} />
-            <span style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".1em", color: C.accent }}>LIVE · EVERY STEP VISIBLE</span>
-          </div>
-        </div>
+        <TracePreview />
       </div>
     </div>
   );
 }
 
-function Wordmark({ large }: { large?: boolean }) {
+/** The miniature reasoning trace: what an investigation looks like, in four steps. */
+export function TracePreview() {
+  const steps: { tag: string; color: string; text: string; mono?: boolean }[] = [
+    { tag: "THINK", color: C.muted, text: "1-star reviews jumped 23% — three days after v3.2 shipped." },
+    { tag: "TOOL", color: C.info, text: 'search_reviews("battery drain", since="v3.2")', mono: true },
+    { tag: "EVID", color: C.accent, text: "“Phone dies by 2pm since the update.”  ev_003" },
+    { tag: "FOUND", color: C.good, text: "Background sync holds a wakelock — confidence 0.85." },
+  ];
+  return (
+    <div className="el-login-trace" style={{ marginTop: S[8], display: "flex", flexDirection: "column", gap: S[2] }}>
+      {steps.map((s, i) => (
+        <div key={i} style={{ display: "grid", gridTemplateColumns: "56px 1fr", columnGap: S[3], alignItems: "start" }}>
+          <div
+            style={{
+              fontFamily: mono,
+              fontSize: T.micro,
+              letterSpacing: ".05em",
+              textAlign: "center",
+              padding: `${S[1]} 0`,
+              borderRadius: R.sm,
+              border: `1px solid ${s.color}`,
+              color: s.color,
+              background: C.bg
+            }}
+          >
+            {s.tag}
+          </div>
+          <div
+            style={{
+              fontSize: T.sm,
+              lineHeight: "var(--el-lh-snug)",
+              color: s.tag === "TOOL" ? C.info : C.text3,
+              fontFamily: s.mono ? mono : sans,
+              paddingTop: 2
+            }}
+          >
+            {s.text}
+          </div>
+        </div>
+      ))}
+      <div style={{ display: "flex", alignItems: "center", gap: S[2], marginTop: S[1], marginLeft: 68 }}>
+        <div style={{ width: 6, height: 6, borderRadius: "50%", background: C.accent, animation: "elPulse 1.4s infinite" }} />
+        <span style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".1em", color: C.accent }}>LIVE · EVERY STEP VISIBLE</span>
+      </div>
+    </div>
+  );
+}
+
+export function Wordmark({ large }: { large?: boolean }) {
   const d = large ? 34 : 26;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: S[3] }}>

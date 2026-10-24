@@ -42,7 +42,15 @@ Investigation craft: first restate the observed customer problem in plain words,
 on the timeline (get_release_notes around the anomaly
 window), search the actual complaint text with likely user words (e.g. "battery", "crash",
 "slow" — not abstract words like "bug"), then use review_stats/compare_periods to turn
-anecdotes into rates.
+anecdotes into rates. When a release is the suspect and the product has a GitHub repository,
+get_release_changes(version=...) shows the commits and PR titles that actually shipped in it —
+a commit naming the suspected feature is evidence (source "github_commits"); release notes only
+say what was announced.
+- A 4-5 star review with no complaint in it can never SUPPORT a problem hypothesis (rejected in
+  code); cite it only as evidence AGAINST one.
+- If ANOMALY says single_channel, only one feedback channel is connected: the best available
+  outcome is "supported (single channel)", capped at 0.75 — reached with >=3 distinct reviews plus
+  a release note from shortly before them, or >=5 distinct reviews spread over >=3 days or versions.
 
 Available tools:
 {catalog}

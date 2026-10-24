@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from echolens.tools.analyze_trend import analyze_trend
 from echolens.tools.compare_cohorts import compare_cohorts
 from echolens.tools.compare_periods import compare_periods
+from echolens.tools.get_release_changes import get_release_changes
 from echolens.tools.get_release_notes import get_release_notes
 from echolens.tools.search_github_issues import search_github_issues
 from echolens.tools.search_reddit import search_reddit
@@ -107,6 +108,21 @@ TOOLS: dict[str, ToolSpec] = {
                 },
             },
             "release_notes",
+        ),
+        ToolSpec(
+            "get_release_changes", get_release_changes,
+            "What changed in the CODE for a release: commit messages, PR titles and changed "
+            "file paths between that release's tag and the previous one (or the releases in a "
+            "date range). Only for products with a connected GitHub repository; otherwise it "
+            "says so. Read-only, no diffs.",
+            {
+                "type": "object",
+                "properties": {
+                    "version": {"type": "string"},
+                    "date_from": _DATE, "date_to": _DATE,
+                },
+            },
+            "github_commits",
         ),
         ToolSpec(
             "search_reddit", search_reddit,

@@ -115,7 +115,9 @@ class _Counter:
         self.n += 1
 
 
-def _counts(monkeypatch, n: int, paths: list[str]) -> dict[str, int]:
+def _counts(monkeypatch, n: int, paths: list[str], repeat: int = 1) -> dict[str, int]:
+    """Statements per path; with `repeat`, the count of the LAST of that many
+    calls (the steady state once anything cached or stored is in place)."""
     eng = _engine()
     Session = _wire(monkeypatch, eng)
     _build(Session, n)
@@ -123,6 +125,8 @@ def _counts(monkeypatch, n: int, paths: list[str]) -> dict[str, int]:
     client = TestClient(app)
     out = {}
     for path in paths:
+        for _ in range(repeat - 1):
+            client.get(path)
         counter = _Counter()
         event.listen(eng, "before_cursor_execute", counter)
         try:
@@ -153,7 +157,11 @@ def test_portfolio_board_stays_under_a_fixed_budget(monkeypatch):
     """Absolute ceilings, so a later change cannot reintroduce a per-product
     query that happens to cost the same at both scales by accident."""
     counts = _counts(monkeypatch, 6, ["/portfolio", "/portfolio/brief", "/portfolio/themes"])
-    assert counts["/portfolio"] <= 15
+    # /portfolio now serves stored rows. The first call (nothing stored yet)
+    # computes the board AND reads the fingerprint and writes the rows: one
+    # more than the old 15. Every later call reads the stored rows instead.
+    assert counts["/portfolio"] <= 16
+    assert _counts(monkeypatch, 6, ["/portfolio"], repeat=2)["/portfolio"] <= 10
     assert counts["/portfolio/brief"] <= 25
     assert counts["/portfolio/themes"] <= 6
 

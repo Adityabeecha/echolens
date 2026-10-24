@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from echolens.db.models import Review
 from echolens.textkit import needs_translation
@@ -24,7 +24,9 @@ def search_reviews(
     """Keyword search over reviews; supports version/OS segmentation
     (the decoy-killer: e.g. version_prefix='3.1', os_version='Android 15') and
     optional product scoping for multi-app workspaces."""
-    stmt = select(Review)
+    # The embedding is never needed here: semantic.augment reads it for a
+    # bounded set of ids. Loading it per row was ~1 KB of JSON each.
+    stmt = select(Review).options(defer(Review.embedding))
     if product:
         stmt = stmt.where(Review.product == product)
     if date_from:
@@ -53,7 +55,8 @@ def search_reviews(
     # v1.0: append semantically-close reviews the keywords missed (no-op until
     # the corpus is embedded — keyword results are never dropped or reordered).
     from echolens.search.semantic import augment
-    ranked += augment(query, rows, set(ranked), analysis_text, limit or 8)
+    ranked += augment(query, rows, set(ranked), analysis_text, limit or 8,
+                      session=session, model=Review)
     items, total = cap_items(ranked, limit)
     return {
         "total_matches": total,

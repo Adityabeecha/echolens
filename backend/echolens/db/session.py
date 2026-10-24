@@ -18,6 +18,9 @@ _SessionLocal: sessionmaker | None = None
 _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("fix_watches", "fixed_in_version", "VARCHAR"),
     ("fix_watches", "release_seen_at", "TIMESTAMP"),
+    ("fix_watches", "shipped_at", "TIMESTAMP"),
+    ("fix_watches", "shipped_note", "TEXT"),
+    ("review_feedback", "actual_cause", "TEXT"),
     ("llm_calls", "product_id", "INTEGER"),
     ("investigations", "reopens_investigation_id", "INTEGER"),
     ("investigations", "checkpoint_json", "JSON"),
@@ -57,10 +60,23 @@ _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
 ]
 
 
+def _with_driver(url: str) -> str:
+    """Name the installed Postgres driver explicitly.
+
+    SQLAlchemy 2.1 maps a bare ``postgresql://`` URL to psycopg 3, which is not
+    installed (we ship psycopg2-binary), so a fresh build crash-looped on
+    startup with ModuleNotFoundError: psycopg. A URL that already names a
+    driver is left alone."""
+    for bare in ("postgresql://", "postgres://"):
+        if url.startswith(bare):
+            return "postgresql+psycopg2://" + url[len(bare):]
+    return url
+
+
 def get_engine(db_url: str | None = None):
     global _engine, _SessionLocal
     if _engine is None or db_url is not None:
-        url = db_url or settings.echolens_db_url
+        url = _with_driver(db_url or settings.echolens_db_url)
         # SQLite needs check_same_thread=False so the API's background
         # investigation thread can share the engine.
         kwargs = {"connect_args": {"check_same_thread": False}} if url.startswith("sqlite") else {}

@@ -86,4 +86,5 @@ def test_registry_runs_and_validates(session):
         "search_reviews", "review_stats", "compare_periods",
         "search_github_issues", "get_release_notes", "search_reddit",
         "compare_cohorts", "analyze_trend",  # v2.0
+        "get_release_changes",  # commit/PR context between release tags
     }

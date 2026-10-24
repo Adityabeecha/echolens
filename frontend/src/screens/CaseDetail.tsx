@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Evidence, Investigation, api, errorMessage } from "../api";
+import { CaseRow, Evidence, Investigation, api, canReview, errorMessage } from "../api";
+import { withToast } from "../components/Toast";
 import { StatusChip, TrustBadge } from "../components/CaseCard";
 import { impactLine } from "../format";
-import { CASE_TABS, CaseTab, CASE_TAB_LABEL } from "../nav";
+import { CASE_TABS, CaseTab, CASE_TAB_LABEL, currentLocation, formatRoute, parseRoute } from "../nav";
 import { SEVERITY } from "../status";
 import { C, R, S, T, mono } from "../theme";
 import { Centered, ErrorState } from "../ui";
@@ -50,6 +51,12 @@ export function CaseDetail({
   const [inv, setInv] = useState<Investigation | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pollGeneration, setPollGeneration] = useState(0);
+  useEffect(() => {
+    if (inv?.id !== caseId || !inv.merged_into_id) return;
+    const route = parseRoute(currentLocation());
+    if (!route || route.screen !== "case") return;
+    window.location.replace(formatRoute({ ...route, id: inv.merged_into_id }));
+  }, [inv?.id, inv?.merged_into_id, caseId]);
   // v15 split pane. On a wide screen the brief stays on the left and whatever
   // you click — a citation, or the trace — opens in the Inspector beside it,
   // instead of sending you to another tab. Narrow screens keep one column and
@@ -141,6 +148,7 @@ export function CaseDetail({
     );
   }
   if (!inv) return <Centered>Loading case #{caseId}…</Centered>;
+  if (inv.merged_into_id) return <Centered>Opening case #{inv.merged_into_id}…</Centered>;
 
   const openEvidence = (e: Evidence) => {
     if (wide) { setPickedId(e.id); setMode("evidence"); if (tab === "trace") onTab("finding"); }
@@ -190,6 +198,10 @@ export function CaseDetail({
           <span style={{ fontFamily: mono, fontSize: T.xs, color: C.faint }}>
             {productName ? `· ${productName}` : ""}
           </span>
+          {canReview() && ["needs_review", "needs_human", "resolved", "regressed"].includes(inv.case_status)
+            && !inv.product_decision?.hidden && (
+            <MergeAction key={caseId} caseId={caseId} onMerged={(id) => { onReviewed(); onOpenCase(id); }} />
+          )}
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: S[3], marginTop: S[2],
@@ -304,6 +316,68 @@ export function CaseDetail({
         <EvidenceSheet evidence={sheetEvidence} onClose={() => setSheetId(null)}>
           {sheetEvidence && <EvidenceDetail evidence={sheetEvidence} inv={inv} onReload={load} />}
         </EvidenceSheet>
+      )}
+    </div>
+  );
+}
+
+function MergeAction({ caseId, onMerged }: { caseId: number; onMerged: (id: number) => void }) {
+  const [open, setOpen] = useState(false);
+  const [candidates, setCandidates] = useState<CaseRow[]>([]);
+  const [target, setTarget] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const show = async () => {
+    setOpen(true); setBusy(true); setError(null);
+    try {
+      const view = await api.cases();
+      setCandidates(view.cases.filter((c) => c.id != null && c.id !== caseId &&
+        ["needs_review", "needs_human", "resolved", "regressed"].includes(c.status) && !c.decision?.hidden));
+    } catch (e) { setError(errorMessage(e)); }
+    finally { setBusy(false); }
+  };
+  const merge = async () => {
+    if (!target) return;
+    setBusy(true);
+    const result = await withToast(() => api.mergeCase(caseId, Number(target)), {
+      success: "Cases merged — the duplicate's evidence is linked as related.",
+      failure: "Couldn't merge these cases"
+    });
+    setBusy(false);
+    if (result) onMerged(result.merged_into_id);
+  };
+  return (
+    <div style={{ marginLeft: "auto", maxWidth: 480 }}>
+      {!open ? (
+        <button className="el-btn" onClick={show} style={{ fontSize: T.sm, color: C.dim }}>
+          Merge duplicate…
+        </button>
+      ) : (
+        <div style={{ padding: S[3], border: `1px solid ${C.border2}`, borderRadius: R.card, background: C.card }}>
+          <label htmlFor="merge-target" style={{ fontSize: T.sm, color: C.text2 }}>
+            Merge case #{caseId} into an open case on this product
+          </label>
+          <select id="merge-target" value={target} disabled={busy}
+            onChange={(e) => setTarget(e.target.value)}
+            style={{ display: "block", width: "100%", marginTop: S[2], padding: S[2],
+                     background: C.bg, color: C.text2, border: `1px solid ${C.border3}`, borderRadius: R.control }}>
+            <option value="">{busy ? "Loading…" : "Choose a case"}</option>
+            {candidates.map((c) => <option key={c.id} value={c.id!}>#{c.id} · {c.title}</option>)}
+          </select>
+          <div style={{ fontSize: T.xs, color: C.dim, marginTop: S[2] }}>
+            This case leaves open lists. Its evidence stays linked as related; links redirect to the selected case.
+          </div>
+          {error && <div role="alert" style={{ fontSize: T.sm, color: C.bad }}>{error}</div>}
+          {!busy && !error && candidates.length === 0 && (
+            <div style={{ fontSize: T.sm, color: C.muted }}>No other open cases available.</div>
+          )}
+          <div style={{ display: "flex", gap: S[3], marginTop: S[2] }}>
+            <button className="el-btn" onClick={merge} disabled={busy || !target} style={{ color: C.accent }}>
+              {busy ? "Working…" : "Merge into selected case"}
+            </button>
+            <button className="el-btn" onClick={() => setOpen(false)} disabled={busy} style={{ color: C.muted }}>Cancel</button>
+          </div>
+        </div>
       )}
     </div>
   );

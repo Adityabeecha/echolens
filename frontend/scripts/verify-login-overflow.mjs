@@ -1,5 +1,6 @@
 const endpoint = process.env.ECHOLENS_CDP || "http://127.0.0.1:9223";
-const appUrl = process.env.ECHOLENS_APP_URL || "http://127.0.0.1:5173/";
+// `?signin`: the root is the public landing page; the sign-in view is one step in.
+const appUrl = process.env.ECHOLENS_APP_URL || "http://127.0.0.1:5173/?signin";
 
 // Drives a real Chrome over the DevTools Protocol. Start Chrome with
 // --remote-debugging-port=9223 first (or point ECHOLENS_CDP elsewhere), and run

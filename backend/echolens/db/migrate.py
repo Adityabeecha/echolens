@@ -86,7 +86,9 @@ def dedupe_cases(session: Session) -> dict:
     merged = 0
     by_anomaly: dict[int, list[Investigation]] = {}
     for inv in session.scalars(select(Investigation).order_by(Investigation.id)).all():
-        if inv.anomaly_id is None:
+        # A challenge re-opens the SAME anomaly on purpose; that case is the
+        # continuation, not a duplicate, and must not be merged away.
+        if inv.anomaly_id is None or inv.opened_by == "challenge":
             continue
         by_anomaly.setdefault(inv.anomaly_id, []).append(inv)
     for anomaly_id, invs in by_anomaly.items():
