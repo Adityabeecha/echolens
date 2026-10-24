@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { C, R, S, T } from "../theme";
 import { Button } from "../ui";
 import { Icon } from "./Icon";
@@ -17,6 +17,8 @@ export interface ToastItem {
   retry?: () => void;
   /** Label for the action button. Defaults to "Retry" (the original use). */
   actionLabel?: string;
+  /** Dismissed and playing its exit; removed once that finishes. */
+  leaving?: boolean;
 }
 
 type Listener = (items: ToastItem[]) => void;
@@ -46,9 +48,30 @@ function push(text: string, kind: ToastItem["kind"], retry?: () => void,
   return id;
 }
 
+/** Matches --el-dur in tokens.css, the length of the exit transition. */
+const EXIT_MS = 180;
+
+function reducedMotion(): boolean {
+  return typeof window !== "undefined" &&
+    !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+}
+
 export function dismiss(id: number) {
-  items = items.filter((t) => t.id !== id);
+  const t = items.find((x) => x.id === id);
+  if (!t || t.leaving) return;
+  if (reducedMotion()) {
+    items = items.filter((x) => x.id !== id);
+    emit();
+    return;
+  }
+  // Fade out first, then leave the DOM: a toast that vanished mid-sentence
+  // read as a glitch, not as "done".
+  items = items.map((x) => (x.id === id ? { ...x, leaving: true } : x));
   emit();
+  setTimeout(() => {
+    items = items.filter((x) => x.id !== id);
+    emit();
+  }, EXIT_MS);
 }
 
 /** Clear everything — called on sign-out so one user's failures never greet
@@ -96,8 +119,16 @@ const KIND: Record<ToastItem["kind"], { color: string; icon: string }> = {
   info: { color: C.info, icon: "info" }
 };
 
+/**
+ * The stack sits bottom-right (above the bottom bar on a phone) and publishes
+ * its height as --el-toast-reserve, which the screen body adds to its bottom
+ * padding. "Case #N is running — Watch live" used to float over whatever was
+ * last on the page — often the very Approve button you were reaching for —
+ * with no way to scroll it out from under the toast.
+ */
 export function Toasts() {
   const [list, setList] = useState<ToastItem[]>(items);
+  const stackRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     listeners.push(setList);
     return () => {
@@ -105,28 +136,32 @@ export function Toasts() {
     };
   }, []);
 
-  if (list.length === 0) return null;
+  const shown = list.length > 0;
+  useEffect(() => {
+    const root = document.documentElement.style;
+    const node = stackRef.current;
+    if (!shown || !node) { root.removeProperty("--el-toast-reserve"); return; }
+    const publish = () => root.setProperty("--el-toast-reserve", `${node.offsetHeight + 16}px`);
+    publish();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(publish) : null;
+    ro?.observe(node);
+    return () => { ro?.disconnect(); root.removeProperty("--el-toast-reserve"); };
+  }, [shown]);
+
+  if (!shown) return null;
   return (
-    <div
-      role="status"
-      aria-live="polite"
-      style={{
-        position: "fixed", right: S[5], bottom: S[5], zIndex: 200,
-        display: "flex", flexDirection: "column", gap: S[2],
-        maxWidth: "min(420px, calc(100vw - 2 * var(--el-s5)))"
-      }}
-    >
+    <div ref={stackRef} className="el-toasts" role="status" aria-live="polite">
       {list.map((t) => {
         const k = KIND[t.kind];
         return (
           <div
             key={t.id}
+            className={`el-toast${t.leaving ? " is-leaving" : ""}`}
             style={{
               display: "flex", alignItems: "flex-start", gap: S[3],
               padding: `${S[3]} ${S[3]}`, borderRadius: R.card, background: C.card,
               border: `1px solid ${k.color}66`, boxShadow: "var(--el-e3)",
-              fontSize: T.base, color: C.text2, lineHeight: "var(--el-lh-normal)",
-              animation: "elFadeUp var(--el-dur-slow) var(--el-ease)"
+              fontSize: T.base, color: C.text2, lineHeight: "var(--el-lh-normal)"
             }}
           >
             <span style={{ color: k.color, marginTop: 2, flex: "none" }}>

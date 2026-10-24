@@ -131,6 +131,8 @@
   --el-dur-fast: 120ms;
   --el-dur: 180ms;
   --el-dur-slow: 320ms;
+  /* Hover/focus feedback on cards, pills, nav items and secondary buttons. */
+  --el-dur-hover: 150ms;
   --el-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 
   /* ── layout ──────────────────────────────────────────────────────────────
@@ -556,13 +558,13 @@ button {
 }
 
 .el-sidebar {
-  background: #1d2325 !important;
-  border-right-color: #30383a !important;
-  color: #f6f2e9;
+  background: var(--el-nav-bg) !important;
+  border-right-color: var(--el-nav-line) !important;
+  color: var(--el-nav-text);
 }
 .el-nav-brand {
   min-height: 82px;
-  border-bottom: 1px solid #343c3e;
+  border-bottom: 1px solid var(--el-nav-line);
   margin-bottom: var(--el-s4);
 }
 .el-brand-mark {
@@ -591,21 +593,21 @@ button {
   z-index: 1;
 }
 .el-brand-name {
-  color: #fffaf3 !important;
+  color: var(--el-nav-text-strong) !important;
   font-family: var(--el-display);
   font-size: 20px !important;
   letter-spacing: -0.02em !important;
 }
 .el-sidebar .el-nav-brand .el-mono,
 .el-sidebar .el-nav-brand span span:last-child {
-  color: #b9beb9 !important;
+  color: var(--el-nav-meta) !important;
 }
 .el-sidebar .el-btn {
-  color: #c9ceca !important;
+  color: var(--el-nav-text) !important;
 }
 .el-sidebar .el-btn:hover {
-  background: #293133 !important;
-  color: #fffaf3 !important;
+  background: var(--el-nav-hover) !important;
+  color: var(--el-nav-text-strong) !important;
 }
 .el-sidebar .el-nav-item {
   min-height: 42px;
@@ -613,8 +615,8 @@ button {
 }
 .el-sidebar .el-nav-item--active,
 .el-sidebar [aria-current="page"] {
-  background: #343c3e !important;
-  color: #fffaf3 !important;
+  background: var(--el-nav-active) !important;
+  color: var(--el-nav-text-strong) !important;
 }
 .el-sidebar .el-nav-item--active::after,
 .el-sidebar [aria-current="page"]::after {
@@ -624,18 +626,12 @@ button {
   top: 7px;
   bottom: 7px;
   width: 2px;
-  background: #e05549;
+  background: var(--el-nav-accent);
 }
 .el-sidebar .el-product-switcher > button {
-  background: #242b2d !important;
-  border-color: #465052 !important;
-  color: #fffaf3 !important;
-}
-.el-sidebar .el-product-switcher > button span span:first-child {
-  color: #fffaf3 !important;
-}
-.el-sidebar .el-product-switcher > button span span:last-child {
-  color: #aeb5b1 !important;
+  background: var(--el-nav-chip) !important;
+  border-color: var(--el-nav-chip-line) !important;
+  color: var(--el-nav-text-strong) !important;
 }
 
 .el-screen-header {
@@ -1186,8 +1182,8 @@ textarea::placeholder {
 }
 
 .el-sidebar {
-  background: #1e1e20 !important;
-  border-right-color: #2c2c2f !important;
+  background: var(--el-nav-bg) !important;
+  border-right-color: var(--el-nav-line) !important;
 }
 .el-nav-brand {
   min-height: 68px;
@@ -1215,7 +1211,7 @@ textarea::placeholder {
   background: #7b86e8;
 }
 .el-brand-name {
-  color: #f4f4f5 !important;
+  color: var(--el-nav-text-strong) !important;
   font-family: var(--el-font);
   font-size: 16px !important;
   font-weight: 600 !important;
@@ -1223,24 +1219,14 @@ textarea::placeholder {
 }
 .el-sidebar .el-nav-brand .el-mono,
 .el-sidebar .el-nav-brand span span:last-child {
-  color: #8e8e98 !important;
+  color: var(--el-nav-meta) !important;
   font-family: var(--el-font) !important;
   font-size: 10px !important;
   letter-spacing: 0.05em !important;
 }
-.el-sidebar .el-btn { color: #a7a7b0 !important; }
-.el-sidebar .el-btn:hover {
-  background: #29292c !important;
-  color: #f1f1f3 !important;
-}
 .el-sidebar .el-nav-item {
   min-height: 38px;
   border-radius: 7px !important;
-}
-.el-sidebar .el-nav-item--active,
-.el-sidebar [aria-current="page"] {
-  background: #303034 !important;
-  color: #ffffff !important;
 }
 .el-sidebar .el-nav-item--active::after,
 .el-sidebar [aria-current="page"]::after {
@@ -1249,20 +1235,12 @@ textarea::placeholder {
   bottom: 9px;
   width: 2px;
   border-radius: 2px;
-  background: #7b86e8;
 }
-.el-sidebar .el-product-switcher > button {
-  background: transparent !important;
-  border-color: #3a3a3f !important;
-  color: #ededf0 !important;
-}
-.el-sidebar .el-product-switcher > button span span:first-child { color: #ededf0 !important; }
-.el-sidebar .el-product-switcher > button span span:last-child { color: #888891 !important; }
 
 .el-screen-header {
   min-height: 74px;
   padding-block: var(--el-s4) !important;
-  background: #ffffff !important;
+  background: var(--el-header-bg) !important;
   border-bottom-color: var(--el-border) !important;
 }
 .el-screen-header h1 {
@@ -1291,19 +1269,19 @@ textarea::placeholder {
 .el-docket-stamp { display: none !important; }
 
 .el-card {
-  background: #ffffff;
+  background: var(--el-bg-card);
   border-color: var(--el-border-2);
   border-radius: var(--el-r-card);
   box-shadow: none;
 }
 .el-card--click:hover,
 .el-case-card:hover {
-  border-color: #b8b8c2;
+  border-color: var(--el-border-3);
   box-shadow: var(--el-e1);
 }
 .el-empty-state,
 .el-error-state {
-  background: #ffffff;
+  background: var(--el-bg-card);
   border-color: var(--el-border-2) !important;
 }
 .el-empty-state { border-style: solid !important; }
@@ -1333,7 +1311,7 @@ select {
 }
 
 .el-case-filters {
-  background: #ffffff;
+  background: var(--el-bg-card);
   border-bottom-color: var(--el-border) !important;
 }
 .el-today .el-screen-body { background: var(--el-bg); }
@@ -1376,7 +1354,7 @@ select {
   padding: var(--el-s4);
   border: 1px solid var(--el-border-2);
   border-radius: var(--el-r-card);
-  background: #ffffff;
+  background: var(--el-bg-card);
 }
 .el-today-section--top-open-problems {
   grid-column: 1;
@@ -1404,7 +1382,7 @@ select {
   min-height: 68px;
   position: relative;
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--el-bg-card);
 }
 .el-case-card::before { display: none; }
 .el-case-status-mark {
@@ -1430,7 +1408,7 @@ select {
   text-decoration: none;
 }
 .el-case-dossier-header {
-  background: #ffffff;
+  background: var(--el-bg-card);
   padding-top: var(--el-s3) !important;
 }
 .el-case-breadcrumb {
@@ -1510,8 +1488,8 @@ select {
   .el-today-section--running-queued { padding: var(--el-s4); }
   .el-case-status-mark { margin-left: var(--el-s3); }
   .el-shell nav.el-sidebar {
-    background: #1e1e20 !important;
-    border-bottom-color: #2c2c2f !important;
+    background: var(--el-nav-bg) !important;
+    border-bottom-color: var(--el-nav-line) !important;
   }
 }
 
@@ -1526,11 +1504,27 @@ select {
 .el-today--no-flight .el-score-docket { grid-row: 5; }
 .el-today--no-flight .el-today-section--this-week { grid-row: 6; }
 
+/* "Title | Product". The divider used to be the span's border-left with
+   `vertical-align: middle`: a border spans the small text's whole line box, and
+   middle-aligning that box against a 24px title left it hanging low and
+   off-centre. Now it is an empty inline-block, whose baseline is its bottom
+   edge, so it stands on the shared text baseline and rises to cap height. */
+.el-screen-header h1 > .el-screen-product,
 .el-screen-product {
   display: inline-block;
   margin-left: var(--el-s3);
-  padding-left: var(--el-s3);
-  border-left: 1px solid var(--el-border);
+  padding-left: 0;
+  border-left: 0;
+  vertical-align: baseline;
+}
+.el-screen-product::before {
+  content: "";
+  display: inline-block;
+  width: 1px;
+  height: 1.1em;
+  margin-right: var(--el-s3);
+  background: var(--el-border-3);
+  vertical-align: baseline;
 }
 
 .el-quiet-state {
@@ -1546,29 +1540,34 @@ select {
   height: 7px;
   flex: none;
   border-radius: 50%;
-  background: var(--el-text-4);
+  /* These named --el-text-4 and --el-green, which were never defined, so the
+     dot rendered with no colour at all. */
+  background: var(--el-text-faint);
 }
-.el-quiet-state__mark.is-good { background: var(--el-green); }
+.el-quiet-state__mark.is-good { background: var(--el-good); }
 .el-quiet-state strong {
   display: block;
   color: var(--el-text);
-  font-size: var(--el-text-sm);
+  font-size: var(--el-fs-sm);
   font-weight: 500;
 }
 .el-quiet-state p {
   margin: 2px 0 0;
   color: var(--el-text-3);
-  font-size: var(--el-text-sm);
+  font-size: var(--el-fs-sm);
 }
 .el-quiet-state .el-btn { margin-left: auto; }
 
 @media (max-width: 720px) {
+  .el-screen-header h1 > .el-screen-product,
   .el-screen-product {
     display: block;
     margin: var(--el-s1) 0 0;
     padding-left: 0;
     border-left: 0;
   }
+  /* On its own line, a divider has nothing to divide. */
+  .el-screen-product::before { display: none; }
   .el-quiet-state { align-items: flex-start; }
   .el-quiet-state .el-btn { flex: none; }
   .el-shell nav.el-sidebar .el-nav-primary {
@@ -1749,7 +1748,7 @@ select {
     overflow-x: auto !important;
     overflow-y: hidden !important;
     border-right: 0 !important;
-    border-bottom: 1px solid #343c3e !important;
+    border-bottom: 1px solid var(--el-nav-line) !important;
   }
   .el-shell nav.el-sidebar > .el-nav-brand,
   .el-shell nav.el-sidebar > .el-nav-wide,
@@ -1838,7 +1837,9 @@ select {
 :root {
   --el-canvas-warm: #f6f4ef;
   --el-nav-ink: #12302d;
-  --el-accent-teal: #2a7d70;
+  /* Was #2a7d70: 4.48:1 on the canvas and 4.14:1 on raised surfaces, under AA
+     for the status text and links it colours. Now >=5.0:1 on every surface. */
+  --el-accent-teal: #236f62;
   --el-paper: #fffdf8;
   --el-rule-warm: #ddd8cd;
   --el-bg: var(--el-canvas-warm);
@@ -1858,24 +1859,46 @@ select {
   --el-text-faint: #64756f;
   --el-text-ghost: #71817c;
   --el-accent: var(--el-accent-teal);
-  --el-accent-hover: #206a60;
+  --el-accent-hover: #1d5f54;
   --el-accent-deep: #18574f;
   --el-on-accent: #ffffff;
   --el-accent-bg: #e1efeb;
   --el-accent-bg-hover: #d5e8e2;
   --el-accent-line: #9cc8bd;
   --el-accent-line-strong: #68aa9b;
-  --el-good: #25745b;
+  /* Status text — positive/negative trends, "Resolved", "Regressed" — sits on
+     the canvas, cards, raised panels AND its own tinted badge. Every value is
+     measured >=5.0:1 against all of them (it was 4.0:1 for bad on raised). */
+  --el-good: #1e6a51;
   --el-good-bg: #e2f1ea;
   --el-good-line: #9bc6b2;
-  --el-bad: #bd5145;
+  --el-bad: #a5423a;
   --el-bad-bg: #fae8e3;
   --el-bad-line: #e5afa5;
-  --el-info: #3f6f9e;
+  --el-info: #37648f;
   --el-info-bg: #e7eef5;
   --el-info-line: #a9bfd4;
   --el-track: #e4e0d7;
   --el-scrollbar: #b8b2a7;
+
+  /* ── navigation and header ───────────────────────────────────────────────
+     The sidebar used to be dark in BOTH themes: three generations of
+     hard-coded hexes (#1d2325, #1e1e20, the nav ink) with light text forced on
+     top. These are its own tokens, so light mode is light all the way through.
+     Text values are measured on --el-nav-bg: text 6.6:1, meta 4.8:1. */
+  --el-nav-bg: #efebe3;
+  --el-nav-line: #ddd8cd;
+  --el-nav-text: #435650;
+  --el-nav-text-strong: #172825;
+  --el-nav-meta: #586a65;
+  --el-nav-hover: #e6e1d6;
+  --el-nav-active: #dcebe6;
+  --el-nav-chip: #fffdf8;
+  --el-nav-chip-line: #d6d0c4;
+  --el-nav-accent: var(--el-accent);
+  /* Kept so anything still naming the old ink follows the theme. */
+  --el-nav-ink: var(--el-nav-bg);
+  --el-header-bg: rgba(255, 253, 248, 0.92);
   --el-r-control: 9px;
   --el-r-card: 14px;
   --el-r-overlay: 18px;
@@ -1893,34 +1916,43 @@ body { background: var(--el-canvas-warm); }
 .el-mobile-task-nav { display: none; }
 
 .el-shell nav.el-sidebar {
-  color: #edf5f2 !important;
-  background: var(--el-nav-ink) !important;
-  border-right: 0 !important;
+  color: var(--el-nav-text) !important;
+  background: var(--el-nav-bg) !important;
+  border-right: 1px solid var(--el-nav-line) !important;
+  /* Inline sidebar styles use the page's text tokens (C.muted, C.dim…), which
+     are tuned for the canvas, not this surface — light dim/faint fall to 4.0:1
+     here. Re-scoping them makes every inline colour in the nav pass on it. */
+  --el-text: var(--el-nav-text-strong);
+  --el-text-muted: var(--el-nav-text);
+  --el-text-dim: var(--el-nav-meta);
+  --el-text-faint: var(--el-nav-meta);
+  --el-text-ghost: var(--el-nav-meta);
 }
 .el-sidebar .el-brand-name,
-.el-sidebar .el-nav-brand > span > span:first-child { color: #f7fbf9 !important; }
+.el-sidebar .el-nav-brand > span > span:first-child { color: var(--el-nav-text-strong) !important; }
 .el-sidebar .el-nav-brand > span > span:last-child,
-.el-sidebar .el-nav-label { color: #b8cbc5; }
+.el-sidebar .el-nav-label { color: var(--el-nav-meta); }
 .el-sidebar .el-product-switcher > button,
 .el-sidebar .el-nav-wide {
-  color: #e8f1ee !important;
-  background: rgba(255,255,255,.055) !important;
-  border-color: rgba(255,255,255,.11) !important;
+  color: var(--el-nav-text-strong) !important;
+  background: var(--el-nav-chip) !important;
+  border-color: var(--el-nav-chip-line) !important;
 }
-.el-sidebar .el-nav-item { color: #bdd0ca !important; }
-.el-sidebar .el-nav-item:hover { background: rgba(255,255,255,.06) !important; }
+.el-sidebar .el-nav-item { color: var(--el-nav-text) !important; }
+.el-sidebar .el-nav-item .el-nav-label { color: inherit; }
+.el-sidebar .el-nav-item:hover { background: var(--el-nav-hover) !important; }
 .el-sidebar .el-nav-item--active,
 .el-sidebar [aria-current="page"] {
-  color: #ffffff !important;
-  background: rgba(84, 176, 157, .18) !important;
+  color: var(--el-nav-text-strong) !important;
+  background: var(--el-nav-active) !important;
 }
 .el-sidebar .el-nav-item--active .el-nav-label,
-.el-sidebar [aria-current="page"] .el-nav-label { color: #ffffff !important; }
+.el-sidebar [aria-current="page"] .el-nav-label { color: var(--el-nav-text-strong) !important; }
 
 .el-screen-header {
   min-height: 84px;
   padding: 18px var(--el-gutter) !important;
-  background: rgba(255,253,248,.92) !important;
+  background: var(--el-header-bg) !important;
   border-bottom-color: var(--el-border) !important;
 }
 .el-screen-header h1 { font-size: 24px !important; letter-spacing: -0.025em !important; }
@@ -2046,7 +2078,7 @@ body { background: var(--el-canvas-warm); }
     height: 64px;
     padding: 0 16px;
     color: var(--el-text);
-    background: rgba(255,253,248,.96);
+    background: var(--el-header-bg);
     border-bottom: 1px solid var(--el-border-2);
   }
   .el-mobile-context__brand { display: inline-flex; align-items: center; gap: 9px; }
@@ -2151,15 +2183,19 @@ body { background: var(--el-canvas-warm); }
   gap: 12px;
   margin: 4px 12px;
   padding: 7px 8px;
-  color: #bdd0ca;
+  color: var(--el-nav-text);
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--el-r-control);
   font: inherit;
   font-size: var(--el-fs-sm);
   cursor: pointer;
+  transition: background-color var(--el-dur-hover) var(--el-ease),
+              border-color var(--el-dur-hover) var(--el-ease),
+              color var(--el-dur-hover) var(--el-ease);
 }
-.el-theme-toggle:hover { color: #ffffff; background: rgba(255,255,255,.06); }
+.el-theme-toggle .el-nav-label { color: inherit; }
+.el-theme-toggle:hover { color: var(--el-nav-text-strong); background: var(--el-nav-hover); }
 .el-theme-toggle.is-compact {
   width: 44px;
   min-height: 44px;
@@ -2224,11 +2260,23 @@ body { background: var(--el-canvas-warm); }
   --el-e2: 0 10px 28px rgba(0, 0, 0, .28);
   --el-e3: 0 20px 48px rgba(0, 0, 0, .36);
   --el-e4: 0 32px 80px rgba(0, 0, 0, .46);
+
+  /* Measured on --el-nav-bg: text 11.8:1, meta 11.2:1; the accent on a chip
+     8.9:1. */
+  --el-nav-bg: #0a1211;
+  --el-nav-line: rgba(255, 255, 255, .08);
+  --el-nav-text: #bdd0ca;
+  --el-nav-text-strong: #ffffff;
+  --el-nav-meta: #b8cbc5;
+  --el-nav-hover: rgba(255, 255, 255, .06);
+  --el-nav-active: rgba(84, 176, 157, .18);
+  --el-nav-chip: rgba(255, 255, 255, .055);
+  --el-nav-chip-line: rgba(255, 255, 255, .11);
+  --el-nav-accent: #70cbb7;
+  --el-header-bg: rgba(16, 24, 22, .94);
 }
 
 html[data-theme="dark"] body { background: var(--el-bg); }
-html[data-theme="dark"] .el-screen-header,
-html[data-theme="dark"] .el-mobile-context { background: rgba(16, 24, 22, .94) !important; }
 html[data-theme="dark"] .el-card,
 html[data-theme="dark"] .el-empty-state,
 html[data-theme="dark"] .el-error-state,
@@ -2244,7 +2292,7 @@ html[data-theme="dark"] .el-onboarding-dossier {
 html[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]),
 html[data-theme="dark"] textarea,
 html[data-theme="dark"] select { color: var(--el-text); background: var(--el-bg-raised) !important; }
-html[data-theme="dark"] .el-shell nav.el-sidebar { background: var(--el-nav-ink) !important; }
+html[data-theme="dark"] .el-shell nav.el-sidebar { background: var(--el-nav-bg) !important; }
 
 @media (max-width: 1200px) {
   .el-shell nav.el-sidebar > .el-theme-toggle { justify-content: center; }
@@ -2321,4 +2369,157 @@ html[data-theme="dark"] .el-shell nav.el-sidebar { background: var(--el-nav-ink)
   outline: 2px solid var(--el-accent);
   outline-offset: 2px;
   border-radius: 6px;
+}
+
+/* ========================================================================== */
+/* SHELL — focus, hover, nav states, toasts                                   */
+/* ========================================================================== */
+
+/* ── focus and hover ───────────────────────────────────────────────────────
+   One ring and one 150ms feel for everything you can point at in a list:
+   case cards, filter pills, nav items, secondary buttons. */
+.el-btn,
+.el-card,
+.el-case-card,
+.el-row--click { transition-duration: var(--el-dur-hover); }
+
+/* Nav items sit in a scrolling column whose overflow clips an outer ring, so
+   theirs is drawn inside the item. */
+.el-sidebar .el-btn:focus-visible,
+.el-sidebar .el-theme-toggle:focus-visible,
+.el-mobile-task-nav button:focus-visible {
+  outline: 2px solid var(--el-nav-accent);
+  outline-offset: -2px;
+}
+.el-btn--ghost:focus-visible,
+.el-btn--quiet:focus-visible,
+.el-btn[aria-pressed]:focus-visible {
+  outline: 2px solid var(--el-accent);
+  outline-offset: 2px;
+}
+.el-btn--quiet:hover { border-color: var(--el-border-2); }
+
+/* Filter pills carry their resting colours inline, which outranks a plain
+   :hover — so an unselected pill gave no hover feedback at all. */
+.el-btn[aria-pressed="false"]:hover {
+  background: var(--el-bg-hover) !important;
+  border-color: var(--el-border-2) !important;
+  color: var(--el-text) !important;
+}
+
+/* A case card's focusable element is its title button; ring the whole card
+   when it has keyboard focus, so you can see WHICH card you are on. */
+@supports selector(:has(*)) {
+  .el-case-card:has(.el-case-title:focus-visible) {
+    outline: 2px solid var(--el-accent);
+    outline-offset: 2px;
+    border-color: var(--el-accent-line) !important;
+  }
+  .el-case-card .el-case-title:focus-visible { outline: none; }
+}
+
+/* ── nav states ────────────────────────────────────────────────────────── */
+/* A learning screen with nothing to show yet: present, named, not a door. */
+.el-nav-locked {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--el-s3);
+  padding: var(--el-s1) var(--el-s2);
+  color: var(--el-nav-meta);
+  font-size: var(--el-fs-sm);
+  line-height: var(--el-lh-snug);
+  cursor: default;
+}
+.el-nav-locked > svg { flex: none; margin-top: 2px; opacity: .6; }
+.el-nav-locked .el-nav-label { color: inherit; }
+.el-nav-locked small {
+  display: block;
+  margin-top: 1px;
+  font-size: var(--el-fs-xs);
+}
+
+/* The shortcut beside "Ask". Inside the label, so it folds away with it. */
+.el-nav-kbd {
+  margin-left: var(--el-s2);
+  padding: 1px 5px;
+  border: 1px solid var(--el-nav-chip-line);
+  border-radius: var(--el-r-sm);
+  color: var(--el-nav-meta);
+  font: 500 var(--el-fs-micro)/1.4 var(--el-mono);
+  white-space: nowrap;
+}
+
+/* "Demo product", as one tag: the eyebrow used to read DEMO PRODUCT in the
+   same wide-tracked caps as ACTIVE PRODUCT, so the two words ran together. */
+.el-product-tag {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 2px;
+  padding: 0 6px;
+  border-radius: var(--el-r-pill);
+  background: var(--el-accent-bg);
+  color: var(--el-accent-deep);
+  font-size: var(--el-fs-micro);
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.el-product-switcher [role="option"] .el-product-tag { margin: 0 0 0 var(--el-s2); flex: none; }
+
+/* The running-investigations widget: nav tokens, so it reads on either theme
+   (it used to put the light theme's text-3 on the dark nav ink, ~1.6:1). */
+.el-nav-live__count { color: var(--el-nav-text-strong); }
+.el-nav-live__ids { color: var(--el-nav-accent); }
+.el-nav-live__dot { background: var(--el-nav-accent); }
+
+/* ── toasts ────────────────────────────────────────────────────────────── */
+.el-toasts {
+  position: fixed;
+  right: var(--el-s5);
+  bottom: var(--el-s5);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: var(--el-s2);
+  max-width: min(400px, calc(100vw - 2 * var(--el-s5)));
+  pointer-events: none;
+}
+.el-toast {
+  pointer-events: auto;
+  animation: elToastIn var(--el-dur) var(--el-ease);
+  transition: opacity var(--el-dur) var(--el-ease), transform var(--el-dur) var(--el-ease);
+}
+.el-toast.is-leaving { opacity: 0; transform: translateY(6px); }
+@keyframes elToastIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+/* While toasts are up, the screen gains that much bottom room, so whatever
+   sits under the stack can always be scrolled clear of it. */
+.el-screen-body { padding-bottom: calc(64px + var(--el-toast-reserve, 0px)) !important; }
+
+@media (max-width: 720px) {
+  /* Above the bottom bar, never on it. */
+  .el-toasts {
+    left: var(--el-s3);
+    right: var(--el-s3);
+    bottom: calc(72px + env(safe-area-inset-bottom) + var(--el-s3));
+    max-width: none;
+  }
+  .el-screen-body { padding-bottom: calc(40px + var(--el-toast-reserve, 0px)) !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .el-btn, .el-card, .el-case-card, .el-row--click, .el-theme-toggle,
+  .el-toast { transition: none !important; animation: none !important; }
+}
+
+/* Locked rows centre like nav items once the rail is icon-only. */
+@media (max-width: 1200px) {
+  .el-shell nav.el-sidebar .el-nav-locked { justify-content: center; min-height: 44px; align-items: center; }
+  .el-shell nav.el-sidebar .el-nav-locked > svg { margin-top: 0; }
+}
+@media (min-width: 1201px) {
+  .el-shell nav.el-sidebar.is-user-collapsed .el-nav-locked { justify-content: center; align-items: center; }
+  .el-shell nav.el-sidebar.is-user-collapsed .el-nav-locked > svg { margin-top: 0; }
 }

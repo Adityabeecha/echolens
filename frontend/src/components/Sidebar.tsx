@@ -18,6 +18,8 @@ interface Props {
   activeId?: number | null;
   onSwitchProduct?: (id: number) => void;
   onAddProduct?: () => void;
+  /** Unused: deleting a product lives in Settings → This product, behind its
+   *  confirmation. Kept so callers that still pass it compile. */
   onDeleteProduct?: (p: ProductRow) => void;
   theme: ThemeMode;
   onThemeChange: (theme: ThemeMode) => void;
@@ -26,16 +28,21 @@ interface Props {
 }
 
 // v8.0: the active product scopes every screen, so it sits above the nav.
-function ProductSwitcher({ products, activeId, onSwitch, onAdd, onDelete }: {
+//
+// Switching only. It used to carry an inline × per product, one slip from the
+// destructive action sitting next to the most-used one; deleting now lives in
+// Settings → This product, behind its confirmation.
+function ProductSwitcher({ products, activeId, onSwitch, onAdd, screen }: {
   products: ProductRow[]; activeId: number | null;
   onSwitch: (id: number) => void; onAdd?: () => void;
-  onDelete?: (p: ProductRow) => void;
+  screen: Screen;
 }) {
   const admin = isAdmin();
   const [open, setOpen] = useState(false);
   const active = products.find((p) => p.id === activeId) ?? products[0];
   const activeIndex = Math.max(0, products.findIndex((p) => p.id === activeId));
   const [focusIndex, setFocusIndex] = useState(activeIndex);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const optionRefs = useRef<Array<HTMLDivElement | null>>([]);
   const openFocus = useRef(activeIndex);
@@ -48,6 +55,30 @@ function ProductSwitcher({ products, activeId, onSwitch, onAdd, onDelete }: {
     return () => cancelAnimationFrame(frame);
   }, [open, activeIndex]);
 
+  // A menu left open across navigation floated over the next screen.
+  useEffect(() => { setOpen(false); }, [screen]);
+
+  // Outside click and Escape close it wherever focus is, not only from inside
+  // the list (a mouse user's focus is usually still on the page).
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (e: PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
   const focusOption = (index: number) => {
     const next = Math.max(0, Math.min(products.length - 1, index));
     setFocusIndex(next);
@@ -55,7 +86,7 @@ function ProductSwitcher({ products, activeId, onSwitch, onAdd, onDelete }: {
   };
   if (!active) return null;
   return (
-    <div className="el-nav-wide el-product-switcher" style={{ position: "relative", margin: `0 ${S[3]} ${S[3]}` }}>
+    <div ref={rootRef} className="el-nav-wide el-product-switcher" style={{ position: "relative", margin: `0 ${S[3]} ${S[3]}` }}>
       <button
         ref={triggerRef}
         onClick={() => { openFocus.current = activeIndex; setOpen((o) => !o); }}
@@ -82,10 +113,14 @@ function ProductSwitcher({ products, activeId, onSwitch, onAdd, onDelete }: {
         <span style={{ minWidth: 0, flex: 1 }}>
           <span className="el-truncate" style={{ display: "block", fontSize: T.sm,
                         fontWeight: 600, color: C.text }}>{active.name}</span>
-          <span style={{ display: "block", fontFamily: mono, fontSize: T.micro, color: C.faint,
-                         letterSpacing: "var(--el-ls-wide)" }}>
-            {active.is_demo ? "DEMO PRODUCT" : "ACTIVE PRODUCT"}
-          </span>
+          {active.is_demo ? (
+            <span className="el-product-tag">Demo product</span>
+          ) : (
+            <span style={{ display: "block", fontFamily: mono, fontSize: T.micro, color: C.faint,
+                           letterSpacing: "var(--el-ls-wide)" }}>
+              ACTIVE PRODUCT
+            </span>
+          )}
         </span>
         <Icon name={open ? "chevronUp" : "chevronDown"} size={14} style={{ color: C.dim }} />
       </button>
@@ -126,19 +161,8 @@ function ProductSwitcher({ products, activeId, onSwitch, onAdd, onDelete }: {
                        padding: `${S[2]} ${S[3]}`, fontSize: T.sm,
                        color: p.id === activeId ? C.accent : C.text2,
                        background: p.id === activeId ? C.hover : "transparent" }}>
-              <span className="el-truncate" style={{ flex: 1 }}>
-                {p.name}{p.is_demo ? "  ·  demo" : ""}
-              </span>
-              {admin && onDelete && (
-                <button
-                  title={`Delete ${p.name}`}
-                  aria-label={`Delete ${p.name}`}
-                  onClick={(e) => { e.stopPropagation(); setOpen(false); onDelete(p); }}
-                  className="el-btn el-btn--sm"
-                  style={{ color: C.dim, padding: 2, flex: "none" }}>
-                  <Icon name="close" size={13} />
-                </button>
-              )}
+              <span className="el-truncate" style={{ flex: 1 }}>{p.name}</span>
+              {p.is_demo && <span className="el-product-tag">Demo product</span>}
             </div>
           ))}
           {/* Admin-only: creating a product is an admin route, so offering it
@@ -191,9 +215,32 @@ const SYSTEM_KEYS = SYSTEM.map((n) => n.key);
 /** Screens reached from within another screen; they highlight their parent. */
 const UNDER_CASES: Screen[] = ["cases", "case"];
 
+/** Screens that are empty until EchoLens has resolved something. */
+type Lockable = "memory" | "plan";
+const UNLOCK_HINT = "Unlocks after your first resolved case";
+
+/**
+ * Whether each learning screen has anything to show yet, from the endpoints
+ * those screens already read. Fails OPEN: a request that errors, or a server
+ * too old to answer, leaves the entry in the nav — a hiccup must never hide a
+ * screen that has content.
+ */
+async function learningUnlocks(): Promise<Record<Lockable, boolean>> {
+  const has = <R,>(p: Promise<R>, pick: (r: R) => boolean) => p.then(pick, () => true);
+  const [patterns, brain, plan] = await Promise.all([
+    has(api.patterns(), (r) => (r.patterns ?? []).length > 0),
+    has(api.brain(), (r) => (r.edges ?? []).length > 0),
+    // Open problems and feature requests together: the plan ranks both.
+    has(api.backlogPlan(undefined, "all"), (r) => r.counts
+      ? r.counts.bugs + r.counts.requests > 0
+      : r.proposed.length + r.deferred.length > 0),
+  ]);
+  return { memory: patterns || brain, plan };
+}
+
 export function Sidebar({
   screen, go, onLogout, products = [], activeId = null,
-  onSwitchProduct, onAddProduct, onDeleteProduct, theme, onThemeChange,
+  onSwitchProduct, onAddProduct, theme, onThemeChange,
   collapsed, onCollapsedChange, onAsk, askShortcut = "Ctrl K"
 }: Props) {
   const admin = isAdmin();
@@ -211,10 +258,22 @@ export function Sidebar({
   const { data: live } = useAsync(() => api.investigations(), [activeId]);
   const running = (live?.investigations ?? []).filter((i) => i.status === "running");
 
+  // Day one: Learned patterns and Plan have nothing in them yet. Without a
+  // product there is nothing to ask about, so everything stays as it is.
+  const { data: unlocks } = useAsync(
+    () => (activeId == null ? Promise.resolve(null) : learningUnlocks()), [activeId]);
+  // Never lock the screen you are on: the nav must not deny where you are.
+  const locked = (key: Screen) =>
+    (key === "memory" || key === "plan") && unlocks != null && !unlocks[key] && screen !== key;
+
   const isActive = (key: Screen) => {
     if (key === "cases") return UNDER_CASES.includes(screen);
     return screen === key;
   };
+  // "Ask" opens the drawer over whatever you are reading; the full page is
+  // still at its URL and one click away inside the drawer.
+  const open = (key: Screen) => (key === "ask" && onAsk ? onAsk() : go(key));
+  const askKeys = askShortcut.startsWith("⌘") ? "Meta+K" : "Control+K";
 
   return (
     <nav id="el-sidebar-navigation" aria-label="Main"
@@ -276,7 +335,7 @@ export function Sidebar({
       {products.length > 0 && onSwitchProduct ? (
         <ProductSwitcher products={products} activeId={activeId}
                          onSwitch={onSwitchProduct} onAdd={onAddProduct}
-                         onDelete={onDeleteProduct} />
+                         screen={screen} />
       ) : (
         /* With no products the switcher has nothing to switch between, so it
            used to render nothing at all — taking the only "Add a product"
@@ -297,8 +356,11 @@ export function Sidebar({
       <div className="el-nav-primary"
            style={{ display: "flex", flexDirection: "column", gap: 2,
                     padding: `0 ${S[3]}`, overflow: "auto" }}>
-        {PRIMARY.map((n) => (
-          <NavRow key={n.key} item={n} active={isActive(n.key)} onClick={() => go(n.key)} />
+        {PRIMARY.map((n) => locked(n.key) ? (
+          <LockedRow key={n.key} item={n} />
+        ) : (
+          <NavRow key={n.key} item={n} active={isActive(n.key)} onClick={() => open(n.key)}
+                  shortcut={n.key === "ask" && onAsk ? { label: askShortcut, keys: askKeys } : undefined} />
         ))}
       </div>
 
@@ -307,20 +369,20 @@ export function Sidebar({
       {running.length > 0 && (
         <button
           onClick={() => go("today")}
-          className="el-btn el-nav-wide"
+          className="el-btn el-nav-wide el-nav-live"
           style={{ margin: `${S[3]} ${S[3]} ${S[1]}`, padding: `${S[2]} ${S[3]}`,
                    border: `1px solid ${C.border2}`, borderRadius: R.control,
                    background: C.card, flexDirection: "column", alignItems: "flex-start",
                    gap: S[1] }}
         >
           <span style={{ display: "flex", alignItems: "center", gap: S[2] }}>
-            <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.accent,
+            <span className="el-nav-live__dot" style={{ width: 7, height: 7, borderRadius: "50%",
                           animation: "elPulse 1.6s infinite", flex: "none" }} />
-            <span style={{ fontSize: T.sm, color: C.text3 }}>
+            <span className="el-nav-live__count" style={{ fontSize: T.sm, fontWeight: 500 }}>
               {running.length} {plural(running.length, "investigation")} running
             </span>
           </span>
-          <span className="el-mono el-truncate" style={{ fontSize: T.xs, color: C.accent,
+          <span className="el-mono el-truncate el-nav-live__ids" style={{ fontSize: T.xs,
                         marginLeft: 15, maxWidth: "100%" }}>
             {running.slice(0, 2).map((i) => `case #${i.id}`).join(", ")}
             {running.length > 2 ? ` +${running.length - 2}` : ""}
@@ -333,7 +395,8 @@ export function Sidebar({
         <button
           onClick={() => setSystemOpen((o) => !o)}
           className="el-btn el-btn--sm el-nav-system-toggle"
-          title="Sources, learned patterns, costs and settings"
+          title="System: sources, learned patterns, costs and settings"
+          aria-label="System"
           aria-expanded={showSystem}
           style={{ display: "flex", alignItems: "center", gap: S[2],
                    padding: `${S[1]} ${S[2]}`, width: "100%", justifyContent: "flex-start",
@@ -348,22 +411,15 @@ export function Sidebar({
             screens, so `.el-nav-system` is shown there and the toggle hidden. */}
         <div className={`el-nav-system${showSystem ? " is-open" : ""}`}
              style={{ display: showSystem ? "flex" : "none", flexDirection: "column", gap: 0 }}>
-          {SYSTEM.map((n) => (
+          {SYSTEM.map((n) => locked(n.key) ? (
+            <LockedRow key={n.key} item={n} small />
+          ) : (
             <NavRow key={n.key} item={n} active={isActive(n.key)} small
                     onClick={() => go(n.key)} />
           ))}
         </div>
       </div>
 
-      {onAsk && (
-        <button className="el-btn" onClick={onAsk} title={`Ask (${askShortcut})`}
-          aria-label={`Ask (${askShortcut})`}
-          style={{ margin: `${S[1]} ${S[3]}`, padding: `${S[2]} ${S[2]}`,
-                   borderRadius: R.control, color: C.muted, fontSize: T.sm, gap: S[3] }}>
-          <Icon name="ask" size={15} />
-          <span className="el-nav-label">Ask <kbd style={{ marginLeft: S[2], fontSize: T.micro }}>{askShortcut}</kbd></span>
-        </button>
-      )}
       <ThemeToggle mode={theme} onChange={onThemeChange} />
 
       {onLogout && (
@@ -371,6 +427,7 @@ export function Sidebar({
           onClick={onLogout}
           className="el-btn"
           title={guest ? "Sign in" : "Sign out"}
+          aria-label={guest ? "Sign in" : "Sign out"}
           style={{ margin: `${S[1]} ${S[3]} ${S[3]}`, padding: `${S[2]} ${S[2]}`,
                    borderRadius: R.control, color: C.muted, fontSize: T.sm,
                    justifyContent: "flex-start", gap: S[3] }}
@@ -386,9 +443,10 @@ export function Sidebar({
             key={`mobile-${item.key}`}
             type="button"
             data-tour={item.key}
-            onClick={() => go(item.key)}
+            onClick={() => open(item.key)}
             className={isActive(item.key) ? "is-active" : ""}
             aria-current={isActive(item.key) ? "page" : undefined}
+            aria-keyshortcuts={item.key === "ask" && onAsk ? askKeys : undefined}
           >
             <Icon name={item.icon} size={19} />
             <span>{item.label}</span>
@@ -408,15 +466,21 @@ export function Sidebar({
   );
 }
 
-function NavRow({ item, active, onClick, small }: {
+function NavRow({ item, active, onClick, small, shortcut }: {
   item: NavItem; active: boolean; onClick: () => void; small?: boolean;
+  /** Shown beside the label, e.g. "Ctrl K"; `keys` is the aria-keyshortcuts value. */
+  shortcut?: { label: string; keys: string };
 }) {
   return (
     <button
       onClick={onClick}
       data-tour={item.key}
       className={`el-btn el-nav-item${small ? " el-nav-item--small" : ""}${active ? " el-nav-item--active" : ""}`}
-      title={item.hint}
+      // The name leads the tooltip: in the icon-only rail (collapsed, or under
+      // 1200px) it is the only place the name is visible at all.
+      title={`${item.label}${shortcut ? ` (${shortcut.label})` : ""} — ${item.hint}`}
+      aria-label={item.label}
+      aria-keyshortcuts={shortcut?.keys}
       aria-current={active ? "page" : undefined}
       style={{
         display: "flex", alignItems: "center", gap: S[3],
@@ -439,7 +503,25 @@ function NavRow({ item, active, onClick, small }: {
             style={{ color: active ? C.accent : C.dim }} />
       {/* Wrapped, not a bare text node, so the collapsed-sidebar breakpoint can
           hide the label without also blanking the icon or the accessible name. */}
-      <span className="el-nav-label">{item.label}</span>
+      <span className="el-nav-label">
+        {item.label}
+        {shortcut && <kbd className="el-nav-kbd">{shortcut.label}</kbd>}
+      </span>
     </button>
+  );
+}
+
+/** A learning screen that has nothing yet: named, quiet, not clickable. */
+function LockedRow({ item, small }: { item: NavItem; small?: boolean }) {
+  return (
+    <div className="el-nav-locked" data-tour={item.key}
+         title={`${item.label} — ${UNLOCK_HINT.toLowerCase()}`}
+         aria-label={`${item.label}: ${UNLOCK_HINT.toLowerCase()}`} role="note">
+      <Icon name={item.icon} size={small ? 14 : 16} />
+      <span className="el-nav-label">
+        {item.label}
+        <small>{UNLOCK_HINT}</small>
+      </span>
+    </div>
   );
 }
