@@ -52,6 +52,37 @@ def fetch_repo_meta(repo: str, timeout: float = 4.0) -> dict | None:
     return r.json()
 
 
+def fetch_compare(repo: str, base: str, head: str, timeout: float = 10.0) -> dict:
+    """Read-only: GitHub's compare of two refs (commits + changed files).
+
+    GET /repos/{repo}/compare/{base}...{head}. Used by the investigator's
+    get_release_changes tool, which caps what reaches the model; this returns
+    GitHub's JSON object as-is. Raises on any non-2xx so the tool's failure is
+    a visible FAIL step, not an empty "nothing changed"."""
+    from urllib.parse import quote
+
+    import httpx
+
+    headers = {"Accept": "application/vnd.github+json"}
+    if settings.github_token:
+        headers["Authorization"] = f"Bearer {settings.github_token}"
+    url = (f"https://api.github.com/repos/{repo}/compare/"
+           f"{quote(base, safe='')}...{quote(head, safe='')}")
+    with httpx.Client(timeout=timeout, headers=headers) as c:
+        r = c.get(url)
+    if r.status_code >= 300:
+        msg = ""
+        try:
+            msg = r.json().get("message", "")
+        except Exception:
+            pass
+        raise RuntimeError(f"GitHub compare HTTP {r.status_code}: {msg or r.text[:120]}")
+    data = r.json()
+    if not isinstance(data, dict):
+        raise RuntimeError("GitHub compare: unexpected response")
+    return data
+
+
 def _default_fetch(repo: str, since: str | None, per_page: int, max_pages: int = 5) -> dict:
     from concurrent.futures import ThreadPoolExecutor
 
