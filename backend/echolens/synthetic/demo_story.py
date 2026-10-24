@@ -460,3 +460,51 @@ def seed_demo(session: Session) -> dict:
     backfill_products(session)            # the corpus becomes the demo product
     counts["story"] = seed_demo_story(session)
     return counts
+
+
+# A demo whose newest review is older than this reads as abandoned: every
+# "last 7 days" number on Today goes quiet. Weekly is the rhythm it is judged on.
+STALE_DAYS = 7
+
+
+def demo_is_stale(session: Session, now: datetime | None = None) -> bool:
+    """True when the demo exists and is out of date (or never got its story)."""
+    demo = session.scalars(select(Product).where(Product.is_demo.is_(True))).first()
+    if demo is None:
+        return False
+    if not session.scalars(select(Investigation).where(Investigation.product_id == demo.id)).first():
+        return True
+    latest = session.scalar(select(Review.created_at).where(Review.product == demo.name)
+                            .order_by(Review.created_at.desc()).limit(1))
+    if latest is None:
+        return True
+    now = (now or datetime.now(timezone.utc)).replace(tzinfo=None)
+    return latest.replace(tzinfo=None) < now - timedelta(days=STALE_DAYS)
+
+
+def reseed_demo(session: Session) -> dict:
+    """Throw away the demo product's data and seed it again, dated to today.
+
+    `seed_demo` only runs on an empty database, so a long-lived deploy kept the
+    demo it was born with — July data on a site visited in October. This
+    rebuilds just the `is_demo` product: real products are never read or
+    touched, and the demo keeps its Product row (and so its id, its links and
+    guest scoping). Deterministic, no LLM. Refuses when there is no demo
+    product rather than inventing one inside a real workspace.
+    """
+    from echolens.db.migrate import backfill_products
+    from echolens.db.purge import purge_product_data
+    from echolens.synthetic.generate import generate
+
+    demo = session.scalars(select(Product).where(Product.is_demo.is_(True))).first()
+    if demo is None:
+        return {"skipped": "no demo product"}
+    purge_product_data(session, demo)
+    counts = generate(session, anchor="today")
+    session.flush()
+    # generate() writes the corpus untagged; with the demo row still present
+    # backfill tags it to the demo (and its anomalies to the demo's id).
+    backfill_products(session)
+    counts["story"] = seed_demo_story(session)
+    counts["product_id"] = demo.id
+    return counts

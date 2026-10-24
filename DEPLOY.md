@@ -133,12 +133,22 @@ Also add an Actions variable named `ECHOLENS_API` with the same backend origin. 
 
 The retained workflows perform:
 
-- `.github/workflows/collect.yml`: collect, scan, and triage every six hours.
+- `.github/workflows/collect.yml`: collect, scan, and triage every six hours. Its last step calls `POST /demo/refresh`, which rebuilds the demo product dated to today once its newest review is over a week old (otherwise it does nothing).
 - `.github/workflows/brief.yml`: send the weekly brief.
 - `.github/workflows/deploy.yml`: poll `/health` (up to about 10 minutes) after backend changes reach `main`.
 - `.github/workflows/ci.yml`: on every push and pull request to `main`, runs the backend tests (Python 3.11, SQLite) and the frontend `npm ci` + `npm run build` (Node 22).
 
 Run each scheduled workflow manually once from the Actions tab to validate credentials.
+
+### Keeping the demo current
+
+The demo seed only runs on an empty database, so an existing deploy keeps the demo it was first seeded with. Any of these rebuilds it. Each one touches only the product flagged `is_demo`, keeps its id, and never calls the LLM:
+
+- the scheduled `collect.yml` run (automatic, when the demo is over a week old);
+- `DEMO_REFRESH_ON_START=true` on Northflank: on each start, rebuild in the background if stale;
+- as an admin, `POST /demo/refresh?force=true` (or `echolens reseed-demo` from a shell) to rebuild now.
+
+Anything people added to the demo product (comments, verdicts, theme renames) is reset with it.
 
 ## 6. Worker (optional, recommended)
 

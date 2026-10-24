@@ -65,6 +65,8 @@ async def lifespan(_app: FastAPI):
     with session_scope() as session:
         _expire_stuck_onboarding_sources(session, expire_all=True)
     _bootstrap()  # free-tier: seed + first admin from env, no shell needed
+    if settings.demo_refresh_on_start:
+        _start_demo_refresh_bg()
     # Resume interrupted work AFTER the app starts accepting requests. Recovery
     # used to run synchronously here, before ``yield``; a single 45-minute case
     # therefore kept the whole deployment unready and its proxy returned 503 to
@@ -96,6 +98,38 @@ def _recover_running_bg() -> None:
             log.info("startup_recovery", investigations=recovered)
     except Exception as err:
         log.error("startup_recovery_failed", error=str(err))
+
+
+_demo_refresh_lock = threading.Lock()
+
+
+def _refresh_demo(force: bool = False) -> dict:
+    """Reseed the demo product when it is stale (or when forced). One at a
+    time: a second call while one runs is a no-op, not a second purge."""
+    from echolens.synthetic.demo_story import demo_is_stale, reseed_demo
+    if not _demo_refresh_lock.acquire(blocking=False):
+        return {"status": "running"}
+    try:
+        with session_scope() as s:
+            if not force and not demo_is_stale(s):
+                return {"status": "fresh"}
+            counts = reseed_demo(s)
+        log.info("demo_refreshed", counts=counts)
+        return {"status": "refreshed", "counts": counts}
+    except Exception as err:
+        log.error("demo_refresh_failed", error=str(err))
+        return {"status": "failed", "error": str(err)}
+    finally:
+        _demo_refresh_lock.release()
+
+
+def _start_demo_refresh_bg(force: bool = False) -> threading.Thread:
+    # Off the startup path: a reseed over the pooler takes a while, and the
+    # deploy must report ready meanwhile.
+    thread = threading.Thread(target=_refresh_demo, kwargs={"force": force},
+                              name="echolens-demo-refresh", daemon=True)
+    thread.start()
+    return thread
 
 
 def _start_recovery_bg() -> threading.Thread:
@@ -1013,12 +1047,8 @@ def product_deletion_preview(product_id: int, user: dict = Depends(current_user)
 def delete_product(product_id: int, confirm: str = "",
                    user: dict = Depends(require_role("admin"))) -> dict:
     """Delete a product and cascade its data. Requires ?confirm=<exact name>."""
-    from echolens.db.models import (
-        AnomalyEvent, CollectorState, Comment, EvidenceRow, FeedbackEntry, Finding,
-        FixWatch, HypothesisRow, Investigation, Issue, KnowledgeEdge, LLMCall, Mention,
-        Post, Product, QueuedInvestigation, Recommendation, Release, Review,
-        ReviewFeedback, ReviewRequest, TraceStep, TriageDecision, User,
-        FindingDecision, ShareLink, SavedView, SentAlert)
+    from echolens.db.models import Product, User
+    from echolens.db.purge import purge_product_data
     with session_scope() as session:
         p = session.get(Product, product_id)
         if p is None:
@@ -1026,62 +1056,7 @@ def delete_product(product_id: int, confirm: str = "",
         if confirm.strip() != p.name:
             raise HTTPException(422, f"type the product name exactly to confirm deletion ('{p.name}')")
         name = p.name
-        inv_ids = [i.id for i in session.scalars(select(Investigation).where(
-            Investigation.product_id == product_id)).all()]
-        find_ids = [f.id for f in session.scalars(select(Finding).where(
-            Finding.product_id == product_id)).all()]
-        anom_ids = [a.id for a in session.scalars(select(AnomalyEvent).where(
-            AnomalyEvent.product_id == product_id)).all()]
-
-        def _purge(model, col, ids):
-            if ids:
-                for row in session.scalars(select(model).where(col.in_(ids))).all():
-                    session.delete(row)
-
-        # Mentions hang off comments, so they go first — deleting the comment
-        # out from under them is the same FK violation one level down.
-        comment_ids = [c.id for c in session.scalars(select(Comment).where(
-            Comment.product_id == product_id)).all()]
-        _purge(Mention, Mention.comment_id, comment_ids)
-
-        _purge(ReviewFeedback, ReviewFeedback.finding_id, find_ids)
-        # v15: decisions and share links hang off findings. Deleting a product
-        # must also kill its public links, or a token would outlive its data.
-        _purge(FindingDecision, FindingDecision.finding_id, find_ids)
-        _purge(ShareLink, ShareLink.finding_id, find_ids)
-        _purge(Recommendation, Recommendation.finding_id, find_ids)
-        _purge(TraceStep, TraceStep.investigation_id, inv_ids)
-        _purge(HypothesisRow, HypothesisRow.investigation_id, inv_ids)
-        _purge(EvidenceRow, EvidenceRow.investigation_id, inv_ids)
-        _purge(LLMCall, LLMCall.investigation_id, inv_ids)
-        # Spend with no case (chat, triage, themes, graph) is tagged by product.
-        _purge(LLMCall, LLMCall.product_id, [product_id])
-        _purge(TriageDecision, TriageDecision.anomaly_id, anom_ids)
-        # Anything that references an investigation must be gone before the
-        # investigations themselves, hence two ordered passes rather than one
-        # loop over every product-scoped model.
-        _purge(Comment, Comment.investigation_id, inv_ids)
-        _purge(ReviewRequest, ReviewRequest.investigation_id, inv_ids)
-        _purge(QueuedInvestigation, QueuedInvestigation.investigation_id, inv_ids)
-        for model in (FixWatch, Finding, Investigation, AnomalyEvent, CollectorState,
-                      QueuedInvestigation, KnowledgeEdge, Comment, Mention, ReviewRequest, SavedView,
-                      SentAlert):
-            for row in session.scalars(select(model).where(model.product_id == product_id)).all():
-                session.delete(row)
-        # Older collector rows were created before product_id was populated.
-        # They are still owned by their product name and must not survive a
-        # delete only to be inherited by a later product with the same name.
-        for row in session.scalars(select(CollectorState).where(
-                CollectorState.product == name, CollectorState.product_id.is_(None))).all():
-            session.delete(row)
-        # Corpus rows are keyed by product NAME, not id. FeedbackEntry was
-        # missing: every v2 source (Hacker News, Stack Overflow, GitHub
-        # Discussions, PRs/commits) lands there, so deleting a product left its
-        # entire non-store corpus behind, and a product recreated with the same
-        # name silently inherited it.
-        for model in (Review, Issue, Post, Release, FeedbackEntry):
-            for row in session.scalars(select(model).where(model.product == name)).all():
-                session.delete(row)
+        purge_product_data(session, p)
         for u in session.scalars(select(User).where(User.last_active_product_id == product_id)).all():
             u.last_active_product_id = None
         session.delete(p)
@@ -1116,6 +1091,25 @@ def collect_run(user: dict = Depends(require_role("admin"))) -> dict:
             return {"status": "already_populated"}
         counts = seed_demo(session)
     return {"status": "seeded", "counts": counts}
+
+
+@app.post("/demo/refresh")
+def demo_refresh(force: bool = False, user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Rebuild the demo product dated to today, in the background. Only the
+    `is_demo` product is touched. Without ?force=true it does nothing while the
+    demo is under a week old, so the scheduled workflow (a reviewer login) can
+    call it every run; forcing a rebuild of a fresh demo is admin-only."""
+    from echolens.synthetic.demo_story import demo_is_stale
+    if force and user.get("role") != "admin":
+        raise HTTPException(403, "forcing a demo rebuild needs the admin role")
+    if _demo_refresh_lock.locked():
+        return {"status": "running"}
+    if not force:
+        with session_scope() as s:
+            if not demo_is_stale(s):
+                return {"status": "fresh"}
+    _start_demo_refresh_bg(force=True)
+    return {"status": "started"}
 
 
 class ConnectSource(BaseModel):

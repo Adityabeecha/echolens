@@ -93,4 +93,7 @@ jobs:
 
           echo "→ digest";   curl -sf --max-time 120 -X POST "$API/alerts/digest?hours=24" -H "$auth" || echo "  digest failed"
           echo "→ fixwatch"; curl -sf --max-time 120 -X POST "$API/fixwatch/evaluate" -H "$auth" || echo "  fixwatch failed"
+          # Last, because it rebuilds the demo product in the background: a no-op
+          # until the demo's newest review is a week old, then it re-dates it.
+          echo "→ demo";     curl -sf --max-time 60 -X POST "$API/demo/refresh" -H "$auth" || echo "  demo refresh failed"
           echo "done"

@@ -47,6 +47,22 @@ def cmd_seed(_args) -> int:
     return 0
 
 
+def cmd_reseed_demo(args) -> int:
+    """Rebuild only the demo product, dated to today. Real products untouched."""
+    init_db()
+    from echolens.synthetic.demo_story import demo_is_stale, reseed_demo
+    with session_scope() as session:
+        if args.if_stale and not demo_is_stale(session):
+            console.print("[green]The demo is up to date — nothing to do.[/]")
+            return 0
+        counts = reseed_demo(session)
+    if "skipped" in counts:
+        console.print(f"[yellow]Nothing reseeded: {counts['skipped']}.[/]")
+        return 1
+    console.print(f"[green]Reseeded the demo product:[/] {counts}")
+    return 0
+
+
 def _print_step(kind: str, content: dict) -> None:
     style = KIND_STYLE.get(kind, "white")
     if kind == "THINK":
@@ -298,6 +314,9 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("seed", help="generate the synthetic Lumo dataset")
+    p_rsd = sub.add_parser("reseed-demo", help="rebuild only the demo product, dated to today")
+    p_rsd.add_argument("--if-stale", action="store_true",
+                       help="only when the demo's newest review is over a week old")
     sub.add_parser("scan", help="run the deterministic anomaly detector")
 
     p_inv = sub.add_parser("investigate", help="run an investigation")
@@ -348,6 +367,7 @@ def main(argv: list[str] | None = None) -> int:
         "connect": cmd_connect, "collect": cmd_collect, "embed": cmd_embed,
         "resume": cmd_resume, "createuser": cmd_createuser, "preflight": cmd_preflight,
         "mcp": cmd_mcp, "watchdog": cmd_watchdog, "worker": cmd_worker,
+        "reseed-demo": cmd_reseed_demo,
     }[args.command](args)
 
 
