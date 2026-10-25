@@ -72,17 +72,17 @@ export interface Route {
 /** The name each screen answers to, used in "Screen · Product" headers. */
 export const SCREEN_LABEL: Record<Screen, string> = {
   today: "Today",
-  cases: "Cases",
-  case: "Case",
+  cases: "All problems",
+  case: "Problem",
   ask: "Ask",
   sources: "Sources",
-  patterns: "Intelligence",
+  patterns: "What we've learned",
   calibration: "Settings",
   costs: "Costs",
   settings: "Settings",
-  plan: "Quarter plan",
-  memory: "Intelligence",
-  intelligence: "Intelligence",
+  plan: "Plan",
+  memory: "What we've learned",
+  intelligence: "What we've learned",
   portfolio: "All products",
   onboarding: "Add a product",
 };

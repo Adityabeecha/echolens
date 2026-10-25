@@ -13,6 +13,11 @@
 const v = (name: string) => `var(--el-${name})`;
 
 export const C = {
+  ink: v("ink"), paper: v("paper"), soft: v("soft"), line: v("line"), lineStrong: v("line-strong"),
+  body: v("body"), stampRed: v("stamp-red"), amber: v("amber"), pencil: v("pencil-blue"),
+  green: v("green"), greenBg: v("green-bg"), greenDeep: v("green-deep"),
+  highlighter: v("highlighter"), highlighterSoft: v("highlighter-soft"),
+  focus: v("focus"), focusText: v("focus-text"), focusMuted: v("focus-muted"), focusBody: v("focus-body"),
   // surface
   bg: v("bg"),
   bgRaised: v("bg-raised"),
@@ -56,8 +61,7 @@ export const C = {
   infoBg: v("info-bg"),
   infoLine: v("info-line"),
 
-  // fixed semantics (DESIGN_SYSTEM.md → Colour). Prefer these in new code:
-  // `good`/`bad`/`info` above are legacy aliases of verified/regress/live.
+  // Compatibility names: green fixes, red confirmed problems, blue pencil.
   live: v("live"),
   liveBg: v("live-bg"),
   liveLine: v("live-line"),
@@ -70,7 +74,7 @@ export const C = {
   lead: v("lead"),
   leadBg: v("lead-bg"),
   leadLine: v("lead-line"),
-  /** ONLY for a confirmed multi-source regression. */
+  /** Legacy alias for the approved confirmed-problem red. */
   regress: v("regress"),
   regressBg: v("regress-bg"),
   regressLine: v("regress-line"),
@@ -82,9 +86,12 @@ export const C = {
 
 export const mono = "var(--el-mono)";
 export const sans = "var(--el-font)";
+export const serif = "var(--el-serif)";
 
-/** Type scale — seven steps, no half-pixels. */
+/** Approved headline and UI scales. */
 export const T = {
+  hero: "var(--el-fs-hero)", page: "var(--el-fs-page)", case: "var(--el-fs-case)",
+  card: "var(--el-fs-card)", section: "var(--el-fs-section)", story: "var(--el-fs-story)", stat: "var(--el-fs-stat)",
   micro: "var(--el-fs-micro)",
   xs: "var(--el-fs-xs)",
   sm: "var(--el-fs-sm)",
@@ -108,8 +115,9 @@ export const S = {
   12: "var(--el-s12)",
 } as const;
 
-/** Radius scale — controls 6, cards 10, overlays 14, pills full. */
+/** Approved controls, cards, overlays and case-file radii. */
 export const R = {
+  focus: "var(--el-r-focus)", exhibit: "var(--el-r-exhibit)", good: "var(--el-r-good)",
   sm: "var(--el-r-sm)",
   control: "var(--el-r-control)",
   card: "var(--el-r-card)",
@@ -126,11 +134,10 @@ export const E = {
 } as const;
 
 /**
- * App screens are full width: the measure is `none`. Kept so the screens that
- * still pass `maxWidth: MEASURE` compile and simply stop capping.
+ * App content is centered at 1200px, including its side gutters.
  */
 export const MEASURE = "var(--el-measure)";
-/** The public-page container (landing, shared briefs): 1440–1600px. */
+/** Public pages use the approved 1280px measure. */
 export const PUBLIC_MAX = "var(--el-public-max)";
 
 // Map a terminal-trace kind to its accent color (matches the design).
@@ -140,7 +147,7 @@ export const KIND_COLOR: Record<string, string> = {
   EVID: C.cite,
   UPDT: C.verified,
   // A refused step is an honesty check doing its job, not a regression, so it
-  // stays neutral (coral is reserved for confirmed regressions).
+  // stays neutral (red is reserved for confirmed problems).
   FAIL: C.text3,
   CHECK: C.faint,
   SPEC: C.accentHi, // v2.0 specialist delegation

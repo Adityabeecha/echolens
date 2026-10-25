@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 const css = readFileSync(new URL("../src/tokens.css", import.meta.url), "utf8");
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const sidebar = readFileSync(new URL("../src/components/Sidebar.tsx", import.meta.url), "utf8");
+const header = readFileSync(new URL("../src/components/AppHeader.tsx", import.meta.url), "utf8");
 const today = readFileSync(new URL("../src/screens/Today.tsx", import.meta.url), "utf8");
 const evidence = readFileSync(new URL("../src/components/EvidenceSheet.tsx", import.meta.url), "utf8");
 const newCase = readFileSync(new URL("../src/components/NewCaseModal.tsx", import.meta.url), "utf8");
@@ -34,8 +35,10 @@ for (const token of requiredCss) {
   assert.ok(css.includes(token), `responsive contract is missing ${token}`);
 }
 
-assert.ok(app.includes("el-mobile-context"), "App must expose the mobile product context bar");
-assert.ok(sidebar.includes("el-mobile-task-nav"), "Sidebar must expose mobile task navigation");
+assert.ok(header.includes("el-product-picker"), "The top bar must expose the product context");
+assert.ok(sidebar.includes("el-bottom-nav"), "Phones must expose the approved bottom navigation");
+assert.ok(header.includes("Workspace menu"), "Secondary destinations must remain reachable");
+assert.ok(!app.includes("<Sidebar"), "The shell must not mount a left rail");
 assert.ok(today.includes("el-attention-brief"), "Today must expose the attention briefing composition");
 assert.ok(today.includes("Reading today's signals"), "Today must not claim a settled state while loading");
 assert.ok(today.includes('loading ? "Checking investigations"'), "Today header must keep activity unknown while loading");

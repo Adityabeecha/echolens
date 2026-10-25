@@ -1,244 +1,76 @@
-/* ============================================================================
-   EchoLens design tokens — SONAR PRISM.
-   The single source of truth: theme.ts reads these through var(), so changing
-   a value here changes it everywhere. Usage rules live in DESIGN_SYSTEM.md.
-
-   Two themes, one vocabulary. Dark (the default) is obsidian/carbon with
-   layered surfaces; light is a crisp, high-contrast slate. Both carry the
-   same FIXED semantic colours:
-     live / cite  cyan-indigo  live AI work and [ev_…] citation chips
-     verified     emerald      a fix that has been verified
-     lead         amber-gold   a single-source working lead (capped, calm)
-     regress      coral/rose   ONLY a confirmed multi-source regression
-   Everything else is neutral. Text values are measured against the darkest
-   (dark) / lightest (light) surface they sit on and pass WCAG AA.
-   ========================================================================= */
-:root {
-  color-scheme: dark;
-
-  /* ── surfaces: canvas → raised (rail, header) → card → overlay ──────── */
-  --el-bg: #0a0b0e;
-  --el-bg-raised: #0e1014;
-  --el-bg-card: #13151a;
-  --el-bg-card-2: var(--el-bg-card);
-  --el-bg-overlay: #181b21;
-  --el-bg-hover: #1a1d24;
-  --el-bg-active: #1f232b;
-  --el-bg-inset: #0c0d11;
-
-  /* ── borders: 1px hairlines, escalating ──────────────────────────────── */
-  --el-border: #1c1f26;
-  --el-border-2: #23272f;
-  --el-border-3: #2e333d;
-  --el-border-4: #5d6473;          /* 3.1:1 — control edges (WCAG 1.4.11) */
-
-  /* ── text (contrast on --el-bg-card) ─────────────────────────────────── */
-  --el-text: #eceef2;              /* 15.6:1 */
-  --el-text-2: #d5d8df;            /* 12.7:1 */
-  --el-text-3: #c0c4cd;            /* 10.4:1 */
-  --el-text-muted: #9ea3af;        /*  7.0:1 */
-  --el-text-dim: #8d929e;          /*  5.7:1 */
-  --el-text-faint: #8a8f9b;        /*  5.4:1 */
-  --el-text-ghost: #828794;        /*  4.9:1 */
-
-  /* ── accent: indigo, the primary action ──────────────────────────────── */
-  --el-accent: #7b84ff;            /* 6.0:1 on card */
-  --el-accent-hover: #959cff;
-  --el-accent-deep: #5d66e8;
-  --el-on-accent: #070817;         /* 6.4:1 on accent */
-  --el-accent-bg: rgba(123, 132, 255, 0.12);
-  --el-accent-bg-hover: rgba(123, 132, 255, 0.18);
-  --el-accent-line: rgba(123, 132, 255, 0.36);
-  --el-accent-line-strong: rgba(123, 132, 255, 0.6);
-
-  /* ── fixed semantics ─────────────────────────────────────────────────── */
-  --el-live: #4fd1ff;              /* live AI work, 10.6:1 */
-  --el-live-bg: rgba(79, 209, 255, 0.1);
-  --el-live-line: rgba(79, 209, 255, 0.34);
-  --el-live-glow: rgba(79, 209, 255, 0.45);
-  --el-cite: #6fd8ff;              /* [ev_…] chips */
-  --el-cite-bg: rgba(111, 216, 255, 0.08);
-  --el-cite-line: rgba(111, 216, 255, 0.3);
-  --el-verified: #3fd69a;          /* 10.1:1 */
-  --el-verified-bg: rgba(63, 214, 154, 0.1);
-  --el-verified-line: rgba(63, 214, 154, 0.34);
-  --el-lead: #f0c35a;              /* 11.2:1 */
-  --el-lead-bg: rgba(240, 195, 90, 0.1);
-  --el-lead-line: rgba(240, 195, 90, 0.34);
-  --el-regress: #ff7b72;           /* 7.4:1 */
-  --el-regress-bg: rgba(255, 123, 114, 0.1);
-  --el-regress-line: rgba(255, 123, 114, 0.36);
-
-  /* Legacy names, mapped onto the semantics above so every existing screen
-     keeps rendering. New code uses the semantic names. */
-  --el-good: var(--el-verified);
-  --el-good-bg: var(--el-verified-bg);
-  --el-good-line: var(--el-verified-line);
-  --el-bad: var(--el-regress);
-  --el-bad-bg: var(--el-regress-bg);
-  --el-bad-line: var(--el-regress-line);
-  --el-info: var(--el-live);
-  --el-info-bg: var(--el-live-bg);
-  --el-info-line: var(--el-live-line);
-
-  --el-scrim: rgba(3, 4, 7, 0.72);
-  --el-track: #20242c;
-  --el-scrollbar: #2b303a;
-
-  /* ── navigation + header (their own tokens, so both themes are whole) ─ */
-  --el-nav-bg: var(--el-bg-raised);
-  --el-nav-line: var(--el-border);
-  --el-nav-text: #b7bcc7;
-  --el-nav-text-strong: #f4f5f8;
-  --el-nav-meta: #a4aab6;
-  --el-nav-hover: rgba(255, 255, 255, 0.04);
-  --el-nav-active: rgba(123, 132, 255, 0.14);
-  --el-nav-chip: rgba(255, 255, 255, 0.035);
-  --el-nav-chip-line: var(--el-border-2);
-  --el-nav-accent: var(--el-accent);
-  --el-nav-ink: var(--el-nav-bg);
-  --el-header-bg: rgba(14, 16, 20, 0.86);
-  /* Older layers still name these; they follow the theme. */
-  --el-canvas-warm: var(--el-bg);
-  --el-paper: var(--el-bg-card);
-  --el-rule-warm: var(--el-border-2);
-  --el-accent-teal: var(--el-accent);
-
-  /* ── type ────────────────────────────────────────────────────────────────
-     Plus Jakarta Sans (geometric) for UI and headings; JetBrains Mono for
-     versions, SHAs, confidence, [ev_…] chips and costs. */
-  --el-font: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --el-display: var(--el-font);
-  --el-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-
-  --el-fs-micro: 11px;   /* mono labels, tags */
-  --el-fs-xs: 12px;      /* dense metadata */
-  --el-fs-sm: 13px;      /* secondary body, table cells */
-  --el-fs-base: 14px;    /* body — the default */
-  --el-fs-md: 16px;      /* card titles, emphasis */
-  --el-fs-lg: 20px;      /* screen headings */
-  --el-fs-xl: 26px;      /* section numbers */
-  --el-fs-display: 40px; /* the one big number */
-
-  --el-lh-tight: 1.2;
-  --el-lh-snug: 1.4;
-  --el-lh-normal: 1.55;
-  --el-ls-wide: 0.08em;
-  --el-ls-tight: -0.015em;
-  --el-fw-normal: 400;
-  --el-fw-medium: 500;
-  --el-fw-semi: 600;
-  --el-fw-bold: 700;
-
-  /* ── space: 4px base ─────────────────────────────────────────────────── */
-  --el-s1: 4px;
-  --el-s2: 8px;
-  --el-s3: 12px;
-  --el-s4: 16px;
-  --el-s5: 20px;
-  --el-s6: 24px;
-  --el-s8: 32px;
-  --el-s10: 40px;
-  --el-s12: 48px;
-
-  /* ── shape ───────────────────────────────────────────────────────────── */
-  --el-r-sm: 4px;
-  --el-r-control: 7px;
-  --el-r-card: 10px;
-  --el-r-overlay: 14px;
-  --el-r-pill: 999px;
-
-  /* ── elevation: shadow + a 1px top highlight reads as a lifted plane ─── */
-  --el-e1: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 1px 2px rgba(0, 0, 0, 0.35);
-  --el-e2: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 6px 18px rgba(0, 0, 0, 0.4);
-  --el-e3: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 16px 40px rgba(0, 0, 0, 0.5);
-  --el-e4: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 28px 72px rgba(0, 0, 0, 0.6);
-
-  /* ── motion: only to explain change ──────────────────────────────────── */
-  --el-dur-fast: 120ms;
-  --el-dur: 180ms;
-  --el-dur-slow: 320ms;
-  --el-dur-hover: 140ms;
-  --el-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
-
-  /* ── layout: full width ──────────────────────────────────────────────────
-     App screens use the whole viewport (no centred measure). Public pages
-     sit in --el-public-max. */
-  --el-measure: none;
-  --el-public-max: 1520px;
-  --el-gutter: var(--el-s6);
-  --el-sidebar-w: 232px;
-  --el-header-h: 52px;
-  --el-banner-h: 34px;
-}
-
-:root[data-theme="light"] {
+/* Approved: design/approved/README.md wins over all earlier visual rules. */
+:root, [data-theme="light"] {
   color-scheme: light;
-  --el-bg: #f4f6f9;
-  --el-bg-raised: #eceff4;
-  --el-bg-card: #ffffff;
-  --el-bg-overlay: #ffffff;
-  --el-bg-hover: #eef1f6;
-  --el-bg-active: #e4e9f1;
-  --el-bg-inset: #f7f9fb;
-  --el-border: #e1e6ed;
-  --el-border-2: #d6dde7;
-  --el-border-3: #c1cad7;
-  --el-border-4: #7a8597;          /* 3.6:1 on white */
-  --el-text: #0b1220;              /* 18.6:1 on white */
-  --el-text-2: #1b2434;
-  --el-text-3: #2c3748;
-  --el-text-muted: #475365;        /*  7.9:1 */
-  --el-text-dim: #526073;          /*  6.6:1 */
-  --el-text-faint: #576579;        /*  6.2:1 on #f4f6f9 */
-  --el-text-ghost: #5f6d81;        /*  5.5:1 on #f4f6f9 */
-  --el-accent: #4f46e5;            /*  6.3:1 on white */
-  --el-accent-hover: #4338ca;
-  --el-accent-deep: #3730a3;
-  --el-on-accent: #ffffff;
-  --el-accent-bg: rgba(79, 70, 229, 0.08);
-  --el-accent-bg-hover: rgba(79, 70, 229, 0.13);
-  --el-accent-line: rgba(79, 70, 229, 0.3);
-  --el-accent-line-strong: rgba(79, 70, 229, 0.55);
-  --el-live: #0b6d8c;              /*  5.9:1 */
-  --el-live-bg: rgba(11, 109, 140, 0.08);
-  --el-live-line: rgba(11, 109, 140, 0.3);
-  --el-live-glow: rgba(14, 165, 211, 0.35);
-  --el-cite: #0b6d8c;
-  --el-cite-bg: rgba(11, 109, 140, 0.07);
-  --el-cite-line: rgba(11, 109, 140, 0.28);
-  --el-verified: #047857;          /*  5.5:1 */
-  --el-verified-bg: rgba(4, 120, 87, 0.08);
-  --el-verified-line: rgba(4, 120, 87, 0.3);
-  --el-lead: #8a5a00;              /*  6.0:1 */
-  --el-lead-bg: rgba(202, 138, 4, 0.1);
-  --el-lead-line: rgba(161, 98, 7, 0.32);
-  --el-regress: #be123c;           /*  6.7:1 */
-  --el-regress-bg: rgba(190, 18, 60, 0.07);
-  --el-regress-line: rgba(190, 18, 60, 0.3);
-  --el-scrim: rgba(15, 23, 42, 0.5);
-  --el-track: #e3e8ef;
-  --el-scrollbar: #b9c2cf;
-  --el-nav-bg: #eceff4;
-  --el-nav-text: #2c3748;
-  --el-nav-text-strong: #0b1220;
-  --el-nav-meta: #475365;
-  --el-nav-hover: rgba(15, 23, 42, 0.05);
-  --el-nav-active: rgba(79, 70, 229, 0.1);
-  --el-nav-chip: #ffffff;
-  --el-header-bg: rgba(255, 255, 255, 0.86);
-  --el-e1: 0 1px 2px rgba(15, 23, 42, 0.06);
-  --el-e2: 0 6px 18px rgba(15, 23, 42, 0.08);
-  --el-e3: 0 16px 40px rgba(15, 23, 42, 0.12);
-  --el-e4: 0 28px 72px rgba(15, 23, 42, 0.16);
+  --el-ink:#0B0B0F; --el-paper:#FFFFFF; --el-soft:#F6F6F3;
+  --el-line:#E8E8E3; --el-line-strong:#D4D4CC; --el-muted:#5B5F6B; --el-body:#3A3C44;
+  --el-stamp-red:#C2361F; --el-stamp-red-on-dark:#FF8D7E;
+  --el-amber:#9A5B00; --el-amber-bg:#FFFBDD;
+  --el-pencil-blue:#2348C9; --el-pencil-on-dark:#9DB1FF;
+  --el-green:#127A45; --el-green-bg:#EEF8F2; --el-green-deep:#0A5C33;
+  --el-highlighter:#FFE96A; --el-highlighter-soft:#FFFBDD; --el-highlight-ink:#0B0B0F;
+  --el-focus:#0B0B0F; --el-focus-text:#FFFFFF; --el-focus-muted:#A1A3AE;
+  --el-focus-body:#C9CAD3; --el-focus-tile:#17171D; --el-focus-line:#3A3B45;
+  --el-focus-red:#FF8D7E; --el-focus-blue:#9DB1FF;
+  --el-font:'Geist',system-ui,sans-serif; --el-mono:'Geist Mono',monospace;
+  --el-serif:'Newsreader',Georgia,serif; --el-display:var(--el-serif);
+  --el-fs-micro:11px; --el-fs-xs:12px; --el-fs-sm:13px; --el-fs-base:15px;
+  --el-fs-md:17px; --el-fs-lg:22px; --el-fs-xl:28px; --el-fs-display:60px;
+  --el-fs-hero:76px; --el-fs-page:60px; --el-fs-case:50px; --el-fs-card:38px;
+  --el-fs-section:28px; --el-fs-story:22px; --el-fs-stat:30px;
+  --el-fw-normal:400; --el-fw-medium:500; --el-fw-semi:600; --el-fw-bold:700;
+  --el-lh-tight:1.04; --el-lh-snug:1.4; --el-lh-normal:1.6;
+  --el-ls-tight:-0.5px; --el-ls-wide:2px;
+  --el-s1:4px; --el-s2:8px; --el-s3:12px; --el-s4:16px; --el-s5:20px;
+  --el-s6:24px; --el-s8:32px; --el-s10:40px; --el-s12:48px;
+  --el-r-sm:4px; --el-r-control:12px; --el-r-card:18px; --el-r-overlay:24px;
+  --el-r-pill:999px; --el-r-focus:28px; --el-r-exhibit:14px; --el-r-good:22px;
+  --el-e1:0 1px 2px rgba(0,0,0,.08); --el-e2:0 4px 12px rgba(0,0,0,.08);
+  --el-e3:0 12px 32px rgba(0,0,0,.12); --el-e4:0 24px 64px rgba(0,0,0,.18);
+  --el-dur-fast:120ms; --el-dur:140ms; --el-dur-slow:140ms; --el-dur-hover:120ms;
+  --el-ease:cubic-bezier(.2,.8,.2,1);
+  --el-measure:1200px; --el-public-max:1280px; --el-gutter:32px;
+  --el-sidebar-w:0px; --el-header-h:80px; --el-banner-h:36px;
+  --el-scrim:rgba(11,11,15,.4);
+}
+[data-theme="dark"] {
+  color-scheme:dark;
+  --el-ink:#FFFFFF; --el-paper:#0B0B0F; --el-soft:#17171D;
+  --el-line:#2A2B33; --el-line-strong:#3A3B45; --el-muted:#A1A3AE; --el-body:#C9CAD3;
+  --el-stamp-red:#FF8D7E; --el-amber:#E9B65A; --el-amber-bg:#292219;
+  --el-pencil-blue:#9DB1FF; --el-green:#80D6A4; --el-green-bg:#13291D; --el-green-deep:#B0E4C6;
+  --el-highlighter-soft:#FFFBDD; --el-focus:#17171D;
+  --el-e1:0 1px 2px rgba(0,0,0,.2); --el-e2:0 4px 12px rgba(0,0,0,.24);
+  --el-e3:0 12px 32px rgba(0,0,0,.32); --el-e4:0 24px 64px rgba(0,0,0,.4);
+}
+:root, [data-theme] {
+  --el-bg:var(--el-paper); --el-bg-raised:var(--el-soft); --el-bg-card:var(--el-paper);
+  --el-bg-card-2:var(--el-soft); --el-bg-overlay:var(--el-paper); --el-bg-inset:var(--el-soft);
+  --el-bg-hover:var(--el-soft); --el-bg-active:var(--el-line);
+  --el-border:var(--el-line); --el-border-2:var(--el-line); --el-border-3:var(--el-line-strong); --el-border-4:var(--el-muted);
+  --el-text:var(--el-ink); --el-text-2:var(--el-body); --el-text-3:var(--el-body);
+  --el-text-muted:var(--el-muted); --el-text-dim:var(--el-muted); --el-text-faint:var(--el-muted); --el-text-ghost:var(--el-muted);
+  --el-accent:var(--el-ink); --el-accent-hover:var(--el-body); --el-accent-deep:var(--el-ink); --el-on-accent:var(--el-paper);
+  --el-accent-bg:var(--el-soft); --el-accent-bg-hover:var(--el-line); --el-accent-line:var(--el-line-strong); --el-accent-line-strong:var(--el-muted);
+  --el-accent-teal:var(--el-pencil-blue);
+  --el-live:var(--el-pencil-blue); --el-cite:var(--el-pencil-blue); --el-info:var(--el-pencil-blue);
+  --el-live-bg:color-mix(in srgb,var(--el-pencil-blue) 10%,var(--el-paper)); --el-live-line:color-mix(in srgb,var(--el-pencil-blue) 30%,var(--el-paper));
+  --el-live-glow:var(--el-live-bg); --el-cite-bg:var(--el-highlighter-soft); --el-cite-line:var(--el-line-strong);
+  --el-info-bg:var(--el-live-bg); --el-info-line:var(--el-live-line);
+  --el-good:var(--el-green); --el-verified:var(--el-green); --el-good-bg:var(--el-green-bg); --el-verified-bg:var(--el-green-bg);
+  --el-good-line:var(--el-green); --el-verified-line:var(--el-green);
+  --el-bad:var(--el-stamp-red); --el-regress:var(--el-stamp-red);
+  --el-bad-bg:color-mix(in srgb,var(--el-stamp-red) 8%,var(--el-paper)); --el-regress-bg:var(--el-bad-bg);
+  --el-bad-line:var(--el-stamp-red); --el-regress-line:var(--el-stamp-red);
+  --el-lead:var(--el-amber); --el-lead-bg:var(--el-amber-bg); --el-lead-line:var(--el-amber);
+  --el-track:var(--el-line); --el-scrollbar:var(--el-line-strong);
+  --el-canvas-warm:var(--el-paper); --el-rule-warm:var(--el-line); --el-header-bg:var(--el-paper);
+  --el-nav-bg:var(--el-paper); --el-nav-ink:var(--el-ink); --el-nav-text:var(--el-muted);
+  --el-nav-text-strong:var(--el-ink); --el-nav-meta:var(--el-muted); --el-nav-line:var(--el-line);
+  --el-nav-hover:var(--el-soft); --el-nav-active:var(--el-soft); --el-nav-accent:var(--el-ink);
+  --el-nav-chip:var(--el-soft); --el-nav-chip-line:var(--el-line-strong);
 }
 
-/* Narrower gutters once the viewport can't afford them. */
-@media (max-width: 900px) {
-  :root {
-    --el-gutter: var(--el-s4);
-  }
-}
+/* Compatibility layouts below consume the approved palette above. */
 
 html,
 body {
@@ -259,11 +91,12 @@ body { background-image: none; }
   box-sizing: border-box;
 }
 a {
-  color: var(--el-accent);
+  color: var(--el-pencil-blue);
   text-decoration: none;
 }
 a:hover {
-  color: var(--el-accent-hover);
+  color: var(--el-pencil-blue);
+  text-decoration: underline;
 }
 ::-webkit-scrollbar {
   width: 10px;
@@ -603,7 +436,7 @@ button {
 .el-brand-mark {
   width: 30px;
   height: 30px;
-  border: 1px solid #f6f2e9;
+  border: 1px solid var(--el-soft);
   border-radius: var(--el-r-control);
   position: relative;
   flex: none;
@@ -614,7 +447,7 @@ button {
 .el-brand-mark::after {
   content: "";
   position: absolute;
-  background: #f6f2e9;
+  background: var(--el-soft);
 }
 .el-brand-mark::before { width: 14px; height: 1px; }
 .el-brand-mark::after { width: 1px; height: 14px; }
@@ -622,7 +455,7 @@ button {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #d1493f;
+  background: var(--el-stamp-red);
   z-index: 1;
 }
 .el-brand-name {
@@ -732,10 +565,10 @@ button {
   min-height: 30px;
 }
 .el-btn--primary {
-  box-shadow: 0 2px 6px rgba(115, 28, 23, 0.18);
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--el-ink) 18%, transparent);
 }
 .el-btn--primary:hover {
-  box-shadow: 0 5px 14px rgba(115, 28, 23, 0.2);
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--el-ink) 20%, transparent);
 }
 input:not([type="checkbox"]):not([type="radio"]),
 textarea,
@@ -921,8 +754,8 @@ textarea::placeholder {
 .el-case-dossier-header > div:last-child::-webkit-scrollbar { display: none; }
 
 .el-login-brand {
-  background: #1d2325 !important;
-  color: #fffaf3;
+  background: var(--el-ink) !important;
+  color: var(--el-soft);
 }
 .el-login-brand .el-login-promise {
   font-family: var(--el-display);
@@ -930,21 +763,21 @@ textarea::placeholder {
   max-width: 12ch;
 }
 .el-login-brand .el-brand-mark {
-  border-color: #f6f2e9;
+  border-color: var(--el-soft);
 }
 .el-login-brand .el-brand-mark::before,
-.el-login-brand .el-brand-mark::after { background: #f6f2e9; }
-.el-login-brand .el-brand-mark > span { background: #e05549; }
+.el-login-brand .el-brand-mark::after { background: var(--el-soft); }
+.el-login-brand .el-brand-mark > span { background: var(--el-stamp-red); }
 .el-login-description {
-  border-left: 1px solid #4b5557;
+  border-left: 1px solid var(--el-muted);
   padding-left: var(--el-s5);
-  color: #c7ceca !important;
+  color: var(--el-line-strong) !important;
 }
 .el-login-trace > div > div:last-child {
-  color: #c2cac6 !important;
+  color: var(--el-line-strong) !important;
 }
 .el-login-trace > div:nth-child(2) > div:last-child {
-  color: #82b7ff !important;
+  color: var(--el-pencil-blue) !important;
 }
 .el-login-title,
 .el-onboarding-dossier h1 {
@@ -1116,6 +949,8 @@ textarea::placeholder {
   .el-onboarding-spinner { animation: none; }
 }
 
+
+
 @media (max-width: 900px) {
   .el-workflow-step small { display: none; }
   .el-workflow-step { min-height: 46px; padding-inline: var(--el-s2); }
@@ -1226,14 +1061,14 @@ textarea::placeholder {
 .el-brand-mark {
   width: 28px;
   height: 28px;
-  border: 1px solid #5a5a61;
+  border: 1px solid var(--el-muted);
   border-radius: 8px;
-  background: #262629;
+  background: var(--el-ink);
 }
 .el-brand-mark::before {
   width: 12px;
   height: 12px;
-  border: 1.5px solid #b9b9c1;
+  border: 1.5px solid var(--el-line-strong);
   border-radius: 50%;
   background: transparent;
 }
@@ -1241,7 +1076,7 @@ textarea::placeholder {
 .el-brand-mark > span {
   width: 4px;
   height: 4px;
-  background: #7b86e8;
+  background: var(--el-pencil-blue);
 }
 .el-brand-name {
   color: var(--el-nav-text-strong) !important;
@@ -1330,10 +1165,10 @@ textarea::placeholder {
 }
 .el-btn--sm { min-height: 30px; }
 .el-btn--primary {
-  box-shadow: 0 1px 2px rgba(65, 76, 168, 0.18);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--el-ink) 18%, transparent);
 }
 .el-btn--primary:hover {
-  box-shadow: 0 3px 9px rgba(65, 76, 168, 0.2);
+  box-shadow: 0 3px 9px color-mix(in srgb, var(--el-ink) 20%, transparent);
 }
 input:not([type="checkbox"]):not([type="radio"]),
 textarea,
@@ -1457,8 +1292,8 @@ select {
 }
 
 .el-login-brand {
-  background: #1e1e20 !important;
-  color: #ffffff;
+  background: var(--el-ink) !important;
+  color: var(--el-paper);
 }
 .el-login-brand .el-login-promise {
   font-family: var(--el-font);
@@ -1468,8 +1303,8 @@ select {
   max-width: 13ch;
 }
 .el-login-description {
-  border-left: 1px solid #4a4a50;
-  color: #b4b4bc !important;
+  border-left: 1px solid var(--el-muted);
+  color: var(--el-line-strong) !important;
 }
 .el-login-title,
 .el-onboarding-dossier h1 {
@@ -1645,9 +1480,7 @@ select {
    Tablet: the sidebar keeps its icons and drops its labels, which buys 150px
    without losing navigation. Phone: it becomes a horizontal bar at the top. */
 @media (max-width: 1024px) {
-  :root {
-    --el-sidebar-w: 64px;
-  }
+
   /* Labels are hidden the accessible way: clipped, not `display: none` and not
      `font-size: 0`. The text stays in the accessibility tree, so a screen
      reader still announces "Cases" while the sighted user sees only the icon.
@@ -1677,9 +1510,7 @@ select {
 }
 
 @media (max-width: 720px) {
-  :root {
-    --el-sidebar-w: 100%;
-  }
+
   .el-shell {
     flex-direction: column;
   }
@@ -1990,7 +1821,7 @@ body { background: var(--el-canvas-warm); }
 .el-case-tabs > button { min-height: 42px; white-space: nowrap; }
 
 @media (max-width: 1200px) {
-  :root { --el-gutter: 22px; --el-sidebar-w: 76px; }
+
   .el-shell nav.el-sidebar .el-nav-label {
     position: absolute !important;
     width: 1px !important;
@@ -2012,7 +1843,7 @@ body { background: var(--el-canvas-warm); }
 }
 
 @media (max-width: 900px) {
-  :root { --el-gutter: 18px; }
+
   .el-today .el-screen-measure { grid-template-columns: minmax(0, 1fr) !important; }
   .el-attention-brief { grid-column: 1; }
   .el-score-docket,
@@ -2020,7 +1851,7 @@ body { background: var(--el-canvas-warm); }
 }
 
 @media (max-width: 720px) {
-  :root { --el-gutter: 16px; --el-sidebar-w: 100%; }
+
   .el-shell { flex-direction: column !important; }
   .el-workspace { padding-top: 64px; padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
   .el-mobile-context {
@@ -2117,7 +1948,7 @@ body { background: var(--el-canvas-warm); }
 }
 
 @media (max-width: 320px) {
-  :root { --el-gutter: 12px; }
+
   .el-screen-body { padding-inline: 12px !important; }
   .el-mobile-context { padding-inline: 12px; }
   .el-attention-brief h2 { font-size: 24px; }
@@ -2170,23 +2001,10 @@ body { background: var(--el-canvas-warm); }
 .el-login-theme-toggle { position: fixed; z-index: 30; top: 16px; right: 16px; }
 
 
-html[data-theme="dark"] body { background: var(--el-bg); }
-html[data-theme="dark"] .el-card,
-html[data-theme="dark"] .el-empty-state,
-html[data-theme="dark"] .el-error-state,
-html[data-theme="dark"] .el-case-filters,
-html[data-theme="dark"] .el-today-section--running-queued,
-html[data-theme="dark"] .el-case-card,
-html[data-theme="dark"] .el-case-dossier-header,
-html[data-theme="dark"] .el-login-form,
-html[data-theme="dark"] .el-onboarding-dossier {
-  color: var(--el-text);
-  background: var(--el-paper) !important;
-}
-html[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]),
-html[data-theme="dark"] textarea,
-html[data-theme="dark"] select { color: var(--el-text); background: var(--el-bg-raised) !important; }
-html[data-theme="dark"] .el-shell nav.el-sidebar { background: var(--el-nav-bg) !important; }
+
+
+
+
 
 @media (max-width: 1200px) {
   .el-shell nav.el-sidebar > .el-theme-toggle { justify-content: center; }
@@ -2215,7 +2033,7 @@ html[data-theme="dark"] .el-shell nav.el-sidebar { background: var(--el-nav-bg) 
   background: var(--el-paper);
   border: 1px solid var(--el-border-2);
   border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(8, 24, 21, .12);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--el-ink) 12%, transparent);
   cursor: pointer;
 }
 .el-sidebar-collapse::before {
@@ -2910,4 +2728,84 @@ html[data-theme="dark"] .el-shell nav.el-sidebar { background: var(--el-nav-bg) 
 @media (prefers-reduced-motion: reduce) {
   .el-logo.is-live *, .el-rail__live-dot, .el-cite-tip { animation: none !important; }
   .el-shell nav.el-rail, .el-rail__item, .el-wb__divider::before { transition: none !important; }
+}
+
+/* Approved top-bar shell. Legacy screen classes above retain their structure. */
+.el-shell { display:flex; flex-direction:column; margin:0; width:100%; }
+.el-workspace { display:flex; flex:1; min-height:0; min-width:0; flex-direction:column; overflow:hidden;
+  width:100%; max-width:1200px; margin:0 auto; padding:0; }
+.el-topbar { position:relative; z-index:35; width:100%; flex:none; background:var(--el-paper); }
+.el-topbar__inner { max-width:1200px; margin:0 auto; min-height:80px; padding:20px 32px;
+  display:flex; align-items:center; gap:16px; border-bottom:1px solid var(--el-line); }
+.el-topbar__brand { flex:none; border:0; padding:0; color:var(--el-ink); background:none; cursor:pointer; }
+.el-logo-lockup { display:inline-flex; align-items:center; gap:10px; }
+.el-logo-lockup__text { display:flex; flex-direction:column; align-items:flex-start; }
+.el-logo-lockup__name { color:var(--el-ink); font:500 24px/1 var(--el-serif); letter-spacing:-.5px; }
+.el-logo-lockup__sub { color:var(--el-muted); font:11px/1.5 var(--el-mono); letter-spacing:1px; }
+.el-logo { display:block; flex:none; overflow:visible; }
+.el-logo.is-live .el-logo__echo { animation:elSonar 2s ease-in-out infinite; transform-origin:9px 17px; }
+.el-product-picker { display:flex; align-items:center; gap:5px; min-width:0; font-size:14px; }
+.el-product-picker select { min-width:0; max-width:105px; border:0; padding:5px 0; appearance:none;
+  background:transparent; color:var(--el-ink); font:500 14px var(--el-font); cursor:pointer; }
+.el-product-picker__demo { color:var(--el-muted); font:10px var(--el-mono); border:1px solid var(--el-line); padding:2px 4px; border-radius:4px; }
+.el-health-dot { display:inline-block; flex:none; width:7px; height:7px; border-radius:50%; background:var(--el-muted); }
+.el-health-dot--healthy { background:var(--el-green); }.el-health-dot--attention,.el-health-dot--on_fire { background:var(--el-amber); }
+.el-pill-nav { display:flex; gap:4px; border-radius:999px; padding:4px; background:var(--el-soft); flex:none; }
+.el-pill-nav button { font:14px var(--el-font); padding:7px 12px; border:0; border-radius:999px;
+  color:var(--el-muted); background:none; cursor:pointer; white-space:nowrap; }
+.el-pill-nav button.is-active { color:var(--el-ink); background:var(--el-paper); box-shadow:var(--el-e1); }
+.el-topbar__spacer { flex:1; }
+.el-ask-field { display:flex; align-items:center; gap:8px; border:1px solid var(--el-line); border-radius:999px;
+  padding:8px 12px; color:var(--el-muted); background:var(--el-paper); font:14px var(--el-font); cursor:pointer; white-space:nowrap; }
+.el-ask-field kbd { color:var(--el-muted); font:11px var(--el-mono); }
+.el-topbar__new.el-btn { padding:8px 10px; min-height:36px; font-size:13px; }
+.el-topbar__more { display:grid; place-items:center; width:36px; height:36px; background:none; border:0; border-radius:12px; color:var(--el-muted); cursor:pointer; }
+.el-topbar__more:hover { background:var(--el-soft); color:var(--el-ink); }
+.el-menu-scrim { position:fixed; inset:0; z-index:40; }
+.el-workspace-menu { position:absolute; z-index:41; right:max(32px,calc((100% - 1136px)/2)); top:calc(100% - 8px);
+  width:260px; max-height:calc(100dvh - 160px); overflow-y:auto; display:flex; flex-direction:column;
+  padding:12px; border:1px solid var(--el-line); border-radius:18px; background:var(--el-paper); color:var(--el-ink); box-shadow:var(--el-e3); }
+.el-workspace-menu__head { display:flex; align-items:center; justify-content:space-between; padding:0 8px 8px; border-bottom:1px solid var(--el-line); margin-bottom:8px; }
+.el-workspace-menu > button { text-align:left; padding:10px 12px; border:0; border-radius:8px;
+  color:var(--el-ink); background:none; cursor:pointer; font:14px var(--el-font); }
+.el-workspace-menu > button:hover { background:var(--el-soft); }
+.el-workspace-menu .el-theme-toggle { width:100%; justify-content:flex-start; margin:0; }
+.el-demo-banner { display:flex; justify-content:center; align-items:center; flex-wrap:wrap; gap:8px; min-height:36px;
+  background:var(--el-soft); color:var(--el-muted); border-bottom:1px solid var(--el-line); font-size:13px; padding:6px 16px; flex:none; }
+.el-demo-banner button { color:var(--el-ink); background:none; border:0; padding:2px; text-decoration:underline; cursor:pointer; font:inherit; }
+.el-bottom-nav { display:none; }
+.el-screen-measure { width:100%; margin:0 auto; }.el-screen-heading h1 { font-family:var(--el-serif); font-weight:500; }
+.el-panel__title,.el-section__title { font-family:var(--el-serif); font-weight:500; font-size:26px; }
+.el-btn { border-radius:12px; }.el-btn--primary { background:var(--el-ink); border-color:var(--el-ink); color:var(--el-paper); }
+.el-btn--primary:hover:not(:disabled) { background:var(--el-body); border-color:var(--el-body); }
+.el-brand-mark { background:transparent; box-shadow:none; }.el-brand-mark::before,.el-brand-mark::after { background:var(--el-ink); }.el-brand-mark > span { background:var(--el-stamp-red); }
+.el-chart__pin line { stroke:var(--el-pencil-blue); stroke-dasharray:none; stroke-width:1.5; }
+.el-chart__pin circle { display:none; }.el-chart__pin text { font:italic 16px var(--el-serif); fill:var(--el-pencil-blue); }
+.el-chart__bar { fill:var(--el-line-strong); opacity:1; }.el-chart__bar.is-after { fill:var(--el-stamp-red); }
+.el-chart__bar.is-active { opacity:.7; }.el-chart__tip { pointer-events:none; }
+.el-chart__empty { position:absolute; inset:24px 12px; display:grid; place-items:center; text-align:center; color:var(--el-muted); font-size:13px; }
+.el-cite { color:var(--el-pencil-blue); background:var(--el-soft); }
+.el-login-brand { background:var(--el-soft) !important; color:var(--el-ink); }.el-login-form { background:var(--el-paper); }
+.el-login-brand .el-login-promise { font-family:var(--el-serif); color:var(--el-ink); }
+.el-login-description,.el-login-trace > div > div:last-child { color:var(--el-body); }
+@keyframes elSonar { 50% { opacity:.5; transform:scale(1.06); } }
+@media(min-width:768px) and (max-width:1100px) {
+  .el-topbar__inner { flex-wrap:wrap; gap:12px; }.el-pill-nav { order:5; width:100%; justify-content:center; }
+  .el-ask-field { margin-left:auto; }
+}
+@media(max-width:767px) {
+  :root { --el-gutter:20px; }
+  .el-topbar__inner { padding:18px 20px; min-height:72px; gap:12px; }.el-logo-lockup__name { font-size:24px; }
+  .el-pill-nav,.el-ask-field,.el-topbar__new { display:none; }
+  .el-product-picker { margin-left:auto; }.el-product-picker select { max-width:90px; }.el-topbar__spacer { display:none; }
+  .el-workspace { padding-bottom:calc(64px + env(safe-area-inset-bottom)); }
+  .el-bottom-nav { position:fixed; z-index:35; bottom:0; left:0; right:0; display:grid; grid-template-columns:repeat(5,1fr);
+    border-top:1px solid var(--el-line); background:var(--el-paper); padding:6px 8px calc(6px + env(safe-area-inset-bottom)); }
+  .el-bottom-nav button { min-height:48px; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:4px;
+    font:11px var(--el-font); border:0; border-radius:12px; background:none; color:var(--el-muted); cursor:pointer; }
+  .el-bottom-nav [aria-current="page"] { color:var(--el-ink); background:var(--el-soft); }
+  .el-workspace-menu { position:fixed; top:auto; bottom:calc(76px + env(safe-area-inset-bottom)); right:12px; left:12px; width:auto; max-height:70dvh; }
+}
+@media(prefers-reduced-motion:reduce) {
+  *,*::before,*::after { animation:none !important; scroll-behavior:auto !important; transition:none !important; }
 }

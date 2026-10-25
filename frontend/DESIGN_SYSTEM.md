@@ -1,386 +1,169 @@
-# EchoLens design system — Sonar Prism
+# EchoLens: One Thing × Evidence Board
 
-EchoLens listens to noisy customer echoes and focuses them into one verified
-root cause: *acoustic forensics meets optical precision*. The people using it
-are busy indie developers, not analysts. Every screen is built from this
-document; read the UX principles first, then reuse the tokens and components
-below instead of inventing new ones.
+The product owner approved this look on 2026-10-25. **[design/approved/README.md](../design/approved/README.md) wins** if any detail here disagrees. Read the markup and inline styles of [Today](../design/approved/today.html), [the problem workbench](../design/approved/case.html), and [Landing](../design/approved/landing.html) as the exact visual contract. They are design-canvas sources, not app screens.
 
-Source of truth: `src/tokens.css` (values), `src/theme.ts` (the same values as
-`var()` references for inline styles), `src/ui.tsx` (primitives) and
-`src/components/` (shared components).
+Every screen answers **what is wrong, how sure we are, and what to do next**, with proof one tap away. Do not improvise another visual language.
 
----
+## Six simplicity rules
 
-## 1. UX principles — every screen follows these
+1. One primary ink button per screen region; everything else outline or text.
+2. Open with a one-sentence answer in serif.
+3. Summary → reason → proof, each one tap deeper. Never a wall of text.
+4. Generous whitespace, dividers over boxes, at most one dark focus card per screen.
+5. Empty states explain what happened and offer the next step.
+6. Everything works at 375px and by keyboard.
 
-1. **The 5-second test.** A first-time user can say, within five seconds of
-   landing on any screen, *what is wrong*, *how bad it is* and *what to do
-   next*. Lead with that sentence; everything else is below it.
-2. **One primary action per screen.** Exactly one `Button variant="primary"`
-   in view. Secondary actions are `quiet`/`ghost`. Destructive actions live
-   out of the way (Settings, an overflow menu), never next to the primary one.
-3. **Plain language.** Use the UI word, never the internal one. The technical
-   term may appear only in a tooltip (`title`) or in docs:
+Every number also needs a unit, a direction and a comparison. Keep loading space reserved. Prefer Undo for reversible actions. Errors explain recovery in plain words. Do not invent measurements for an empty product.
 
-   | Internal concept | Say in the UI |
-   |---|---|
-   | signal / anomaly | spike |
-   | hypothesis | possible cause |
-   | z-score | signal strength |
-   | triage | decide what to investigate |
-   | finding | what we found |
-   | evidence | proof |
-   | guard | honesty check |
-   | supported (multi-source) | Smoking gun |
-   | supported_single_channel | Working lead — awaiting 2nd source |
-   | needs_human | Needs your call |
-   | fix watch / FixWatch | Fix watch |
-   | confirmed fix | Verified fix |
+## Tokens and typography
 
-4. **Progressive disclosure.** Summary → reason → proof, each one click
-   deeper. Never a wall of text: a paragraph longer than three lines gets a
-   "Show why" disclosure.
-5. **Every number carries a unit, a direction and a comparison.**
-   "14.2% negative ↑ 3 pts vs last 4 weeks", not "14.2". Better/worse is
-   colour *and* an arrow; the comparison is spelled out.
-6. **Designed states.** Loading, empty and error states explain what is
-   happening and offer the next step (`EmptyState` with an action,
-   `ErrorState` with Retry). Never a blank panel.
-7. **Forgiving.** Prefer an undo toast (`toast.action("Archived.", "Undo", …)`)
-   to a confirmation dialog where the action is safe to reverse. Nothing
-   important is irreversible by one click.
-8. **Fast and calm.** Navigation is instant (cached reads, see §8), updates
-   are optimistic, nothing shifts when data arrives (reserve the space), and
-   motion only explains a change.
-9. **Consistent.** The same component behaves the same everywhere. Keyboard
-   reaches everything; ⌘K / Ctrl K opens Ask from any screen.
-10. **Mobile is for reading and deciding.** At 375px a user can read a case
-    and approve or challenge it — not just look at it.
+Values live in `src/tokens.css`; `src/theme.ts` exports matching `var()` references. Use tokens, never a second palette. Light is the default; a saved theme still wins. `boot.js` and `themeMode.ts` agree before first paint. Components never inspect the theme to choose colours.
 
-Be creative within these rules: craft and delight, never added complexity.
-
----
-
-## 2. Brand — the Sonar Prism mark
-
-`components/Logo.tsx`. Concentric soundwave rings (the echoes) pass through a
-prism and leave as one beam ending at a glowing node (the verified cause).
-
-```tsx
-import { Logo, LogoLockup } from "../components/Logo";
-
-<Logo size={26} />                       // static mark, role="img", label "EchoLens"
-<Logo size={26} live />                  // rings emanate + node glows: an investigation is running
-<Logo size={20} decorative />            // beside a visible wordmark
-<LogoLockup size={28} subtitle="Feedback forensics" />   // public pages
-```
-
-- Drawn on a 32-unit grid; crisp from 20px up. Do not recolour it: it reads
-  its colours from tokens and follows the theme.
-- `live` is used by the rail while any investigation runs. Under
-  `prefers-reduced-motion` it is static.
-- Favicon: `public/favicon.svg` (static mark on an obsidian tile).
-- The logo links to Today for signed-in users and to the landing page for a
-  demo guest.
-
----
-
-## 3. Colour
-
-Two themes, same vocabulary. **Dark** (default) is obsidian/carbon with
-layered surfaces; **light** is a crisp, high-contrast slate. Themes switch by
-`html[data-theme]`; never branch on the theme in components — use tokens.
-
-### Surfaces and lines
-
-| Token | `C.` | Use |
-|---|---|---|
-| `--el-bg` | `bg` | the canvas |
-| `--el-bg-raised` | `bgRaised` | rail, header, banners |
-| `--el-bg-card` | `card` | cards, raised panels, inputs |
-| `--el-bg-overlay` | `overlay` | menus, popovers, tooltips |
-| `--el-bg-inset` | `inset` | sunk secondary detail |
-| `--el-bg-hover` / `--el-bg-active` | `hover` / `active` | interaction states |
-| `--el-border` → `--el-border-4` | `border`…`border4` | 1px hairlines, escalating; `border4` is the 3:1 control edge |
-| `--el-text` → `--el-text-ghost` | `text`…`ghost` | text, stepping down; all pass AA |
-
-### Fixed semantics — these never change meaning
-
-| Meaning | Token (`C.`) | Hue | Use for | Never for |
-|---|---|---|---|---|
-| Live AI work, citations | `live`, `cite` | cyan | running investigations, [ev_…] chips, the theme overlay on charts | decoration |
-| Your move / primary | `accent` | indigo | the one primary button, focus rings, "Smoking gun" | status |
-| Verified fix | `verified` | emerald | a fix measured to have worked, high health | "resolved" in general |
-| Working lead | `lead` | amber-gold | single-source / capped conclusions, "needs a look" | errors |
-| Regression | `regress` | coral/rose | **only** a confirmed multi-source regression | errors, destructive buttons, "bad" numbers |
-| Everything else | text/border tokens | neutral | — | — |
-
-Each semantic colour has `…Bg` and `…Line` companions for tinted pills.
-`C.good`, `C.bad` and `C.info` are legacy aliases of `verified`, `regress`
-and `live`; new code uses the semantic names.
-
-**Errors and destructive actions are neutral.** An error state is a neutral
-card with a warning icon and a plain sentence; a destructive button is a
-`ghost` button inside a confirmation (or an undo toast). Red is not "bad";
-it means "it came back".
-
----
-
-## 4. Typography
-
-- **UI and headings:** Plus Jakarta Sans (`sans`, `--el-font`), a geometric sans.
-- **Data:** JetBrains Mono (`mono`, `--el-mono`) for versions (`v3.2.0`),
-  SHAs, confidence (`0.89`), `[ev_001]` chips, costs (`$0.0031`), ids
-  (`Case #34`), timestamps and tabular numbers. Add `className="el-num"` for
-  tabular figures in sans text.
-- Both from Google Fonts, loaded without blocking first paint (`index.html`).
-
-| Token | `T.` | px | Use |
+| Token / JS | Light | Dark | Purpose |
 |---|---|---|---|
-| `--el-fs-micro` | `micro` | 11 | mono labels, tags |
-| `--el-fs-xs` | `xs` | 12 | dense metadata |
-| `--el-fs-sm` | `sm` | 13 | secondary text, tables |
-| `--el-fs-base` | `base` | 14 | body (default) |
-| `--el-fs-md` | `md` | 16 | card / panel titles |
-| `--el-fs-lg` | `lg` | 20 | screen titles |
-| `--el-fs-xl` | `xl` | 26 | big section numbers |
-| `--el-fs-display` | `display` | 40 | the one headline number |
+| `--el-ink` / `C.ink` | `#0B0B0F` | `#FFFFFF` | text, primary, selected border |
+| `--el-paper` / `C.paper` | `#FFFFFF` | `#0B0B0F` | page |
+| `--el-soft` / `C.soft` | `#F6F6F3` | `#17171D` | exhibits rail, chips |
+| `--el-line` / `C.line` | `#E8E8E3` | `#2A2B33` | quiet dividers |
+| `--el-line-strong` / `C.lineStrong` | `#D4D4CC` | `#3A3B45` | outlined controls, pending steps |
+| `--el-muted` / `C.muted` | `#5B5F6B` | `#A1A3AE` | secondary text |
+| `--el-body` / `C.body` | `#3A3C44` | `#C9CAD3` | prose |
+| `--el-stamp-red` / `C.stampRed` | `#C2361F` | `#FF8D7E` | CONFIRMED, bad number, REOPENED |
+| `--el-amber` / `C.amber` | `#9A5B00` | `#E9B65A` | HUNCH |
+| `--el-pencil-blue` / `C.pencil` | `#2348C9` | `#9DB1FF` | REQUEST, LIVE, release notes, links |
+| `--el-green` / `C.green` | `#127A45` | `#80D6A4` | FIX WORKED, checks |
+| `--el-green-bg` / `C.greenBg` | `#EEF8F2` | `#13291D` | good news |
+| `--el-green-deep` / `C.greenDeep` | `#0A5C33` | `#B0E4C6` | good-news prose |
+| `--el-highlighter` / `C.highlighter` | `#FFE96A` | same | selected proof; always ink text |
+| `--el-highlighter-soft` | `#FFFBDD` | same | selected reason; always ink text |
 
-Headings 600–700 with slight negative tracking (`--el-ls-tight`). Uppercase
-mono labels use `--el-ls-wide` (see `Label`).
+The focus card deliberately stays dark in both themes: `C.focus` is ink in light and `#17171D` with a `#3A3B45` border in dark. Its text is white, body `#C9CAD3`, captions `#A1A3AE`, stat tiles `#17171D`, red `#FF8D7E`, pencil `#9DB1FF`. Use the FocusCard part rather than manually inverting tokens.
 
----
+**Geist** 400/500/600/700 (`sans`): UI, body and buttons. **Geist Mono** 400/500 (`mono`): stamps, letters, step numbers, versions. **Newsreader** 400/500 and italic 400 (`serif`): headlines, story, quotes and pencil notes. Google Fonts uses preconnect and `display=swap` with immediate fallbacks.
 
-## 5. Space, shape, elevation, motion
+| `T` | Size | Use |
+|---|---|---|
+| `micro`, `xs`, `sm` | 11, 12, 13px | metadata |
+| `base`, `md`, `lg`, `xl` | 15, 17, 22, 28px | UI/body scale |
+| `page` / `display` | 60px, responsive | one page answer |
+| `hero` | 76px, responsive | landing headline |
+| `case` | 50px, responsive | problem title |
+| `card` | 38px | focus-card title |
+| `section` | 28px | Exhibits, Good news |
+| `story`, `stat` | 22px / 1.7, 30px / 600 | narrative, numbers |
 
-- **Space** (`S.`): 4px base — 4, 8, 12, 16, 20, 24, 32, 40, 48. Lay out with
-  flex/grid `gap`, not per-element margins.
-- **Radius** (`R.`): `sm` 4 · `control` 7 · `card` 10 · `overlay` 14 · `pill`.
-- **Elevation** (`E.`): `1` resting card · `2` hover / tooltip · `3` menu ·
-  `4` modal. In dark mode each carries a 1px top highlight so a lifted plane
-  reads as lifted, not dirty.
-- **Motion:** `--el-dur-fast` 120ms, `--el-dur` 180ms, `--el-dur-slow` 320ms,
-  `--el-ease`. Motion only explains a change (something arrived, moved,
-  started running). Everything respects `prefers-reduced-motion`.
+`S`: 4, 8, 12, 16, 20, 24, 32, 40, 48px. Approved radii: control 12px, stat/card 18px, exhibit 14px, good-news 22px, rail/overlay 24px, focus 28px, pill 999px. Exceptions copied from the canvases are encoded in the parts. Use 120ms selection feedback; stamps press once over 140ms. Only LIVE loops. Reduced motion stops all animation and transitions.
 
----
+Legacy `C.bg`, `card`, `border*`, `text*`, `accent*`, `good*`, `bad*`, `info*`, `live*`, `cite*`, `verified*`, `lead*`, `regress*`, `overlay`, `inset`, `track`, plus `S`, `R`, `E`, `T` remain available. They alias the new palette so screens can migrate separately. New primary uses ink; red means a confirmed problem, never an uncertain error. `MEASURE` is 1200px; `PUBLIC_MAX` is 1280px.
 
-## 6. Layout
+## Shell and navigation
 
-App screens are **full width**: there is no centred measure any more
-(`--el-measure` is `none`, so `maxWidth: MEASURE` no longer caps). Keep line
-length readable inside a block (`max-width: 62ch` on paragraphs), not by
-narrowing the whole screen. Hierarchy comes from elevation, dividers and
-whitespace — **not every block is an equal bordered box**.
+`AppHeader` owns the top bar: Sonar Prism, Newsreader wordmark, product switcher with measured health dot and demo tag, pill navigation, Ask field, quiet Workspace menu. There is **no left rail**. `Sidebar.tsx` is retained as a compatibility filename for the top/phone navigation component. Phones below 768px use Today · Problems · Plan · Ask · More at the bottom. More reaches every secondary destination. Reviewer actions Run investigation and Import CSV live in the menu; guests never see them.
 
-```tsx
-import { Workbench, Panel, Section, PublicContainer, ScreenHeader, ScreenBody } from "../ui";
-```
+Content is centred at max-width 1200px, including 32px side padding (20px on phones). Public pages use 1280px. Use `ScreenHeader` + `ScreenBody`, or `Workbench`, `Panel`, `Section`, `PublicContainer` from `ui.tsx`. `Panel` defaults flat; dividers before boxes. `Workbench split` keeps the existing keyboard-resizable split. Constrain long paragraphs to a readable measure inside the screen.
 
-### Workbench — the full-viewport grid
+Labels/routes: Today `/today`; All problems `/cases`; Plan `/plan`; What we've learned `/intelligence`. Product scope is `/p/:id/...`. Existing `/memory`, `/patterns`, `/brain`, `/backlog`, legacy hashes, case tabs and Settings section redirects stay valid. Never invent a second router. The demo banner retains Sign in and Exit demo. Ask still uses the existing drawer and Cmd/Ctrl K.
 
-```tsx
-<Workbench columns={3}>{/* three equal columns → 2 under 1100px → 1 under 900px */}</Workbench>
+## Plain words
 
-<Workbench split storageKey="case">   {/* 60/40, resizable, sticky right pane */}
-  <CaseNarrative />                   {/* main: scrolls with the page */}
-  <ProofRail />                       {/* side: sticky, scrolls on its own */}
-</Workbench>
-```
+| Internal term | On screen |
+|---|---|
+| finding / case | problem |
+| anomaly / signal | spike |
+| hypothesis | possible cause |
+| evidence row | proof / exhibit |
+| confidence 0.89 | we're 89% sure |
+| single-source / needs_human | hunch |
+| challenge | Think this is wrong? |
+| fix watch | Fix shipped |
+| create issue | Send to GitHub |
+| guards | honesty checks |
 
-- `split` takes exactly two children. Drag the divider, or focus it and use
-  ←/→ (Home resets). The ratio (35–75%) is remembered per `storageKey`.
-- Under 900px everything stacks to one column and the side pane un-sticks.
+Technical vocabulary belongs in tooltips, not navigation or main labels.
 
-### Panel and Section
+## Case-file parts
 
-```tsx
-<Panel title="What we found" eyebrow="Step 2" actions={<Button>Copy</Button>}>…</Panel>  // flat (default)
-<Panel tone="raised" title="Needs your call">…</Panel>   // the ONE thing that must stand out
-<Panel tone="inset">…</Panel>                           // sunk secondary detail
-<Section title="Proof" description="3 sources" divider>…</Section>
-```
-
-Use `flat` by default. At most one `raised` panel per view column.
-
-### Public pages
-
-`<PublicContainer>` caps at `--el-public-max` (1520px) with the gutter, for
-the landing page and shared briefs.
-
-### Screen frame
-
-Each screen renders `ScreenHeader` (title · product · one-line subtitle ·
-right-side actions) then `ScreenBody`. The shell already shows breadcrumbs, so
-`ScreenHeader` is a flat title row, not a band.
-
----
-
-## 7. App shell (owned by `App.tsx`)
-
-- **Rail** (`components/Sidebar.tsx`): the logo, the product switcher (each
-  product with a health dot from the portfolio rows: emerald healthy,
-  neutral watch, amber needs attention), then **Today · Cases & Signals ·
-  Quarter Plan · Intelligence** and **Portfolio · Sources · Settings**. The
-  case workbench is reached from Cases. Nothing is locked: a screen with
-  nothing in it shows an empty state. Collapsible (remembered); icon-only
-  under 1200px; under 720px it becomes the bottom bar (Today, Cases, Plan,
-  Ask, More).
-- **Header** (`components/AppHeader.tsx`) on every app screen: breadcrumbs
-  (Product / Screen / Case #N), the AI cost pill (this month vs cap, $/case,
-  model — click opens Settings → Costs), Ask (⌘K / Ctrl K) and, for reviewers
-  and admins only, **Run investigation** and **Import CSV**. Under 720px the
-  compact mobile bar replaces it (logo, product, Ask, theme).
-- **Demo banner:** a guest sees "You're exploring the demo · Sign in · Exit
-  demo". Exit ends the guest visit and returns to the landing page; visiting
-  `/` as a guest shows the landing page.
-- **Routes:** `/p/:id/intelligence` is new (Learned patterns + a link to
-  Settings → Calibration). `/memory`, `/patterns` and `/brain` redirect to
-  it; `/calibration` and `/costs` redirect to their Settings sections.
-
-Screens get callbacks from the shell (`onOpenCase`, `go(...)`); they never
-render their own nav or header bar.
-
----
-
-## 8. Data loading — instant navigation
-
-`useAsync(fn, deps, { key? })` (`src/hooks.ts`) keeps the last successful
-result per **call site + deps** in memory. A revisit renders it immediately
-and revalidates in the background.
+Import all parts and their exported types from `components/casefile`. They take plain typed props: no API calls and no invented data. Keep selection state in the screen so narrative, reasons and exhibits agree.
 
 ```tsx
-const { data, error, loading, refreshing, reload } = useAsync(() => api.sources(), []);
-if (loading) return <Skeleton rows={3} />;      // true ONLY on a first load
-if (error && !data) return <ErrorState onRetry={reload} />;
-// `refreshing` → optionally a quiet inline indicator; never a skeleton
+import { Stamp, stampFor, LiveDot, SerifHeadline, FocusCard, StatTile, ReleaseChart,
+  HighlightQuote, Exhibit, CitationLetter, ReasonRow, NumberedSteps, ListRow,
+  GoodNewsCard, PillTabs, EmptyState } from '../components/casefile';
 ```
 
-- `loading` is false whenever cached data exists, so a skeleton never
-  flashes on revisit. `Skeleton` also waits 150ms before appearing.
-- The cache is cleared on product switch and sign-out (the shell does this).
-- Writes go straight through (`api.*` calls), then `reload()`.
-- Pass `{ key }` only to share one cache entry between two call sites on purpose.
+### Verdicts, brand and hierarchy
 
----
+- **Stamp**: `<Stamp variant="confirmed" rotation={-6} />`. Variants `confirmed`, `hunch`, `request`, `fixWorked`, `reopened`; `live` renders LiveDot. `compact` uses 11px, otherwise 14px. Rotations normally −7°…+4°. A verdict always sits beside a title that explains the problem.
+- **stampFor**: `<Stamp variant={stampFor(row)} />`. Accepts a `StampInput` compatible with a case row, investigation or finding. Precedence: running/queued → LIVE; regressed → REOPENED; confirmed fix → FIX WORKED; feature request → REQUEST; single-channel/capped/needs-human → HUNCH; explicit supported or `trust.two_source_ok` → CONFIRMED. A bare resolved status is **not proof** and earns HUNCH. `StatusBadge` delegates through this helper; legacy `StatusKind` and `statusKindFor` exports remain compatible.
+- **LiveDot**: `<LiveDot label="Investigating now" />`. Only for work actually in progress, never a confirmed conclusion or a shipped fix still being watched.
+- **Logo**: `import { Logo, LogoLockup } from '../components/Logo'`. `<Logo size={28} live decorative />` or `<LogoLockup size={28} />`. Approved 34-unit ink ring/prism and red beam; use 20–34px. `decorative` beside a visible wordmark. `live` is calm and reduced-motion safe. Favicon matches.
+- **SerifHeadline**: `<SerifHeadline as="h1" size="page">One bug is costing you 0.84 stars.</SerifHeadline>`. Sizes `hero`, `page`, `case`, `card`, `section`. Use real heading order; a number here must come from actual data.
 
-## 9. Components — stories
-
-The data in these stories (`api.timeline`, `api.citations`, `inv.guards`,
-`finding.causal_chain`) comes from the forensics read endpoints
-(`GET /timeline`, `/investigations/{id}/citations`, `/guards/*`); the
-components themselves take plain props and work with any source.
-
-### CitationChip / CitedText — `components/CitationChip.tsx`
+### The one thing that matters
 
 ```tsx
-// One chip. Hover or keyboard focus shows the quote; Enter/click selects.
-<CitationChip id="ev_001" quote="Phone dies by 2pm since the update." source="Play Store · 1★"
-  active={hovered === "ev_001"}
-  onHover={setHovered}            // id on enter/focus, null on leave/blur → highlight the proof row
-  onSelect={openEvidence} />
-
-// Prose with inline [ev_…] tags → chips, quotes looked up lazily.
-<CitedText text={finding.prose} activeId={hovered}
-  getQuote={(id) => evidence.find((e) => e.id === id)?.snippet}
-  onHover={setHovered} onSelect={openEvidence} />
+<FocusCard stamp={<Stamp variant={stampFor(row)} />} aside={<>
+  <StatTile value="−0.84★" caption="off your rating in 4 weeks" tone="problem" />
+  <ReleaseChart points={daily} releases={releases} ariaLabel="One-star reviews per day"
+    unit="one-star reviews" caption="Last 30 days, compared with the previous month" />
+</>}>
+  <SerifHeadline as="h2" size="card">Battery drain since version 3.2.0</SerifHeadline>
+  <p>The update keeps phones awake. <HighlightQuote>Phone dies by 2pm.</HighlightQuote></p>
+  <Button variant="primary" onClick={openProof}>See the proof</Button>
+</FocusCard>
 ```
 
-Two-way highlighting: the proof list sets `hovered` on its rows too, and
-passes `active` back to the chips. `GET /investigations/{id}/citations` gives
-`claim_spans` (sentence indexes) and `highlight` (the exact quoted substring)
-for the reverse direction.
+**FocusCard**: 28px corners, 40px padding, equal story and stats columns; stacks on phones. Supply `children`, `aside`, optional `stamp`, and ordinary article attributes. One per screen. **StatTile** accepts `value`, `caption`, and `tone="neutral" | "problem" | "good"`; put all units/comparisons in the value or caption. **ReleaseChart** reuses TimelineChart's typed `points`, `releases`, optional `overlay`, `mode`, `unit`, `height`, `formatDate`; adds `caption`. Daily points are `{date, value}`, pins `{date, version, kind: 'release' | 'hotfix'}`. It preserves dates, counts and keyboard exploration (arrows, Home/End, Escape). Empty input states no data. Blue thin release pins use Newsreader italic pencil notes. Hover/focus details are announced by a live region.
 
-### StatusBadge — `components/StatusBadge.tsx`
+### Proof and two-way selection
 
 ```tsx
-<StatusBadge kind="smoking_gun" />      // Smoking gun — confirmed by 2+ independent sources (indigo)
-<StatusBadge kind="working_lead" />     // Working lead — awaiting 2nd source (calm amber)
-<StatusBadge kind="fix_watch" />        // Fix watch (cyan: the machine is watching)
-<StatusBadge kind="verified_fix" />     // Verified fix (emerald)
-<StatusBadge kind="regressed" />        // Regressed (coral — confirmed regressions only)
-<StatusBadge kind="resolved" />         // Resolved (neutral)
-<StatusBadge kind="working_lead" compact />   // short label; full label in the tooltip
-
-const kind = statusKindFor(row.case_status, finding?.support_level, finding?.fix?.status);
-{kind && <StatusBadge kind={kind} />}
+<HighlightQuote active={selected === 'A'}>Phone dies by 2pm.</HighlightQuote>
+<CitationLetter letter="A" selected={selected === 'A'} onSelect={setSelected} />
+<Exhibit letter="A" kind="Play Store ★1" date="Oct 15" quote="Phone dies by 2pm."
+  selected={selected === 'A'} tilt={-0.5} onSelect={setSelected} />
+<ReasonRow letters={['A', 'D']} selected={reason === 'users'}
+  onSelect={() => { setReason('users'); setLit(['A', 'D']); }}>
+  Users describe the same thing, in their own words
+</ReasonRow>
 ```
 
-Every badge is colour + glyph + words. Lists of running/queued cases keep
-using `statusMeta()` from `src/status.ts`.
+**HighlightQuote** marks only the exact proof substring. **CitationLetter** is a 22px real button with an accessible exhibit name and pressed state; `onSelect` receives its letter. **Exhibit** has a 30px letter, kind/date and 18px serif quote. `onSelect(letter)` selects it; `selected` adds a 2px ink border, 5px ink offset shadow and yellow proof. Unselected fades to 60%; `tilt` is degrees (normally ±0.6). **ReasonRow** is a green-check button with the plain reason and related `letters`. The screen owns related selection; never nest interactive controls inside these buttons.
 
-### GuardBadge — `components/GuardBadge.tsx`
+### Next steps, lists and good news
 
 ```tsx
-{inv.guards?.map((g) => (
-  <GuardBadge key={g.key} status={g.status} label={g.label} detail={g.detail} />
-))}
+<NumberedSteps steps={[
+  { id:'send', text:'Send it to your developers', action:<Button variant="primary">Review & send</Button> },
+  { id:'ship', text:'Tell EchoLens when the fix ships', action:<Button>Fix shipped</Button> },
+  { id:'watch', text:'We watch the reviews for 14 days', automatic:true },
+]} />
+<ListRow variant="hunch" title="App crashes after clearing cache"
+  detail="Needs a second source" onClick={openProblem} />
+<GoodNewsCard title="Your video-crash fix worked." action={<Button variant="primary">Write to the reviewers</Button>}>
+  Complaints fell from 6 a day to zero after the fix.
+</GoodNewsCard>
 ```
 
-Status words: Passed · Capped · Trimmed · Blocked · Not needed. Only `capped`
-takes colour (amber); the others are neutral, told apart by glyph. In copy,
-guards are **honesty checks**.
-
-### TimelineChart — `components/charts/TimelineChart.tsx`
+**NumberedSteps**: stable `id`, `text`, optional `action`, `automatic`. First human step is ink-filled; automatic is dashed/muted. The screen supplies working actions. **ListRow**: verdict column, title + one muted line, arrow; whole row is a button. **GoodNewsCard**: 22px green panel, FIX WORKED stamp and Newsreader title. Use only for measured improvement after a fix.
 
 ```tsx
-const t = await api.timeline(30, caseId);
-<TimelineChart
-  ariaLabel="Negative reviews per day, last 30 days"
-  points={t.series.map((d) => ({ date: d.date, value: d.negative }))}
-  overlay={t.theme?.series.map((d) => ({ date: d.date, value: d.total }))}
-  overlayLabel="mention this problem"
-  releases={t.releases}              // pins: "v3.2.0 shipped" / "hotfix v3.2.1"
-  unit="negative reviews"
-  height={200} />
+<PillTabs tabs={[{id:'proof',label:'Proof'},{id:'next',label:'What to do next'}]}
+  value={tab} onChange={setTab} label="Problem sections" panelId="problem-panel" />
+<div role="tabpanel" id="problem-panel" aria-label="Proof">…</div>
+<EmptyState title="No problems waiting." action={<Button onClick={connect}>Connect a source</Button>}>
+  Connect reviews so EchoLens can notice what changed.
+</EmptyState>
 ```
 
-Hand-rolled SVG (no chart library), responsive to its container, tooltips on
-hover, keyboard-explorable (Tab, ←/→, Home/End) with the tooltip mirrored to a
-live region. `mode="line"` draws the main series as a line.
+**PillTabs**: controlled generic string IDs; optional disabled items; arrows, Home/End select and move focus. Give the associated panel an accessible name. **EmptyState**: one clear sentence, explanatory children and a real next-step action. No decorative dashboard numbers.
 
-### Sparkline — `components/charts/Sparkline.tsx`
+## Existing shared parts and data
 
-```tsx
-<Sparkline values={weekly} />                                   // decorative, beside a number
-<Sparkline values={rates} tone="verified" label="Complaint rate since the fix: falling" />
-```
+`CitationChip` / `CitedText`, `GuardBadge`, `TimelineChart`, `Sparkline`, `Gauge`, `Skeleton`, `ErrorState`, `Button`, and dialog hooks remain available. Citation chips retain hover/focus quotes; new narrative screens prefer CitationLetter for exhibit selection. Use `useAsync`'s existing cache/revalidation and `api.ts` for cookie + CSRF writes. Do not put backend terms into labels. Do not copy the sample numbers from the canvases into real screens.
 
-`tone` follows the fixed semantics; default neutral.
+## Dev gallery and verification
 
-### Gauge — `components/charts/Gauge.tsx`
+`/design` exists **only in Vite DEV**; it is never in navigation and its module/fixtures are excluded from production. It renders every part in four isolated frames: light/dark × 1200/375px. Open `/design?frame=1&theme=light` directly to inspect at a real viewport. All gallery measurements are clearly labelled reference fixtures. The shell in each frame uses the actual AppHeader; example action buttons only announce a local message.
 
-```tsx
-<Gauge value={row.health} label="Health" caption="vs 74 last week" size={120} />
-```
-
-0–100, higher is healthier: emerald ≥75, neutral 45–74, amber <45, "—" with
-no data. `role="meter"` with a spoken value.
-
-### Skeleton — `ui.tsx`
-
-`<Skeleton rows={3} height={74} />` — only when `loading` (true first load).
-
----
-
-## 10. Accessibility checklist
-
-- Visible focus everywhere (global `:focus-visible` ring in `--el-accent`).
-  Never remove it without replacing it.
-- AA contrast: use the text tokens; they are measured on their surfaces.
-- State is never colour alone: pill + glyph + words; numbers carry arrows.
-- Every interactive thing is a real `<button>`/`<a>`; menus and dialogs close
-  on Escape and return focus (`useDialog`).
-- `prefers-reduced-motion`: the logo, live dots and transitions stand still.
-- Phone width (375px): no horizontal page scroll; wide content scrolls inside
-  its own container.
-
-## 11. Don't
-
-- Don't hardcode a hex or rgba — add a token.
-- Don't use coral for anything but a confirmed regression.
-- Don't add a second primary button, a second font, or a chart library.
-- Don't cap a screen's width; cap a paragraph's.
-- Don't box every block — one raised panel per column, the rest flat.
-- Don't show a skeleton over data the user has already seen.
+Before a screen handoff: compare the canvases at 1440 and 375px in light and dark, exercise keyboard navigation, reduced motion, source/empty/error states and the one obvious next action. Run TypeScript, production build and every `frontend/scripts/*.mjs`. Do not commit screenshots or notes.

@@ -14,13 +14,15 @@ class MemoryStorage {
 }
 
 const storage = new MemoryStorage();
-assert.equal(themeMode.resolveTheme(storage), "dark", "first run must default to dark");
+assert.equal(themeMode.resolveTheme(storage), "light", "approved first run defaults to paper");
 
 storage.setItem(themeMode.THEME_STORAGE_KEY, "light");
 assert.equal(themeMode.resolveTheme(storage), "light", "a saved light preference must be restored");
+storage.setItem(themeMode.THEME_STORAGE_KEY, "dark");
+assert.equal(themeMode.resolveTheme(storage), "dark", "a saved dark preference must be restored");
 
 storage.setItem(themeMode.THEME_STORAGE_KEY, "unexpected");
-assert.equal(themeMode.resolveTheme(storage), "dark", "invalid preferences must fall back safely to dark");
+assert.equal(themeMode.resolveTheme(storage), "light", "invalid preferences fall back to light");
 
 const meta = { content: "" };
 const root = { dataset: {}, style: {} };
@@ -32,12 +34,12 @@ const documentLike = {
 themeMode.applyTheme("light", documentLike);
 assert.equal(root.dataset.theme, "light");
 assert.equal(root.style.colorScheme, "light");
-assert.equal(meta.content, "#f4f6f9");
+assert.equal(meta.content, "#FFFFFF");
 
 themeMode.applyTheme("dark", documentLike);
 assert.equal(root.dataset.theme, "dark");
 assert.equal(root.style.colorScheme, "dark");
-assert.equal(meta.content, "#0a0b0e");
+assert.equal(meta.content, "#0B0B0F");
 
 themeMode.persistTheme("light", storage);
 assert.equal(storage.getItem(themeMode.THEME_STORAGE_KEY), "light");
@@ -48,7 +50,7 @@ const blockedStorage = {
   getItem() { throw new Error("storage blocked"); },
   setItem() { throw new Error("storage blocked"); },
 };
-assert.equal(themeMode.resolveTheme(blockedStorage), "dark", "blocked storage must fall back to dark");
+assert.equal(themeMode.resolveTheme(blockedStorage), "light", "blocked storage falls back to light");
 assert.doesNotThrow(() => themeMode.persistTheme("light", blockedStorage), "blocked storage must not stop the app");
 
 console.log("Theme mode behavior verified.");
