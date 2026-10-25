@@ -615,6 +615,8 @@ export interface HistoryEvent {
   /** Who made it, for human decisions (email), when known. */
   by?: string | null;
   actual_cause?: string | null;
+  /** trigger → mechanism → symptom → impact, quoted from the case; null unless supported. */
+  causal_chain?: CausalChain | null;
 }
 export interface Investigation {
   id: number;
@@ -641,6 +643,8 @@ export interface Investigation {
   recommendations: Recommendation[];
   product_decision?: ProductDecision | null;
   extension?: ExtensionOffer | null;
+  /** One entry per honesty guard, derived from what this case stored. */
+  guards?: GuardResult[];
 }
 
 // v13: the unified case list. One lifecycle, one status vocabulary, one card —
@@ -1757,4 +1761,100 @@ export const api = {
     const q = qs.toString();
     return `${BASE}/investigations/${id}/trace/stream${q ? `?${q}` : ""}`;
   },
+  // Forensics reads (backend echolens/forensics.py). All product-scoped
+  // except guardsConfig, which is constants only.
+  liveInvestigations: () =>
+    get<{ investigations: LiveInvestigation[] }>(scoped("/investigations/live")),
+  guardsConfig: () => get<GuardConfig>("/guards/config"),
+  guardsStats: () => get<GuardStats>(scoped("/guards/stats")),
+  timeline: (days = 30, investigationId?: number) =>
+    get<ComplaintTimeline>(scoped(`/timeline?days=${days}` +
+      (investigationId != null ? `&investigation_id=${investigationId}` : ""))),
+  citations: (id: number) => get<CitationMap>(scoped(`/investigations/${id}/citations`)),
 };
+
+// ── forensics ─────────────────────────────────────────────────────────────
+
+export type GuardKey = "citation" | "two_source" | "single_source_cap" | "temporal_order" | "speculation";
+export type GuardStatus = "pass" | "capped" | "stripped" | "blocked" | "not_applicable";
+export interface GuardResult {
+  key: GuardKey;
+  label: string;
+  status: GuardStatus;
+  detail: string;
+}
+export interface GuardConfig {
+  two_source: { min_items: number; min_sources: number; support_confidence: number };
+  single_source_cap: number;
+  temporal_order: boolean;
+  claim_grounding: boolean;
+  speculation_label: string;
+  guards: { key: GuardKey; label: string }[];
+}
+export interface GuardStats {
+  as_of: string;
+  /** Cases that stopped running, opened in each window. */
+  cases_checked: { d30: number; d90: number };
+  guards: { key: GuardKey; label: string; interventions: { d30: number; d90: number } }[];
+}
+export interface ChainLink {
+  text: string;
+  evidence_ids: string[];
+}
+export interface CausalChain {
+  trigger: ChainLink | null;
+  mechanism: ChainLink | null;
+  symptom: ChainLink | null;
+  impact: (ChainLink & { affected_pct?: number | null; rating_impact?: number | null }) | null;
+}
+export interface TimelineDay {
+  date: string;
+  negative: number;
+  one_star: number;
+  total: number;
+}
+export interface ReleaseMarker {
+  version: string;
+  date: string;
+  kind: "release" | "hotfix";
+}
+export interface ComplaintTimeline {
+  product: string | null;
+  days: number;
+  start: string;
+  end: string;
+  series: TimelineDay[];
+  releases: ReleaseMarker[];
+  /** Present when requested with an investigation: reviews matching its theme. */
+  theme?: { terms: string[]; series: TimelineDay[] };
+}
+export interface LiveInvestigation {
+  /** Null for queued work that has no investigation yet. */
+  id: number | null;
+  queue_id: number | null;
+  status: "running" | "queued";
+  title: string;
+  started_at: string | null;
+  elapsed_s: number | null;
+  step_count: number;
+  current_step: { kind: string; text: string } | null;
+  cost_usd_so_far: number;
+}
+export interface Citation {
+  id: string;
+  source: string;
+  ref: string;
+  quote: string;
+  url: string | null;
+  /** Hypothesis ids this evidence supports. */
+  supports: string[];
+  /** Indexes into CitationMap.sentences that cite this evidence. */
+  claim_spans: number[];
+  /** The exact substring of the review text the finding quotes, if any. */
+  highlight: string | null;
+}
+export interface CitationMap {
+  investigation_id: number;
+  sentences: string[];
+  citations: Citation[];
+}

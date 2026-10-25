@@ -339,6 +339,80 @@ def single_channel_winner(hypotheses: list[dict], evidence: list[dict]) -> tuple
     return None
 
 
+# ── temporal order ──────────────────────────────────────────────────────
+#
+# A release cannot cause complaints that began before it shipped. Nothing
+# stopped a hypothesis blaming v3.2.0 when the first cited complaint predates
+# v3.2.0's release, and the two-source rule happily counted the release note as
+# the second channel. This is a hard, date-only check: a cause tied to a
+# release (by a cited release/commit, or by naming its version) never reaches
+# "supported" while every release it blames shipped AFTER the first cited
+# complaint. Undated evidence is never guessed at; the check then passes.
+
+TRIGGER_SOURCES = frozenset({"release_notes", "github_commits"})
+VERSION_IN_TEXT = re.compile(r"(?<![\w.])v?(\d+(?:\.\d+)+)\b", re.IGNORECASE)
+
+
+def _bare_version(v) -> str:
+    return str(v or "").strip().lower().lstrip("v")
+
+
+def _date(value):
+    from datetime import date
+    try:
+        return date.fromisoformat(_day(value)) if value else None
+    except (TypeError, ValueError):
+        return None
+
+
+def temporal_order_violation(hypothesis: dict, evidence: list[dict],
+                             release_dates: dict[str, str] | None = None) -> dict | None:
+    """{release, release_date, first_complaint, complaint_id} when `hypothesis`
+    blames only releases that shipped after its first cited complaint, else None.
+
+    Blamed releases: any version its statement names, dated from cited release
+    evidence or `release_dates` ({"3.2.0": "2026-05-01"}, the product's release
+    table), prefix-matched ("3.2" covers "3.2.0"); when it names none, the
+    release_notes / github_commits evidence it cites (dated by `released_at`, or
+    a commit's `date`). The first complaint is the earliest dated item it cites
+    from any other source.
+    """
+    by_id = {e["id"]: e for e in evidence}
+    items = [by_id[eid] for eid in hypothesis.get("evidence_for", []) if eid in by_id]
+    known: dict[str, object] = {_bare_version(k): _date(v) for k, v in (release_dates or {}).items()}
+    blamed: list[tuple[str, object]] = []
+    complaints: list[tuple[object, str]] = []
+    for e in items:
+        meta = e.get("meta") or {}
+        if str(e.get("source", "")).lower() in TRIGGER_SOURCES:
+            shipped = _date(meta.get("released_at") or meta.get("date"))
+            label = _bare_version(meta.get("version")) or str(e.get("ref", e["id"]))
+            if label.startswith("release "):
+                label = _bare_version(label[len("release "):])
+            if shipped is not None:
+                blamed.append((label, shipped))
+                known.setdefault(label, shipped)
+        else:
+            day = _date(meta.get("date"))
+            if day is not None:
+                complaints.append((day, e["id"]))
+    # A version the statement names IS the blamed release; citing an older
+    # release note beside it must not let the hypothesis pass on that date.
+    named = [(v, d) for n in VERSION_IN_TEXT.findall(hypothesis.get("statement", ""))
+             for v, d in known.items()
+             if d is not None and (v == n or v.startswith(n + "."))]
+    if named:
+        blamed = named
+    if not blamed or not complaints:
+        return None
+    first_day, first_id = min(complaints)
+    earliest_label, earliest = min(blamed, key=lambda b: b[1])
+    if earliest <= first_day:
+        return None
+    return {"release": earliest_label, "release_date": earliest.isoformat(),
+            "first_complaint": first_day.isoformat(), "complaint_id": first_id}
+
+
 def conflicting_evidence(hypotheses: list[dict]) -> bool:
     """Strong conflict: some non-rejected hypothesis has both meaningful
     support and meaningful contradiction (>=2 each) -> a human should look."""
