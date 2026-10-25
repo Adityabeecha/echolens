@@ -609,7 +609,9 @@ PATHS = ["/today/overview?product_id=1", "/cases?product_id=1", "/investigations
          "/products", "/team", "/sources?product_id=1", "/feed/summary?product_id=1",
          "/portfolio"]
 # Steady-state ceilings measured at ~10k reviews / 60 cases, with a little room.
-CEILING = {"/today/overview": 24, "/cases": 28, "/investigations/1": 30, "/backlog/plan": 24,
+# /investigations/1 +1 for the per-case `guards` field (one query for the
+# case's guard trace steps — fixed, not per row).
+CEILING = {"/today/overview": 24, "/cases": 28, "/investigations/1": 31, "/backlog/plan": 24,
            "/costs/summary": 12, "/costs": 3, "/products": 3, "/team": 5, "/sources": 7,
            "/feed/summary": 6, "/portfolio": 10, "/chat": 7}
 

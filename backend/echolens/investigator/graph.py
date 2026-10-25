@@ -130,6 +130,8 @@ class Investigator:
         self._recent: list[str] = []
         self._executed_calls: set[str] = set()
         self._refuted: set[str] = set()   # v5.0 counter-evidence duty (per hypothesis)
+        self._release_dates_cache: dict[str, str] | None = None
+        self._temporal_logged: set[tuple] = set()
         # v5.0 trust loop: past human verdicts (calibration + weak spots) become a
         # corrective note injected into this investigation's planning prompt.
         try:
@@ -198,6 +200,40 @@ class Investigator:
         from echolens.db.models import Product
         product = self.session.get(Product, pid)
         return product.name if product is not None else None
+
+    def _release_dates(self) -> dict[str, str]:
+        """{version: release day} for this product, read once per run, so the
+        temporal-order guard can date a version the hypothesis only names."""
+        if self._release_dates_cache is None:
+            from echolens.db.models import Release
+            stmt = select(Release.version, Release.released_at)
+            if self._product_name:
+                stmt = stmt.where(Release.product == self._product_name)
+            self._release_dates_cache = {
+                v: at.date().isoformat() for v, at in self.session.execute(stmt).all() if at}
+        return self._release_dates_cache
+
+    def _temporally_blocked(self, h: dict, evidence: list[dict]) -> bool:
+        """Temporal-order guard: True when `h` blames a release that shipped after
+        its first cited complaint. Logged once per (hypothesis, release, date)
+        as a REFUTE step naming both dates."""
+        hit = guards.temporal_order_violation(h, evidence, self._release_dates())
+        if hit is None:
+            return False
+        key = (h["id"], hit["release"], hit["first_complaint"])
+        if key not in self._temporal_logged:
+            self._temporal_logged.add(key)
+            self._trace("REFUTE", {
+                "guard": "temporal_order", "hypothesis": h["id"], "contradicted": True,
+                "release": hit["release"], "release_date": hit["release_date"],
+                "first_complaint": hit["first_complaint"], "complaint_id": hit["complaint_id"],
+                "text": (f"Temporal-order guard: {h['id']} blames {hit['release']}, released "
+                         f"{hit['release_date']}, but the first cited complaint "
+                         f"({hit['complaint_id']}) is from {hit['first_complaint']}. A release "
+                         "cannot cause complaints that began before it shipped, so "
+                         f"{h['id']} cannot be supported."),
+            })
+        return True
 
     # ── bookkeeping ────────────────────────────────────────────────────
 
@@ -610,6 +646,8 @@ class Investigator:
             new_status = upd.get("new_status", h["status"])
             if new_status == "supported" and not corroborated:
                 new_status = "active"  # guard: two-source rule not met
+            if new_status == "supported" and self._temporally_blocked(h, state["evidence"]):
+                new_status = "active"  # guard: the blamed release came after the complaints
             if new_status == guards.SINGLE_CHANNEL_STATUS:
                 new_status = "active"  # only the check guard can grant it
             h["status"] = new_status
@@ -691,13 +729,23 @@ class Investigator:
         if state.get("budget_stop_reason"):
             status, reason = "budget_exhausted", state["budget_stop_reason"]
 
-        winner = guards.resolvable_hypothesis(state["hypotheses"], state["evidence"],
+        # A hypothesis blaming a release that shipped after its first complaint
+        # is out of the running for either kind of support.
+        eligible = []
+        for h in state["hypotheses"]:
+            if h["status"] not in ("rejected", "parked") and self._temporally_blocked(h, state["evidence"]):
+                if h["status"] in ("supported", guards.SINGLE_CHANNEL_STATUS):
+                    h["status"] = "active"   # later evidence dated it; support withdrawn
+                    self._persist_hypotheses(state["hypotheses"])
+                continue
+            eligible.append(h)
+        winner = guards.resolvable_hypothesis(eligible, state["evidence"],
                                               self._ignore_sources)
         # The full bar is out of reach on a single-channel product; the
         # stricter within-channel bar can still yield the LABELLED outcome.
         single = None
         if winner is None and self._single_channel:
-            single = guards.single_channel_winner(state["hypotheses"], state["evidence"])
+            single = guards.single_channel_winner(eligible, state["evidence"])
             if single:
                 winner = single[0]
         if proposed:

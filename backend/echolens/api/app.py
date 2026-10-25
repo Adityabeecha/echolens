@@ -316,8 +316,16 @@ def _investigation_dict(session, inv: Investigation) -> dict:
     watch = session.scalars(select(FixWatch).where(
         FixWatch.investigation_id == inv.id).order_by(FixWatch.id.desc())).first()
     case_status, case_why = derive_status(inv, finding, watch)
+    from echolens.forensics import case_guards, causal_chain, hypothesis_dict
+    hyp_dicts = [hypothesis_dict(h) for h in hyps]
+    ev_dicts = [{"id": e.eid, "source": e.source, "ref": e.ref, "snippet": e.snippet,
+                 "retrieved_by": e.retrieved_by, **e.json} for e in evs]
+    fj = finding.json if finding is not None else None
     return {
         "id": inv.id, "anomaly_id": inv.anomaly_id, "status": inv.status,
+        # One {key, label, status, detail} per honesty guard, derived from what
+        # this case stored (see echolens.forensics.guard_results).
+        "guards": case_guards(session, inv, hyp_dicts, fj),
         "case_status": case_status, "case_why": case_why,
         "title": title,
         "opened_by": inv.opened_by, "budget_tier": inv.budget_tier,
@@ -328,14 +336,14 @@ def _investigation_dict(session, inv: Investigation) -> dict:
         # thing that happened somewhere you can no longer see.
         "history": _extension_history(session, inv),
         **_merge_view(session, inv),
-        "hypotheses": [{"id": h.hid, "statement": h.statement, "confidence": h.confidence,
-                        "status": h.status, **h.json} for h in hyps],
-        "evidence": _with_translations(session, inv, [
-            {"id": e.eid, "source": e.source, "ref": e.ref, "snippet": e.snippet,
-             "retrieved_by": e.retrieved_by, **e.json} for e in evs]),
+        "hypotheses": hyp_dicts,
+        "evidence": _with_translations(session, inv, ev_dicts),
         "finding": None if finding is None else {
             "id": finding.id, "status": finding.status, **finding.json,
-            **_finding_extras(session, finding, recs, inv.status)},
+            **_finding_extras(session, finding, recs, inv.status),
+            # trigger → mechanism → symptom → impact, quoted from the case
+            # itself; null unless a hypothesis is supported.
+            "causal_chain": causal_chain(fj, hyp_dicts, ev_dicts)},
         "recommendations": [{"rank": r.rank, "action": r.action, "impact": r.impact,
                              "effort": r.effort, "rationale": r.rationale} for r in recs],
         # v15: the product decision in force (fix now / park / won't fix), and
@@ -2500,6 +2508,82 @@ def list_investigations(product_id: int | None = None, user: dict = Depends(curr
                         "opened_by": q.source, "budget_tier": q.budget_tier,
                         "anomaly_id": q.anomaly_id})
         return {"investigations": out}
+
+
+# ── forensics reads (echolens.forensics) ────────────────────────────────
+# Declared before /investigations/{inv_id} so "live" is not parsed as an id.
+
+@app.get("/investigations/live")
+def live_investigations_view(product_id: int | None = None,
+                             user: dict = Depends(current_user)) -> dict:
+    """Running and queued cases for one product: {investigations: [{id,
+    queue_id, status, title, started_at, elapsed_s, step_count, current_step:
+    {kind, text} | null, cost_usd_so_far}]}. Bounded, grouped queries."""
+    from echolens.forensics import live_investigations
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        return {"investigations": live_investigations(session, p.id if p else None)}
+
+
+@app.get("/guards/config")
+def guards_config_view() -> dict:
+    """The honesty guards in force — constants only, so public like
+    /auth/config: {two_source: {min_items, min_sources, support_confidence},
+    single_source_cap, temporal_order, claim_grounding, speculation_label,
+    guards: [{key, label}]}."""
+    from echolens.forensics import guard_config
+    return guard_config()
+
+
+@app.get("/guards/stats")
+def guards_stats_view(product_id: int | None = None,
+                      user: dict = Depends(current_user)) -> dict:
+    """How often each guard changed an outcome: {as_of, cases_checked: {d30,
+    d90}, guards: [{key, label, interventions: {d30, d90}}]}. An intervention
+    is a case where the guard capped, stripped or blocked something."""
+    from echolens.forensics import guard_stats
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        return guard_stats(session, p.id if p else None)
+
+
+@app.get("/timeline")
+def timeline_view(product_id: int | None = None, days: int = Query(30, ge=1, le=365),
+                  investigation_id: int | None = None,
+                  user: dict = Depends(current_user)) -> dict:
+    """Daily {date, negative, one_star, total} for the product's last `days`
+    days, release markers [{version, date, kind: release|hotfix}], and with
+    `investigation_id` that case's theme-matching series under `theme`
+    ({terms, series}). One grouped query per series."""
+    from echolens.db.models import Product
+    from echolens.forensics import timeline
+    from echolens.impact import theme_terms
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        product = session.get(Product, p.id).name if p else None
+        terms = None
+        if investigation_id is not None:
+            inv = _owned(session, Investigation, investigation_id, p.id if p else None)
+            anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv.anomaly_id else None
+            finding = session.scalars(select(Finding).where(
+                Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
+            terms = theme_terms(anomaly, (finding.json or {}) if finding else {})
+        return timeline(session, product, days, theme_terms=terms)
+
+
+@app.get("/investigations/{inv_id}/citations")
+def citations_view(inv_id: int, product_id: int | None = None,
+                   user: dict = Depends(current_user)) -> dict:
+    """Two-way citation map: {investigation_id, sentences: [finding prose
+    sentences], citations: [{id, source, ref, quote, url, supports,
+    claim_spans: [sentence indexes], highlight}]}."""
+    from echolens.db.models import Product
+    from echolens.forensics import citations
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        inv = _owned(session, Investigation, inv_id, p.id if p else None)
+        product = session.get(Product, inv.product_id) if inv.product_id else None
+        return citations(session, inv, product.name if product else None)
 
 
 @app.get("/investigations/{inv_id}")
