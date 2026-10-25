@@ -153,9 +153,11 @@ export function useRouter(initial: Route) {
     ? { label: SCREEN_LABEL[previous.screen], route: previous }
     : null;
 
-  // Keep the address bar honest even on first paint.
+  // Keep the address bar honest even on first paint. A bare "/" is left
+  // alone: it is the public landing page (a guest's way out of the demo), and
+  // boot replaces it with the product's own path once you are inside.
   useEffect(() => {
-    if (!parseRoute(currentLocation())) {
+    if (window.location.pathname !== "/" && !parseRoute(currentLocation())) {
       window.history.replaceState(null, "", formatRoute(route));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

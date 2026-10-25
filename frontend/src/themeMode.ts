@@ -29,7 +29,7 @@ export function applyTheme(theme: ThemeMode, target?: ThemeDocument): void {
   doc.documentElement.dataset.theme = theme;
   doc.documentElement.style.colorScheme = theme;
   const meta = doc.querySelector('meta[name="theme-color"]');
-  if (meta) meta.content = theme === "dark" ? "#101816" : "#f6f4ef";
+  if (meta) meta.content = theme === "dark" ? "#0a0b0e" : "#f4f6f9";
 }
 
 export function persistTheme(theme: ThemeMode, storage?: StorageLike): void {

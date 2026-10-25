@@ -7,17 +7,14 @@
       name="description"
       content="EchoLens investigates product feedback the way an analyst would: every conclusion backed by evidence you can click."
     />
-    <meta name="theme-color" content="#101816" />
+    <meta name="theme-color" content="#0a0b0e" />
     <!-- Match the application canvas before the stylesheet arrives. -->
     <style>
       html, body { margin: 0; }
-      html[data-theme="dark"], html[data-theme="dark"] body { background: #101816; }
-      html[data-theme="light"], html[data-theme="light"] body { background: #f6f4ef; }
+      html[data-theme="dark"], html[data-theme="dark"] body { background: #0a0b0e; }
+      html[data-theme="light"], html[data-theme="light"] body { background: #f4f6f9; }
     </style>
-    <link
-      rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='4' y='4' width='24' height='24' rx='4' fill='%231b2022'/%3E%3Ccircle cx='16' cy='16' r='7' fill='none' stroke='%23f6f2e9' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='2.5' fill='%23d1493f'/%3E%3C/svg%3E"
-    />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <!-- Loaded WITHOUT blocking first paint.
@@ -29,7 +26,7 @@
          swap; this only stops the wait being blank. -->
     <link
       id="el-fonts"
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
       rel="stylesheet"
       media="print"
     />
@@ -38,21 +35,13 @@
     <script src="/boot.js"></script>
     <noscript>
       <link
-        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
         rel="stylesheet"
       />
     </noscript>
     <title>EchoLens</title>
   </head>
   <body>
-    <!--
-      THESIS: EchoLens is a human evidence workspace: warm enough to feel calm and approachable, precise enough to make every product decision traceable.
-      OWN-WORLD: Warm stone canvas, deep ink navigation, paper-white evidence surfaces, restrained teal actions, small semantic state colors, IBM Plex typography, consistent line icons, and structure carried by spacing before borders.
-      STORY: A product lead sees what needs attention, follows the active investigations, opens a case, tests its evidence, reviews the finding and tracks the recommended fix without losing provenance.
-      FIRST VIEWPORT: Recessed navigation at left; one compact page header above a two-column work view with decisions dominant, active investigations secondary, and verified outcomes following in reading order.
-      FORM: A hybrid of Human Signal Studio and Precision Workspace: plain-language prioritization paired with disciplined evidence density. SEED: approved Figma concepts in nodes 3:2 and 3:6.
-      FINISH: Responsive contract, browser captures, craft review, and DESIGN.md are part of the shipped result.
-    -->
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

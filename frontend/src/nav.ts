@@ -9,7 +9,7 @@
 //   /p/12/cases?tab=running      the case list, filtered — shareable
 //   /p/12/cases/34               case 34 (finding tab by default)
 //   /p/12/cases/34/trace         case 34's investigation trace
-//   /p/12/memory?view=fixes      learned patterns, proven-fixes tab
+//   /p/12/intelligence?view=fixes  what EchoLens has learned (patterns, proven fixes)
 //   /p/12/settings?section=costs
 //   /portfolio                   cross-product, deliberately unscoped
 //   /onboarding                  the add-product wizard
@@ -31,6 +31,7 @@ export type Screen =
   | "settings"
   | "plan"
   | "memory"
+  | "intelligence"
   | "portfolio"
   | "onboarding";
 
@@ -53,7 +54,7 @@ export const GLOBAL_SCREENS: Screen[] = ["portfolio", "onboarding"];
 /** Screens scoped to one product. */
 const PRODUCT_SCREENS: Screen[] = [
   "today", "cases", "ask", "sources", "patterns", "calibration", "costs",
-  "settings", "plan", "memory",
+  "settings", "plan", "memory", "intelligence",
 ];
 
 export interface Route {
@@ -75,12 +76,13 @@ export const SCREEN_LABEL: Record<Screen, string> = {
   case: "Case",
   ask: "Ask",
   sources: "Sources",
-  patterns: "Learned patterns",
+  patterns: "Intelligence",
   calibration: "Settings",
   costs: "Costs",
   settings: "Settings",
-  plan: "Plan",
-  memory: "Learned patterns",
+  plan: "Quarter plan",
+  memory: "Intelligence",
+  intelligence: "Intelligence",
   portfolio: "All products",
   onboarding: "Add a product",
 };
@@ -104,11 +106,12 @@ function qs(params?: Record<string, string>): string {
 }
 
 /**
- * Patterns and Product memory were two screens about one thing — what EchoLens
- * has learned — so they are now two tabs of "Learned patterns" (`memory`).
- * Calibration and Costs are sections of Settings. The old screen names stay in the
- * union so existing `go("patterns")` / `go("calibration")` callers and old
- * links keep working; they are rewritten here, in one place.
+ * What EchoLens has learned lives under "Intelligence" (`intelligence`): the
+ * learned-patterns map and proven fixes as two views, with calibration one
+ * click away in Settings. `memory` (the old "Learned patterns") and `patterns`
+ * stay in the union so existing `go("memory")` / `go("patterns")` callers and
+ * old links keep working; they are rewritten here, in one place. Calibration
+ * and Costs are sections of Settings.
  */
 export const LEARNED_VIEWS = ["map", "fixes"] as const;
 export type LearnedView = (typeof LEARNED_VIEWS)[number];
@@ -117,7 +120,10 @@ export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 export function canonicalRoute(r: Route): Route {
   if (r.screen === "patterns") {
-    return { ...r, screen: "memory", params: { ...r.params, view: "fixes" } };
+    return { ...r, screen: "intelligence", params: { ...r.params, view: "fixes" } };
+  }
+  if (r.screen === "memory") {
+    return { ...r, screen: "intelligence" };
   }
   if (r.screen === "calibration") {
     return { ...r, screen: "settings", params: { ...r.params, section: "calibration" } };
@@ -199,7 +205,7 @@ export function parseRoute(location: string): Route | null {
   // so send people where it moved to.
   const RETIRED: Record<string, Screen> = {
     feed: "cases", archive: "cases", overview: "today", backlog: "plan",
-    brain: "memory", chat: "ask",
+    brain: "intelligence", chat: "ask",
   };
   if (RETIRED[head]) return { screen: RETIRED[head], productId, params };
   return null;

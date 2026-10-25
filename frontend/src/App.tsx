@@ -1,11 +1,15 @@
 import { ReactNode, Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
-import { ProductRow, api, endSession, isAdmin, isAuthed, isGuest, onAuthError, setActiveProduct, setGuest, setRole } from "./api";
+import { ProductRow, api, canReview, endSession, isAdmin, isAuthed, isGuest, onAuthError, setActiveProduct,
+         setGuest, setRole } from "./api";
 import { CaseTab, GLOBAL_SCREENS, LEARNED_VIEWS, LearnedView, SETTINGS_SECTIONS, Screen,
          SettingsSection, caseTabFor } from "./nav";
 import { useRouter } from "./router";
-import { useWorkWatcher } from "./hooks";
+import { clearAsyncCache, useWorkWatcher } from "./hooks";
 import { C, T, sans } from "./theme";
 import { Sidebar } from "./components/Sidebar";
+import { AppHeader, Crumb } from "./components/AppHeader";
+import { Logo } from "./components/Logo";
+import { Icon } from "./components/Icon";
 import { AskDrawer, isAskShortcut } from "./components/AskDrawer";
 import { Chat } from "./screens/Chat";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -34,6 +38,13 @@ const Portfolio = lazy(() => import("./screens/Portfolio").then((m) => ({ defaul
 const Backlog = lazy(() => import("./screens/Backlog").then((m) => ({ default: m.Backlog })));
 const LearnedPatterns = lazy(() => import("./screens/LearnedPatterns").then((m) => ({ default: m.LearnedPatterns })));
 
+/** What each screen is called in the header's breadcrumb. */
+const CRUMB: Partial<Record<Screen, string>> = {
+  today: "Today", cases: "Cases & Signals", case: "Cases & Signals", plan: "Quarter Plan",
+  intelligence: "Intelligence", memory: "Intelligence", portfolio: "Portfolio", sources: "Sources",
+  settings: "Settings", ask: "Ask", onboarding: "Add a product",
+};
+
 /** The wait while a lazily loaded screen's chunk arrives. */
 function ScreenChunk({ children, fallback = <Centered>Loading…</Centered> }: {
   children: ReactNode; fallback?: ReactNode;
@@ -61,7 +72,10 @@ export default function App() {
   const [reloadKey, setReloadKey] = useState(0);
   // "In the app" is either a real session or an accepted guest visit. A guest
   // has no token, so `authed` alone would bounce them straight back to Login.
-  const [authed, setAuthed] = useState<boolean>(isAuthed() || isGuest());
+  // A guest arriving at "/" sees the landing page (with "Explore the demo"),
+  // not a silent redirect back into the demo they may have meant to leave.
+  const [authed, setAuthed] = useState<boolean>(
+    () => isAuthed() || (isGuest() && window.location.pathname !== "/"));
   const [products, setProducts] = useState<ProductRow[]>([]);
   const [booted, setBooted] = useState(false);
   const [deleting, setDeleting] = useState<ProductRow | null>(null);
@@ -84,6 +98,15 @@ export default function App() {
   const activeProduct = products.find((p) => p.id === activeId) ?? null;
   const productName = activeProduct?.name ?? null;
 
+  // Cached reads belong to one product. Cleared during render, BEFORE the
+  // screens for the new product mount and read the cache — an effect would
+  // run after them and let one product's numbers flash under another's name.
+  const cacheScope = useRef<number | null | undefined>(undefined);
+  if (cacheScope.current !== activeId) {
+    if (cacheScope.current !== undefined) clearAsyncCache();
+    cacheScope.current = activeId;
+  }
+
   // A 401 anywhere (expired/absent token) bounces back to the login screen.
   useEffect(() => {
     // A 401 ends the session — but a guest browsing a guest-enabled deployment
@@ -91,6 +114,12 @@ export default function App() {
     // would look like the demo breaking.
     onAuthError(() => { if (!isGuest()) setAuthed(false); });
   }, []);
+
+  // "Import CSV" arrives as ?import=1 so Sources opens with its form showing.
+  // Consumed once: a refresh or a later visit must not reopen it.
+  useEffect(() => {
+    if (route.screen === "sources" && route.params?.import) setParams({ import: null });
+  }, [route.screen, route.params?.import, setParams]);
 
   // Keep the api client's scope in step with the URL, before any screen fetches.
   useEffect(() => {
@@ -243,6 +272,7 @@ export default function App() {
 
   const logout = () => {
     closeAsk();
+    clearAsyncCache();
     endSession();
     // Drop the cached role too. Leaving "admin" behind is what let a stale
     // value from an earlier session decide the next one's UI.
@@ -252,6 +282,23 @@ export default function App() {
     setGuest(false);
     setAuthed(false);
     clearToasts();  // a previous session's failures must not greet the next user
+  };
+
+  /** Leave the demo for the public landing page (or its sign-in form). */
+  const leaveDemo = (signIn: boolean) => {
+    logout();
+    window.history.replaceState(null, "", signIn ? "/?signin" : "/");
+  };
+  // The logo: a guest goes to the landing page (their demo is one click
+  // back), a signed-in user goes to Today.
+  const onLogo = () => {
+    if (isGuest()) {
+      closeAsk();
+      window.history.pushState(null, "", "/");
+      setAuthed(false);
+    } else {
+      go("today");
+    }
   };
 
   if (!authed) return (
@@ -267,8 +314,10 @@ export default function App() {
   // otherwise the wizard flashes on every refresh.
   if (!booted) {
     return (
-      <div style={{ height: "100vh", background: C.bg, color: C.dim, fontFamily: sans,
-                    display: "flex", alignItems: "center", justifyContent: "center", fontSize: T.md }}>
+      <div role="status" style={{ height: "100dvh", background: C.bg, color: C.dim, fontFamily: sans,
+                    display: "flex", alignItems: "center", justifyContent: "center", fontSize: T.md,
+                    gap: 12 }}>
+        <Logo size={28} live decorative />
         Loading your workspace…
       </div>
     );
@@ -283,6 +332,18 @@ export default function App() {
   // with no way back. It now sits above the running app and can be dismissed.
   const onboarding = screen === "onboarding";
   const key = activeId ?? "none";
+  const guest = isGuest();
+  // Starting a case and importing reviews need reviewer access; a guest or a
+  // viewer is not offered buttons the server would refuse.
+  const canAct = canReview() && !guest && activeId != null;
+  const askShortcut = /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? "\u2318 K" : "Ctrl K";
+  const crumbs: Crumb[] = [];
+  if (!GLOBAL_SCREENS.includes(screen) && productName) {
+    crumbs.push({ label: productName, onClick: () => go("today") });
+  }
+  crumbs.push({ label: CRUMB[screen] ?? screen,
+                onClick: screen === "case" ? () => go("cases") : undefined });
+  if (screen === "case" && caseId != null) crumbs.push({ label: `Case #${caseId}`, mono: true });
 
   return (
     <>
@@ -311,9 +372,11 @@ export default function App() {
           key={activeId ?? "none"}
           screen={screen}
           go={go}
-          onLogout={logout}
+          onLogout={guest ? () => leaveDemo(true) : logout}
           onAsk={openAsk}
-          askShortcut={/Mac|iPhone|iPad|iPod/.test(navigator.platform) ? "\u2318 K" : "Ctrl K"}
+          askShortcut={askShortcut}
+          onLogoClick={onLogo}
+          liveKey={reloadKey}
           products={products}
           activeId={activeId}
           onSwitchProduct={switchProduct}
@@ -328,16 +391,41 @@ export default function App() {
 
       <div className="el-workspace" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column",
                     overflow: "hidden" }}>
+        {guest && (
+          <div className="el-demo-banner" role="region" aria-label="Demo">
+            <span>You're exploring the demo</span>
+            <span aria-hidden>·</span>
+            <button type="button" onClick={() => leaveDemo(true)}>Sign in</button>
+            <span aria-hidden>·</span>
+            <button type="button" onClick={() => leaveDemo(false)}>Exit demo</button>
+          </div>
+        )}
         <div className="el-mobile-context" aria-label="Current workspace">
-          <span className="el-mobile-context__brand">
-            <span className="el-brand-mark" aria-hidden><span /></span>
+          <button type="button" className="el-mobile-context__brand" onClick={onLogo}
+                  aria-label={guest ? "EchoLens home page" : "Today"}>
+            <Logo size={24} decorative />
             <strong>EchoLens</strong>
-          </span>
+          </button>
           <span className="el-mobile-context__actions">
             <span className="el-mobile-context__product">{productName ?? "Workspace"}</span>
+            <button type="button" className="el-mobile-context__ask" onClick={openAsk} aria-label="Ask">
+              <Icon name="search" size={16} />
+            </button>
             <ThemeToggle mode={theme} onChange={setTheme} compact />
           </span>
         </div>
+        {!onboarding && (
+          <AppHeader
+            crumbs={crumbs}
+            productId={activeId}
+            liveKey={reloadKey}
+            onAsk={openAsk}
+            askShortcut={askShortcut}
+            onRunInvestigation={canAct ? () => setNewCaseOpen(true) : undefined}
+            onImportCsv={canAct ? () => go("sources", { import: "1" }) : undefined}
+            onOpenCosts={guest ? undefined : () => go("settings", { section: "costs" })}
+          />
+        )}
         <ErrorBoundary // The tab is part of the key: a TraceTab that threw stayed broken when
           // you switched to Finding, because nothing in the key had changed.
           resetKey={`${screen}:${caseId}:${route.tab ?? ""}:${activeId}`} onGoHome={() => go("today")}>
@@ -401,7 +489,7 @@ export default function App() {
 
           {screen === "sources" && (
             <ScreenChunk>
-              <Sources key={key} productName={productName}
+              <Sources key={key} productName={productName} openImport={params.import === "1"}
                        onAddProduct={() => navigate({ screen: "onboarding", productId: null })} />
             </ScreenChunk>
           )}
@@ -432,18 +520,27 @@ export default function App() {
                        backLabel={backTarget?.label ?? "Cases"} />
             </ScreenChunk>
           )}
-          {/* Patterns and Product memory, as two tabs of one screen. */}
-          {screen === "memory" && (
-            <ScreenChunk>
-              <LearnedPatterns
-                key={key}
-                productName={productName}
-                view={LEARNED_VIEWS.includes(params.view as LearnedView) ? params.view as LearnedView : "map"}
-                onView={(view) => setParams({ view: view === "map" ? null : view })}
-                onOpenInvestigation={openCase}
-                onGoCases={() => go("cases")}
-              />
-            </ScreenChunk>
+          {/* Intelligence: the learned-patterns map and proven fixes, with
+              calibration one click away. (The full hub replaces this.) */}
+          {(screen === "intelligence" || screen === "memory") && (
+            <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+              <div className="el-intel-link">
+                <span>How often is EchoLens right when it says it is sure?</span>
+                <button type="button" onClick={() => go("settings", { section: "calibration" })}>
+                  See calibration in Settings <Icon name="arrowRight" size={13} />
+                </button>
+              </div>
+              <ScreenChunk>
+                <LearnedPatterns
+                  key={key}
+                  productName={productName}
+                  view={LEARNED_VIEWS.includes(params.view as LearnedView) ? params.view as LearnedView : "map"}
+                  onView={(view) => setParams({ view: view === "map" ? null : view })}
+                  onOpenInvestigation={openCase}
+                  onGoCases={() => go("cases")}
+                />
+              </ScreenChunk>
+            </div>
           )}
 
           {screen === "portfolio" && (

@@ -32,12 +32,12 @@ const documentLike = {
 themeMode.applyTheme("light", documentLike);
 assert.equal(root.dataset.theme, "light");
 assert.equal(root.style.colorScheme, "light");
-assert.equal(meta.content, "#f6f4ef");
+assert.equal(meta.content, "#f4f6f9");
 
 themeMode.applyTheme("dark", documentLike);
 assert.equal(root.dataset.theme, "dark");
 assert.equal(root.style.colorScheme, "dark");
-assert.equal(meta.content, "#101816");
+assert.equal(meta.content, "#0a0b0e");
 
 themeMode.persistTheme("light", storage);
 assert.equal(storage.getItem(themeMode.THEME_STORAGE_KEY), "light");
