@@ -1,0 +1,49 @@
+.today-v2 { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; }
+/* Override the compatibility screen gutter without changing other builders. */
+.today-v2 > .el-screen-body { padding-inline:var(--el-gutter) !important; }
+.today-v2__content { display:flex; flex-direction:column; gap:40px; min-width:0; }
+.today-intro { display:flex; flex-direction:column; gap:10px; }
+.today-intro h1 { max-width:960px; }
+.today-greeting { color:var(--el-muted); font-size:15px; }
+.today-greeting strong { font-weight:600; color:var(--el-ink); }
+.today-summary { color:var(--el-muted); font-size:14px; display:flex; flex-wrap:wrap; gap:8px 16px; }
+.today-summary .el-btn { padding:0; font:inherit; min-height:0; }
+.today-columns { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:48px; }
+.today-section { display:flex; flex-direction:column; gap:14px; min-width:0; }
+.today-section > .cf-headline { font-size:26px; }
+.today-stack { display:flex; flex-direction:column; gap:14px; min-width:0; }
+.today-actions { display:flex; align-items:center; flex-wrap:wrap; gap:12px; }
+.today-focus__meta { font-size:14px; color:var(--el-focus-muted); }
+.today-focus .cf-release-chart figcaption { overflow-wrap:anywhere; }
+.today-chart-note { grid-column:1 / -1; min-height:153px; display:grid; align-content:center; padding:12px 18px;
+  border-radius:18px; background:var(--el-focus-tile); color:var(--el-focus-muted); }
+.today-chart-note p { margin:0; font-size:14px; }
+.today-live-step { font:italic 16px/1.4 var(--el-serif); }
+.today-muted { margin:0; color:var(--el-muted); font-size:15px; line-height:1.6; }
+.today-watch { color:var(--el-muted); font-size:14px; }
+.today-watch .el-btn { font:inherit; padding:0; white-space:normal; text-align:left; min-height:0; }
+.today-fix-sentence { margin:0; }
+.today-fix-chart { margin-top:10px; font-size:13px; }
+.today-fix-chart summary { cursor:pointer; }
+.today-details { border-top:1px solid var(--el-line); padding:18px 0; min-width:0; }
+.today-details > summary { cursor:pointer; font-size:15px; color:var(--el-ink); }
+.today-details[open] > summary { margin-bottom:18px; }
+.today-details .el-btn { white-space:normal; }
+.today-context { display:flex; flex-direction:column; gap:14px; border-top:1px solid var(--el-line); padding-top:24px; }
+.today-context-line { display:flex; align-items:baseline; flex-wrap:wrap; gap:8px 16px; font-size:14px; color:var(--el-muted); }
+.today-context-line > span { flex:1 1 260px; }
+.today-brief { font-size:16px; line-height:1.7; color:var(--el-body); }
+.today-brief p { margin:0 0 12px; }
+.today-brief .el-btn { display:inline; min-height:0; padding:0 2px; vertical-align:baseline; color:var(--el-pencil-blue); font:inherit; }
+.today-health { display:flex; flex-direction:column; gap:16px; font-size:15px; }
+.today-health__part { display:flex; align-items:baseline; flex-wrap:wrap; gap:8px; }
+.today-health__part > span { margin-left:auto; font-variant-numeric:tabular-nums; }
+.today-queued { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; padding:12px 0; border-bottom:1px solid var(--el-line); }
+.today-queued > span { flex:1 1 240px; }
+.today-placeholder { min-height:375px; display:grid; align-content:center; }
+@media(max-width:767px) {
+  .today-columns { grid-template-columns:minmax(0,1fr); gap:32px; }
+  .today-v2__content { gap:32px; }.today-focus__meta { line-height:1.5; }
+  .today-focus .cf-stat__value { font-size:23px; }
+  .today-placeholder { min-height:720px; }
+}

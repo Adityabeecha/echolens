@@ -39,8 +39,8 @@ assert.ok(header.includes("el-product-picker"), "The top bar must expose the pro
 assert.ok(sidebar.includes("el-bottom-nav"), "Phones must expose the approved bottom navigation");
 assert.ok(header.includes("Workspace menu"), "Secondary destinations must remain reachable");
 assert.ok(!app.includes("<Sidebar"), "The shell must not mount a left rail");
-assert.ok(today.includes("el-attention-brief"), "Today must expose the attention briefing composition");
-assert.ok(today.includes("Reading today's signals"), "Today must not claim a settled state while loading");
+assert.ok(today.includes("<FocusProblem"), "Today must expose the approved first decision card");
+assert.ok(today.includes("Reading today's reviews"), "Today must not claim a settled state while loading");
 assert.ok(today.includes('loading ? "Checking investigations"'), "Today header must keep activity unknown while loading");
 assert.ok(evidence.includes('aria-label="Close evidence"'), "Evidence sheet close control needs an accessible name");
 assert.ok(newCase.includes("useDialog(onClose, true, !busy)"), "New Case must keep focus contained while busy");

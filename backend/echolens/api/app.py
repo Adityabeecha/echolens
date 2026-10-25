@@ -2145,6 +2145,7 @@ def snapshot(product: str | None = None, product_id: int | None = None,
 
 @app.get("/today/overview")
 def today_overview_view(product_id: int | None = None,
+                  investigation_id: int | None = None,
                   user: dict = Depends(current_user)) -> dict:
     """What Today draws around the score: releases inside the charted window,
     the rating-drop breakdown (an estimate), when sources last synced, and the
@@ -2153,8 +2154,93 @@ def today_overview_view(product_id: int | None = None,
     from echolens.overview import overview
     with session_scope() as session:
         p = _scope(session, product_id, user)
+        inv = (_owned(session, Investigation, investigation_id, p.id if p else None)
+               if investigation_id is not None else None)
         fixes = recent_confirmed_fixes(session, p.id, user.get("id")) if p is not None else []
-        return {**overview(session, p), "confirmed_fixes": fixes}
+        return {**overview(session, p), "confirmed_fixes": fixes,
+                "focus": _today_focus(session, p, inv) if p is not None and inv is not None else None}
+
+
+def _today_focus(session, product, inv) -> dict:
+    """The focused problem's measurements, never the whole product's rating loss."""
+    from statistics import mean
+    from echolens.cases import _terms
+    from echolens.detector.detect import reference_now
+    from echolens.intent import BUG, UX_CONFUSION, classify
+    from echolens.textkit import tokenize
+    from echolens.vocab import _norm
+
+    finding = session.scalars(select(Finding).where(Finding.investigation_id == inv.id)
+                              .order_by(Finding.id.desc())).first()
+    fj = (finding.json or {}) if finding else {}
+    anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv.anomaly_id else None
+    needles = [{_norm(w) for w in tokenize(t)} for t in _terms(finding, anomaly)]
+
+    def matches(row):
+        words = {_norm(w) for w in tokenize(row.text_en or row.text)}
+        return row.rating <= 2 and any(n and n <= words for n in needles)
+
+    now = reference_now(session, product.name)
+    rows = list(session.scalars(select(Review).where(Review.product == product.name,
+        Review.created_at > now - timedelta(days=35), Review.created_at <= now)))
+    recent = [r for r in rows if aware_utc(r.created_at) > now - timedelta(days=7)]
+    prior = [r for r in rows if aware_utc(r.created_at) <= now - timedelta(days=7)]
+    drag = None
+    if needles and len(recent) >= 5 and len(prior) >= 5:
+        baseline = mean(r.rating for r in prior)
+        # Change in this theme's pull on the average: share × (rating − prior
+        # overall average), recent 7 days minus prior 28 days. Not additive
+        # across overlapping cases; an estimate, not a causal rating forecast.
+        contribution = (sum(r.rating - baseline for r in recent if matches(r)) / len(recent)
+                        - sum(r.rating - baseline for r in prior if matches(r)) / len(prior))
+        drag = round(max(0.0, -contribution), 2)
+    one_star = [r for r in rows if r.rating == 1
+                and aware_utc(r.created_at) >= now.replace(hour=0, minute=0, second=0, microsecond=0)
+                - timedelta(days=29)]
+    matching = sum(matches(r) for r in one_star)
+    share = {"matching": matching, "total": len(one_star), "days": 30,
+             "pct": round(100 * matching / len(one_star), 1) if needles and len(one_star) >= 5 else None}
+
+    struck = {e.get("eid") for e in fj.get("rejected_evidence") or []}
+    evidence = [e for e in session.scalars(select(EvidenceRow).where(
+        EvidenceRow.investigation_id == inv.id)).all() if e.eid not in struck]
+    hid = fj.get("supported_hypothesis")
+    supporting = [e for e in evidence if hid in (e.json or {}).get("supports", [])] if hid else evidence
+    quote = None
+    for e in supporting:
+        if e.source not in ("play_store", "app_store"):
+            continue
+        review = session.scalar(select(Review).where(Review.product == product.name,
+            Review.source == e.source, Review.ext_id == e.ref))
+        if review is None or classify(review.text, review.rating) not in (BUG, UX_CONFUSION):
+            continue
+        # Evidence may paraphrase a source. The highlighted words must come
+        # from the referenced review itself, with its original wording intact.
+        quote = {"text": review.text, "evidence_id": e.eid, "source": e.source, "ref": e.ref}
+        break
+
+    first = None
+    if needles:
+        # Reach beyond the visible chart: an older complaint must prevent a
+        # later release from looking causal merely because the chart starts late.
+        candidates = session.scalars(select(Review).where(Review.product == product.name,
+            Review.rating <= 2, Review.created_at <= now).order_by(Review.created_at)).yield_per(200)
+        try:
+            first = next((aware_utc(r.created_at) for r in candidates if matches(r)), None)
+        finally:
+            candidates.close()
+    versions = {((e.json or {}).get("meta") or {}).get("version") or
+                e.ref.removeprefix("release:").removeprefix("release ")
+                for e in supporting if e.source == "release_notes"}
+    release = None
+    if first is not None and versions:
+        rel = session.scalar(select(Release).where(Release.product == product.name,
+            Release.version.in_(versions), Release.released_at < first).order_by(Release.released_at.desc()))
+        if rel is not None:
+            release = {"version": rel.version, "date": aware_utc(rel.released_at).date().isoformat(),
+                       "days_after": (first.date() - aware_utc(rel.released_at).date()).days}
+    return {"investigation_id": inv.id, "rating_drag": drag, "one_star_share": share,
+            "quote": quote, "release": release}
 
 
 @app.post("/fixwatch/{watch_id}/dismiss")
@@ -3712,17 +3798,20 @@ def finding_followup_questions(finding_id: int, product_id: int | None = None,
 def fixwatch_list(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     from echolens.db.models import FixWatch
     from echolens.fixwatch import TERMINAL_FIX_STATUSES
+    from echolens.evidence_summary import dismissed_fixes
     with session_scope() as session:
         p = _scope(session, product_id, user)
         stmt = select(FixWatch).order_by(FixWatch.id.desc())
         if p is not None:
             stmt = stmt.where(FixWatch.product_id == p.id)
         rows = session.scalars(stmt).all()
+        hidden = dismissed_fixes(session, user.get("id"))
         return {"watches": [
             {"id": w.id, "finding_id": w.finding_id, "investigation_id": w.investigation_id,
              "repo": w.repo, "issue_number": w.issue_number, "issue_url": w.issue_url,
              "status": w.status, "metric": w.metric, "baseline_rate": w.baseline_rate,
              "post_rate": w.post_rate,
+             "window_days": w.window_days, "dismissed_today": w.id in hidden,
              # before_after() computes this and _confirm/_inconclusive/_reopen
              # persist it, but nothing served it — so the chart existed in the
              # DB and no caller could reach it. Only sent for terminal statuses,
