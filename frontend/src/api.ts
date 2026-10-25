@@ -561,6 +561,15 @@ export interface Finding {
   /** v15: evidence a reviewer struck, and the flag raised when that broke the two-source rule. */
   rejected_evidence?: { eid: string; user_id: number | null; at: string; note: string }[];
   needs_review?: { reason: string; at: string; eid: string } | null;
+  /** How strongly the cause is supported (investigator/graph.py _label_support). */
+  support_level?: "supported" | "single_channel" | null;
+  support_label?: string;
+  single_channel_note?: string;
+  /** Causal sentences without a citation, moved out of the prose. */
+  working_hypotheses?: string[];
+  working_hypothesis_label?: string;
+  /** trigger → mechanism → symptom → impact; null unless supported. */
+  causal_chain?: CausalChain | null;
 }
 export interface Recommendation {
   rank: number;
@@ -1732,8 +1741,8 @@ export const api = {
   /** Which issue trackers this deployment can file to (booleans, no secrets). */
   trackers: () => get<{ trackers: TrackerInfo[] }>("/integrations/trackers"),
   /** File a finding to GitHub, Linear or Jira — same ticket body everywhere. */
-  createTicket: (findingId: number, tracker: TrackerId) =>
-    post<TicketResult>(scoped(`/findings/${findingId}/ticket?tracker=${tracker}`)),
+  createTicket: (findingId: number, tracker: TrackerId, edits?: { title?: string; body?: string }) =>
+    post<TicketResult>(scoped(`/findings/${findingId}/ticket?tracker=${tracker}`), edits),
   /** Instant look-up of what the wizard is about to connect. Never throws on a
    *  slow store — the server answers `ok: false` with a reason instead. */
   onboardPreview: (q: { play_store?: string; github?: string }) => {
@@ -1852,6 +1861,10 @@ export interface Citation {
   claim_spans: number[];
   /** The exact substring of the review text the finding quotes, if any. */
   highlight: string | null;
+  /** The day the source was written or released, when known. */
+  date?: string | null;
+  /** A review's stars. */
+  rating?: number | null;
 }
 export interface CitationMap {
   investigation_id: number;
