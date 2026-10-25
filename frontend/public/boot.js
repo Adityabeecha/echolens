@@ -11,7 +11,7 @@
   document.documentElement.dataset.theme = theme;
   document.documentElement.style.colorScheme = theme;
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.content = theme === "dark" ? "#101816" : "#f6f4ef";
+  if (meta) meta.content = theme === "dark" ? "#0a0b0e" : "#f4f6f9";
 
   // Non-blocking web fonts: the stylesheet is requested with media="print" and
   // switched on once loaded. This replaces an inline onload="" handler, which

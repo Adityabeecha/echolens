@@ -17,22 +17,99 @@ export function useMediaQuery(query: string): boolean {
   return matches;
 }
 
-// Simple async loader with loading/error/reload.
+/**
+ * The rendered width of an element, kept current by a ResizeObserver, so a
+ * chart can draw at its real size. 0 until measured (callers reserve height,
+ * so nothing shifts when it arrives).
+ */
+export function useElementWidth<E extends HTMLElement>(): [(node: E | null) => void, number] {
+  const [width, setWidth] = useState(0);
+  const observer = useRef<ResizeObserver | null>(null);
+  const ref = useCallback((node: E | null) => {
+    observer.current?.disconnect();
+    observer.current = null;
+    if (!node) return;
+    setWidth(node.getBoundingClientRect().width);
+    if (typeof ResizeObserver === "undefined") return;
+    observer.current = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w != null) setWidth((prev) => (Math.abs(prev - w) >= 1 ? w : prev));
+    });
+    observer.current.observe(node);
+  }, []);
+  return [ref, width];
+}
+
+// ── stale-while-revalidate cache ─────────────────────────────────────────
+//
+// Revisiting a screen used to start from nothing: a skeleton, then the same
+// data it showed a moment ago. Each useAsync now keeps its last successful
+// result in memory, keyed by WHERE it is called from plus its deps, renders it
+// immediately on the next mount, and revalidates in the background. Only a
+// true first load is `loading`. Writes never go through here.
+//
+// The key is the call site, not `fn.toString()`: minified bundles give
+// different functions identical source text (`()=>t(n)`), which would have
+// served one screen another screen's data. Cleared on product switch and on
+// sign-out, so nothing crosses a product or a user.
+const CACHE_MAX = 200;
+const asyncCache = new Map<string, unknown>();
+
+/** Drop every cached read. Call on product switch and sign-out. */
+export function clearAsyncCache(): void {
+  asyncCache.clear();
+}
+
+function remember(key: string, value: unknown): void {
+  asyncCache.delete(key);              // re-insert = most recent
+  asyncCache.set(key, value);
+  if (asyncCache.size > CACHE_MAX) asyncCache.delete(asyncCache.keys().next().value as string);
+}
+
+/** "file:line:col" of the component that called useAsync, or "" if unknown. */
+function callSite(): string {
+  // Frames only: V8 prefixes the stack with an "Error" line, Firefox and
+  // Safari do not. Then [0] callSite, [1] useAsync, [2] the caller. Function
+  // names are mangled in production, so the frame is identified by position
+  // and kept whole (url:line:col is unique per call site).
+  const frames = (new Error().stack ?? "").split("\n").filter((l) => /(^\s*at\s|@)/.test(l));
+  return (frames[2] ?? "").trim();
+}
+
+function depsKey(deps: unknown[]): string {
+  try {
+    return JSON.stringify(deps);
+  } catch {
+    return String(deps.length);
+  }
+}
+
+// Async loader with loading/error/reload and a stale-while-revalidate cache.
 //
 // Every read the loader starts is cancelled when its deps change or the
 // component unmounts (screen or product switched), and is timed out by the
 // api layer — so `loading` always ends, in data or in an error the screen's
 // ErrorState can offer a Retry for. A read cancelled by a product switch while
 // this loader is still mounted (the sidebar, say) is simply asked again.
-export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []): {
+//
+// `loading` is true only while there is nothing to show; `refreshing` is true
+// while a cached result is being revalidated. Pass `opts.key` to share a cache
+// entry between call sites deliberately.
+export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = [], opts?: { key?: string }): {
   data: T | null;
   error: string | null;
   loading: boolean;
+  refreshing: boolean;
   reload: () => void;
 } {
-  const [data, setData] = useState<T | null>(null);
+  const site = useRef<string | null>(null);
+  if (site.current == null) site.current = callSite() || fn.toString();
+  const key = `${opts?.key ?? site.current}|${depsKey(deps)}`;
+  const hit = asyncCache.has(key);
+  const [data, setData] = useState<T | null>(() => (hit ? (asyncCache.get(key) as T) : null));
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!hit);
+  const [refreshing, setRefreshing] = useState(false);
   const [tick, setTick] = useState(0);
   // Monotonic request id. `alive` alone only cancels on dep change; two reloads
   // fired close together could still resolve out of order and let the SLOWER,
@@ -44,11 +121,18 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []): {
     const mine = ++seq.current;
     const current = () => alive && seq.current === mine;
     const ctl = new AbortController();
-    setLoading(true);
+    if (asyncCache.has(key)) {
+      // Show what we had for these deps at once; revalidate behind it.
+      setData(asyncCache.get(key) as T);
+      setLoading(false);
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     let again = false;
     Promise.resolve()
       .then(() => withSignal(ctl.signal, fn))
-      .then((d) => current() && (setData(d), setError(null)))
+      .then((d) => current() && (remember(key, d), setData(d), setError(null)))
       .catch((e) => {
         if (!current()) return;
         if (isAbortError(e)) {
@@ -62,7 +146,7 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []): {
       .finally(() => {
         if (!current()) return;
         if (again) setTick((t) => t + 1);
-        else setLoading(false);
+        else { setLoading(false); setRefreshing(false); }
       });
     return () => {
       alive = false;
@@ -73,7 +157,7 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []): {
 
   // Stable identity so passing it as a prop does not defeat memoisation.
   const reload = useCallback(() => setTick((t) => t + 1), []);
-  return { data, error, loading, reload };
+  return { data, error, loading, refreshing, reload };
 }
 
 /**

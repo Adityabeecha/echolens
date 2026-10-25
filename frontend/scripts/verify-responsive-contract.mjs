@@ -11,10 +11,12 @@ const deleteProduct = readFileSync(new URL("../src/components/DeleteProductModal
 const onboarding = readFileSync(new URL("../src/screens/Onboarding.tsx", import.meta.url), "utf8");
 
 const requiredCss = [
-  "HUMAN PRECISION UI",
-  "--el-canvas-warm",
-  "--el-nav-ink",
-  "--el-accent-teal",
+  "SONAR PRISM",
+  "--el-live",
+  "--el-verified",
+  "--el-lead",
+  "--el-regress",
+  "--el-public-max",
   "@media (max-width: 1200px)",
   "@media (max-width: 900px)",
   "@media (max-width: 720px)",

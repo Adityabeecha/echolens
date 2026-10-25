@@ -15,12 +15,14 @@ const STATUS_COLOR: Record<string, string> = {
   Idle: C.muted
 };
 
-export function Sources({ onAddProduct, productName }: {
+export function Sources({ onAddProduct, productName, openImport = false }: {
   onAddProduct?: () => void; productName: string | null;
+  /** Arrive with the import form open (the header's "Import CSV"). */
+  openImport?: boolean;
 }) {
   const { data, loading, error, reload } = useAsync(() => api.sources(), []);
   const [showConnect, setShowConnect] = useState(false);
-  const [showImport, setShowImport] = useState(false);
+  const [showImport, setShowImport] = useState(openImport);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [resetTarget, setResetTarget] = useState<{ source: string; identifier: string } | null>(null);

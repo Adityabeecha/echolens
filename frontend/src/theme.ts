@@ -56,6 +56,27 @@ export const C = {
   infoBg: v("info-bg"),
   infoLine: v("info-line"),
 
+  // fixed semantics (DESIGN_SYSTEM.md → Colour). Prefer these in new code:
+  // `good`/`bad`/`info` above are legacy aliases of verified/regress/live.
+  live: v("live"),
+  liveBg: v("live-bg"),
+  liveLine: v("live-line"),
+  cite: v("cite"),
+  citeBg: v("cite-bg"),
+  citeLine: v("cite-line"),
+  verified: v("verified"),
+  verifiedBg: v("verified-bg"),
+  verifiedLine: v("verified-line"),
+  lead: v("lead"),
+  leadBg: v("lead-bg"),
+  leadLine: v("lead-line"),
+  /** ONLY for a confirmed multi-source regression. */
+  regress: v("regress"),
+  regressBg: v("regress-bg"),
+  regressLine: v("regress-line"),
+
+  overlay: v("bg-overlay"),
+  inset: v("bg-inset"),
   track: v("track"),
 } as const;
 
@@ -104,33 +125,41 @@ export const E = {
   4: "var(--el-e4)",
 } as const;
 
-/** The one content measure. Replaces 20 hardcoded maxWidth values. */
+/**
+ * App screens are full width: the measure is `none`. Kept so the screens that
+ * still pass `maxWidth: MEASURE` compile and simply stop capping.
+ */
 export const MEASURE = "var(--el-measure)";
+/** The public-page container (landing, shared briefs): 1440–1600px. */
+export const PUBLIC_MAX = "var(--el-public-max)";
 
 // Map a terminal-trace kind to its accent color (matches the design).
 export const KIND_COLOR: Record<string, string> = {
   THINK: C.muted,
-  TOOL: C.info,
-  EVID: C.accent,
-  UPDT: C.good,
-  FAIL: C.bad,
+  TOOL: C.live,
+  EVID: C.cite,
+  UPDT: C.verified,
+  // A refused step is an honesty check doing its job, not a regression, so it
+  // stays neutral (coral is reserved for confirmed regressions).
+  FAIL: C.text3,
   CHECK: C.faint,
   SPEC: C.accentHi, // v2.0 specialist delegation
-  REFUTE: C.info, // v5.0 counter-evidence duty (attempted refutation)
+  REFUTE: C.live, // v5.0 counter-evidence duty (attempted refutation)
 };
 
 export function statusColor(status: string): string {
   return (
     {
-      resolved: C.good,
+      resolved: C.verified,
       insufficient_evidence: C.text3,
-      needs_human: C.accent,
-      budget_exhausted: C.bad,
-      running: C.accent,
+      needs_human: C.lead,
+      budget_exhausted: C.muted,
+      running: C.live,
+      queued: C.live,
     }[status] ?? C.muted
   );
 }
 
 export function confColor(conf: number): string {
-  return conf >= 0.7 ? C.good : conf >= 0.5 ? C.accent : C.muted;
+  return conf >= 0.7 ? C.verified : conf >= 0.5 ? C.lead : C.muted;
 }
