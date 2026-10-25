@@ -15,7 +15,7 @@ from typing import Any
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -2161,9 +2161,47 @@ def _product_intents(session, product: str | None, days: int = 90) -> dict:
     return {"product": product, "days": days, "total": total, "counts": dict(counts)}
 
 
+def _import_mapping(raw: str) -> dict | None:
+    """The column matching from the import screen: JSON {field: column}."""
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        raise HTTPException(422, "the column matching could not be read")
+    if not isinstance(value, dict) or not all(isinstance(v, (str, type(None))) for v in value.values()):
+        raise HTTPException(422, "the column matching could not be read")
+    return value
+
+
+@app.post("/import/reviews/preview")
+async def import_reviews_preview(file: UploadFile = File(...), mapping: str = Form(""),
+                                 product: str = "", source: str = "csv", product_id: int | None = None,
+                                 user: dict = Depends(require_role("admin"))) -> dict:
+    """A dry run of /import/reviews: columns, the first rows, the column
+    matching (guessed unless given), and the rows that would be skipped and why.
+    Writes nothing."""
+    from echolens.importers.csv_reviews import preview_reviews_csv
+    raw = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"file too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)")
+    text = _upload_text(raw, file.filename)
+    with session_scope() as session:
+        name = product or None
+        if product_id is not None:
+            prod = _scope(session, product_id, user)
+            if prod is not None:
+                name = prod.name
+        try:
+            return preview_reviews_csv(session, text, product=name, source=(source or "csv"),
+                                       mapping=_import_mapping(mapping))
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+
+
 @app.post("/import/reviews")
 async def import_reviews(file: UploadFile = File(...), product: str = "", source: str = "csv",
-                        product_id: int | None = None,
+                        product_id: int | None = None, mapping: str = Form(""),
                         user: dict = Depends(require_role("admin"))) -> dict:
     """Import reviews from any export (App Store, Zendesk, spreadsheet) as CSV
     or Excel. Widens the evidence base beyond the live scrapers. Idempotent by
@@ -2189,7 +2227,8 @@ async def import_reviews(file: UploadFile = File(...), product: str = "", source
             if prod is not None:
                 name = prod.name
         try:
-            result = import_reviews_csv(session, text, product=name, source=(source or "csv"))
+            result = import_reviews_csv(session, text, product=name, source=(source or "csv"),
+                                        mapping=_import_mapping(mapping))
         except ValueError as err:
             raise HTTPException(422, str(err))
     return result
@@ -3596,7 +3635,8 @@ def _do_approve(finding_id: int, note: str) -> dict:
         # so record the channel it came from rather than pretending it was nobody.
         review_mod.approve(session, finding, f"[via Slack] {note}" if note else "[via Slack]")
         result = {"status": "approved", "finding_id": finding.id}
-        if settings.auto_create_issue_on_approve:
+        from echolens.alert_settings import effective_alerts
+        if effective_alerts(session)["auto_create_issue_on_approve"]:
             result["issue"] = _auto_issue(session, finding)
         return result
 
@@ -4712,7 +4752,8 @@ def sources(product_id: int | None = None, user: dict = Depends(current_user)) -
         from echolens.overview import freshness
         return {"connected": connected, "product": prod.name if prod else None,
                 "last_synced": freshness(session, prod),
-                "available": ["Zendesk export", "Discord community", "In-app feedback"]}
+                # Not collected directly; each can arrive as a CSV import.
+                "available": ["Zendesk", "Intercom", "Discord community", "In-app feedback"]}
 
 
 @app.get("/costs/summary")
@@ -4755,7 +4796,30 @@ def costs_summary(product_id: int | None = None, user: dict = Depends(current_us
                 "time_flagged": bool(c.get("duration_flagged")),
                 "cost": _money(c.get("cost", 0)),
             })
+        # This month, every product the caller may see: what each one spent and
+        # how many problems it looked into. Two grouped queries, whatever the
+        # number of products (spend counts a call through its case, or by tag).
+        from sqlalchemy import func as _f
+        owner = _f.coalesce(Investigation.product_id, LLMCall.product_id)
+        spend = dict(session.execute(
+            select(owner, _f.sum(LLMCall.cost))
+            .outerjoin(Investigation, Investigation.id == LLMCall.investigation_id)
+            .where(LLMCall.created_at >= month_floor).group_by(owner)).all())
+        looked = dict(session.execute(
+            select(Investigation.product_id, _f.count(Investigation.id))
+            .where(Investigation.created_at >= month_floor)
+            .group_by(Investigation.product_id)).all())
+        by_product = [{"product_id": row.id, "product": row.name,
+                       "month_to_date": round(float(spend.get(row.id) or 0.0), 4),
+                       "investigations": int(looked.get(row.id) or 0)}
+                      for row in _visible_products(session, user)]
+        month_invs = (int(looked.get(pid) or 0) if pid is not None
+                      else int(sum(looked.values())))
         return {
+            "by_product": by_product,
+            # This month's spend divided by the problems looked into this month.
+            "per_problem": round(month_to_date / month_invs, 4) if month_invs else None,
+            "investigations_this_month": int(month_invs),
             "stats": {
                 "spent_today": round(spent_today, 4),
                 "avg_per_resolved": avg_resolved,
@@ -4777,6 +4841,31 @@ class LimitsBody(BaseModel):
     per_case_wall_min: int | None = Field(None, ge=1, le=1440)
     daily_cost_budget: float | None = Field(None, ge=0, le=10000)
     monthly_budget: float | None = Field(None, ge=0, le=100000)
+    # Settings → Sensitivity: the strength (z) a spike must reach. 1.0 is the
+    # detector's own floor and the default; read by detector.detect.min_case_z.
+    detector_min_z: float | None = Field(None, ge=1.0, le=3.0)
+
+
+class AlertsBody(BaseModel):
+    alerts_enabled: bool | None = None
+    alert_instant_min_severity: float | None = Field(None, ge=0.0, le=1.0)
+    auto_create_issue_on_approve: bool | None = None
+
+
+@app.get("/settings/alerts")
+def get_alert_settings(user: dict = Depends(current_user)) -> dict:
+    """Alerts on/off, how serious before an instant alert, auto-issue on
+    approve — plus whether Slack and GitHub are connected (booleans only)."""
+    from echolens.alert_settings import channels, effective_alerts
+    with session_scope() as session:
+        return {**effective_alerts(session), **channels()}
+
+
+@app.put("/settings/alerts")
+def put_alert_settings(body: AlertsBody, user: dict = Depends(require_role("admin"))) -> dict:
+    from echolens.alert_settings import channels, save_alerts
+    with session_scope() as session:
+        return {**save_alerts(session, body.model_dump()), **channels()}
 
 
 @app.put("/settings/limits")
@@ -4800,7 +4889,7 @@ def set_limits(body: LimitsBody, product_id: int | None = None,
         # (one field) does not blank the others.
         current = _limits(session, prod.id if prod else None)
         for k in ("daily_investigations", "per_case_budget", "per_case_wall_min",
-                  "daily_cost_budget", "monthly_budget"):
+                  "daily_cost_budget", "monthly_budget", "detector_min_z"):
             v = getattr(body, k)
             if v is not None:
                 current[k] = v

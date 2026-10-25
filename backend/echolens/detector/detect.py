@@ -553,6 +553,21 @@ def detect_low_volume_watch(session: Session, as_of: datetime | None = None,
 
 # v8.0 noise gate: a signal below this z never becomes a case at all.
 MIN_CASE_Z = SEV3_Z          # detector-level filter, not a display filter
+# Settings → Sensitivity: an admin may raise the bar a spike must clear, stored
+# as "detector_min_z" with the other limits. Never below MIN_CASE_Z (the
+# detectors don't produce weaker signals) and never above SEV1_Z.
+SENSITIVITY_KEY = "detector_min_z"
+MAX_CASE_Z = SEV1_Z
+
+
+def min_case_z(session: Session, product_id: int | None) -> float:
+    """The strength a spike must reach for this product (default MIN_CASE_Z)."""
+    from echolens.orchestrator.queue import effective_limits
+    try:
+        value = float(effective_limits(session, product_id).get(SENSITIVITY_KEY, MIN_CASE_Z))
+    except (TypeError, ValueError):
+        return MIN_CASE_Z
+    return min(MAX_CASE_Z, max(MIN_CASE_Z, value))
 MERGE_WINDOW_DAYS = 7        # same metric within N days → same anomaly, not a new one
 
 
@@ -655,16 +670,19 @@ def scan(session: Session, as_of: datetime | None = None, persist: bool = True,
     # candidate, which also misreported how bad the signal was.
     # low_volume_watch carries no z-score at all; its own bar (>= 3 distinct
     # reviews in 14 days) already gated it.
-    candidates = [c for c in candidates
-                  if c.type in ("issue_velocity_surge", "low_volume_watch")
-                  or c.severity in ("SEV1", "SEV2")
-                  or c.z >= MIN_CASE_Z]
-    window_start = as_of - timedelta(days=win.recent)
     # One slug scheme: whenever an event belongs to a product it carries the
     # product-prefixed slug. A scan that was not told the product id (the CLI)
     # resolves it, otherwise it wrote unprefixed slugs next to the UI's `p1-...`
     # ones and the same anomaly was stored twice.
     product_id = _resolve_product_id(session, product, product_id)
+    # At the default bar the gate is exactly as before. A raised bar (Settings →
+    # Sensitivity) applies to the z-score alone, so a SEV2 below it drops too.
+    bar = min_case_z(session, product_id)
+    candidates = [c for c in candidates
+                  if c.type in ("issue_velocity_surge", "low_volume_watch")
+                  or (c.z >= bar if bar > MIN_CASE_Z
+                      else (c.severity in ("SEV1", "SEV2") or c.z >= MIN_CASE_Z))]
+    window_start = as_of - timedelta(days=win.recent)
     # A theme someone muted in Cases raises no NEW signals. Only theme-shaped
     # detectors are filtered: muting a complaint must never silence the
     # product-wide 1-star spike or rating drop.

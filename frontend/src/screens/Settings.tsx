@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react";
 import { ProductRow, api, getRole, isAdmin, isGuest } from "../api";
 import { withToast } from "../components/Toast";
+import { PillTabs, SerifHeadline } from "../components/casefile";
 import { money } from "../format";
 import { useAsync } from "../hooks";
-import { C, MEASURE, R, S, T, mono } from "../theme";
 import { SettingsSection } from "../nav";
-import { Bar, Centered, ErrorState, Label, ScreenHeader } from "../ui";
-import { Icon } from "../components/Icon";
-import { SubTabs } from "../components/SubTabs";
+import { Button, Centered, ErrorState } from "../ui";
 import { Calibration } from "./Calibration";
 import { Costs } from "./Costs";
+import { CostsSection, HonestySection, IntegrationsSection, SensitivitySection } from "./settings/Sections";
+import "./settings/ps.css";
 
 interface Props {
   product: ProductRow | null;
@@ -23,194 +23,132 @@ interface Props {
   onGoReview?: () => void;
 }
 
-const SECTIONS: { key: SettingsSection; label: string }[] = [
-  { key: "general", label: "Budgets & product" },
-  { key: "costs", label: "Costs" },
-  { key: "calibration", label: "Calibration" },
+const SECTIONS: { id: SettingsSection; label: string }[] = [
+  { id: "general", label: "Limits & product" },
+  { id: "costs", label: "Costs" },
+  { id: "sensitivity", label: "Sensitivity" },
+  { id: "honesty", label: "Honesty checks" },
+  { id: "integrations", label: "Integrations" },
+  { id: "calibration", label: "How often it's right" },
 ];
 
 /**
- * Settings — the parts of "how EchoLens runs" that are a product decision.
- *
- * Budgets and limits used to live on the Costs screen, wedged between a token
- * table and a per-case cost breakdown: a PM who wanted to spend less had to go
- * looking through a developer's page to do it. The deep accounting stays on
- * Costs; the levers are here.
+ * Settings — how EchoLens runs for this product: limits, what it costs, how
+ * sensitive spike detection is, the honesty checks (read-only), alerts and
+ * trackers, and calibration. Each section opens with its answer in serif.
  */
 export function Settings({
-  product, onGoCosts, onGoSources, onAddProduct, onDeleteProduct,
-  section = "general", onSection, onGoReview
+  product, onGoCosts, onGoSources, onAddProduct, onDeleteProduct, section = "general", onSection, onGoReview,
 }: Props) {
   const guest = isGuest();
-  const session = guest ? "Exploring the demo (read-only)" : `SIGNED IN AS ${getRole().toUpperCase()}`;
-  // Calibration ("is EchoLens right as often as it claims?") was its own
-  // System screen. It is the question of how far to trust the numbers, so it
-  // is a section here now, and #/calibration redirects to it.
+  const admin = isAdmin() && !guest;
+  const why = guest ? "Sign in with an admin account to change this." : "Only admins can change this.";
+  const needsCosts = section === "general" || section === "costs" || section === "sensitivity";
+  const costs = useAsync(() => (needsCosts ? api.costsSummary() : Promise.resolve(null)), [needsCosts]);
+
+  const body = () => {
+    if (section === "honesty") return <HonestySection />;
+    if (section === "integrations") return <IntegrationsSection admin={admin} why={why} trackers={<TrackersPanel />} />;
+    if (section === "calibration") {
+      return (
+        <div className="ps-sections">
+          <SerifHeadline as="h1" size="page">How often EchoLens is right when it says it's sure.</SerifHeadline>
+          <div style={{ display: "flex", minHeight: 420 }}><Calibration embedded onGoCases={() => onGoReview?.()} /></div>
+        </div>
+      );
+    }
+    if (costs.loading && !costs.data) return <Centered>Loading settings…</Centered>;
+    if (costs.error || !costs.data) return <ErrorState title="Couldn't load your settings" onRetry={costs.reload} />;
+    if (section === "costs") {
+      // The per-problem ledger (was the Costs screen; /costs links land here).
+      return <CostsSection data={costs.data}><div style={{ display: "flex", minHeight: 360 }}><Costs embedded /></div></CostsSection>;
+    }
+    if (section === "sensitivity") return <SensitivitySection data={costs.data} admin={admin} why={why} onSaved={costs.reload} />;
+    return (
+      <GeneralSection limits={costs.data.limits} product={product} spent={costs.data.month_to_date}
+        budget={costs.data.budget} admin={admin} why={why} onSaved={costs.reload} onGoCosts={onGoCosts}
+        onGoSources={onGoSources} onAddProduct={onAddProduct} onDeleteProduct={onDeleteProduct} />
+    );
+  };
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <ScreenHeader
-        title="Settings"
-        product={product?.name}
-        subtitle="Budgets, limits, calibration and this product"
-        right={
-          <span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>
-            {session}
-          </span>
-        }
-      />
-      <SubTabs label="Settings sections" tabs={SECTIONS} active={section}
-               onChange={(s) => onSection?.(s)} />
-      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-        {section === "calibration" ? (
-          <Calibration embedded onGoCases={() => onGoReview?.()} />
-        ) : section === "costs" ? (
-          // The per-case ledger was its own System screen; #/costs links land here.
-          <Costs embedded />
-        ) : (
-          <GeneralSection product={product} onGoCosts={onGoCosts} onGoSources={onGoSources}
-                          onAddProduct={onAddProduct} onDeleteProduct={onDeleteProduct} />
-        )}
-      </div>
+    <div className="ps-screen">
+      <main className="ps-main">
+        <div className="ps-head">
+          <div className="ps-head__meta">
+            <span>Settings{product ? <> · <b>{product.name}</b></> : null}</span>
+            <span className="ps-spacer" />
+            <span>{guest ? "Exploring the demo (read-only)" : `Signed in as ${getRole()}`}</span>
+          </div>
+          <PillTabs label="Settings sections" panelId="ps-settings" value={section}
+            tabs={SECTIONS} onChange={(s) => onSection?.(s)} />
+        </div>
+        <div id="ps-settings" role="tabpanel" aria-label={SECTIONS.find((s) => s.id === section)?.label}>
+          {body()}
+        </div>
+      </main>
     </div>
   );
 }
 
-function GeneralSection({
-  product, onGoCosts, onGoSources, onAddProduct, onDeleteProduct
-}: Pick<Props, "product" | "onGoCosts" | "onGoSources" | "onAddProduct" | "onDeleteProduct">) {
-  const { data, loading, error, reload } = useAsync(() => api.costsSummary(), []);
-  const guest = isGuest();
-  const admin = isAdmin() && !guest;
-  const why = guest ? "Sign in with an admin account to change this." : "Only admins can change this.";
+type Limits = { daily_investigations: number; per_case_budget: number; per_case_wall_min: number };
 
-  if (loading && !data) return <Centered>Loading settings…</Centered>;
-  if (error || !data) {
-    return (
-      <div style={{ padding: 28 }}>
-        <ErrorState title="Couldn't load your settings" onRetry={reload} />
-      </div>
-    );
-  }
-
-  const spentPct = data.budget ? (data.month_to_date / data.budget) * 100 : 0;
-  const over = data.month_to_date > data.budget;
-
+function GeneralSection({ limits, product, spent, budget, admin, why, onSaved, onGoCosts, onGoSources, onAddProduct,
+  onDeleteProduct }: {
+  limits: Limits; product: ProductRow | null; spent: number; budget: number; admin: boolean; why: string;
+  onSaved: () => void; onGoCosts: () => void; onGoSources: () => void; onAddProduct: () => void;
+  onDeleteProduct: (p: ProductRow) => void;
+}) {
   return (
-      <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]} ${S[12]}` }}>
-        <Label style={{ marginBottom: S[2] }}>SPEND THIS MONTH</Label>
-        <div style={{ maxWidth: MEASURE, padding: `${S[4]} ${S[5]}`, background: C.card,
-                      border: `1px solid ${over ? `${C.bad}55` : C.border2}`, borderRadius: R.card }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline",
-                        marginBottom: S[3], flexWrap: "wrap", gap: S[2] }}>
-            <span style={{ fontSize: T.base, color: C.text2 }}>
-              {money(data.month_to_date)} of {money(data.budget)} used
-            </span>
-            <span style={{ fontFamily: mono, fontSize: T.sm,
-                           color: over ? C.bad : C.muted }}>
-              {over
-                ? `${money(data.month_to_date - data.budget)} over budget`
-                : `${money(data.budget - data.month_to_date)} left`}
-            </span>
-          </div>
-          <Bar pct={Math.min(100, spentPct)} color={over ? C.bad : C.accent} height={8} />
-          <div style={{ fontSize: T.sm, color: C.dim, marginTop: S[3], lineHeight: "var(--el-lh-normal)" }}>
-            Investigations stop at the per-case caps below, so a runaway case cannot spend the
-            month.{" "}
-            <button onClick={onGoCosts} className="el-btn"
-              style={{ color: C.accent }}>
-              See what each case cost →
-            </button>
-          </div>
-        </div>
-
-        <Label style={{ margin: "28px 0 10px" }}>
-          LIMITS{admin ? "" : " · READ-ONLY"}
-        </Label>
-        {!admin && (
-          <p style={{ fontSize: T.sm, color: C.dim, margin: `0 0 ${S[2]}`, maxWidth: MEASURE }}>{why}</p>
-        )}
-        <LimitsPanel limits={data.limits} onSaved={reload} admin={admin} />
-
-        <Label style={{ margin: "28px 0 10px" }}>THIS PRODUCT</Label>
-        <div style={{ maxWidth: MEASURE, padding: `${S[4]} ${S[5]}`, background: C.card,
-                      border: `1px solid ${C.border2}`, borderRadius: R.card,
-                      display: "flex", flexDirection: "column", gap: S[3] }}>
-          <Field label="Name" value={product?.name ?? data.product ?? "—"} />
-          <Field label="Play Store package" value={product?.package_name ?? "not connected"} />
+    <div className="ps-sections">
+      <SerifHeadline as="h1" size="page">
+        Up to {limits.daily_investigations} problems a day, {money(limits.per_case_budget)} each at most.
+      </SerifHeadline>
+      <p className="ps-note">{money(spent)} of {money(budget)} spent this month.{" "}
+        <button type="button" className="ps-link" onClick={onGoCosts}>See what it went on →</button></p>
+      <section className="ps-section" aria-labelledby="ps-limits">
+        <h2 id="ps-limits">Limits{admin ? "" : " · read-only"}</h2>
+        {!admin && <span className="ps-muted">{why}</span>}
+        <LimitsPanel limits={limits} onSaved={onSaved} admin={admin} />
+      </section>
+      <section className="ps-section" aria-labelledby="ps-product">
+        <h2 id="ps-product">This product</h2>
+        <div className="ps-card">
+          <Field label="Name" value={product?.name ?? "—"} />
+          <Field label="Google Play app" value={product?.package_name ?? "not connected"} />
           <Field label="GitHub repo" value={product?.github_repo ?? "not connected"} />
-          <div style={{ display: "flex", gap: S[2], marginTop: S[1], flexWrap: "wrap" }}>
-            <button onClick={onGoSources} className="el-btn"
-              style={{ background: "transparent", color: C.text2, border: `1px solid ${C.border3}`,
-                       borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base }}>
-              Manage sources
-            </button>
-            {admin && (
-              <button onClick={onAddProduct} className="el-btn"
-                style={{ background: "transparent", color: C.text2,
-                         border: `1px solid ${C.border3}`, borderRadius: R.control, padding: `${S[2]} ${S[3]}`,
-                         fontSize: T.base }}>
-                Add another product
-              </button>
-            )}
+          <div className="ps-row">
+            <Button variant="ghost" size="sm" onClick={onGoSources}>Manage sources</Button>
+            {admin && <Button variant="ghost" size="sm" onClick={onAddProduct}>Add another product</Button>}
             {product && (
-              <button onClick={() => admin && onDeleteProduct(product)} className="el-btn"
-                disabled={!admin}
-                title={admin ? undefined : why}
-                style={{ background: "transparent", color: C.bad, border: `1px solid ${C.bad}55`,
-                         borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.base,
-                         opacity: admin ? 1 : 0.45, cursor: admin ? "pointer" : "not-allowed" }}>
-                Delete {product.name}
-              </button>
+              <Button variant="danger" size="sm" disabled={!admin} title={admin ? undefined : why}
+                onClick={() => admin && onDeleteProduct(product)}>Delete {product.name}</Button>
             )}
           </div>
-          {!admin && product && (
-            <div style={{ fontSize: T.xs, color: C.dim }}>
-              Deleting a product is admin-only. {why}
-            </div>
-          )}
+          {!admin && product && <span className="ps-muted">Deleting a product is for admins. {why}</span>}
         </div>
-
-        <Label as="h2" style={{ margin: "28px 0 10px" }}>ISSUE TRACKERS</Label>
-        <TrackersPanel />
-      </div>
+      </section>
+    </div>
   );
 }
 
-/** Which trackers a finding can be filed to. They are configured on the server
- *  only, so this names the settings to set rather than offering a form. */
+/** Which trackers a problem can be sent to. Set up on the server only. */
 function TrackersPanel() {
   const { data, loading, error, reload } = useAsync(() => api.trackers(), []);
   const ENV: Record<string, string> = {
-    github: "GITHUB_TOKEN",
-    linear: "LINEAR_API_KEY + LINEAR_TEAM_ID",
+    github: "GITHUB_TOKEN", linear: "LINEAR_API_KEY + LINEAR_TEAM_ID",
     jira: "JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_PROJECT_KEY",
   };
   return (
-    <div style={{ maxWidth: MEASURE, padding: `${S[4]} ${S[5]}`, background: C.card,
-                  border: `1px solid ${C.border2}`, borderRadius: R.card,
-                  display: "flex", flexDirection: "column", gap: S[3] }}>
-      {loading && !data && <span style={{ fontSize: T.sm, color: C.dim }}>Checking trackers…</span>}
-      {error && !data && (
-        <span style={{ fontSize: T.sm, color: C.muted }}>
-          Couldn't check which trackers are set up.{" "}
-          <button onClick={reload} className="el-btn" style={{ color: C.accent }}>Retry</button>
-        </span>
-      )}
+    <div className="ps-card">
+      {loading && !data && <span className="ps-muted">Checking…</span>}
+      {error && !data && <span className="ps-muted">Couldn't check. <button type="button" className="ps-link" onClick={reload}>Retry</button></span>}
       {data?.trackers.map((t) => (
-        <div key={t.id} style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: S[3],
-                                  alignItems: "baseline" }}>
-          <span style={{ display: "flex", alignItems: "center", gap: S[2], fontSize: T.sm, color: C.text2 }}>
-            <Icon name={t.configured ? "check" : "circle"} size={12}
-                  style={{ color: t.configured ? C.good : C.faint }} />
-            {t.label}
-          </span>
-          <span style={{ fontSize: T.sm, color: t.configured ? C.text3 : C.dim, minWidth: 0 }}>
-            {t.configured ? "Connected. Findings can be filed here." : (
-              <>Not set up. Set{" "}
-                <span style={{ fontFamily: mono, fontSize: T.xs, wordBreak: "break-word" }}>{ENV[t.id]}</span>
-                {" "}on the server.</>
-            )}
-          </span>
+        <div key={t.id} className="ps-row" style={{ justifyContent: "space-between" }}>
+          <span><i className={`ps-dot ${t.configured ? "is-healthy" : ""}`} aria-hidden
+            style={{ display: "inline-block", marginRight: 8, background: t.configured ? undefined : "var(--el-line-strong)" }} />{t.label}</span>
+          <span className="ps-muted" title={t.configured ? undefined : `Set ${ENV[t.id]} on the server`}>
+            {t.configured ? "Connected — problems can be sent here" : "Not set up on the server"}</span>
         </div>
       ))}
     </div>
@@ -219,85 +157,51 @@ function TrackersPanel() {
 
 function Field({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "170px 1fr", gap: S[3],
-                  alignItems: "baseline" }}>
-      <span style={{ fontSize: T.sm, color: C.muted }}>{label}</span>
-      <span style={{ fontFamily: mono, fontSize: T.sm, color: C.text2, wordBreak: "break-all" }}>
-        {value}
-      </span>
+    <div className="ps-row" style={{ justifyContent: "space-between" }}>
+      <span className="ps-muted">{label}</span>
+      <span style={{ fontFamily: "var(--el-mono)", fontSize: 13, overflowWrap: "anywhere" }}>{value}</span>
     </div>
   );
 }
 
-function LimitsPanel({ limits, onSaved, admin }: {
-  limits: { daily_investigations: number; per_case_budget: number; per_case_wall_min: number };
-  onSaved: () => void;
-  admin: boolean;
-}) {
+function LimitsPanel({ limits, onSaved, admin }: { limits: Limits; onSaved: () => void; admin: boolean }) {
   const [state, setState] = useState(limits);
   useEffect(() => setState(limits), [limits]);
-
-  const adjust = async (key: keyof typeof state, delta: number, min: number, max: number) => {
+  const adjust = async (key: keyof Limits, delta: number, min: number, max: number) => {
     const before = state;
     const next = Math.min(max, Math.max(min, +(state[key] + delta).toFixed(2)));
     if (next === state[key]) return;
     setState({ ...state, [key]: next });
-    const ok = await withToast(() => api.setLimits({ [key]: next }), {
-      success: "Limit saved.",
-      failure: "Couldn't save that limit"
-    });
+    const ok = await withToast(() => api.setLimits({ [key]: next }), { success: "Saved.", failure: "Couldn't save that limit" });
     if (!ok) setState(before);
     else onSaved();
   };
-
-  const fields: {
-    key: keyof typeof state; name: string; explain: string;
-    fmt: (v: number) => string; step: number; min: number; max: number;
-  }[] = [
-    { key: "daily_investigations", name: "Investigations per day",
-      explain: "Anything past this queues for tomorrow rather than being dropped.",
-      fmt: (v) => `${v} / day`, step: 1, min: 1, max: 50 },
-    { key: "per_case_budget", name: "Budget per case",
-      explain: "A case that hits this stops and reports budget exhausted, honestly.",
-      fmt: (v) => money(v), step: 0.25, min: 0.25, max: 10 },
-    { key: "per_case_wall_min", name: "Time per case",
-      explain: "Wall-clock cap, so nothing runs unattended forever.",
-      fmt: (v) => `${v} min`, step: 5, min: 5, max: 240 },
+  const fields: { key: keyof Limits; name: string; explain: string; fmt: (v: number) => string;
+                  step: number; min: number; max: number }[] = [
+    { key: "daily_investigations", name: "Problems looked into per day",
+      explain: "Past this, new ones wait for tomorrow — nothing is dropped.", fmt: (v) => `${v} a day`, step: 1, min: 1, max: 50 },
+    { key: "per_case_budget", name: "Most one problem may cost",
+      explain: "A problem that reaches this stops and says it ran out of budget.", fmt: (v) => money(v), step: 0.25, min: 0.25, max: 10 },
+    { key: "per_case_wall_min", name: "Longest one problem may take",
+      explain: "So nothing runs unattended forever.", fmt: (v) => `${v} min`, step: 5, min: 5, max: 240 },
   ];
-
   return (
-    <div style={{ display: "flex", gap: S[3], maxWidth: MEASURE, flexWrap: "wrap" }}>
+    <div className="ps-checks">
       {fields.map((f) => (
-        <div key={f.key} style={{ flex: 1, minWidth: 240, padding: `${S[3]} ${S[4]}`, background: C.card,
-                                  border: `1px solid ${C.border2}`, borderRadius: R.card }}>
-          <div style={{ display: "flex", alignItems: "center", gap: S[3] }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: T.sm, color: C.text3 }}>{f.name}</div>
-              <div style={{ fontFamily: mono, fontSize: T.lg, color: C.text, marginTop: S[1] }}>
-                {f.fmt(state[f.key])}
-              </div>
-            </div>
+        <div key={f.key} className="ps-check" style={{ gap: 10 }}>
+          <span className="ps-muted">{f.name}</span>
+          <div className="ps-row" style={{ justifyContent: "space-between" }}>
+            <strong style={{ fontSize: 28, fontWeight: 600, letterSpacing: "-1px" }}>{f.fmt(state[f.key])}</strong>
             {admin && (
-              <div style={{ display: "flex", flexDirection: "column", gap: S[1] }}>
-                <button className="el-btn" aria-label={`Increase ${f.name}`}
-                  onClick={() => adjust(f.key, f.step, f.min, f.max)} style={stepBtn}>
-                  <Icon name="chevronUp" size={12} /></button>
-                <button className="el-btn" aria-label={`Decrease ${f.name}`}
-                  onClick={() => adjust(f.key, -f.step, f.min, f.max)} style={stepBtn}>
-                  <Icon name="chevronDown" size={12} /></button>
-              </div>
+              <span className="ps-row" style={{ gap: 6 }}>
+                <Button variant="ghost" size="sm" aria-label={`Decrease ${f.name}`} onClick={() => adjust(f.key, -f.step, f.min, f.max)}>−</Button>
+                <Button variant="ghost" size="sm" aria-label={`Increase ${f.name}`} onClick={() => adjust(f.key, f.step, f.min, f.max)}>+</Button>
+              </span>
             )}
           </div>
-          <div style={{ fontSize: T.xs, color: C.dim, marginTop: S[2], lineHeight: "var(--el-lh-normal)" }}>
-            {f.explain}
-          </div>
+          <span className="ps-muted">{f.explain}</span>
         </div>
       ))}
     </div>
   );
 }
-
-const stepBtn: React.CSSProperties = {
-  width: 22, height: 20, borderRadius: R.sm, border: `1px solid ${C.border3}`, background: C.hover,
-  color: C.muted, fontSize: T.micro, lineHeight: 1
-};

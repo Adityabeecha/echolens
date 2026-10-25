@@ -1018,6 +1018,30 @@ export interface AvailableSource {
 export interface AvailableSourcesResp {
   sources: AvailableSource[];
 }
+export type ImportField = "text" | "rating" | "version" | "date" | "source" | "author";
+export type ImportMapping = Partial<Record<ImportField, string | null>>;
+export interface ImportPreview {
+  columns: string[];
+  /** The first rows, as the file has them. */
+  rows: Record<string, string>[];
+  mapping: ImportMapping;
+  total: number | null;
+  would_import: number;
+  skipped: number;
+  /** Plain reason → rows. */
+  reasons: Record<string, number>;
+  problems: { row: number; reason: string }[];
+  undated: number;
+  error: string | null;
+}
+export interface AlertSettings {
+  alerts_enabled: boolean;
+  /** 0–1: a problem at or above this severity is sent at once; below waits for the digest. */
+  alert_instant_min_severity: number;
+  auto_create_issue_on_approve: boolean;
+  slack_connected: boolean;
+  github_connected: boolean;
+}
 export interface CostsSummary {
   stats: {
     spent_today: number;
@@ -1033,7 +1057,14 @@ export interface CostsSummary {
     daily_investigations: number;
     per_case_budget: number;
     per_case_wall_min: number;
+    /** Settings → Sensitivity: the strength (z) a spike must reach; 1.0 by default. */
+    detector_min_z?: number;
   };
+  /** This month, per visible product. */
+  by_product?: { product_id: number; product: string; month_to_date: number; investigations: number }[];
+  /** This month's spend ÷ problems looked into this month; null with none. */
+  per_problem?: number | null;
+  investigations_this_month?: number;
   rows: {
     id: string;
     outcome: string;
@@ -1309,7 +1340,13 @@ export interface PortfolioProduct {
   health_label: string;
   reasons: PortfolioReason[];
   headline: string;
-  top_problem: { investigation_id: number; summary: string; band: string; sev_score: number } | null;
+  top_problem: {
+    investigation_id: number; summary: string; band: string; sev_score: number;
+    /** What the verdict stamp reads (absent on rows stored before these existed). */
+    status?: string; support_level?: string | null; needs_review?: boolean; fix_status?: string | null;
+    /** Stars this problem is estimated to cost. */
+    rating_impact?: number;
+  } | null;
   open_problems: number;
   regressions: number;
   untriaged: number;
@@ -1319,6 +1356,12 @@ export interface PortfolioProduct {
   negative_rate_delta_pct: number | null;
   confirmed_fixes: number;
   has_data: boolean;
+  /** Proven by two independent kinds of source and not fixed yet. */
+  confirmed_open?: number;
+  /** Average stars per week for 12 weeks, oldest first; null for a week with no reviews. */
+  rating_weekly?: (number | null)[];
+  /** What people complain about, in their words. */
+  top_topics?: string[];
 }
 export interface TransferStats {
   seeded_cases: number;
@@ -1723,9 +1766,27 @@ export const api = {
   requestReview: (invId: number, note: string) =>
     post<{ request_id: number; status: string }>(
       scoped(`/investigations/${invId}/review-request`), { note }),
-  importReviews: (file: File, product?: string, source = "csv") => {
+  /** A dry run of importReviews: columns, first rows, matching, row problems. */
+  previewImport: (file: File, mapping?: ImportMapping | null, source = "csv") => {
     const fd = new FormData();
     fd.append("file", file);
+    if (mapping) fd.append("mapping", JSON.stringify(mapping));
+    const qs = new URLSearchParams({ source });
+    const pid = getActiveProduct();
+    if (pid != null) qs.set("product_id", String(pid));
+    const path = `/import/reviews/preview?${qs.toString()}`;
+    return timed(path, [], (signal) => writeFetch(path, { method: "POST", body: fd, signal }).then(async (r) => {
+      if (!r.ok) {
+        handle(r.status);
+        throw new Error((await r.json().catch(() => ({})))?.detail || `preview → ${r.status}`);
+      }
+      return r.json() as Promise<ImportPreview>;
+    }));
+  },
+  importReviews: (file: File, product?: string, source = "csv", mapping?: ImportMapping | null) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (mapping) fd.append("mapping", JSON.stringify(mapping));
     const qs = new URLSearchParams({ source });
     if (product) qs.set("product", product);
     // Without a product the importer writes Review(product=None): the rows land
@@ -1744,7 +1805,8 @@ export const api = {
         handle(r.status);
         throw new Error((await r.json().catch(() => ({})))?.detail || `import → ${r.status}`);
       }
-      return r.json() as Promise<{ imported: number; skipped: number; total: number }>;
+      return r.json() as Promise<{ imported: number; skipped: number; total: number;
+                                   undated?: number; reasons?: Record<string, number> }>;
     }));
   },
   // product_id, not just the free-text name. With a blank product the server
@@ -1811,13 +1873,18 @@ export const api = {
   notifyFinding: (findingId: number) =>
     post<{ routed: string; sent?: string[] }>(scoped(`/findings/${findingId}/notify`)),
   costsSummary: () => get<CostsSummary>(scoped("/costs/summary")),
+  alertSettings: () => get<AlertSettings>("/settings/alerts"),
+  setAlertSettings: (body: Partial<Pick<AlertSettings, "alerts_enabled" | "alert_instant_min_severity" |
+                                       "auto_create_issue_on_approve">>) =>
+    put<AlertSettings>("/settings/alerts", body),
   // Goes through put(): the raw fetch() never checked r.ok, so a rejected save
   // (401, 403, 500) resolved as success and Settings reported "Limit saved."
   // scoped(): the READ comes from costsSummary(), which is product-scoped and
   // layers this product's override on top. An unscoped write landed in the
   // workspace row that the read ignores, so the save appeared to succeed and
   // the number silently reverted.
-  setLimits: (limits: { daily_investigations?: number; per_case_budget?: number; per_case_wall_min?: number }) =>
+  setLimits: (limits: { daily_investigations?: number; per_case_budget?: number; per_case_wall_min?: number;
+                         detector_min_z?: number }) =>
     put<Record<string, number>>(scoped("/settings/limits"), limits),
   // SSE URL for the live trace. No token in it: a JWT in a URL ends up in
   // proxy logs and history. The session cookie authenticates the stream, sent

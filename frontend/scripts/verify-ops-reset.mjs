@@ -60,6 +60,10 @@ function screen(role, status = "Healthy") {
       useDialog: (...args) => { dialogs.push(args); return { current: null }; } },
     "../theme": { C: {}, R: {}, S: {}, T: {} },
     "../ui": new Proxy({}, { get: (_, key) => String(key) }),
+    // Shared parts, the import panel and the stylesheet render as named stubs.
+    "../components/casefile": new Proxy({}, { get: (_, key) => String(key) }),
+    "./sources/ImportPanel": { ImportPanel: "ImportPanel" },
+    "./settings/ps.css": {},
   };
   vm.runInNewContext(compile("../src/screens/Sources.tsx"), { exports,
     require: name => { assert.ok(name in dependencies, `unstubbed ${name}`); return dependencies[name]; },
@@ -70,15 +74,15 @@ function screen(role, status = "Healthy") {
 
 function verifyVisibility() {
   for (const role of ["viewer", "reviewer"]) {
-    assert.equal(button(screen(role).render(), "Re-sync from scratch"), undefined, `${role} cannot reset`);
+    assert.equal(button(screen(role).render(), "Start over"), undefined, `${role} cannot reset`);
   }
-  assert.ok(button(screen("admin").render(), "Re-sync from scratch"));
-  assert.equal(button(screen("admin", "Syncing…").render(), "Re-sync from scratch").props.disabled, true);
+  assert.ok(button(screen("admin").render(), "Start over"));
+  assert.equal(button(screen("admin", "Syncing…").render(), "Start over").props.disabled, true);
 }
 
 async function verifyConfirmationAndResult(failure = false) {
   const h = screen("admin");
-  button(h.render(), "Re-sync from scratch").props.onClick();
+  button(h.render(), "Start over").props.onClick();
   let tree = h.render();
   const dialog = nodes(tree).find(n => n.props?.role === "dialog");
   assert.ok(dialog, "reset requires an accessible confirmation dialog");
@@ -89,9 +93,9 @@ async function verifyConfirmationAndResult(failure = false) {
   assert.equal(h.calls.length, 0, "opening confirmation must not make a request");
   button(dialog, "Cancel").props.onClick();
   assert.equal(nodes(h.render()).some(n => n.props?.role === "dialog"), false);
-  button(h.render(), "Re-sync from scratch").props.onClick();
+  button(h.render(), "Start over").props.onClick();
   tree = h.render();
-  const request = button(nodes(tree).find(n => n.props?.role === "dialog"), "Re-sync from scratch").props.onClick();
+  const request = button(nodes(tree).find(n => n.props?.role === "dialog"), "Start over").props.onClick();
   tree = h.render();
   assert.equal(h.calls.length, 1);
   assert.deepEqual(Array.from(h.calls[0]), ["play_store", "com.example.app"]);

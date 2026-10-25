@@ -105,7 +105,7 @@ export function Costs({ onGoSettings, embedded = false }: {
               </div>
               {data.rows.map((r) => (
                 <div key={r.id} style={{ display: "grid", gridTemplateColumns: COLS, gap: S[3],
-                                         padding: `${S[3]} ${S[4]}`, borderBottom: `1px solid #1c1e27`,
+                                         padding: `${S[3]} ${S[4]}`, borderBottom: `1px solid ${C.border}`,
                                          alignItems: "center", background: C.card }}>
                   <span style={{ fontFamily: mono, fontSize: T.xs, color: C.accent }}>{r.id}</span>
                   <span style={{ fontSize: T.sm, color: ROW_STATUS_COLOR[r.status] ?? C.muted }}>

@@ -259,11 +259,14 @@ def notify_finding(session: Session, finding: Finding, *, force: bool = False,
     Delivery records are flushed in the caller's transaction; caller commits.
     Force bypasses the severity gate, while keeping incident deduplication.
     """
-    if not settings.alerts_enabled and not force:
+    # Settings → Integrations can override the config defaults.
+    from echolens.alert_settings import effective_alerts
+    alerts = effective_alerts(session)
+    if not alerts["alerts_enabled"] and not force:
         return {"routed": "disabled"}
     ctx = _finding_context(session, finding)
     sev = ctx["severity"]
-    if not (force or sev["score"] >= settings.alert_instant_min_severity):
+    if not (force or sev["score"] >= alerts["alert_instant_min_severity"]):
         return {"routed": "digest", "severity": sev}
     now = aware_utc(as_of) or datetime.now(timezone.utc)
     incident = _incident_contexts(session, [finding], finding_window_end=now)[0]
