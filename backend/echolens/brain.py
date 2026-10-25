@@ -98,9 +98,107 @@ def _confidence(supports: int, refutes: int) -> float:
 # ── mining: build edges from confirmed findings ─────────────────────────
 
 
+def _import_corrections(session: Session, product_id: int | None) -> None:
+    """Copy legacy human causes once; later edits and retirement always win."""
+    from sqlalchemy.exc import IntegrityError
+    from echolens.db.models import HumanRule, ReviewFeedback, User
+    if product_id is None:
+        return
+    rows = session.execute(select(ReviewFeedback, Investigation)
+        .join(Finding, Finding.id == ReviewFeedback.finding_id)
+        .join(Investigation, Investigation.id == Finding.investigation_id)
+        .where(Investigation.product_id == product_id, Investigation.status != "merged",
+               ReviewFeedback.action == "challenge", ReviewFeedback.actual_cause.is_not(None))
+        .order_by(ReviewFeedback.id.desc())).all()
+    seen = set()
+    for feedback, inv in rows:
+        if feedback.finding_id in seen or not (feedback.actual_cause or "").strip():
+            continue
+        seen.add(feedback.finding_id)
+        if session.scalar(select(HumanRule.id).where(HumanRule.feedback_id == feedback.id)):
+            continue
+        author = session.get(User, feedback.user_id) if feedback.user_id else None
+        try:
+            with session.begin_nested():
+                for prior in session.scalars(select(HumanRule).where(
+                        HumanRule.product_id == product_id, HumanRule.case_id == inv.id,
+                        HumanRule.origin == "correction", HumanRule.status == "active")):
+                    prior.status = "retired"
+                    prior.updated_at = datetime.now(timezone.utc)
+                session.add(HumanRule(product_id=product_id, text=feedback.actual_cause.strip(),
+                    author=author.email if author else None, case_id=inv.id,
+                    feedback_id=feedback.id, origin="correction", created_at=feedback.created_at,
+                    updated_at=feedback.created_at))
+                session.flush()
+        except IntegrityError:
+            # Another reader imported this feedback concurrently.
+            pass
+
+
+def _rule_dict(row) -> dict:
+    return {"id": row.id, "text": row.text, "author": row.author,
+            "created_at": aware_utc(row.created_at).isoformat(),
+            "updated_at": aware_utc(row.updated_at).isoformat(),
+            "status": row.status, "case_id": row.case_id, "origin": row.origin}
+
+
+def rules(session: Session, product_id: int | None) -> list[dict]:
+    from echolens.db.models import HumanRule
+    _import_corrections(session, product_id)
+    return [_rule_dict(r) for r in session.scalars(select(HumanRule).where(
+        HumanRule.product_id == product_id).order_by(HumanRule.created_at.desc(), HumanRule.id.desc()))]
+
+
+def _rule_text(text: str) -> str:
+    text = text.strip()
+    if not text or len(text) > 2000:
+        raise ValueError("A fact must contain 1 to 2000 characters")
+    return text
+
+
+def add_rule(session: Session, product_id: int, text: str, author: str | None) -> dict:
+    from echolens.db.models import HumanRule
+    row = HumanRule(product_id=product_id, text=_rule_text(text), author=author)
+    session.add(row)
+    session.flush()
+    return _rule_dict(row)
+
+
+def update_rule(session: Session, product_id: int, rule_id: int, *,
+                text: str | None = None, status: str | None = None) -> dict | None:
+    from echolens.db.models import HumanRule
+    row = session.scalar(select(HumanRule).where(
+        HumanRule.id == rule_id, HumanRule.product_id == product_id))
+    if row is None:
+        return None
+    if status is not None and status not in {"active", "retired"}:
+        raise ValueError("Status must be active or retired")
+    if text is not None:
+        row.text = _rule_text(text)
+    if status is not None:
+        row.status = status
+    row.updated_at = datetime.now(timezone.utc)
+    session.flush()
+    return _rule_dict(row)
+
+
 def human_cause_priors(session: Session, product_id: int | None) -> list[dict]:
     """Human corrections for investigation seeding only; never mine these as verified edges."""
     from echolens.db.models import ReviewFeedback
+
+    # Product-owned rules supersede imported feedback, including its retirement.
+    if product_id is not None:
+        from echolens.db.models import HumanRule
+        _import_corrections(session, product_id)
+        rows = session.execute(select(HumanRule, AnomalyEvent)
+            .outerjoin(Investigation, Investigation.id == HumanRule.case_id)
+            .outerjoin(AnomalyEvent, AnomalyEvent.id == Investigation.anomaly_id)
+            .where(HumanRule.product_id == product_id, HumanRule.status == "active")
+            .order_by(HumanRule.id.desc())).all()
+        return [{"case_id": r.case_id, "cause": r.text,
+                 "theme": (f"{a.metric} {a.description}" if a else r.text),
+                 "source": "human_provided", "at": r.created_at, "rule_id": r.id}
+                for r, a in rows]
 
     rows = session.execute(select(ReviewFeedback, Finding, Investigation, AnomalyEvent)
         .join(Finding, Finding.id == ReviewFeedback.finding_id)

@@ -1,113 +1,33 @@
-import { api } from "../api";
-import { useAsync } from "../hooks";
-import { C, MEASURE, R, S, T, mono } from "../theme";
-import { Centered, EmptyState, ErrorState, Label, ScreenHeader } from "../ui";
-import { Icon } from "../components/Icon";
-
+import { useEffect } from 'react';
+import { api } from '../api';
+import { useAsync } from '../hooks';
+import { EmptyState, SerifHeadline, Stamp } from '../components/casefile';
+import { Button, ErrorState, Panel } from '../ui';
+import { patternProblemIds, patternTrigger } from './learned/model';
+import './learned/learned.css';
 interface Props {
   onGoMemory: () => void;
   onGoCases: () => void;
-  /** Rendered as a tab of Learned patterns, which owns the header. */
+  onOpenInvestigation?: (id: number, status?: string) => void;
   embedded?: boolean;
+  onPatternCount?: (count: number) => void;
 }
-
-// The validated pattern library: (trigger → cause → fix) proven by confirmed
-// fixes. Earned, not asserted — each pattern is backed by fixes that worked.
-export function Patterns({ onGoMemory, onGoCases, embedded }: Props) {
+export function Patterns({ onGoCases, onOpenInvestigation, embedded, onPatternCount }: Props) {
   const { data, loading, error, reload } = useAsync(() => api.patterns(), []);
-  if (loading && !data) return <Centered>Loading patterns…</Centered>;
-  if (error || !data) {
-    return (
-      <div style={{ padding: 28 }}>
-        <ErrorState title="Couldn't load the pattern library" onRetry={reload} />
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      {!embedded && (
-        <ScreenHeader
-          title="Patterns"
-          product={data.product}
-          subtitle="Fixes that were proven to work"
-          right={
-            <button onClick={onGoMemory} className="el-btn"
-              style={{ fontSize: T.sm, color: C.dim }}>
-              What else this product has taught EchoLens →
-            </button>
-          }
-        />
-      )}
-      <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>
-        <p style={{ fontSize: T.base, color: C.muted, maxWidth: 720, lineHeight: "var(--el-lh-normal)", marginTop: 0 }}>
-          Every pattern below is built from a fix that was <span style={{ color: C.good }}>verified to work</span>. The
-          investigator uses a matching pattern as a proven starting prior, so a recurring problem shortcuts straight to
-          the hypothesis that already worked.
-        </p>
-
-        {data.patterns.length === 0 ? (
-          <EmptyState
-            title="No verified fixes yet"
-            body={<>
-              A pattern is added only after a fix ships and the complaints actually stop. Next step:
-              open a resolved case and mark its fix as shipped — EchoLens then watches the reviews
-              and records the pattern if it worked.
-              <div style={{ marginTop: S[3], fontSize: T.sm, color: C.dim }}>
-                Want what EchoLens suspects before any fix is proven?{" "}
-                <button onClick={onGoMemory} className="el-btn"
-                  style={{ color: C.accent, fontSize: T.sm }}>See how it breaks →</button>
-              </div>
-            </>}
-            action="Open resolved cases"
-            onAction={onGoCases}
-          />
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: S[3], maxWidth: MEASURE }}>
-            {data.patterns.map((p, i) => (
-              <div key={i} style={{ padding: `${S[4]} ${S[4]}`, background: C.card, border: `1px solid ${C.border2}`, borderRadius: R.card }}>
-                <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[3], flexWrap: "wrap" }}>
-                  {p.terms.map((t) => (
-                    <span key={t} style={{ fontFamily: mono, fontSize: T.xs, padding: `${S[1]} ${S[2]}`, borderRadius: R.pill, background: C.hover, border: `1px solid ${C.border3}`, color: C.text3 }}>
-                      {t}
-                    </span>
-                  ))}
-                  {p.cross_product && p.from_product && (
-                    <span style={{ fontFamily: mono, fontSize: T.micro, padding: `${S[1]} ${S[2]}`, borderRadius: R.pill, background: `${C.info}1f`, border: `1px solid ${C.info}66`, color: C.info }}>
-                      proven on {p.from_product}
-                    </span>
-                  )}
-                  <span style={{ fontFamily: mono, fontSize: T.micro, padding: `${S[1]} ${S[2]}`, borderRadius: R.pill, background: `${C.good}1f`, border: `1px solid ${C.good}66`, color: C.good, marginLeft: "auto" }}>
-                    verified {p.verified_count}×
-                  </span>
-                </div>
-                <Flow trigger={p.trigger} cause={p.cause} fix={p.fix} />
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function Flow({ trigger, cause, fix }: { trigger: string; cause: string; fix: string }) {
-  const steps: [string, string, string][] = [
-    ["TRIGGER", trigger.replace(/_/g, " "), C.info],
-    ["CAUSE", cause, C.accent],
-    ["FIX THAT WORKED", fix, C.good],
-  ];
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
-      {steps.map(([k, v, color], i) => (
-        <div key={k} style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: S[3], alignItems: "baseline" }}>
-          <div style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".08em", color }}>
-            {i > 0 && <Icon name="arrowDown" size={11} style={{ display: "inline" }} />}
-            {k}
-          </div>
-          <div style={{ fontSize: T.base, color: C.text2, lineHeight: "var(--el-lh-snug)" }}>{v || "—"}</div>
-        </div>
-      ))}
-    </div>
-  );
+  useEffect(() => { if (data) onPatternCount?.(data.patterns.length); }, [data, onPatternCount]);
+  return <section className={embedded ? 'learned-stack' : 'learned-v2'} aria-label="What fixed things before">
+    {!embedded && <SerifHeadline>Every fix leaves a lesson.</SerifHeadline>}
+    <div><SerifHeadline as="h2" size="section">What fixed things before</SerifHeadline>
+      <p className="learned-intro">A fix earns its place here when the follow-up shows it worked. It gives the next investigation a starting point; a new problem still needs its own proof.</p></div>
+    {loading && !data ? <p role="status">Reading verified fixes…</p> : error || !data ? <ErrorState title="We couldn’t read the fix history" onRetry={reload} /> : data.patterns.length === 0 ?
+      <EmptyState title="No verified fixes yet." action={<Button onClick={onGoCases}>Open all problems</Button>}>When a fix ships, mark it on the problem. EchoLens watches what happens next and saves a lesson when the fix works.</EmptyState> :
+      <div className="learned-stack">{data.patterns.map((pattern, index) => <Panel tone="inset" key={`${pattern.trigger}-${index}`}>
+        <header className="learned-row"><Stamp variant="fixWorked" compact /><span className="learned-meta">Verified {pattern.verified_count} {pattern.verified_count === 1 ? 'time' : 'times'}{pattern.cross_product ? ` · From ${pattern.from_product || 'another product'}` : ` · ${data.product || 'This product'}`}</span></header>
+        <dl className="learned-flow">{[['When this happens', patternTrigger(pattern.trigger)], ['Watch out for', pattern.cause], ['What fixed it', pattern.fix]].map(([label, text]) => <div key={label}><dt>{label}</dt><dd>{text || 'No detail recorded.'}</dd></div>)}</dl>
+        {pattern.terms.length > 0 && <p className="learned-meta">Related to {pattern.terms.join(', ')}</p>}
+        <footer className="learned-row learned-proof">
+          {pattern.cross_product ? <p className="learned-meta">Problem history belongs to {pattern.from_product || 'another product'}{pattern.cases.length ? `: ${pattern.cases.map((id) => `#${id}`).join(', ')}` : '.'} It is a lead for this product, not proof.</p> : patternProblemIds(pattern).length > 0 ? <><span className="learned-meta">Problems behind this lesson</span>{patternProblemIds(pattern).map((id) => onOpenInvestigation ? <Button key={id} size="sm" onClick={() => onOpenInvestigation(id, 'resolved')}>Problem #{id}</Button> : <span className="learned-meta" key={id}>Problem #{id}</span>)}</> : <span className="learned-meta">No linked problems were recorded.</span>}
+        </footer>
+      </Panel>)}</div>}
+  </section>;
 }

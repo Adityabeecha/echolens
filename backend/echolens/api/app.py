@@ -1584,6 +1584,56 @@ def brain_view(product_id: int | None = None, include_retired: bool = False,
                 "product": p.name if p else None}
 
 
+class HumanRuleBody(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+    product_id: int | None = None
+
+
+class HumanRulePatch(BaseModel):
+    text: str | None = Field(None, min_length=1, max_length=2000)
+    status: str | None = Field(None, pattern="^(active|retired)$")
+    product_id: int | None = None
+
+
+@app.get("/brain/rules")
+def brain_rules(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    from echolens.brain import rules
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        return {"rules": rules(session, p.id) if p else []}
+
+
+@app.post("/brain/rules")
+def brain_rule_add(body: HumanRuleBody, product_id: int | None = None,
+                   user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.brain import add_rule
+    with session_scope() as session:
+        p = _scope(session, product_id if product_id is not None else body.product_id, user)
+        if p is None:
+            raise HTTPException(404, "Choose a product first")
+        try:
+            return add_rule(session, p.id, body.text, user.get("email"))
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
+
+@app.patch("/brain/rules/{rule_id}")
+def brain_rule_update(rule_id: int, body: HumanRulePatch, product_id: int | None = None,
+                      user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.brain import update_rule
+    with session_scope() as session:
+        p = _scope(session, product_id if product_id is not None else body.product_id, user)
+        if p is None:
+            raise HTTPException(404, "No such fact")
+        try:
+            rule = update_rule(session, p.id, rule_id, text=body.text, status=body.status)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        if rule is None:
+            raise HTTPException(404, "No such fact")
+        return rule
+
+
 @app.post("/brain/rebuild")
 def brain_rebuild(product_id: int | None = None,
                   user: dict = Depends(require_role("reviewer"))) -> dict:
@@ -1696,11 +1746,32 @@ def backlog_plan_save(body: PlanBody,
         pid = p.id if p else None
         save_plan(session, pid, included=body.included, excluded=body.excluded,
                   notes=body.notes, capacity_days=body.capacity_days,
-                  overrides=overrides)
+                  overrides=overrides, kind=body.kind)
         return {**quarter_plan(session, pid, kind=body.kind), "product": p.name if p else None}
 
 
 # ── v16: specs from user requests ───────────────────────────────────────
+
+class PlanExportBody(BaseModel):
+    tracker: str = Field(pattern="^(github|linear|jira)$")
+    kind: str = Field("bugs", pattern="^(bugs|requests|all)$")
+    product_id: int | None = None
+
+
+@app.post("/backlog/plan/export")
+def backlog_plan_export(body: PlanExportBody, product_id: int | None = None,
+                        user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.backlog import export_plan
+    with session_scope() as session:
+        p = _scope(session, product_id if product_id is not None else body.product_id, user)
+        if p is None:
+            raise HTTPException(404, "Choose a product first")
+        try:
+            return export_plan(session, p.id, body.tracker, kind=body.kind,
+                               repo=_github_repo(session, p.id))
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
 
 def _request_spec(session, p, slug: str, user: dict | None) -> dict:
     """The spec for one of THIS product's requests, or 404. A live model only
