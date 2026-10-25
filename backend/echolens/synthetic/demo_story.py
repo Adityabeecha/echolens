@@ -54,6 +54,18 @@ class _Script:
 def _topics(today: datetime) -> list[dict]:
     d = lambda n: (today - timedelta(days=n)).date().isoformat()  # noqa: E731
     return [
+        {"key": "sync_crash", "days_ago": 1, "status": "resolved", "confidence": 0.89,
+         "metric": "sync crashes share of negative reviews",
+         "signal": "Sync crashes after photo upload completion following the v3.2 release.",
+         "h1": "v3.2 background sync causes crashes after upload completion",
+         "h2": "Android 15 causes the upload crashes",
+         "reviews": {"query": "sync crashes upload", "date_from": d(7), "rating_max": 2},
+         "release": "3.2.0", "github": "disposed completion callback gallery",
+         "summary": "The v3.2 sync regression crashes the gallery after uploads",
+         "prose": "Upload reviews describe sync crashes after completion [ev_001]. "
+                  "The v3.2 release enabled background photo sync [ev_002]. "
+                  "The completion callback causes the crash by reading a disposed view [ev_003].",
+         "actions": [("Stop the upload callback from accessing disposed gallery views", "HIGH", "LOW")]},
         {"key": "battery", "slug": "demo1", "days_ago": 5, "status": "resolved", "confidence": 0.85,
          "h1": "v3.2 background sync causes battery drain",
          "h2": "the Android 15 update causes the drain",
@@ -138,7 +150,8 @@ def _topics(today: datetime) -> list[dict]:
          "summary": "Sync worker spins when device storage is full",
          "prose": "Part of the drain comes from the sync worker retrying in a tight loop on "
                   "full storage: reviews report the drain [ev_001] and the loop is filed on "
-                  "GitHub [ev_002].",
+                  "GitHub [ev_002]. A missing retry delay causes every upload failure.",
+         "uncited_draft": True,
          "actions": [("Back off sync retries when storage is full", "MED", "LOW")],
          "challenge": {"reason": "wrong_severity",
                        "note": "Real, but it only hits devices with full storage — not a headline.",
@@ -152,14 +165,14 @@ def _topics(today: datetime) -> list[dict]:
          "signal": "The app crashes on startup after clearing the cache.",
          "h1": "clearing the cache corrupts the local database",
          "reviews": {"query": "crash startup cache", "rating_max": 2},
-         "summary": "Not enough evidence behind the startup crash",
+         "summary": "Working lead: startup crashes after clearing the cache",
          "prose": "A handful of reviews report the app failing at startup after a cache "
                   "clear [ev_001]. Nothing else on record corroborates it.",
          "settle": "crash logs from an affected device",
          "challenge": {"reason": "weak_evidence",
                        "note": "Ask support for crash logs before concluding anything.",
                        "confidence": 0.45, "h1": "a migration fails on a cleared cache",
-                       "summary": "Still not enough evidence behind the startup crash",
+                       "summary": "Working lead: startup crashes still need device logs",
                        "prose": "Searched again with the reviewer's note [ev_001]. Still one "
                                 "source and no logs, so nothing is named yet.",
                        "settle": "crash logs from support"}},
@@ -197,6 +210,8 @@ def _script(session: Session, product: str, t: dict, *, hyp: str | None = None,
     from echolens.tools.search_github_issues import search_github_issues
     from echolens.tools.search_reddit import search_reddit
     from echolens.tools.search_reviews import search_reviews
+    from echolens.tools.get_release_notes import get_release_notes
+    from echolens.intent import BUG, UX_CONFUSION, classify
 
     resolved = t["status"] == "resolved"
     conf = t["confidence"] if confidence is None else confidence
@@ -208,7 +223,9 @@ def _script(session: Session, product: str, t: dict, *, hyp: str | None = None,
                         "action": "revise_hypotheses", "hypotheses": hyps}]
     refs: list[str] = []
     if t.get("reviews"):
-        ref = _ref(search_reviews(session, product=product, **t["reviews"]), "reviews")
+        reviews = search_reviews(session, product=product, **t["reviews"])["reviews"]
+        ref = next((r["ref"] for r in reviews if r["rating"] < 4 or
+                    classify(r["snippet"], r["rating"]) in (BUG, UX_CONFUSION)), None)
         out.append({"thought": "Read what the complaining users actually say.", "action": "call_tool",
                     "tool": {"name": "search_reviews", "args": t["reviews"], "tests_hypothesis": "H1"}})
         if ref:
@@ -229,6 +246,14 @@ def _script(session: Session, product: str, t: dict, *, hyp: str | None = None,
                     "hypothesis_updates": [{"id": "H1", "new_confidence": conf,
                                             "based_on_refs": [ref] if ref else [],
                                             "note": "a single source"}]})
+    if t.get("release"):
+        ref = _ref(get_release_notes(session, version=t["release"], product=product), "releases")
+        out.append({"thought": "Check what shipped before the complaints started.", "action": "call_tool",
+                    "tool": {"name": "get_release_notes", "args": {"version": t["release"]},
+                             "tests_hypothesis": "H1"}})
+        out.append({"evidence": [{"ref": ref, "snippet": "the release note",
+                                  "supports": ["H1"], "contradicts": []}] if ref else [],
+                    "hypothesis_updates": []})
     gh = t.get("github") if github == "" else github
     if resolved and gh:
         ref = _ref(search_github_issues(session, gh, product=product), "issues")
@@ -252,12 +277,15 @@ def _script(session: Session, product: str, t: dict, *, hyp: str | None = None,
                 "confidence": conf, "supported_hypothesis": "H1" if resolved else None,
                 "checked": ["play_store", "github"] if resolved else ["play_store", "reddit"],
                 "what_would_settle_it": "" if resolved else (settle or t.get("settle", ""))})
+    if t.get("uncited_draft") and prose is None:
+        out.append(dict(out[-1]))  # both draft attempts expose the uncited claim to the guard
     return out
 
 
 def _anomaly(session: Session, product: Product, t: dict, opened: datetime) -> AnomalyEvent:
     if t.get("slug"):
-        a = session.scalars(select(AnomalyEvent).where(AnomalyEvent.slug == t["slug"])).first()
+        a = session.scalars(select(AnomalyEvent).where(
+            AnomalyEvent.slug == t["slug"], AnomalyEvent.product_id == product.id)).first()
         if a is not None:
             a.product_id = product.id
             return a
@@ -344,7 +372,12 @@ def seed_demo_story(session: Session) -> dict:
         anomaly = _anomaly(session, demo, t, opened)
         inv = Investigator(session, anomaly, llm=_Script(_script(session, demo.name, t)),
                            tier="standard").run()
+        anomaly.status = "closed"
         _backdate(session, inv, opened)
+        if t.get("release"):
+            for e in session.scalars(select(EvidenceRow).where(
+                    EvidenceRow.investigation_id == inv.id, EvidenceRow.source == "release_notes")):
+                e.ref = f"https://github.com/{REPO}/releases/tag/v{t['release']}"
         f = _finding(session, inv)
         out["cases"] += 1
         if f is None:
@@ -415,6 +448,14 @@ def seed_demo_story(session: Session) -> dict:
     for d in session.scalars(select(FindingDecision).where(
             FindingDecision.product_id == demo.id)).all():
         d.created_at = today - timedelta(days=1)
+    from echolens.cases import _AffectedIndex, _terms
+    affected = _AffectedIndex(session, demo.name, today)
+    for f, inv, anomaly in session.execute(select(Finding, Investigation, AnomalyEvent)
+            .join(Investigation, Investigation.id == Finding.investigation_id)
+            .join(AnomalyEvent, AnomalyEvent.id == Investigation.anomaly_id)
+            .where(Investigation.product_id == demo.id)):
+        f.json = {**f.json, "impact": affected.measure(
+            (f.json or {}).get("impact") or {}, _terms(f, anomaly))}
     session.flush()
     return out
 

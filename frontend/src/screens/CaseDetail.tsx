@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { CaseRow, Evidence, Investigation, api, canReview, errorMessage } from "../api";
+import { CaseRow, DemoRefreshedError, Evidence, Investigation, api, canReview, errorMessage } from "../api";
 import { withToast } from "../components/Toast";
 import { StatusChip, TrustBadge } from "../components/CaseCard";
 import { impactLine } from "../format";
@@ -50,6 +50,7 @@ export function CaseDetail({
 }: Props) {
   const [inv, setInv] = useState<Investigation | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [demoRefreshed, setDemoRefreshed] = useState(false);
   const [pollGeneration, setPollGeneration] = useState(0);
   useEffect(() => {
     if (inv?.id !== caseId || !inv.merged_into_id) return;
@@ -80,7 +81,9 @@ export function CaseDetail({
     const mine = ++loadSeq.current;
     return api.investigation(caseId)
       .then((d) => { if (mine === loadSeq.current) { setInv(d); setError(null); } })
-      .catch((e) => { if (mine === loadSeq.current) setError(errorMessage(e)); });
+      .catch((e) => { if (mine === loadSeq.current) {
+        setError(errorMessage(e)); setDemoRefreshed(e instanceof DemoRefreshedError);
+      } });
   };
 
   // Restart the polling effect, not just one request. The old Retry called
@@ -123,10 +126,12 @@ export function CaseDetail({
         failures = 0;
         setInv(d);
         setError(null);
+        setDemoRefreshed(false);
         if (settled(d)) stop();
       } catch (e) {
         if (!alive || mine !== loadSeq.current) return;
         setError(errorMessage(e));
+        setDemoRefreshed(e instanceof DemoRefreshedError);
         if (++failures >= MAX_FAILURES) stop();   // Retry restarts it
       } finally {
         // Schedule only AFTER this request finishes. setInterval allowed slow
@@ -140,10 +145,14 @@ export function CaseDetail({
     return () => { alive = false; stop(); };
   }, [caseId, pollGeneration]);
 
-  if (error && !inv) {
+  if (error && (!inv || demoRefreshed)) {
     return (
       <div style={{ padding: `${S[6]}` }}>
         <ErrorState title={`Couldn't load case #${caseId}`} detail={error} onRetry={retry} />
+        {demoRefreshed && <button className="el-btn" onClick={() => {
+          const route = parseRoute(currentLocation());
+          window.location.assign(formatRoute({ screen: "cases", productId: route?.productId }));
+        }}>Go to Cases</button>}
       </div>
     );
   }

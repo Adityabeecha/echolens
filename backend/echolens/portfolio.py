@@ -22,12 +22,12 @@ from echolens.timeutil import aware_utc
 
 # What each signal is worth. Tuned so one live SEV1 outranks a pile of chronic
 # background noise — a fire beats a smell.
-W_SEV1 = 40.0
-W_SEV2 = 18.0
+W_SEV1 = 10.0
+W_SEV2 = 4.5
 W_REGRESSION = 30.0
-W_CHRONIC = 8.0
+W_CHRONIC = 2.0
 W_UNTRIAGED = 4.0
-W_TREND = 25.0        # multiplied by the negative-rate delta (0..1)
+W_TREND = 12.5        # multiplied by the negative-rate delta (0..1)
 W_STALE_DATA = 6.0
 
 # Below this many reviews in a window, a negative-review RATE is noise. Reporting
@@ -61,6 +61,8 @@ HEALTH_LABELS = {
 
 def health(score: float) -> float:
     """Health shown to users: 100 − attention, floored at 0."""
+    # Ten high-severity problems consume the full scale; four leave health 60
+    # before trend/queue penalties. Previously three problems alone hit zero.
     return round(max(0.0, 100.0 - score), 1)
 
 
@@ -120,8 +122,11 @@ def _load_board(session: Session, products: list[Product], now: datetime) -> dic
         return data
     for w in session.scalars(select(FixWatch).where(FixWatch.product_id.in_(ids))).all():
         data[w.product_id]["watches"].append(w)
-    resolved = session.scalars(select(Investigation).where(
-        Investigation.product_id.in_(ids), Investigation.status == "resolved")).all()
+    pairs = session.execute(select(Investigation, AnomalyEvent)
+        .outerjoin(AnomalyEvent, AnomalyEvent.id == Investigation.anomaly_id).where(
+            Investigation.product_id.in_(ids), Investigation.status == "resolved")).all()
+    resolved = [inv for inv, _ in pairs]
+    anomalies = {a.id: a for _, a in pairs if a is not None}
     by_id = {inv.id: inv for inv in resolved}
     for inv in resolved:
         data[inv.product_id]["resolved"].append(inv)
@@ -158,14 +163,29 @@ def _load_board(session: Session, products: list[Product], now: datetime) -> dic
             .group_by(Review.product)).all():
         data[names[name]]["rates"] = (_rate(rec_n or 0, rec_neg or 0),
                                       _rate(base_n or 0, base_neg or 0))
-    # Whether ANY feedback exists (not just in the last 7 days), for has_data.
-    for name in session.scalars(select(Review.product).where(
-            Review.product.in_(list(names))).distinct()).all():
+    # Whether ANY feedback exists, plus the recent negative texts needed for
+    # theme-specific impact. Group old/positive rows into one NULL bucket per
+    # product rather than loading their text or adding another corpus query.
+    recent_text = case(((Review.created_at > split) & (Review.created_at <= now) &
+                        (Review.rating <= 2), Review.text), else_=None)
+    texts: dict[str, list[str]] = {name: [] for name in names}
+    for name, text, count in session.execute(select(Review.product, recent_text, func.count())
+            .where(Review.product.in_(list(names))).group_by(Review.product, recent_text)):
         data[names[name]]["has_reviews"] = True
+        if text is not None:
+            texts[name].extend([text] * count)
 
     for s in session.scalars(select(CollectorState).where(
             CollectorState.product_id.in_(ids))).all():
         data[s.product_id]["sources"].append(s)
+    # Old findings use the same corrected impact as the case cards.
+    from echolens.cases import _AffectedIndex, _terms
+    for name, pid in names.items():
+        index = _AffectedIndex(session, name, now, texts[name])
+        data[pid]["impacts"] = {inv.id: index.measure(
+            (data[pid]["latest"][inv.id].json or {}).get("impact") or {},
+            _terms(data[pid]["latest"][inv.id], anomalies.get(inv.anomaly_id)))
+            for inv in data[pid]["resolved"] if inv.id in data[pid]["latest"]}
     return data
 
 
@@ -195,7 +215,7 @@ def product_snapshot(session: Session, product: Product, now: datetime,
         f = latest.get(inv.id)
         if f is None:
             continue
-        impact = (f.json or {}).get("impact", {})
+        impact = data.get("impacts", {}).get(inv.id, (f.json or {}).get("impact", {}))
         sev = severity(float(f.confidence or 0.0), impact)
         if sev["band"] == "high":
             high += 1
@@ -345,7 +365,7 @@ def _fingerprints(session: Session, products: list[Product]) -> dict[int, list]:
 
     ids = [p.id for p in products]
     names = {p.name: p.id for p in products}
-    fp: dict[int, list] = {pid: [] for pid in ids}
+    fp: dict[int, list] = {pid: [["health_scale", "2"]] for pid in ids}
     if not ids:
         return fp
 

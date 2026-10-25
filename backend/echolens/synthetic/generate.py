@@ -256,4 +256,26 @@ def generate(session: Session, anchor=None) -> dict[str, int]:
     session.add_all(anomalies)
     counts["anomalies"] = len(anomalies)
 
+    if anchor == "today":
+        # Demo-only beats: a distinct confirmed regression and a request group
+        # large enough to draft a spec. The fixed-date eval corpus stays intact.
+        crash_reports = [
+            "Sync crashes when an upload finishes in v3.2. My gallery closes every time.",
+            "After the update, sync crashes on the final photo upload. Lost my place again.",
+            "Photo upload completes then sync crashes. This started with version 3.2.",
+        ]
+        for i in range(15):
+            session.add(Review(source="play_store", ext_id=f"story-sync-{i}", rating=1,
+                text=crash_reports[i % len(crash_reports)], version="3.2.0",
+                os_version="Android 15", created_at=END - timedelta(days=i % 6, hours=1)))
+        for i in range(12):
+            session.add(Review(source="play_store", ext_id=f"story-request-{i}", rating=4,
+                text="Love the gallery. Please add offline albums for trips without reception.",
+                version="3.2.0", created_at=END - timedelta(days=i % 6, hours=2)))
+        session.add(Issue(ext_id="#3901", title="Sync crashes after upload completion in 3.2",
+            body_snippet="Reproduced: the upload completion callback reads a disposed gallery "
+                         "view. The new background sync path in 3.2 triggers this crash.",
+            state="open", reactions=18, created_at=X + timedelta(days=4)))
+        counts["reviews"] += 27
+        counts["issues"] += 1
     return counts

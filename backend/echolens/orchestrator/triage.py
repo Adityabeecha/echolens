@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from echolens.config import ORCHESTRATOR_DAILY_INVESTIGATIONS
 from echolens.db.models import AnomalyEvent, Investigation, LLMCall, TriageDecision
 from echolens.llm.client import LLMClient, LLMError
+from echolens.orchestrator.automatic import demo_product_ids
 
 TRIAGE_SYSTEM = """You are the EchoLens orchestrator. Detected anomalies arrive in batches; \
 your job is triage — decide what NOT to do as much as what to do. For each anomaly choose:
@@ -106,9 +107,6 @@ class Orchestrator:
         self.session = session
         self.daily_limit = daily_limit
         self.product_id = product_id
-        if llm is None:
-            from echolens.llm.openai_client import OpenAIClient
-            llm = OpenAIClient(on_call=self._record_llm_call)
         self.llm = llm
 
     def _record_llm_call(self, agent, model, tokens_in, tokens_out, cost, ms):
@@ -145,6 +143,10 @@ class Orchestrator:
         # yet — already-triaged ones are never re-triaged (duplicate-cases bug).
         stmt = select(AnomalyEvent).where(
             AnomalyEvent.status == "pending", AnomalyEvent.merged_into_id.is_(None))
+        demos = demo_product_ids(self.session)
+        if demos:
+            stmt = stmt.where(or_(AnomalyEvent.product_id.is_(None),
+                                  AnomalyEvent.product_id.not_in(demos)))
         if self.product_id is not None:
             stmt = stmt.where(AnomalyEvent.product_id == self.product_id)
         # One column, scoped to this product — not every Investigation row ever
@@ -161,6 +163,9 @@ class Orchestrator:
         pending = [a for a in self.session.scalars(stmt).all() if a.id not in linked]
         if not pending:
             return []
+        if self.llm is None:
+            from echolens.llm.openai_client import OpenAIClient
+            self.llm = OpenAIClient(on_call=self._record_llm_call)
         open_invs = self.session.scalars(
             select(Investigation).where(Investigation.status == "running")
         ).all()
@@ -303,8 +308,9 @@ def run_triaged(session: Session, decisions: list[Decision], llm: LLMClient | No
     from echolens.investigator.graph import Investigator
 
     investigations: list[Investigation] = []
+    demos = demo_product_ids(session)
     for d in decisions:
-        if d.decision != "investigate":
+        if d.decision != "investigate" or d.anomaly.product_id in demos:
             continue
         anomaly_id = d.anomaly.id
         d.anomaly.status = "investigating"

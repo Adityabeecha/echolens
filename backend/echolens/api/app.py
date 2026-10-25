@@ -18,7 +18,7 @@ from datetime import date, datetime, timedelta, timezone
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -335,7 +335,7 @@ def _investigation_dict(session, inv: Investigation) -> dict:
              "retrieved_by": e.retrieved_by, **e.json} for e in evs]),
         "finding": None if finding is None else {
             "id": finding.id, "status": finding.status, **finding.json,
-            **_finding_extras(session, finding, recs, inv.status)},
+            **_finding_extras(session, finding, recs, inv.status, watch)},
         "recommendations": [{"rank": r.rank, "action": r.action, "impact": r.impact,
                              "effort": r.effort, "rationale": r.rationale} for r in recs],
         # v15: the product decision in force (fix now / park / won't fix), and
@@ -393,16 +393,18 @@ def _extension_view(session, inv: Investigation) -> dict | None:
         return None
 
 
-def _finding_extras(session, finding, recs, status: str) -> dict:
+def _finding_extras(session, finding, recs, status: str, watch) -> dict:
     """The decision doc + severity (v4.0) plus the fix-verification status (v6.0),
     so the UI can show What's broken / How bad / What to do and — once a fix
     ships — a confirmed-fix badge with a before/after chart."""
-    from echolens.db.models import FixWatch
+    from echolens.cases import affected_impact
+    from echolens.db.models import Investigation, Product
     from echolens.impact import decision_doc, severity
     fj = finding.json or {}
-    impact = fj.get("impact", {})
-    watch = session.scalars(select(FixWatch).where(
-        FixWatch.finding_id == finding.id).order_by(FixWatch.id.desc())).first()
+    inv = session.get(Investigation, finding.investigation_id)
+    product = session.get(Product, inv.product_id) if inv and inv.product_id else None
+    anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv and inv.anomaly_id else None
+    impact = affected_impact(session, finding, anomaly, product.name if product else None)
     fix = None
     if watch is not None:
         fix = {"status": watch.status, "issue_number": watch.issue_number,
@@ -422,7 +424,6 @@ def _finding_extras(session, finding, recs, status: str) -> dict:
     # carries rather than a claim it makes.
     breadth = None
     try:
-        from echolens.db.models import Investigation, Product
         from echolens.feedback_graph import evidence_breadth
         inv = session.get(Investigation, finding.investigation_id)
         prod = session.get(Product, inv.product_id) if inv and inv.product_id else None
@@ -433,6 +434,7 @@ def _finding_extras(session, finding, recs, status: str) -> dict:
         log.warning("evidence_breadth_failed", finding_id=finding.id, error=str(err))
 
     return {
+        "impact": impact,
         "decision": decision_doc(fj, list(recs), impact, status),
         "severity": severity(float(fj.get("confidence", 0.0)), impact),
         "fix": fix,
@@ -2370,6 +2372,10 @@ def anomalies_triage(request: Request, run: bool = False, product_id: int | None
         pid = p.id if p else None
         # A preview (run=false) must not consume the pending queue — see
         # Orchestrator.triage(persist=...).
+        if p is not None and p.is_demo:
+            return {"decisions": [], "started_investigations": [],
+                    "skipped_already_triaged": 0,
+                    "summary": "Automatic investigations are disabled for the demo."}
         decisions = Orchestrator(session, daily_limit=_daily_limit(session, pid),
                                  product_id=pid).triage(persist=run)
         out = [{"anomaly": d.anomaly.slug, "decision": d.decision, "reason": d.reason,
@@ -2507,6 +2513,9 @@ def get_investigation(inv_id: int, product_id: int | None = None,
                       user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
         p = _scope(session, product_id, user)
+        if p is not None and p.is_demo and session.get(Investigation, inv_id) is None:
+            return JSONResponse(status_code=404, content={
+                "detail": "no such investigation", "demo_refreshed": True})
         inv = _owned(session, Investigation, inv_id, p.id if p else None)
         return _investigation_dict(session, inv)
 
@@ -3822,6 +3831,12 @@ def _chat_respond(body: "ChatBody", user: dict, on_step=None) -> dict:
                             "basis": chat_mod.basis_investigation(inv.id),
                             "text": f"{f.summary} — case #{inv.id}. This was already "
                                     "investigated; start a new one if it's back."}
+
+        if decision.get("type") == "launch" and prod is not None and prod.is_demo and not body.force_investigate:
+            return _chat_finish({"type": "answer", "citations": [],
+                "basis": chat_mod.basis_none(), "can_investigate": True,
+                "text": "Automatic investigations are disabled for the demo. "
+                        "Start a case manually to investigate this question."}, user, message)
 
         if decision.get("type") != "launch":
             # A deterministic answer that already cites cases (or is built from
