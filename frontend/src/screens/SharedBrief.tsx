@@ -2,13 +2,18 @@ import { useEffect, useState } from "react";
 import { ShareBrief, api } from "../api";
 import { when } from "../format";
 import { applyTheme, resolveTheme } from "../themeMode";
-import { C, MEASURE, R, S, T, mono, sans } from "../theme";
-import { Centered, ErrorState, Label } from "../ui";
+import { Exhibit, NumberedSteps, SerifHeadline, Stamp, stampFor } from "../components/casefile";
+import { LogoLockup } from "../components/Logo";
+import "./landing/public.css";
+
+const LETTERS = "ABCDEFGH";
+const TILTS = [-0.5, 0.4, -0.3, 0.6, -0.6, 0.3, -0.4, 0.5];
 
 /**
- * The public, read-only view of one shared finding (#/share/<token>).
+ * The public, read-only view of one shared problem (#/share/<token>), laid out
+ * like a small case file: verdict stamp, serif title, what happened, exhibits.
  *
- * Rendered without login, outside the app shell: no sidebar, no product
+ * Rendered without login, outside the app shell: no navigation, no product
  * switcher, no links into cases. It shows exactly what the server's public
  * endpoint returns for the token — the brief the sharer chose to share — and
  * nothing that could lead a stranger to other data or other products.
@@ -16,6 +21,7 @@ import { Centered, ErrorState, Label } from "../ui";
 export function SharedBrief({ token }: { token: string }) {
   const [brief, setBrief] = useState<ShareBrief | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState("A");
 
   useEffect(() => { applyTheme(resolveTheme()); }, []);
 
@@ -33,95 +39,96 @@ export function SharedBrief({ token }: { token: string }) {
     if (brief) document.title = `${brief.headline} · EchoLens`;
   }, [brief]);
 
-  return (
-    <main style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: sans,
-                   display: "flex", flexDirection: "column", alignItems: "center",
-                   padding: `${S[8]} ${S[4]}` }}>
-      <div style={{ width: "100%", maxWidth: MEASURE, display: "flex", flexDirection: "column", gap: S[5] }}>
-        <div style={{ display: "flex", alignItems: "center", gap: S[2], flexWrap: "wrap" }}>
-          <span style={{ fontFamily: mono, fontSize: T.sm, fontWeight: 600, color: C.accent,
-                         letterSpacing: ".08em" }}>ECHOLENS</span>
-          <span style={{ fontSize: T.xs, color: C.dim }}>
-            Shared finding{brief?.product ? ` · ${brief.product}` : ""} · read-only
-          </span>
-        </div>
+  // A stamp only when the server said how well this is proven; an older
+  // server without the verdict gets none rather than a guessed one.
+  const verdict = brief?.verdict;
+  const stamp = verdict ? stampFor({ support_level: verdict.support_level, needs_review: verdict.needs_review,
+                                     fix: verdict.fix }) : null;
+  const sure = verdict && verdict.confidence > 0 ? Math.round(verdict.confidence * 100) : null;
 
-        {!brief && !error && <Centered>Loading the shared brief…</Centered>}
+  return (
+    <main className="pub-share">
+      <div className="pub-share__inner">
+        <header className="pub-share__top">
+          <LogoLockup size={28} />
+          <span className="pub-share__meta">
+            Shared problem{brief?.product ? ` · ${brief.product}` : ""} · read-only
+          </span>
+        </header>
+
+        {!brief && !error && <div role="status" className="pub-share__state"><p>Opening the shared problem…</p></div>}
 
         {error && (
-          <ErrorState title="This link doesn't open a brief"
-            detail={`${error.replace(/\.$/, "")}. The link may have been revoked — ask whoever shared it for a new one.`} />
+          <div role="alert" className="pub-share__state">
+            <SerifHeadline as="h1" size="section">This link doesn't open a problem.</SerifHeadline>
+            <p>It may have been turned off, or copied only in part. Ask whoever shared it to send a new link.</p>
+            <p className="pub-share__sure" title={error}>The server said: {error.replace(/\.$/, "")}.</p>
+          </div>
         )}
 
         {brief && (
-          <article style={{ display: "flex", flexDirection: "column", gap: S[5],
-                            background: C.card, border: `1px solid ${C.border2}`,
-                            borderRadius: R.card, padding: S[6] }}>
-            <header style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
-              <h1 style={{ margin: 0, fontSize: T.xl, fontWeight: 650, letterSpacing: "-.01em",
-                           lineHeight: 1.25, overflowWrap: "anywhere" }}>
-                {brief.headline}
-              </h1>
-              {brief.impact && (
-                <div style={{ fontSize: T.md, color: C.text2, lineHeight: 1.5 }}>{brief.impact}</div>
+          <article className="pub-share__grid" aria-labelledby="pub-share-title">
+            <div className="pub-share__story">
+              <div className="pub-share__titlerow">
+                <SerifHeadline as="h1" size="case" id="pub-share-title" style={{ overflowWrap: "anywhere" }}>
+                  {brief.headline}
+                </SerifHeadline>
+                {stamp && stamp !== "live" && <Stamp variant={stamp} rotation={-6} />}
+              </div>
+              {brief.impact && <p className="pub-share__impact">{brief.impact}</p>}
+              {sure != null && (
+                <div className="pub-share__sure"
+                  title={stamp === "hunch" ? "Hunch: one kind of source, or a reviewer flagged it — capped below confirmed." : undefined}>
+                  We're {sure}% sure{stamp === "hunch" ? " — a hunch, not yet confirmed by two kinds of source" : ""}.
+                </div>
               )}
-            </header>
 
-            {brief.why && brief.why !== brief.headline && (
-              <section>
-                <Label>Why</Label>
-                <p style={{ margin: `${S[2]} 0 0`, fontSize: T.base, color: C.text2, lineHeight: 1.6 }}>
-                  {brief.why}
+              {brief.why && brief.why !== brief.headline && (
+                <section style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <SerifHeadline as="h2" size="section">What happened</SerifHeadline>
+                  <p className="pub-share__prose">{brief.why}</p>
+                </section>
+              )}
+
+              {brief.actions.length > 0 && (
+                <section style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <SerifHeadline as="h2" size="section">What to do next</SerifHeadline>
+                  <NumberedSteps label="Recommended actions" steps={brief.actions.map((a, i) => ({
+                    id: String(i),
+                    text: (
+                      <>
+                        {a.action}
+                        {(a.impact || a.effort) && (
+                          <span style={{ display: "block", marginTop: 4, fontSize: 13, opacity: 0.75 }}>
+                            {[a.impact && `${a.impact} impact`, a.effort && `${a.effort} effort`].filter(Boolean).join(" · ")}
+                          </span>
+                        )}
+                      </>
+                    ),
+                  }))} />
+                </section>
+              )}
+            </div>
+
+            <aside className="pub-share__rail" aria-label="Exhibits">
+              <SerifHeadline as="h2" size="section">Exhibits</SerifHeadline>
+              {brief.quotes.length === 0 ? (
+                <p style={{ margin: 0, color: "var(--el-muted)", fontSize: 15, lineHeight: 1.5 }}>
+                  No quotes were shared with this problem.
                 </p>
-              </section>
-            )}
-
-            {brief.quotes.length > 0 && (
-              <section style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
-                <Label>What users said</Label>
-                {brief.quotes.map((q, i) => (
-                  <blockquote key={i} style={{ margin: 0, padding: `${S[2]} ${S[4]}`,
-                                               borderLeft: `2px solid ${C.accent}`, background: C.card2,
-                                               borderRadius: R.sm }}>
-                    <div style={{ fontSize: T.base, color: C.text, lineHeight: 1.55, overflowWrap: "anywhere" }}>
-                      “{q.text}”
-                    </div>
-                    {q.source && (
-                      <div style={{ marginTop: S[1], fontFamily: mono, fontSize: T.xs, color: C.dim }}>
-                        {q.source}
-                      </div>
-                    )}
-                  </blockquote>
-                ))}
-              </section>
-            )}
-
-            {brief.actions.length > 0 && (
-              <section>
-                <Label>Recommended actions</Label>
-                <ol style={{ margin: `${S[2]} 0 0`, paddingLeft: S[5], display: "flex",
-                             flexDirection: "column", gap: S[2] }}>
-                  {brief.actions.map((a, i) => (
-                    <li key={i} style={{ fontSize: T.base, color: C.text, lineHeight: 1.5 }}>
-                      {a.action}
-                      {(a.impact || a.effort) && (
-                        <span style={{ marginLeft: S[2], fontFamily: mono, fontSize: T.xs, color: C.dim }}>
-                          {[a.impact && `${a.impact} impact`, a.effort && `${a.effort} effort`]
-                            .filter(Boolean).join(" · ")}
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                </ol>
-              </section>
-            )}
+              ) : brief.quotes.slice(0, LETTERS.length).map((q, i) => (
+                <Exhibit key={i} letter={LETTERS[i]} kind={`Exhibit ${LETTERS[i]}`} date={q.source || "source not named"}
+                  quote={`“${q.text}”`} tilt={TILTS[i]} selected={selected === LETTERS[i]} onSelect={setSelected} />
+              ))}
+            </aside>
           </article>
         )}
 
-        {brief?.shared_at && (
-          <div style={{ fontSize: T.xs, color: C.faint, fontFamily: mono }}>
-            Shared {when(brief.shared_at)}
-          </div>
+        {brief && (
+          <footer className="pub-share__foot">
+            {brief.shared_at ? `Shared ${when(brief.shared_at)}. ` : ""}
+            This page shows only what was shared, and stops working if the link is turned off.
+          </footer>
         )}
       </div>
     </main>
