@@ -160,3 +160,20 @@ def test_deleting_a_product_also_removes_its_theme_overrides(Session_):
         assert s.scalar(select(func.count(ThemeOverride.id))) == 0
         assert s.scalar(select(func.count(CaseMerge.id))) == 0
         assert s.scalar(select(func.count(Review.id))) == 0
+
+
+def test_seeded_exhibits_quote_the_real_text(Session_):
+    """Every demo exhibit shows the cited item's own words, not a stand-in."""
+    from echolens.db.models import EvidenceRow
+    with Session_() as s:
+        seed_demo(s)
+        s.commit()
+        demo = _demo(s)
+        inv_ids = [i.id for i in s.scalars(select(Investigation).where(
+            Investigation.product_id == demo.id)).all()]
+        rows = s.scalars(select(EvidenceRow).where(EvidenceRow.investigation_id.in_(inv_ids))).all()
+        assert rows
+        stand_ins = {"the complaint as written", "the release note", "the engineering report",
+                     "one community report"}
+        for e in rows:
+            assert e.snippet and e.snippet.strip().lower() not in stand_ins, (e.eid, e.snippet)

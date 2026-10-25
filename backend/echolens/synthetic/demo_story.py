@@ -201,6 +201,21 @@ def _ref(result: dict, key: str) -> str | None:
     return rows[0]["ref"] if rows else None
 
 
+def _quote(row: dict | None) -> str:
+    """The cited item's own words, verbatim from the tool result: what a viewer
+    reads as the exhibit. A stand-in phrase here shows up on every demo case."""
+    if not row:
+        return ""
+    if row.get("title"):            # GitHub issue: its title is the report
+        return row["title"]
+    return (row.get("snippet") or row.get("notes") or "").strip()
+
+
+def _first(result: dict, key: str) -> dict | None:
+    rows = result.get(key) or []
+    return rows[0] if rows else None
+
+
 def _script(session: Session, product: str, t: dict, *, hyp: str | None = None,
             confidence: float | None = None, github: str | None = "",
             summary: str | None = None, prose: str | None = None,
@@ -224,39 +239,43 @@ def _script(session: Session, product: str, t: dict, *, hyp: str | None = None,
     refs: list[str] = []
     if t.get("reviews"):
         reviews = search_reviews(session, product=product, **t["reviews"])["reviews"]
-        ref = next((r["ref"] for r in reviews if r["rating"] < 4 or
+        row = next((r for r in reviews if r["rating"] < 4 or
                     classify(r["snippet"], r["rating"]) in (BUG, UX_CONFUSION)), None)
+        ref = row["ref"] if row else None
         out.append({"thought": "Read what the complaining users actually say.", "action": "call_tool",
                     "tool": {"name": "search_reviews", "args": t["reviews"], "tests_hypothesis": "H1"}})
         if ref:
             refs.append(ref)
-            out.append({"evidence": [{"ref": ref, "snippet": "the complaint as written",
+            out.append({"evidence": [{"ref": ref, "snippet": _quote(row),
                                       "supports": ["H1"], "contradicts": []}],
                         "hypothesis_updates": [{"id": "H1", "new_confidence": min(conf, 0.65),
                                                 "based_on_refs": [ref], "note": "reviews point here"}]})
         else:
             out.append({"evidence": [], "hypothesis_updates": []})
     if t.get("reddit"):
-        ref = _ref(search_reddit(session, t["reddit"], product=product), "posts")
+        row = _first(search_reddit(session, t["reddit"], product=product), "posts")
+        ref = row["ref"] if row else None
         out.append({"thought": "Check the community thread.", "action": "call_tool",
                     "tool": {"name": "search_reddit", "args": {"query": t["reddit"]},
                              "tests_hypothesis": "H1"}})
-        out.append({"evidence": [{"ref": ref, "snippet": "one community report", "supports": ["H1"],
+        out.append({"evidence": [{"ref": ref, "snippet": _quote(row), "supports": ["H1"],
                                   "contradicts": []}] if ref else [],
                     "hypothesis_updates": [{"id": "H1", "new_confidence": conf,
                                             "based_on_refs": [ref] if ref else [],
                                             "note": "a single source"}]})
     if t.get("release"):
-        ref = _ref(get_release_notes(session, version=t["release"], product=product), "releases")
+        row = _first(get_release_notes(session, version=t["release"], product=product), "releases")
+        ref = row["ref"] if row else None
         out.append({"thought": "Check what shipped before the complaints started.", "action": "call_tool",
                     "tool": {"name": "get_release_notes", "args": {"version": t["release"]},
                              "tests_hypothesis": "H1"}})
-        out.append({"evidence": [{"ref": ref, "snippet": "the release note",
+        out.append({"evidence": [{"ref": ref, "snippet": _quote(row),
                                   "supports": ["H1"], "contradicts": []}] if ref else [],
                     "hypothesis_updates": []})
     gh = t.get("github") if github == "" else github
     if resolved and gh:
-        ref = _ref(search_github_issues(session, gh, product=product), "issues")
+        row = _first(search_github_issues(session, gh, product=product), "issues")
+        ref = row["ref"] if row else None
         out.append({"thought": "Corroborate in a second, independent source.", "action": "call_tool",
                     "tool": {"name": "search_github_issues", "args": {"query": gh},
                              "tests_hypothesis": "H1"}})
@@ -265,7 +284,7 @@ def _script(session: Session, product: str, t: dict, *, hyp: str | None = None,
         if len(hyps) > 1:
             updates.append({"id": "H2", "new_confidence": 0.15, "new_status": "rejected",
                             "based_on_refs": [ref] if ref else [], "note": "does not fit the mechanism"})
-        out.append({"evidence": [{"ref": ref, "snippet": "the engineering report",
+        out.append({"evidence": [{"ref": ref, "snippet": _quote(row),
                                   "supports": ["H1"], "contradicts": ["H2"] if len(hyps) > 1 else []}]
                     if ref else [], "hypothesis_updates": updates})
     if not resolved:
