@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>EchoLens — Case (combined)</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500&amp;family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#FFFFFF}
+a{color:#2348C9}a:hover{color:#132E8F}
+</style>
+</helmet>
+<div style="min-height: 1240px; background: #FFFFFF; color: #0B0B0F; font-family: 'Geist', system-ui, sans-serif">
+
+  <header style="position: sticky; top: 0; z-index: 2; background: rgba(255,255,255,.95); border-bottom: 1px solid #E8E8E3">
+    <div style="max-width: 1200px; margin: 0 auto; padding: 16px 32px; display: flex; flex-wrap: wrap; align-items: center; gap: 14px">
+      <a href="D-Today.dc.html" style="text-decoration: none; color: #5B5F6B; font-size: 15px">← Today</a>
+      <div style="font-size: 14px; color: #5B5F6B">Problem #2 · we're <b style="color: #0B0B0F">89% sure</b></div>
+      <div style="flex: 1 1 auto"></div>
+      <button type="button" style="font-family: inherit; font-size: 15px; font-weight: 600; color: #FFFFFF; background: #0B0B0F; border: 0; border-radius: 12px; padding: 11px 18px">Send to GitHub</button>
+      <button type="button" style="font-family: inherit; font-size: 15px; color: #0B0B0F; background: #FFFFFF; border: 1px solid #D4D4CC; border-radius: 12px; padding: 11px 18px">Fix shipped</button>
+    </div>
+  </header>
+
+  <main style="max-width: 1200px; margin: 0 auto; padding: 36px 32px 64px; display: flex; flex-wrap: wrap; gap: 48px">
+    <div style="flex: 3 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 36px">
+
+      <div style="display: flex; align-items: flex-start; gap: 20px; flex-wrap: wrap">
+        <h1 style="flex: 1 1 420px; margin: 0; font-family: 'Newsreader', Georgia, serif; font-size: 50px; line-height: 1.04; letter-spacing: -1.2px; font-weight: 500">Battery drain since version 3.2.0</h1>
+        <div style="transform: rotate(-6deg); border: 3px solid #C2361F; color: #C2361F; font-family: 'Geist Mono', monospace; font-size: 14px; font-weight: 500; letter-spacing: 3px; padding: 6px 12px; border-radius: 4px; margin-top: 10px">CONFIRMED</div>
+      </div>
+
+      <section style="display: flex; flex-direction: column; gap: 12px">
+        <h2 style="margin: 0; font-size: 13px; letter-spacing: 1px; color: #5B5F6B; font-weight: 500">WHAT HAPPENED · tap a letter to see the exhibit</h2>
+        <p style="margin: 0; font-family: 'Newsreader', Georgia, serif; font-size: 22px; line-height: 1.7; color: #1E1F24">
+          <sc-for list="{{story}}" as="s" hint-placeholder-count="5">
+            <span style="background: {{s.hl}}; padding: 1px 0; border-radius: 2px">{{s.text}}</span><button type="button" onClick="{{s.pick}}" aria-pressed="{{s.on}}" aria-label="Show exhibit {{s.letter}}" style="font-family: 'Geist Mono', monospace; font-size: 11px; font-weight: 500; vertical-align: 8px; margin: 0 3px; cursor: pointer; border-radius: 50%; width: 22px; height: 22px; padding: 0; color: {{s.fg}}; background: {{s.bg}}; border: 1.5px solid #0B0B0F">{{s.letter}}</button>
+          </sc-for>
+        </p>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap; font-size: 14px; color: #5B5F6B">
+          <span style="background: #F6F6F3; border-radius: 999px; padding: 6px 12px"><b style="color: #C2361F">−0.84★</b> rating</span>
+          <span style="background: #F6F6F3; border-radius: 999px; padding: 6px 12px"><b style="color: #0B0B0F">62%</b> of 1★ reviews</span>
+          <span style="background: #F6F6F3; border-radius: 999px; padding: 6px 12px">started <b style="color: #0B0B0F">2 days</b> after the update</span>
+        </div>
+      </section>
+
+      <section style="display: flex; flex-direction: column; gap: 12px">
+        <h2 style="margin: 0; font-size: 13px; letter-spacing: 1px; color: #5B5F6B; font-weight: 500">WHY WE'RE SURE · our honesty checks</h2>
+        <sc-for list="{{reasons}}" as="r" hint-placeholder-count="4">
+          <button type="button" onClick="{{r.pick}}" aria-pressed="{{r.on}}" style="text-align: left; font-family: inherit; cursor: pointer; display: flex; gap: 14px; align-items: center; border-radius: 16px; padding: 15px 18px; color: #0B0B0F; background: {{r.bg}}; border: 1.5px solid {{r.bd}}">
+            <span style="flex: none; width: 26px; height: 26px; border-radius: 50%; background: #127A45; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-size: 14px">✓</span>
+            <span style="flex: 1 1 auto; font-size: 17px">{{r.text}}</span>
+            <span style="font-family: 'Geist Mono', monospace; font-size: 12px; color: #5B5F6B">{{r.letters}}</span>
+          </button>
+        </sc-for>
+      </section>
+
+      <section style="display: flex; flex-direction: column; gap: 12px">
+        <h2 style="margin: 0; font-size: 13px; letter-spacing: 1px; color: #5B5F6B; font-weight: 500">WHAT TO DO NEXT</h2>
+        <ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px">
+          <li style="display: flex; gap: 16px; align-items: center; background: #0B0B0F; color: #FFFFFF; border-radius: 18px; padding: 18px 20px; flex-wrap: wrap">
+            <span style="font-family: 'Geist Mono', monospace; font-size: 13px; color: #A1A3AE">1</span>
+            <span style="flex: 1 1 260px; font-size: 17px">Send it to your developers — the GitHub issue is already written, with every exhibit attached</span>
+            <button type="button" style="font-family: inherit; font-size: 15px; font-weight: 600; color: #0B0B0F; background: #FFFFFF; border: 0; border-radius: 12px; padding: 11px 18px">Review &amp; send</button>
+          </li>
+          <li style="display: flex; gap: 16px; align-items: center; border: 1px solid #E8E8E3; border-radius: 18px; padding: 18px 20px; flex-wrap: wrap">
+            <span style="font-family: 'Geist Mono', monospace; font-size: 13px; color: #5B5F6B">2</span>
+            <span style="flex: 1 1 260px; font-size: 17px">When the fix ships, tell EchoLens the version</span>
+            <button type="button" style="font-family: inherit; font-size: 15px; color: #0B0B0F; background: #FFFFFF; border: 1px solid #D4D4CC; border-radius: 12px; padding: 11px 18px">Fix shipped</button>
+          </li>
+          <li style="display: flex; gap: 16px; align-items: center; border: 1px dashed #D4D4CC; border-radius: 18px; padding: 18px 20px; flex-wrap: wrap">
+            <span style="font-family: 'Geist Mono', monospace; font-size: 13px; color: #5B5F6B">3</span>
+            <span style="flex: 1 1 260px; font-size: 17px; color: #5B5F6B">We watch the reviews for 14 days, then stamp it <b style="color: #127A45">FIX WORKED</b> — or reopen it</span>
+          </li>
+        </ol>
+        <button type="button" style="align-self: flex-start; font-family: inherit; font-size: 14px; color: #5B5F6B; background: transparent; border: 0; padding: 4px 0; text-decoration: underline">Think this is wrong? Tell us what really caused it</button>
+      </section>
+    </div>
+
+    <aside aria-label="Exhibits" style="flex: 2 1 360px; min-width: 0; display: flex; flex-direction: column; gap: 14px; background: #F6F6F3; border-radius: 24px; padding: 24px; align-self: flex-start">
+      <div style="display: flex; justify-content: space-between; align-items: baseline">
+        <h2 style="margin: 0; font-family: 'Newsreader', Georgia, serif; font-size: 28px; font-weight: 500">Exhibits</h2>
+        <span style="font-size: 13px; color: #5B5F6B">5 pieces · 3 kinds</span>
+      </div>
+      <sc-for list="{{exhibits}}" as="e" hint-placeholder-count="5">
+        <button type="button" onClick="{{e.pick}}" aria-pressed="{{e.on}}" style="text-align: left; font-family: inherit; color: #0B0B0F; cursor: pointer; background: #FFFFFF; border-radius: 14px; padding: 16px; display: flex; gap: 14px; transform: rotate({{e.tilt}}); border: {{e.bd}}; box-shadow: {{e.sh}}; opacity: {{e.op}}">
+          <span style="flex: none; width: 30px; height: 30px; border-radius: 50%; border: 1.5px solid #0B0B0F; display: flex; align-items: center; justify-content: center; font-family: 'Geist Mono', monospace; font-size: 13px; background: {{e.dot}}">{{e.letter}}</span>
+          <span style="display: flex; flex-direction: column; gap: 6px; min-width: 0">
+            <span style="font-size: 12px; color: #5B5F6B">{{e.kind}} · {{e.when}}</span>
+            <span style="font-family: 'Newsreader', Georgia, serif; font-size: 18px; line-height: 1.4"><span style="background: {{e.hl}}; border-radius: 2px">{{e.quote}}</span></span>
+          </span>
+        </button>
+      </sc-for>
+    </aside>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1240}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { kind: 'reason', id: 'users' };
+  }
+  renderVals() {
+    var self = this;
+    var st = this.state;
+    var pickEx = function (l) { return function () { self.setState({ kind: 'ex', id: l }); }; };
+    var pickR = function (r) { return function () { self.setState({ kind: 'reason', id: r }); }; };
+    var rs = [
+      { id: 'users', text: 'Users describe the same thing, in their own words', ev: ['A', 'D'] },
+      { id: 'devs', text: 'Your developers already logged it on GitHub', ev: ['B', 'E'] },
+      { id: 'order', text: 'The update came first — complaints began 2 days later', ev: ['C', 'A'] },
+      { id: 'disprove', text: 'We tried to disprove it: older versions are fine', ev: ['C'] }
+    ];
+    var lit = st.kind === 'ex' ? [st.id] : (rs.filter(function (r) { return r.id === st.id; })[0] || rs[0]).ev;
+    var on = function (l) { return lit.indexOf(l) >= 0; };
+    var parts = [
+      ['On October 13, version 3.2.0 switched on background photo sync for everyone.', 'C'],
+      ['Two days later, people wrote that their phone was dead by two in the afternoon.', 'A'],
+      ['Some found the workaround themselves: turn sync off and the battery recovers.', 'D'],
+      ['Your developers had seen it — the sync job keeps the phone awake when a retry fails,', 'B'],
+      ['and Android’s own battery screen names Lumo.', 'E']
+    ];
+    var story = parts.map(function (p, i) {
+      var o = on(p[1]);
+      return { text: (i ? ' ' : '') + p[0], letter: p[1], on: o, pick: pickEx(p[1]),
+        hl: o ? '#FFE96A' : 'transparent', fg: o ? '#FFFFFF' : '#0B0B0F', bg: o ? '#0B0B0F' : '#FFFFFF' };
+    });
+    var reasons = rs.map(function (r) {
+      var o = st.kind === 'reason' && st.id === r.id;
+      return Object.assign({}, r, { on: o, pick: pickR(r.id), letters: r.ev.join(' · '),
+        bg: o ? '#FFFBDD' : '#FFFFFF', bd: o ? '#0B0B0F' : '#E8E8E3' });
+    });
+    var ex = [
+      { letter: 'A', kind: 'Play Store review ★1', when: 'Oct 15', quote: '“Phone dies by 2pm since the update. Never had this before.”', tilt: '-0.5deg' },
+      { letter: 'B', kind: 'GitHub issue #2841', when: 'Oct 16', quote: 'Wakelock not released when background sync retry fails.', tilt: '0.4deg' },
+      { letter: 'C', kind: 'Release note', when: 'Oct 13', quote: 'Version 3.2.0 — New: background photo sync, on by default.', tilt: '-0.3deg' },
+      { letter: 'D', kind: 'Play Store review ★2', when: 'Oct 17', quote: '“Battery hot all day. Turned off sync and it’s fine.”', tilt: '0.6deg' },
+      { letter: 'E', kind: 'GitHub issue #2856', when: 'Oct 18', quote: 'Lumo at 40% in Android battery settings after 3.2.', tilt: '-0.4deg' }
+    ];
+    var exhibits = ex.map(function (e) {
+      var o = on(e.letter);
+      return Object.assign({}, e, { on: o, pick: pickEx(e.letter),
+        bd: o ? '2px solid #0B0B0F' : '1px solid #E8E8E3',
+        sh: o ? '5px 5px 0 #0B0B0F' : 'none',
+        op: o ? '1' : '0.6',
+        hl: o ? '#FFE96A' : 'transparent', dot: o ? '#FFE96A' : '#FFFFFF' });
+    });
+    return { story: story, reasons: reasons, exhibits: exhibits };
+  }
+}
+</script>
+</body>
+</html>
