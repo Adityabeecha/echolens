@@ -1,577 +1,79 @@
-import { useEffect, useRef, useState } from "react";
-import {
-  BacklogItem, PlanItem, PlanKind, PlanOverride, PlanSegment, QuarterPlan, RequestPlanItem,
-  api, canReview,
-} from "../api";
-import { age, plural } from "../format";
-import { C, MEASURE, R, S, T, mono, sans } from "../theme";
-import { Bar, Centered, EmptyState, ErrorState, Label, ScreenHeader } from "../ui";
-import { Icon } from "../components/Icon";
-import { SubTabs } from "../components/SubTabs";
+import { useState } from "react";
+import { PlanItem, PlanOverride, RequestPlanItem, api, canReview, isGuest } from "../api";
+import { EmptyState, PillTabs, SerifHeadline, StatTile } from "../components/casefile";
+import { useAsync } from "../hooks";
+import { Button, ErrorState, ScreenBody, Skeleton } from "../ui";
+import { PlanRow } from "./plan/PlanRow";
+import { PlanExport } from "./plan/PlanExport";
+import { keyOf, planHeadline, preview } from "./plan/model";
+import { usePlan } from "./plan/usePlan";
+import "./plan/plan.css";
 
-const BAND: Record<string, string> = { high: C.bad, medium: C.accent, low: C.dim };
-
-const isRequest = (i: PlanItem): i is RequestPlanItem => i.kind === "request";
-/** What the plan stores for an item: investigation id, or request slug. */
-const keyOf = (i: PlanItem): number | string => (isRequest(i) ? i.slug : i.investigation_id);
-
-const KINDS: { key: PlanKind; label: string }[] = [
-  { key: "bugs", label: "Bugs to fix" },
-  { key: "requests", label: "Users are asking for" },
-  { key: "all", label: "All" },
-];
-const SUBTITLE: Record<PlanKind, string> = {
-  bugs: "Open problems, ranked by value per engineer-day",
-  requests: "What users ask for, ranked by demand per engineer-day",
-  all: "Bugs and requests in one plan, each scored against the best of its kind",
-};
-
-/** The spec modal, loaded on first use. */
-type SpecModalType = typeof import("../components/SpecModal").SpecModal;
-
-/** Rebuilt from the structured fields: the server's sentence carries raw floats. */
-function defenceLine(i: BacklogItem): string {
-  const bits = [`${i.severity.band} severity (${i.severity.score.toFixed(2)})`];
-  if (i.volume) bits.push(`${i.volume} affected ${plural(i.volume, "review")}`);
-  bits.push(`open · ${age(i.persistence_days)}`);
-  if (i.projected.confident) bits.push(`prevents about ${i.projected.stars.toFixed(2)}★ of further drift (30-day rolling rating)`);
-  bits.push(effortLabel(i));
-  if (i.impact?.overridden) bits.push(`impact ×${i.impact.factor} (set by you)`);
-  if (i.segment) bits.push(`×${i.segment.factor} ${i.segment.label.toLowerCase()} (set by you)`);
-  bits.push(`${i.evidence_count} cited evidence ${plural(i.evidence_count, "item")}`);
-  return bits.join(" · ");
-}
-
-function effortLabel(i: PlanItem): string {
-  if (i.effort.overridden) return `${i.effort.days}d effort (set by you)`;
-  return i.effort.known ? `${i.effort.days}d effort (${i.effort.basis})` : `est. ${i.effort.days}d (default)`;
-}
-
-interface Props {
-  onOpenInvestigation: (id: number, status?: string) => void;
-  onGoCases: () => void;
-  onBack: () => void;
-  backLabel: string;
-}
-
-/**
- * The quality backlog — EchoLens proposes a plan, the PM edits and owns it.
- *
- * Ranked by impact-per-effort rather than impact, because a slightly smaller
- * problem that costs a day genuinely should beat one that costs three weeks.
- * Every line shows the arithmetic that placed it there.
- */
-export function Backlog({ onOpenInvestigation, onGoCases, onBack, backLabel }: Props) {
-  const [plan, setPlan] = useState<QuarterPlan | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const savingRef = useRef(false);
-  const [capacity, setCapacity] = useState<number>(20);
-  const [kind, setKind] = useState<PlanKind>("bugs");
-  const [spec, setSpec] = useState<{ slug: string; title: string; Modal: SpecModalType } | null>(null);
-  const reviewer = canReview();
-
-  const load = (days?: number) => {
-    setLoading(true);
-    api
-      .backlogPlan(days, kind)
-      .then((p) => {
-        setPlan(p);
-        setCapacity(p.capacity_days);
-        setError(null);
-      })
-      .catch((e) => setError(String(e).replace("Error: ", "")))
-      .finally(() => setLoading(false));
+type SpecModalType=typeof import("../components/SpecModal").SpecModal;
+interface Props { onOpenInvestigation:(id:number,status?:string)=>void;onGoCases:()=>void;onBack:()=>void;backLabel:string }
+export function Backlog({onOpenInvestigation,onGoCases,onBack,backLabel}:Props) {
+  const state=usePlan();
+  const cases=useAsync(()=>api.cases(),[]);
+  const [spec,setSpec]=useState<{item:RequestPlanItem;Modal:SpecModalType}|null>(null);
+  const reviewer=canReview()&&!isGuest();
+  if(!state.plan||!state.draft)return <div className="plan-v2"><ScreenBody>{state.error?<ErrorState title="Couldn't build your plan" detail={state.error} onRetry={state.reload}/>:<Skeleton rows={5} height={64}/>}</ScreenBody></div>;
+  const draft=state.draft,plan=preview(state.plan,draft);
+  const setOverride=(id:number|string,patch:PlanOverride|null)=>{
+    const overrides={...draft.overrides};
+    if(patch==null)delete overrides[String(id)];else overrides[String(id)]={...overrides[String(id)],...patch};
+    state.change({...draft,overrides});
   };
-
-  useEffect(() => load(), [kind]);
-
-  // Imported on click so the modal (and its tracker calls) stays out of Plan's
-  // first paint; a second open reuses the loaded module.
-  const openSpec = (item: RequestPlanItem) => {
-    import("../components/SpecModal")
-      .then((m) => setSpec({ slug: item.slug, title: item.summary, Modal: m.SpecModal }))
-      .catch((e) => setError(String(e).replace("Error: ", "")));
+  const toggle=(item:PlanItem,inPlan:boolean)=>{
+    const id=keyOf(item);
+    state.change({...draft,included:inPlan?draft.included.filter(x=>x!==id):[...draft.included.filter(x=>x!==id),id],
+      excluded:inPlan?[...draft.excluded.filter(x=>x!==id),id]:draft.excluded.filter(x=>x!==id)});
   };
-
-  const commit = async (included: (number | string)[], excluded: (number | string)[], days = capacity,
-                        overrides?: Record<string, PlanOverride>) => {
-    // `saving` only disables the buttons on the NEXT render, so two fast clicks
-    // both read the same pre-mutation plan and the second overwrote the first —
-    // one dropped item silently reappeared with no explanation. This ref is set
-    // synchronously, so the second call is refused before it can read stale ids.
-    if (!reviewer || savingRef.current) return;
-    savingRef.current = true;
-    setSaving(true);
-    try {
-      setPlan(await api.saveBacklogPlan({ included, excluded, capacity_days: days, overrides }, kind));
-      setError(null);
-    } catch (e) {
-      setError(String(e).replace("Error: ", ""));
-    } finally {
-      savingRef.current = false;
-      setSaving(false);
-    }
+  const open=async(item:PlanItem)=>{
+    if(reviewer&&state.pending&&!await state.flush())return;
+    if(item.kind === "request"){
+      const {SpecModal}=await import("../components/SpecModal");setSpec({item,Modal:SpecModal});
+    }else onOpenInvestigation(item.investigation_id,"resolved");
   };
-
-  if (loading && !plan) return <Centered>Ranking your open problems…</Centered>;
-  if (!plan) {
-    return (
-      <div style={{ padding: 28 }}>
-        <ErrorState title="Couldn't build a plan" detail={error ?? undefined}
-                    onRetry={() => load()} />
-      </div>
-    );
-  }
-
-  // Only explicit choices are overrides. Pinning every automatic proposal and
-  // excluding all overflow prevents the planner from refilling or resizing.
-  const inIds = plan.included ?? [];
-  const outIds = plan.excluded ?? [];
-  const drop = (id: number | string) => commit(inIds.filter((x) => x !== id), [...outIds, id]);
-  const add = (id: number | string) => commit([...inIds, id], outIds.filter((x) => x !== id));
-
-  // One item's estimate changed: send the WHOLE override map (the server
-  // replaces it wholesale), with this item's entry merged or removed.
-  const setOverride = (id: number | string, patch: PlanOverride | null) => {
-    const all = { ...(plan.overrides ?? {}) };
-    const key = String(id);
-    const merged = patch == null ? {} : { ...(all[key] ?? {}), ...patch };
-    const clean = Object.fromEntries(
-      Object.entries(merged).filter(([, v]) => v != null)) as PlanOverride;
-    if (Object.keys(clean).length) all[key] = clean;
-    else delete all[key];
-    commit(inIds, outIds, capacity, all);
-  };
-  const segments = plan.segments ?? [];
-
-  const empty = plan.proposed.length === 0 && plan.deferred.length === 0;
-  const counts = plan.counts;
-  const tabs = KINDS.map((k) => ({
-    key: k.key,
-    label: counts && k.key !== "all" ? `${k.label} · ${counts[k.key]}` : k.label,
-  }));
-  const row = (i: PlanItem, inPlan: boolean) => {
-    const id = keyOf(i);
-    const common = {
-      inPlan, busy: saving, canEdit: reviewer, segments,
-      onToggle: () => (inPlan ? drop(id) : add(id)),
-      onOverride: (p: PlanOverride | null) => setOverride(id, p),
-      note: plan.notes[String(id)],
-    };
-    return isRequest(i)
-      ? <RequestRow key={i.slug} item={i} onSpec={() => openSpec(i)} {...common} />
-      : <Row key={i.investigation_id} item={i} onOpen={onOpenInvestigation} {...common} />;
-  };
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <ScreenHeader
-        title="Plan"
-        product={plan.product}
-        subtitle={SUBTITLE[kind]}
-        back={{ label: backLabel, onClick: onBack }}
-        right={
-          <span style={{ fontFamily: mono, fontSize: T.xs, color: C.muted }}>
-            {plan.owned ? "YOUR PLAN" : "PROPOSED"} · {plan.generated}
-          </span>
-        }
-      />
-      <SubTabs tabs={tabs} active={kind} onChange={setKind} label="What to plan" />
-      <div style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>
-        {empty ? (
-          <EmptyState
-            title={kind === "requests" ? `No repeated requests from ${plan.product || "this product"} users yet`
-              : `Nothing to plan yet for ${plan.product || "this product"}`}
-            body={kind === "requests"
-              ? "Requests come from 3–5★ reviews that ask for something (“please add…”, “I wish…”). Once two or more ask for the same thing it shows up here, ranked by demand per engineer-day."
-              : "A problem enters the plan once a case resolves with a finding and no verified fix. Investigate something and it shows up here, ranked by what each engineer-day buys you."}
-            action="Go to Cases"
-            onAction={onGoCases}
-          />
-        ) : (
-          <>
-            {/* capacity + the outcome the plan projects */}
-            <div style={{ maxWidth: MEASURE, display: "flex", gap: S[5], flexWrap: "wrap",
-                          alignItems: "flex-end", padding: `${S[4]} ${S[5]}`, background: C.card,
-                          border: `1px solid ${C.border2}`, borderRadius: R.card, marginBottom: S[5] }}>
-              <div>
-                <Label style={{ marginBottom: S[1] }}>CAPACITY (ENGINEER-DAYS)</Label>
-                <input
-                  aria-label="Capacity in engineer-days"
-                  type="number" min={1} max={200} value={capacity}
-                  disabled={!reviewer || saving}
-                  onChange={(e) => setCapacity(Number(e.target.value))}
-                  // Clamp on commit. Number("") is 0 and Number("abc") is NaN,
-                  // and min/max are not enforced by React — clearing the field
-                  // saved capacity_days: 0, which emptied the plan and rendered
-                  // "COMMITTED 14d OF 0d" with no error anywhere.
-                  onBlur={() => {
-                    const safe = Number.isFinite(capacity) && capacity >= 1
-                      ? Math.min(200, Math.round(capacity))
-                      : 1;
-                    if (safe !== capacity) setCapacity(safe);
-                    commit(inIds, outIds, safe);
-                  }}
-                  style={{ width: 90, background: C.bgRaised, border: `1px solid ${C.border3}`,
-                           borderRadius: R.control, color: C.text, fontFamily: mono, fontSize: T.md,
-                           padding: `${S[2]} ${S[2]}` }}
-                />
-              </div>
-              <div style={{ flex: 1, minWidth: 220 }}>
-                <Label style={{ marginBottom: S[2] }}>
-                  COMMITTED {plan.committed_days}d OF {plan.capacity_days}d
-                </Label>
-                <Bar pct={(plan.committed_days / Math.max(1, plan.capacity_days)) * 100}
-                     color={plan.committed_days > plan.capacity_days ? C.bad : C.accent}
-                     height={7} />
-              </div>
-              <Stat label="FURTHER DRIFT PREVENTED"
-                    hint="Estimated further drift prevented in the 30-day rolling rating if these fixes reduce future complaints. Based on the observed drop, share of negative reviews and confidence. Existing low ratings remain until they age out; this is not an instant rating gain."
-                    value={plan.projected_stars > 0 ? `about ${plan.projected_stars.toFixed(2)}★` : "—"}
-                    color={plan.projected_stars > 0 ? C.good : C.muted} />
-              {kind !== "requests" && (
-                <Stat label="RESOLUTION RATE"
-                      value={`${Math.round(plan.resolution_rate * 100)}%`} color={C.text} />
-              )}
-              {kind !== "requests" && plan.median_fix_days != null && (
-                <Stat label="MEDIAN FIX" value={`${plan.median_fix_days}d`} color={C.muted} />
-              )}
-            </div>
-
-            {plan.unknown_effort > 0 && (
-              <div style={{ maxWidth: MEASURE, marginBottom: S[4], padding: `${S[2]} ${S[4]}`,
-                            border: `1px solid ${C.border3}`, background: C.card2,
-                            borderRadius: R.control, fontSize: T.sm, color: C.muted, lineHeight: "var(--el-lh-normal)" }}>
-                {plan.unknown_effort} item{plan.unknown_effort === 1 ? " has" : "s have"} no
-                effort signal yet — {kind === "bugs" ? "no linked issue labels and no fix history to learn from"
-                  : "nothing says how big a request is until you set it"}. They
-                use a default estimate of {plan.proposed.concat(plan.deferred).find((i) => !i.effort.known)?.effort.days ?? 5}d,
-                which counts toward your capacity — treat their rank as provisional.
-              </div>
-            )}
-
-            {error && (
-              <div style={{ maxWidth: MEASURE, marginBottom: S[4], padding: `${S[2]} ${S[3]}`,
-                            border: `1px solid ${C.bad}55`, background: `${C.bad}14`,
-                            borderRadius: R.control, fontSize: T.sm, color: C.bad }}>{error}</div>
-            )}
-
-            <Label as="h2" style={{ marginBottom: S[1], color: C.accent }}>
-              THIS QUARTER · {plan.proposed.length}
-            </Label>
-            <p style={{ fontSize: T.sm, color: C.dim, margin: "0 0 12px", lineHeight: "var(--el-lh-normal)" }}>
-              {kind === "bugs" ? "Ranked by value per engineer-day."
-                : kind === "requests" ? `Ranked by demand per engineer-day. ${plan.request_weight?.why ?? ""}`
-                : "Bugs and requests are measured differently, so each is scored as a share of the best of its kind."}
-              {" "}EchoLens proposes; you decide — drop anything and
-              the plan re-fills around your choice.{reviewer && " Adjust effort, impact or segment on any item and the ranking updates at once."}
-            </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: S[2], maxWidth: MEASURE }}>
-              {plan.proposed.map((i) => row(i, true))}
-            </div>
-
-            {plan.deferred.length > 0 && (
-              <>
-                <Label style={{ margin: "26px 0 12px", color: C.faint }}>
-                  DIDN'T FIT · {plan.deferred.length}
-                </Label>
-                <div style={{ display: "flex", flexDirection: "column", gap: S[2], maxWidth: MEASURE }}>
-                  {plan.deferred.map((i) => row(i, false))}
-                </div>
-              </>
-            )}
-          </>
-        )}
-      </div>
-      {spec && <spec.Modal slug={spec.slug} title={spec.title} onClose={() => setSpec(null)} />}
+  const row=(item:PlanItem,inPlan:boolean)=><PlanRow key={keyOf(item)} item={item} inPlan={inPlan} editable={reviewer}
+    segments={plan.segments??[]} note={plan.notes[String(keyOf(item))]} caseRow={item.kind === "request"?undefined:cases.data?.cases.find(r=>r.id===item.investigation_id)}
+    onOpen={()=>void open(item)} onToggle={()=>toggle(item,inPlan)} onOverride={p=>setOverride(keyOf(item),p)}/>;
+  const exportReady=async()=>{state.change({...draft});return state.flush();};
+  return <div className="plan-v2"><ScreenBody><div className="pl-page">
+    <div className="pl-intro"><div className="pl-actions"><Button variant="quiet" onClick={onBack}>← {backLabel === "Cases" ? "All problems" : backLabel}</Button><span className="pl-muted">{plan.product} · this quarter</span></div>
+      <SerifHeadline>{planHeadline(plan)}</SerifHeadline>
+      <p className="pl-muted">An estimate of future complaints avoided, not an instant rating gain. Existing low ratings stay until they age out.</p>
     </div>
-  );
-}
-
-function Stat({ label, value, color, hint }: { label: string; value: string; color: string; hint?: string }) {
-  return (
-    <div title={hint}>
-      <div style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".1em", color: C.faint }}>{label}</div>
-      <div style={{ fontSize: T.xl, fontWeight: 700, fontFamily: mono, color, marginTop: S[1] }}>{value}</div>
-      {hint && (
-        <div style={{ fontSize: T.micro, color: C.dim, marginTop: S[1], maxWidth: 200,
-                      lineHeight: "var(--el-lh-snug)" }}>
-          Rating gain if the whole plan ships
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Row({ item, inPlan, busy, canEdit, onToggle, onOpen, note, segments, onOverride }: {
-  item: BacklogItem;
-  inPlan: boolean;
-  busy: boolean;
-  canEdit: boolean;
-  onToggle: () => void;
-  onOpen: (id: number, status?: string) => void;
-  note?: string;
-  segments: PlanSegment[];
-  onOverride: (patch: PlanOverride | null) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const band = BAND[item.severity.band] ?? C.dim;
-  return (
-    <div className="el-card" style={{ display: "flex", gap: S[3], padding: `${S[3]} ${S[4]}`,
-                                      opacity: inPlan ? 1 : 0.74 }}>
-      <div style={{ width: 3, borderRadius: R.sm, background: band, flex: "none" }} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: S[2], flexWrap: "wrap" }}>
-          <span style={{ fontFamily: mono, fontSize: T.xs, color: C.faint }}>#{item.rank}</span>
-          <button
-            onClick={() => onOpen(item.investigation_id, "resolved")}
-            className="el-btn"
-            style={{ fontSize: T.md, fontWeight: 600, color: C.text,
-                     flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
-                     whiteSpace: "nowrap" }}>
-            {item.summary}
-          </button>
-          <span style={{ fontFamily: mono, fontSize: T.micro, padding: `0 ${S[2]}`, borderRadius: R.card,
-                         background: `${band}1a`, border: `1px solid ${band}55`, color: band }}>
-            {item.effort.overridden ? `${item.effort.days}d · set by you`
-              : item.effort.known ? `${item.effort.days}d` : `est. ${item.effort.days}d (default)`}
-          </span>
-          {item.segment && <SegmentPill segment={item.segment} />}
-        </div>
-
-        <div style={{ fontSize: T.sm, color: C.muted, marginTop: S[1], lineHeight: "var(--el-lh-normal)" }}>
-          {defenceLine(item)}
-        </div>
-
-        {note && (
-          <div style={{ fontSize: T.sm, color: C.text3, marginTop: S[1], fontStyle: "italic" }}>
-            “{note}”
-          </div>
-        )}
-
-        <div style={{ display: "flex", gap: S[3], marginTop: S[2], flexWrap: "wrap" }}>
-          <button onClick={() => setOpen((o) => !o)} className="el-btn"
-            style={{ fontFamily: mono, fontSize: T.micro, color: C.dim }}>
-            <Icon name={open ? "chevronDown" : "chevronRight"} size={11} />
-            {open ? "hide evidence" : `${item.evidence_count} evidence`}
-          </button>
-          {item.projected.confident && (
-            <span style={{ fontFamily: mono, fontSize: T.micro, color: C.good }}>
-              prevents about {item.projected.stars.toFixed(2)}★ of further drift (30-day rolling rating)
-            </span>
-          )}
-        </div>
-
-        <Estimates item={item} canEdit={canEdit} busy={busy} segments={segments}
-                   onOverride={onOverride} />
-
-        {open && (
-          <div style={{ marginTop: S[2], paddingLeft: 10, borderLeft: `2px solid ${C.border3}`,
-                        display: "flex", flexDirection: "column", gap: S[1] }}>
-            <div style={{ fontSize: T.sm, color: C.dim, lineHeight: "var(--el-lh-normal)" }}>
-              {item.projected.basis}
-            </div>
-            <div style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, wordBreak: "break-all" }}>
-              {item.evidence_refs.join(" · ") || "no cited refs"}
-            </div>
-          </div>
-        )}
+    <PillTabs label="What to plan" value={draft.kind} onChange={kind=>state.change({...draft,kind})} panelId="plan-items"
+      tabs={[{id:"bugs",label:"Bugs to fix"},{id:"requests",label:"Users are asking for"},{id:"all",label:"Everything"}]}/>
+    <section className="pl-capacity" aria-label="Plan capacity">
+      <label htmlFor="plan-capacity">Your capacity <strong>{draft.capacity_days} developer-days</strong>
+        <input id="plan-capacity" type="range" min={10} max={60} step={1} value={draft.capacity_days}
+          aria-valuetext={`${draft.capacity_days} developer-days this quarter`} onChange={e=>state.change({...draft,capacity_days:Number(e.target.value)})}/>
+      </label>
+      <div className="pl-stats" aria-live="polite">
+        <StatTile value={`${plan.proposed.length} items`} caption={`${plan.committed_days} of ${draft.capacity_days} developer-days used`}/>
+        <StatTile value={draft.kind === "requests"?plan.request_reviews:plan.complaints} caption={draft.kind === "requests"?"requesting reviews represented by this plan":"complaint matches addressed; reviews may overlap"}/>
+        <StatTile value={plan.projected_stars>0?`~${plan.projected_stars.toFixed(2)}★`:"—"} caption={plan.projected_stars>0?"further 30-day rating drift this plan could prevent":"no rating benefit measured for this selection"}/>
       </div>
-
-      {canEdit && (
-        <button onClick={onToggle} disabled={busy} className="el-btn"
-          style={{ background: "transparent", color: inPlan ? C.dim : C.accent,
-                   border: `1px solid ${inPlan ? C.border3 : "var(--el-accent-line)"}`,
-                   borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.sm, fontFamily: sans,
-                   cursor: busy ? "wait" : "pointer", flex: "none", alignSelf: "center" }}>
-          {inPlan ? "Drop" : "Add"}
-        </button>
-      )}
+      <p className="pl-muted" role="status">{!reviewer?"Preview only. A reviewer can save and send the plan.":state.saving?"Saving your plan…":state.pending?"Edits ready to save…":plan.owned?"Plan saved.":"Suggested plan — your edits will save automatically."}
+        {plan.committed_days>draft.capacity_days&&" Your pinned choices exceed capacity. Move an item to Next time or raise capacity."}</p>
+      {state.error&&<p role="alert">{state.error} <Button variant="quiet" onClick={()=>void state.flush()}>Retry save</Button></p>}
+    </section>
+    <div id="plan-items" role="tabpanel" aria-label="Planned items" tabIndex={0} className="pl-stack">
+      <SerifHeadline as="h2" size="section">In the plan · {plan.proposed.length}</SerifHeadline>
+      {plan.proposed.length?plan.proposed.map(i=>row(i,true)):<EmptyState title="Nothing fits this selection yet." action={<Button onClick={onGoCases}>See all problems</Button>}>
+        {plan.deferred.length?"Raise capacity or add one of the items below. Your explicit choices stay yours.":draft.kind === "requests"?"Repeated requests from your reviews will appear here. Connect feedback or check your sources to bring more in.":"Investigate a review spike first. Problems with a finding and no checked fix become planning candidates."}</EmptyState>}
+      <section className="pl-cut pl-stack"><SerifHeadline as="h2" size="section">Next time · {plan.deferred.length}</SerifHeadline>
+        {plan.deferred.length?plan.deferred.map(i=>row(i,false)):<p className="pl-muted">Everything in this selection fits. Lower capacity to compare a smaller plan.</p>}
+      </section>
     </div>
-  );
-}
-
-/** Rebuilt from the structured fields, like defenceLine for bugs. */
-function requestLine(i: RequestPlanItem): string {
-  const bits = [`${i.count} requesting ${plural(i.count, "review")}`];
-  if (i.avg_rating != null) bits.push(`avg ${i.avg_rating}★`);
-  if (i.happy_count) bits.push(`${i.happy_count} at 4–5★ count extra`);
-  bits.push(effortLabel(i));
-  if (i.impact?.overridden) bits.push(`impact ×${i.impact.factor} (set by you)`);
-  if (i.segment) bits.push(`×${i.segment.factor} ${i.segment.label.toLowerCase()} (set by you)`);
-  return bits.join(" · ");
-}
-
-/** A feature-request theme on the plan: demand, quotes, and a spec to hand off. */
-function RequestRow({ item, inPlan, busy, canEdit, onToggle, onSpec, note, segments, onOverride }: {
-  item: RequestPlanItem;
-  inPlan: boolean;
-  busy: boolean;
-  canEdit: boolean;
-  onToggle: () => void;
-  onSpec: () => void;
-  note?: string;
-  segments: PlanSegment[];
-  onOverride: (patch: PlanOverride | null) => void;
-}) {
-  return (
-    <div className="el-card" style={{ display: "flex", gap: S[3], padding: `${S[3]} ${S[4]}`,
-                                      opacity: inPlan ? 1 : 0.74 }}>
-      <div style={{ width: 3, borderRadius: R.sm, background: C.good, flex: "none" }} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: S[2], flexWrap: "wrap" }}>
-          <span style={{ fontFamily: mono, fontSize: T.xs, color: C.faint }}>#{item.rank}</span>
-          <span style={{ fontSize: T.md, fontWeight: 600, color: C.text, flex: 1, minWidth: 0,
-                         overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {item.summary}
-          </span>
-          <span style={{ fontFamily: mono, fontSize: T.micro, padding: `0 ${S[2]}`, borderRadius: R.card,
-                         background: `${C.good}1a`, border: `1px solid ${C.good}55`, color: C.good }}>
-            REQUEST · {item.effort.overridden ? `${item.effort.days}d · set by you`
-              : item.effort.known ? `${item.effort.days}d` : `est. ${item.effort.days}d (default)`}
-          </span>
-          {item.segment && <SegmentPill segment={item.segment} />}
-        </div>
-
-        <div style={{ fontSize: T.sm, color: C.muted, marginTop: S[1], lineHeight: "var(--el-lh-normal)" }}>
-          {requestLine(item)}
-        </div>
-
-        {item.verbatims.map((q) => (
-          <div key={q} title={q}
-               style={{ fontSize: T.sm, color: C.text3, marginTop: S[1], fontStyle: "italic",
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            “{q}”
-          </div>
-        ))}
-
-        {note && (
-          <div style={{ fontSize: T.sm, color: C.text3, marginTop: S[1] }}>Note: {note}</div>
-        )}
-
-        <div style={{ display: "flex", gap: S[3], marginTop: S[2], flexWrap: "wrap" }}>
-          <button onClick={onSpec} className="el-btn"
-            style={{ fontFamily: mono, fontSize: T.micro, color: C.accent }}>
-            <Icon name="external" size={11} /> Write spec
-          </button>
-        </div>
-
-        <Estimates item={item} canEdit={canEdit} busy={busy} segments={segments}
-                   onOverride={onOverride} />
-      </div>
-
-      {canEdit && (
-        <button onClick={onToggle} disabled={busy} className="el-btn"
-          style={{ background: "transparent", color: inPlan ? C.dim : C.accent,
-                   border: `1px solid ${inPlan ? C.border3 : "var(--el-accent-line)"}`,
-                   borderRadius: R.control, padding: `${S[2]} ${S[3]}`, fontSize: T.sm, fontFamily: sans,
-                   cursor: busy ? "wait" : "pointer", flex: "none", alignSelf: "center" }}>
-          {inPlan ? "Drop" : "Add"}
-        </button>
-      )}
-    </div>
-  );
-}
-
-/** A reviewer-set priority segment. The tooltip says what it does to value. */
-function SegmentPill({ segment }: { segment: PlanSegment }) {
-  return (
-    <span title={segment.why}
-      style={{ fontFamily: mono, fontSize: T.micro, padding: `0 ${S[2]}`, borderRadius: R.pill,
-               background: C.accentBg, border: `1px solid ${C.accentLine}`, color: C.accent,
-               cursor: "help" }}>
-      {segment.label} · ×{segment.factor}
-    </span>
-  );
-}
-
-const IMPACT_LABEL: Record<number, string> = {
-  1: "1 · minimal", 2: "2 · low", 3: "3 · medium", 4: "4 · high", 5: "5 · critical",
-};
-
-function SetByYou() {
-  return <span style={{ fontFamily: mono, fontSize: T.micro, color: C.accent }}>set by you</span>;
-}
-
-const ctl = {
-  background: C.bgRaised, border: `1px solid ${C.border3}`, borderRadius: R.control,
-  color: C.text, fontFamily: sans, fontSize: T.sm, padding: `2px ${S[2]}`,
-} as const;
-
-/**
- * Inline estimate overrides for a reviewer: effort (engineer-days), impact
- * (1–5) and a manual priority segment. Each change saves with the plan and the
- * server re-ranks immediately; overridden values are marked "set by you".
- */
-function Estimates({ item, canEdit, busy, segments, onOverride }: {
-  item: PlanItem;
-  canEdit: boolean;
-  busy: boolean;
-  segments: PlanSegment[];
-  onOverride: (patch: PlanOverride | null) => void;
-}) {
-  if (!canEdit) return null;
-  const days = item.effort.days;
-  const step = days <= 2 ? 0.5 : 1;
-  const bump = (dir: 1 | -1) => {
-    const next = Math.round(Math.max(0.5, Math.min(365, days + dir * step)) * 2) / 2;
-    if (next !== days) onOverride({ effort_days: next });
-  };
-  const impact = item.impact;
-  const touched = item.effort.overridden || impact?.overridden || item.segment != null;
-  const estimated = item.effort.estimated;
-  return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: S[4], alignItems: "center", marginTop: S[2],
-                  fontSize: T.sm, color: C.dim }}>
-      <div style={{ display: "flex", alignItems: "center", gap: S[1] }}
-           title={estimated ? `EchoLens estimated ${estimated.days}d (${estimated.basis})` : item.effort.basis}>
-        <span style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".08em" }}>EFFORT</span>
-        <button className="el-btn" style={ctl} disabled={busy || days <= 0.5}
-          aria-label="Decrease effort" onClick={() => bump(-1)}>−</button>
-        <span style={{ fontFamily: mono, color: C.text, minWidth: 34, textAlign: "center" }}>{days}d</span>
-        <button className="el-btn" style={ctl} disabled={busy || days >= 365}
-          aria-label="Increase effort" onClick={() => bump(1)}>+</button>
-        {item.effort.overridden && <SetByYou />}
-      </div>
-      {impact && (
-        <label style={{ display: "flex", alignItems: "center", gap: S[1] }}
-               title="Impact on a 1–5 scale. Each step doubles or halves value; the default comes from severity.">
-          <span style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".08em" }}>IMPACT</span>
-          <select value={impact.level} disabled={busy} style={ctl}
-            onChange={(e) => {
-              const lvl = Number(e.target.value);
-              onOverride({ impact: lvl === impact.default ? null : lvl });
-            }}>
-            {[1, 2, 3, 4, 5].map((n) => (
-              <option key={n} value={n}>
-                {IMPACT_LABEL[n]}{n === impact.default ? " (measured)" : ""}
-              </option>
-            ))}
-          </select>
-          {impact.overridden && <SetByYou />}
-        </label>
-      )}
-      {segments.length > 0 && (
-        <label style={{ display: "flex", alignItems: "center", gap: S[1] }}
-               title={item.segment?.why ?? "EchoLens has no data on who pays. Flag an item that hits a priority segment to multiply its value."}>
-          <span style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".08em" }}>SEGMENT</span>
-          <select value={item.segment?.key ?? ""} disabled={busy} style={ctl}
-            onChange={(e) => onOverride({ segment: e.target.value || null })}>
-            <option value="">None</option>
-            {segments.map((s) => (
-              <option key={s.key} value={s.key}>{s.label} (×{s.factor})</option>
-            ))}
-          </select>
-        </label>
-      )}
-      {touched && (
-        <button className="el-btn" disabled={busy} onClick={() => onOverride(null)}
-          style={{ fontFamily: mono, fontSize: T.micro, color: C.dim }}>
-          <Icon name="retry" size={10} /> reset to EchoLens's estimate
-        </button>
-      )}
-    </div>
-  );
+    {reviewer&&<PlanExport kind={draft.kind} flush={exportReady} count={plan.proposed.length}/>}
+    <details className="pl-context"><summary>How this plan is ranked · history and assumptions</summary><div className="pl-stack">
+      <p className="pl-muted">Problems are ranked by impact for each developer-day. Requests use demand for each developer-day. Everything compares each item with the best of its own kind. Your pins and exclusions win over automatic choices.</p>
+      <p className="pl-muted">{plan.unknown_effort} items use an estimated effort. Set effort, impact or priority group on a row to adjust it. No requesting review is counted as a promised rating improvement.</p>
+      <p className="pl-muted">{Math.round(plan.resolution_rate*100)}% of resolved problems led to a checked fix.{plan.median_fix_days!=null&&` Past fixes took a median of ${plan.median_fix_days} days.`}</p>
+      {plan.request_weight&&<p className="pl-muted">{plan.request_weight.why}</p>}
+      <Button variant="quiet" onClick={onGoCases}>Review all problems</Button>
+    </div></details>
+  </div>{spec&&<spec.Modal slug={spec.item.slug} title={spec.item.summary} onClose={()=>setSpec(null)}/>}</ScreenBody></div>;
 }

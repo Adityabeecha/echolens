@@ -15,7 +15,7 @@ from echolens.db.models import (
     FindingDecision, FixWatch, HypothesisRow, Investigation, Issue, KnowledgeEdge,
     LLMCall, Mention, Post, Product, QueuedInvestigation, Recommendation, Release,
     Review, ReviewFeedback, ReviewRequest, SavedView, SentAlert, ShareLink,
-    ThemeOverride, TraceStep, TriageDecision,
+    ThemeOverride, TraceStep, TriageDecision, HumanRule, PlanExport,
 )
 
 
@@ -39,6 +39,9 @@ def purge_product_data(session: Session, product: Product) -> None:
         Comment.product_id == product_id)).all()]
     _purge(Mention, Mention.comment_id, comment_ids)
 
+    _purge(HumanRule, HumanRule.product_id, [product_id])
+    _purge(PlanExport, PlanExport.product_id, [product_id])
+    session.flush()
     _purge(ReviewFeedback, ReviewFeedback.finding_id, find_ids)
     # v15: decisions and share links hang off findings. Deleting a product
     # must also kill its public links, or a token would outlive its data.

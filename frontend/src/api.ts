@@ -116,6 +116,9 @@ async function timed<T>(path: string, cancelWith: (AbortSignal | null)[],
 const SESSION_KEY = "echolens_session";
 const LEGACY_TOKEN_KEY = "echolens_token";
 let _session = localStorage.getItem(SESSION_KEY) === "1";
+let _sessionGeneration = 0;
+/** In-memory drafts and queued writes belong to the session that created them. */
+export function getSessionGeneration(): number { return _sessionGeneration; }
 // Drop any JWT an older build left behind; it must not linger in storage.
 localStorage.removeItem(LEGACY_TOKEN_KEY);
 let _onAuthError: (() => void) | null = null;
@@ -151,11 +154,13 @@ function scoped(path: string): string {
 
 /** Record a session the server just opened (its cookie is already set). */
 export function startSession(csrf?: string | null): void {
+  _sessionGeneration++;
   _session = true;
   _csrf = csrf ?? null;
   localStorage.setItem(SESSION_KEY, "1");
 }
 function forgetSession(): void {
+  _sessionGeneration++;
   _session = false;
   _csrf = null;
   localStorage.removeItem(SESSION_KEY);
@@ -191,6 +196,7 @@ const GUEST_KEY = "echolens_guest";
 let _guest = localStorage.getItem(GUEST_KEY) === "1";
 
 export function setGuest(on: boolean): void {
+  if (on !== _guest) _sessionGeneration++;
   _guest = on;
   if (on) localStorage.setItem(GUEST_KEY, "1");
   else localStorage.removeItem(GUEST_KEY);
@@ -1179,6 +1185,13 @@ export interface BrainEdge {
   case_ids: number[];
   trend: "holding" | "weakening";
 }
+export interface TeamRule {
+  id: number; text: string; author: string | null; created_at: string; updated_at: string;
+  status: "active" | "retired"; case_id: number | null; origin: "team" | "correction";
+}
+export interface PlanExportResult {
+  results: { key: number | string; title: string; status: "created" | "existing" | "failed"; url: string | null; error?: string }[];
+}
 export interface ReviewFlag {
   subsystem: string;
   symptom: string;
@@ -1198,6 +1211,11 @@ export interface ChangeReview {
 
 // v11: the quality backlog
 export interface BacklogItem {
+  /** Exact preview input and stable tie order; optional for older servers. */
+  base_value?: number;
+  tie_order?: number;
+  support_level?: string | null;
+  needs_review?: boolean;
   /** v16: absent on older servers; every item without it is a bug finding. */
   kind?: "bug";
   key?: number;
@@ -1231,6 +1249,8 @@ export interface BacklogItem {
 }
 /** v16: a feature-request theme on the plan, keyed by its request slug. */
 export interface RequestPlanItem {
+  base_value?: number;
+  tie_order?: number;
   kind: "request";
   key: string;
   slug: string;
@@ -1631,6 +1651,12 @@ export const api = {
   brainAsk: (question: string) =>
     post<{ answer: string; edges: BrainEdge[]; grounded: boolean }>(
       "/brain/ask", { question, product_id: getActiveProduct() }),
+  teamRules: () => get<{ rules: TeamRule[] }>(scoped("/brain/rules")),
+  addTeamRule: (text: string) => post<TeamRule>(scoped("/brain/rules"), { text }),
+  editTeamRule: (id: number, body: { text?: string; status?: "active" | "retired" }) =>
+    patch<TeamRule>(scoped(`/brain/rules/${id}`), body),
+  exportPlan: (tracker: TrackerId, kind: PlanKind, productId = getActiveProduct()) =>
+    post<PlanExportResult>("/backlog/plan/export" + (productId == null ? "" : `?product_id=${productId}`), { tracker, kind }),
   backlogPlan: (capacityDays?: number, kind: PlanKind = "bugs") => {
     const qs = [capacityDays ? `capacity_days=${capacityDays}` : "", kind !== "bugs" ? `kind=${kind}` : ""]
       .filter(Boolean).join("&");
@@ -1641,8 +1667,8 @@ export const api = {
   saveBacklogPlan: (body: {
     included: (number | string)[]; excluded: (number | string)[]; capacity_days?: number;
     overrides?: Record<string, PlanOverride>;
-  }, kind: PlanKind = "bugs") =>
-    put<QuarterPlan>("/backlog/plan", { ...body, kind, product_id: getActiveProduct() }),
+  }, kind: PlanKind = "bugs", productId = getActiveProduct()) =>
+    put<QuarterPlan>("/backlog/plan", { ...body, kind, product_id: productId }),
   /** A Markdown spec for one request theme (template, or a checked LLM rewrite). */
   requestSpec: (slug: string) =>
     get<RequestSpec>(scoped(`/requests/${encodeURIComponent(slug)}/spec`)),

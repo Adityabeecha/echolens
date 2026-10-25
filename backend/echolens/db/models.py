@@ -509,6 +509,41 @@ class ReviewFeedback(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class HumanRule(Base):
+    """A team's editable hints, kept separate from evidence-derived knowledge."""
+    __tablename__ = "human_rules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    text: Mapped[str] = mapped_column(Text)
+    author: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    case_id: Mapped[int | None] = mapped_column(nullable=True)
+    # Unique source identity makes lazy legacy import safe on repeated reads.
+    feedback_id: Mapped[int | None] = mapped_column(ForeignKey("review_feedback.id"),
+                                                    nullable=True, unique=True)
+    origin: Mapped[str] = mapped_column(String(16), default="team")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class PlanExport(Base):
+    """Durable per-item claims: an uncertain remote write must never repeat blindly."""
+    __tablename__ = "plan_exports"
+    __table_args__ = (UniqueConstraint("product_id", "tracker", "destination", "item_key",
+                                      name="uq_plan_export_item"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    tracker: Mapped[str] = mapped_column(String(16))
+    destination: Mapped[str] = mapped_column(String(256))
+    item_key: Mapped[str] = mapped_column(String(96))
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    number: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class CaseMerge(Base):
     """A duplicate's evidence stays on its case; this link makes it related."""
     __tablename__ = "case_merges"
