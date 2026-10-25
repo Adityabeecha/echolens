@@ -11,6 +11,7 @@ function harness(file, stubs = {}) {
     useState(initial) { const i = cursor++; if (!(i in slots)) slots[i] = initial;
       return [slots[i], x => { slots[i] = typeof x === "function" ? x(slots[i]) : x; }]; },
     useEffect() {}, useRef(x) { return { current: x }; }, useMemo(fn) { return fn(); },
+    useId() { return "uid"; },
   };
   const jsx = (type, props) => ({ type, props: props ?? {} });
   const passthrough = p => jsx("div", { children: [p.title, p.children] });
@@ -22,13 +23,16 @@ function harness(file, stubs = {}) {
       if (name === "react") return react;
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx, Fragment: "fragment" };
       if (name in stubs) return stubs[name];
+      // Stylesheets and the SVG chart are not part of what these checks render.
+      if (name.endsWith(".css")) return {};
+      if (name.endsWith("/charts/TimelineChart")) return { TimelineChart: () => null };
       if (name.endsWith("/ui")) return new Proxy({}, { get: () => passthrough });
       if (name.endsWith("/components/Icon")) return { Icon: () => null };
       if (name.endsWith("/components/CaseCard")) return { CaseCard: passthrough };
       if (name.endsWith("/components/Toast")) return { withToast: fn => fn() };
       if (name === "./TraceTab") return { TraceRow: () => null };
       const base = new URL(name, url);
-      const child = [".ts", ".tsx"].map(ext => new URL(base.href + ext)).find(existsSync);
+      const child = [".ts", ".tsx", "/index.ts", "/index.tsx"].map(ext => new URL(base.href + ext)).find(existsSync);
       if (!child) throw new Error(`Unexpected import ${name}`);
       return load(child);
     };
