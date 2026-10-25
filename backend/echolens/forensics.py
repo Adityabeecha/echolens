@@ -475,12 +475,66 @@ def _highlight(quotes: list[str], text: str) -> str | None:
     return None
 
 
+_ISSUE_REF = re.compile(r"^issue\s+(\S+)$")
+_RELEASE_REF = re.compile(r"^release\s+v?(\S+)$")
+
+
+def _exhibit_meta(session: Session, evs: list, product: str | None) -> dict[str, dict]:
+    """{evidence id: {date, rating}} — when each exhibit was written (a review,
+    a post, an issue, a release) and a review's stars. One query per source
+    kind that is actually cited; anything not found stays None."""
+    from echolens.db.models import Issue, Post
+    reviews = [e.ref for e in evs if e.source in guards.REVIEW_SOURCES]
+    posts = [e.ref for e in evs if e.source not in guards.REVIEW_SOURCES
+             and not _ISSUE_REF.match(e.ref or "") and not _RELEASE_REF.match(e.ref or "")]
+    issues = [m[1] for e in evs if (m := _ISSUE_REF.match(e.ref or ""))]
+    versions = [m[1] for e in evs if (m := _RELEASE_REF.match(e.ref or ""))]
+
+    def scoped(stmt, model):
+        return stmt.where(model.product == product) if product else stmt
+
+    review_rows: dict[str, tuple] = {}
+    if reviews:
+        for ext, at, rating in session.execute(scoped(select(Review.ext_id, Review.created_at, Review.rating)
+                                                      .where(Review.ext_id.in_(reviews)), Review)).all():
+            review_rows[ext] = (at, rating)
+    post_rows: dict[str, datetime] = {}
+    if posts:
+        post_rows = dict(session.execute(scoped(select(Post.ext_id, Post.created_at)
+                                                .where(Post.ext_id.in_(posts)), Post)).all())
+    issue_rows: dict[str, datetime] = {}
+    if issues:
+        for ext, at in session.execute(select(Issue.ext_id, Issue.created_at)
+                                       .where(Issue.ext_id.in_(issues)).order_by(Issue.id)).all():
+            issue_rows.setdefault(ext, at)
+    release_rows: dict[str, datetime] = {}
+    if versions:
+        release_rows = dict(session.execute(scoped(select(Release.version, Release.released_at)
+                                                   .where(Release.version.in_(versions)), Release)).all())
+
+    out: dict[str, dict] = {}
+    for e in evs:
+        at, rating = None, None
+        if e.ref in review_rows and e.source in guards.REVIEW_SOURCES:
+            at, rating = review_rows[e.ref]
+        elif (m := _ISSUE_REF.match(e.ref or "")):
+            at = issue_rows.get(m[1])
+        elif (m := _RELEASE_REF.match(e.ref or "")):
+            at = release_rows.get(m[1])
+        else:
+            at = post_rows.get(e.ref)
+        out[e.eid] = {"date": _day_key(at) if at else None, "rating": rating}
+    return out
+
+
 def citations(session: Session, inv: Investigation, product: str | None) -> dict:
     """Two-way citation map for one case.
 
     {sentences: [finding prose sentences], citations: [{id, source, ref, quote,
     url, supports: [hypothesis ids], claim_spans: [sentence indexes citing it],
-    highlight: substring of the full review text the finding quotes, or null}]}.
+    highlight: substring of the full review text the finding quotes, or null,
+    date: the day the source was written or released (or null), rating: a
+    review's stars (or null)}]}.
     Three queries plus one for the quoted reviews' full text.
     """
     evs = session.scalars(select(EvidenceRow).where(
@@ -500,6 +554,7 @@ def citations(session: Session, inv: Investigation, product: str | None) -> dict
             stmt = stmt.where(Review.product == product)
         full = dict(session.execute(stmt).all())
 
+    meta = _exhibit_meta(session, evs, product)
     out = []
     for e in evs:
         supports = [h.hid for h in hyps if e.eid in ((h.json or {}).get("evidence_for") or [])]
@@ -511,5 +566,6 @@ def citations(session: Session, inv: Investigation, product: str | None) -> dict
             "id": e.eid, "source": e.source, "ref": e.ref, "quote": e.snippet,
             "url": _url(e.source, e.ref), "supports": supports, "claim_spans": spans,
             "highlight": _highlight(quotes, full.get(e.ref) or e.snippet) if quotes else None,
+            **meta[e.eid],
         })
     return {"investigation_id": inv.id, "sentences": sentences, "citations": out}

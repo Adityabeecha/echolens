@@ -3511,9 +3511,17 @@ def integrations_trackers(user: dict = Depends(current_user)) -> dict:
                          for t in TRACKERS]}
 
 
+class TicketEdits(BaseModel):
+    """What a person changed in the issue preview. The evidence section is
+    re-attached by exporting.apply_ticket_edits if they removed it."""
+    title: str | None = Field(None, max_length=256)
+    body: str | None = Field(None, max_length=60000)
+
+
 @app.post("/findings/{finding_id}/ticket")
 def finding_ticket_create(finding_id: int, tracker: str = "github",
                           product_id: int | None = None,
+                          edits: TicketEdits | None = None,
                           user: dict = Depends(require_role("reviewer"))) -> dict:
     """File a finding to GitHub, Linear or Jira. Same ticket body everywhere
     (exporting.finding_ticket); only GitHub issues are linked for fix-watch,
@@ -3535,6 +3543,9 @@ def finding_ticket_create(finding_id: int, tracker: str = "github",
         inv = session.get(Investigation, finding.investigation_id)
         ticket = finding_ticket(session, finding, repo=repo,
                                 deep_link=deep_link(inv.id) if inv else None)
+        if edits is not None:
+            from echolens.exporting import apply_ticket_edits
+            ticket = apply_ticket_edits(ticket, edits.title, edits.body)
         try:
             issue = create_ticket(tracker, ticket["title"], ticket["body"], repo=repo)
         except TrackerError as err:
