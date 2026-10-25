@@ -1918,6 +1918,10 @@ def feed_candidates(request: Request, product_id: int | None = None,
         muted_n = len([o for o in overrides.values() if o.muted])
         out = apply_overrides(out, overrides)
         requests_out = apply_overrides(requests_out, overrides)
+        from echolens.intent import spike_category
+        for th in out + requests_out:
+            th["category"] = spike_category([th["statement"], *th.get("verbatims", [])],
+                                            th.get("intents"))
         return {"candidates": out, "requests": requests_out, "product": prod.name,
                 "engine": result.get("engine"), "cached": result.get("cached", False),
                 "reviews_considered": result.get("reviews_considered", 0),
@@ -1964,7 +1968,9 @@ def queue_themes(request: Request, body: QueueThemes,
 
     if queued:
         _spawn_drain(pid)
-    deferred = len([q for q in view["queued"] if q["status"] == "deferred"])
+    # Deferred from THIS selection, not everything already waiting in the queue.
+    mine = {q.get("queue_id") for q in queued}
+    deferred = len([q for q in view["queued"] if q["status"] == "deferred" and q["queue_id"] in mine])
     parts = []
     if queued:
         parts.append(f"{len(queued)} queued")
@@ -1974,6 +1980,59 @@ def queue_themes(request: Request, body: QueueThemes,
         parts.append(f"{len(already)} already under investigation")
     return {"queued": queued, "already": already, "queue": view,
             "summary": " · ".join(parts) or "nothing to queue"}
+
+
+class SpikeBatch(BaseModel):
+    slugs: list[str] = Field(min_length=1, max_length=100)
+    product_id: int | None = None
+    tier: str = "quick"
+    reason: str = Field("", max_length=300)
+
+
+@app.post("/spikes/merge")
+@limiter.limit("20/minute")
+def spikes_merge(request: Request, body: SpikeBatch,
+                 user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Merge several new spikes into one problem and queue it (inside the
+    daily limit, like any other selection)."""
+    from echolens.orchestrator.queue import enqueue_theme, queue_view
+    from echolens.problems import merge_spikes
+    with session_scope() as session:
+        prod = _scope(session, body.product_id, user)
+        pid = prod.id if prod else None
+        try:
+            merged = merge_spikes(session, pid, body.slugs, user.get("email") or "a reviewer")
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        res = enqueue_theme(session, product_id=pid, slug=merged["lead"],
+                            statement=merged["title"], tier=body.tier)
+        view = queue_view(session, pid, _daily_limit(session, pid))
+    if res["status"] != "already":
+        _spawn_drain(pid)
+    deferred = any(q["status"] == "deferred" and q.get("queue_id") == res.get("queue_id")
+                   for q in view["queued"])
+    n = len(merged["merged"]) + 1
+    summary = f"{n} spikes merged into one problem" + (
+        " — waiting for tomorrow's budget" if deferred else " and queued")
+    return {**merged, "queue": view, "deferred": deferred, "summary": summary}
+
+
+@app.post("/spikes/dismiss")
+@limiter.limit("30/minute")
+def spikes_dismiss(request: Request, body: SpikeBatch,
+                   user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Dismiss new spikes with a reason; each then shows who and why."""
+    from echolens.problems import dismiss_spikes
+    with session_scope() as session:
+        prod = _scope(session, body.product_id, user)
+        try:
+            out = dismiss_spikes(session, prod.id if prod else None, body.slugs, body.reason,
+                                 user.get("email") or "a reviewer")
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+    n = len(out["dismissed"])
+    return {**out, "summary": f"{n} {'spike' if n == 1 else 'spikes'} dismissed"
+            + (f" · {len(out['skipped'])} already decided" if out["skipped"] else "")}
 
 
 @app.get("/queue")
@@ -2222,8 +2281,15 @@ def list_cases(product_id: int | None = None, user: dict = Depends(current_user)
         name = p.name if p else None
         # Signals: intent counts, muted themes hidden, related ones grouped into
         # incidents. Members stay in `signals`; incidents only reference them.
+        everything = view["signals"]
         view["signals"], view["incidents"] = incident_view(
-            session, name, view["signals"], muted_word_sets(session, pid))
+            session, name, everything, muted_word_sets(session, pid))
+        # Problems screen: category, strength, and a plain "why" on everything
+        # dismissed — including spikes a muted theme hid.
+        from echolens.problems import annotate_spikes
+        kept = {s["slug"] for s in view["signals"]}
+        view["signals"] = annotate_spikes(session, view["signals"], view["incidents"],
+                                          [s for s in everything if s["slug"] not in kept])
         view["intents"] = _product_intents(session, name)
         # Queued rows past today's cap say so, with the override's estimate.
         limit = _daily_limit(session, pid)
@@ -2251,7 +2317,7 @@ def list_cases(product_id: int | None = None, user: dict = Depends(current_user)
 # as other app mutations; guests keep their views in the browser instead.
 class SavedViewBody(BaseModel):
     name: str = Field(min_length=1, max_length=80)
-    params: dict[str, str] = Field(default_factory=dict, max_length=6)
+    params: dict[str, str] = Field(default_factory=dict, max_length=7)
 
     @field_validator("name")
     @classmethod
@@ -2263,7 +2329,7 @@ class SavedViewBody(BaseModel):
     @field_validator("params")
     @classmethod
     def case_filters(cls, value):
-        if set(value) - {"tab", "sev", "source", "range", "intent", "q"}:
+        if set(value) - {"tab", "sev", "source", "range", "intent", "q", "sort"}:
             raise ValueError("Only Cases filters can be saved")
         if any(len(v) > 500 for v in value.values()):
             raise ValueError("Filter values must be 500 characters or fewer")

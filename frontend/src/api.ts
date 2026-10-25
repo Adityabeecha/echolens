@@ -336,7 +336,7 @@ async function del<T>(path: string): Promise<T> {
 
 // ── types ────────────────────────────────────────────────────────────
 
-export const CASE_VIEW_FILTERS = ["tab", "sev", "source", "range", "intent", "q"] as const;
+export const CASE_VIEW_FILTERS = ["tab", "sev", "source", "range", "intent", "q", "sort"] as const;
 export type CaseViewParams = Partial<Record<typeof CASE_VIEW_FILTERS[number], string>>;
 export interface SavedView {
   id: number;
@@ -684,6 +684,13 @@ export interface CaseRow {
   estimate?: CostEstimate | null;
   /** The trust badge, for cases with a finding. */
   trust?: TrustSummary | null;
+  /** What the verdict stamp reads (see stampFor). */
+  support_level?: string | null;
+  needs_review?: boolean;
+  /** The fix watch's state: issue_open, waiting_for_release, watching, confirmed… */
+  fix_status?: string | null;
+  /** "feature_request" when the problem came from users' requests. */
+  intent?: string | null;
 }
 /**
  * Computed from a case's evidence rows. `label` is the badge sentence; it says
@@ -720,6 +727,8 @@ export interface Incident {
   window_start: string;
   window_end: string;
   intents: IntentCounts | null;
+  category?: SpikeCategory;
+  strength?: SpikeStrength;
 }
 export interface SignalRow {
   id?: number;
@@ -736,7 +745,19 @@ export interface SignalRow {
   window_end?: string | null;
   /** Null when no reviews sit behind the signal (e.g. a GitHub issue burst). */
   intents?: IntentCounts | null;
+  /** Which New-spikes group it belongs to. */
+  category?: SpikeCategory;
+  /** strong / medium / weak, from the detector's z bands. */
+  strength?: SpikeStrength;
+  /** Plain-word reason on every dismissed spike. */
+  dismissed_why?: string | null;
+  dismissed_decision?: string | null;
+  merge_into_anomaly_id?: number | null;
+  /** Hidden by a muted theme. */
+  muted?: boolean;
 }
+export type SpikeCategory = "bug" | "ux_confusion" | "performance" | "feature_request";
+export type SpikeStrength = "strong" | "medium" | "weak";
 export interface CaseView {
   product: string | null;
   product_id: number | null;
@@ -1034,6 +1055,7 @@ export interface ThemeCandidate {
   original_statement?: string;
   merged_from?: string[];
   avg_rating?: number | null;
+  category?: SpikeCategory;
 }
 export interface ThemeOverride {
   slug: string;
@@ -1504,6 +1526,14 @@ export const api = {
     post<{ queued: QueueSelection[]; already: QueueSelection[]; queue: QueueView; summary: string }>(
       "/queue/themes", { slugs, statements, tier, product_id: productId }),
   queue: () => get<QueueView>(scoped("/queue")),
+  /** Fold 2+ new spikes into one problem (the strongest leads) and queue it. */
+  mergeSpikes: (slugs: string[], tier = "quick", productId = getActiveProduct()) =>
+    post<{ lead: string; title: string; merged: string[]; skipped: string[]; deferred: boolean;
+           summary: string }>("/spikes/merge", { slugs, tier, product_id: productId }),
+  /** Dismiss new spikes; each then shows "Dismissed by <you>: <reason>". */
+  dismissSpikes: (slugs: string[], reason: string, productId = getActiveProduct()) =>
+    post<{ dismissed: string[]; skipped: string[]; summary: string }>(
+      "/spikes/dismiss", { slugs, reason, product_id: productId }),
   cancelQueued: (queueId: number) => del<{ cancelled: number }>(scoped(`/queue/${queueId}`)),
   /** Bypass today's cap for ONE deferred item. Recorded on the queue row. */
   runQueuedNow: (queueId: number) =>

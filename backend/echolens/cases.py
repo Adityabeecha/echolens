@@ -362,6 +362,12 @@ def related_evidence(session: Session, inv: Investigation) -> list[dict]:
                 EvidenceRow.investigation_id.in_(related)).order_by(EvidenceRow.id)).all()]
 
 
+def _intent_of(anomaly: AnomalyEvent | None) -> str | None:
+    """A case opened from a users' request theme is a request; the rest carry
+    no intent of their own (their stamp comes from the proof)."""
+    return "feature_request" if anomaly is not None and (anomaly.slug or "").startswith("request-") else None
+
+
 def case_rows(session: Session, product_id: int | None,
               as_of: datetime | None = None) -> list[dict]:
     """Every case for a product, newest first, in the shared card shape."""
@@ -436,6 +442,11 @@ def case_rows(session: Session, product_id: int | None,
             "reopens_investigation_id": inv.reopens_investigation_id,
             "decision": decision_dict(decisions.get(finding.id), now) if finding else None,
             "spark": spark.series(_terms(finding, anomaly)),
+            # What the verdict stamp needs, from rows already loaded above.
+            "support_level": fj.get("support_level") if finding else None,
+            "needs_review": bool(fj.get("needs_review")) if finding else False,
+            "fix_status": watch.status if watch else None,
+            "intent": _intent_of(anomaly),
         })
 
     # Queued work is part of the same lifecycle, so it lives in the same list
@@ -473,6 +484,8 @@ def case_rows(session: Session, product_id: int | None,
             "decision": None,
             "position": position,
             "spark": spark.series(_terms(None, anomaly)),
+            "support_level": None, "needs_review": False, "fix_status": None,
+            "intent": _intent_of(anomaly),
         })
     # Queued work leads the list, IN QUEUE ORDER. This was built with
     # `rows.insert(0, ...)` inside the loop, so each insert pushed the previous
@@ -547,6 +560,9 @@ def signal_rows(session: Session, product_id: int | None,
             "age_days": _age_days(a.created_at, now),
             "dismissed": dismissed,
             "dismissed_reason": (td.reason if dismissed else None),
+            "dismissed_decision": (td.decision if dismissed else None),
+            "merge_into_anomaly_id": (td.merge_into_anomaly_id
+                                      if dismissed and td.decision == "merge" else None),
             "window_start": aware_utc(a.window_start).isoformat() if a.window_start else None,
             "window_end": aware_utc(a.window_end).isoformat() if a.window_end else None,
         })
