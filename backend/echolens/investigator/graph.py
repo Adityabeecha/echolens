@@ -44,6 +44,7 @@ from echolens.investigator.prompts import (
 from echolens.investigator.state import Budget, InvState
 from echolens.llm.client import LLMClient, LLMError
 from echolens.logging import get_logger
+from echolens.textkit import clean_headline
 from echolens.tools.registry import TOOLS, run_tool
 
 log = get_logger("investigator")
@@ -1147,6 +1148,11 @@ class Investigator:
             return self.inv
 
         finding = self._draft_finding(final)
+        # The summary is the case's headline everywhere it is shown (cards,
+        # briefs, Slack, email), so it is stored clean: no [ev_…] tags, no
+        # "V3.2.0". The prose keeps its citations.
+        if "summary" in finding:
+            finding["summary"] = clean_headline(finding["summary"])
         try:  # v4.0 impact quantification — deterministic, never fail the run over it
             from echolens.impact import quantify
             # Scoped. This omitted `product`, so impact was quantified over the

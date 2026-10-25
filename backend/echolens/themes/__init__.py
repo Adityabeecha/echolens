@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from echolens.db.models import AnomalyEvent, Finding, FixWatch, Investigation
 from echolens.impact import theme_terms
+from echolens.textkit import clean_headline
 from echolens.timeutil import aware_utc
 
 CHRONIC_DAYS = 60
@@ -74,7 +75,7 @@ def _lifecycle(rows, confirmed: set[int], now: datetime) -> list[dict]:
         created = aware_utc(inv.created_at) or now
         g = groups.setdefault(key, {
             "theme": key, "cases": [], "open_cases": [],
-            "first_seen": created, "last_seen": created, "label": f.summary,
+            "first_seen": created, "last_seen": created, "label": clean_headline(f.summary),
         })
         g["cases"].append(inv.id)
         if inv.id not in confirmed:
@@ -82,7 +83,7 @@ def _lifecycle(rows, confirmed: set[int], now: datetime) -> list[dict]:
         g["first_seen"] = min(g["first_seen"], created)
         if created >= g["last_seen"]:
             g["last_seen"] = created
-            g["label"] = f.summary  # most recent finding's headline
+            g["label"] = clean_headline(f.summary)  # most recent finding's headline
 
     out = []
     for g in groups.values():

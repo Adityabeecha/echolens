@@ -1,4 +1,5 @@
 import { PortfolioProduct, PortfolioTheme, TransferStats, api, isAdmin } from "../api";
+import { pct } from "../format";
 import { useAsync } from "../hooks";
 import { C, MEASURE, R, S, T, mono } from "../theme";
 import { Bar, Centered, ErrorState, Label, ScreenHeader } from "../ui";
@@ -201,7 +202,10 @@ function ProductRow({ p, onOpen, onOpenInvestigation }: {
             {band.label}
           </span>
           <span style={{ marginLeft: "auto", fontFamily: mono, fontSize: T.xs, color: C.faint }}>
-            {p.has_data ? `${p.negative_rate_pct}% negative` : "no data yet"}
+            {!p.has_data ? "no data yet"
+              : p.negative_rate_pct == null
+                ? <span title={p.negative_rate_reason ?? "no reviews in the last 7 days"}>— negative</span>
+                : `${pct(p.negative_rate_pct, 1)} negative`}
             {p.has_data && trend != null && trend !== 0 && (
               <span style={{ color: trend > 0 ? C.bad : C.good, marginLeft: 6 }}>
                 negative reviews <Icon name={trend > 0 ? "arrowUp" : "arrowDown"} size={11} /> {Math.abs(trend)} pts

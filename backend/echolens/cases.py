@@ -27,6 +27,7 @@ from echolens.db.models import (
     AnomalyEvent, CaseMerge, EvidenceRow, Finding, FindingDecision, FixWatch, Investigation, Product,
     QueuedInvestigation, Review, ReviewFeedback, TraceStep, TriageDecision)
 from echolens.impact import severity
+from echolens.textkit import clean_headline
 from echolens.timeutil import aware_utc
 
 # ── the vocabulary ──────────────────────────────────────────────────────
@@ -258,8 +259,10 @@ def case_title(finding: Finding | None, anomaly: AnomalyEvent | None,
     The old feed used `anomaly.metric` as a title, so cases were called things
     like "battery share of negatives" — a column header, not a problem.
     """
-    if finding is not None and (finding.summary or "").strip():
-        return finding.summary.strip()
+    # Cleaned on read too: findings stored before headlines were cleaned at
+    # write time still carry "[ev_001]" tags and "V3.2.0".
+    if finding is not None and clean_headline(finding.summary):
+        return clean_headline(finding.summary)
     if queued_title and queued_title.strip():
         return queued_title.strip()
     if anomaly is not None:

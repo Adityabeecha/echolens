@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from echolens.db.models import AnomalyEvent, Finding, FixWatch, Investigation
 from echolens.impact import severity
+from echolens.textkit import clean_headline
 from echolens.timeutil import aware_utc
 
 
@@ -119,7 +120,7 @@ def _fix_next(d: dict, resolution_rate: float, now) -> dict | None:
         return None
     f, inv = best
     return {"investigation_id": inv.id,
-            "summary": f.summary if f else "This case needs human review",
+            "summary": clean_headline(f.summary) if f else "This case needs human review",
             "score": round(best_score, 2)}
 
 
@@ -133,7 +134,7 @@ def _compose(d: dict, now) -> dict:
         f = d["latest"].get(inv.id)
         if f is not None:
             impact = (f.json or {}).get("impact", {})
-            new_problems.append({"investigation_id": inv.id, "summary": f.summary,
+            new_problems.append({"investigation_id": inv.id, "summary": clean_headline(f.summary),
                                  "impact_score": impact.get("impact_score", 0.0)})
     new_problems.sort(key=lambda p: -p["impact_score"])
 
