@@ -34,6 +34,8 @@ W_STALE_DATA = 6.0
 # Below this many reviews in a window, a negative-review RATE is noise. Reporting
 # "100% negative" off one review is a statistic-shaped guess.
 MIN_RATE_SAMPLE = 5
+RATING_WEEKS = 12      # the rating line on All products
+TOP_TOPICS = 3
 
 BANDS = (
     (60.0, "on_fire", "Needs you today"),
@@ -117,8 +119,8 @@ def _load_board(session: Session, products: list[Product], now: datetime) -> dic
 
     ids = [p.id for p in products]
     data = {pid: {"watches": [], "resolved": [], "latest": {}, "untriaged": 0, "waiting_incidents": 0,
-                  "sources": [], "chronic": [], "rates": (None, None),
-                  "recent_reviews": 0, "has_reviews": False} for pid in ids}
+                  "sources": [], "chronic": [], "topics": [], "rates": (None, None),
+                  "recent_reviews": 0, "has_reviews": False, "rating_weekly": []} for pid in ids}
     if not ids:
         return data
     for w in session.scalars(select(FixWatch).where(FixWatch.product_id.in_(ids))).all():
@@ -138,6 +140,9 @@ def _load_board(session: Session, products: list[Product], now: datetime) -> dic
                 finding.investigation_id] = finding
     for pid, themes in theme_lifecycles(session, ids, now).items():
         data[pid]["chronic"] = [t for t in themes if t["status"] == "chronic"]
+        # What people complain about, in their words: open themes, most cases first.
+        live = sorted((t for t in themes if t["status"] != "resolved"), key=lambda t: -t["open_cases"])
+        data[pid]["topics"] = [t["theme"] for t in live if t["theme"] != "other"][:TOP_TOPICS]
     for pid, n in session.execute(select(AnomalyEvent.product_id, func.count(AnomalyEvent.id)).where(
             AnomalyEvent.product_id.in_(ids), AnomalyEvent.status == "pending",
             AnomalyEvent.merged_into_id.is_(None)).group_by(AnomalyEvent.product_id)).all():
@@ -177,6 +182,25 @@ def _load_board(session: Session, products: list[Product], now: datetime) -> dic
         if text is not None:
             texts[name].extend([text] * count)
 
+    # Average stars per week for the last RATING_WEEKS weeks, one GROUP BY by
+    # day for every product, bucketed into weeks here (portable SQL).
+    week0 = (now - timedelta(weeks=RATING_WEEKS)).replace(hour=0, minute=0, second=0, microsecond=0)
+    buckets: dict[int, list[list[float]]] = {pid: [[0.0, 0] for _ in range(RATING_WEEKS)] for pid in ids}
+    for name, day, n, stars in session.execute(
+            select(Review.product, func.date(Review.created_at), func.count(Review.id), func.sum(Review.rating))
+            .where(Review.product.in_(list(names)), Review.created_at >= week0, Review.created_at < now)
+            .group_by(Review.product, func.date(Review.created_at))).all():
+        try:
+            d = datetime.fromisoformat(str(day)[:10]).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        w = min(RATING_WEEKS - 1, max(0, (d - week0).days // 7))
+        b = buckets[names[name]][w]
+        b[0] += float(stars or 0)
+        b[1] += int(n or 0)
+    for pid, weeks in buckets.items():
+        data[pid]["rating_weekly"] = [round(t / n, 2) if n else None for t, n in weeks]
+
     for s in session.scalars(select(CollectorState).where(
             CollectorState.product_id.in_(ids))).all():
         data[s.product_id]["sources"].append(s)
@@ -207,7 +231,7 @@ def product_snapshot(session: Session, product: Product, now: datetime,
     # ── live problems, weighted by severity ────────────────────────────
     watches = data["watches"]
     confirmed_inv = {w.investigation_id for w in watches if w.status == "confirmed"}
-    high = medium = 0
+    high = medium = confirmed_open = 0
     top_problem = None
     resolved = data["resolved"]
     latest: dict[int, Finding] = data["latest"]
@@ -223,9 +247,18 @@ def product_snapshot(session: Session, product: Product, now: datetime,
             high += 1
         elif sev["band"] == "medium":
             medium += 1
+        fj = f.json or {}
+        if fj.get("support_level") == "supported" and not fj.get("needs_review"):
+            confirmed_open += 1
         if top_problem is None or sev["score"] > top_problem["sev_score"]:
+            watch = next((w for w in watches if w.investigation_id == inv.id), None)
             top_problem = {"investigation_id": inv.id, "summary": clean_headline(f.summary),
-                           "band": sev["band"], "sev_score": sev["score"]}
+                           "band": sev["band"], "sev_score": sev["score"],
+                           # What the verdict stamp needs, and the rating it costs.
+                           "status": inv.status, "support_level": fj.get("support_level"),
+                           "needs_review": bool(fj.get("needs_review")),
+                           "fix_status": watch.status if watch else None,
+                           "rating_impact": round(float((impact or {}).get("rating_impact") or 0.0), 2)}
     if high:
         score += W_SEV1 * high
         reasons.append({"kind": "high", "weight": round(W_SEV1 * high, 1),
@@ -310,6 +343,11 @@ def product_snapshot(session: Session, product: Product, now: datetime,
         "negative_rate_reason": rate_reason,
         "negative_rate_delta_pct": round(100 * delta, 1) if has_rate else None,
         "confirmed_fixes": len(confirmed_inv),
+        # Problems proven by two independent kinds of source and not yet fixed.
+        "confirmed_open": confirmed_open,
+        # Average stars per week, oldest first; None for a week with no reviews.
+        "rating_weekly": data.get("rating_weekly", []),
+        "top_topics": data.get("topics", []),
         # Whether ANY feedback exists, not whether the last 7 days had some: the
         # old test (`bool(recent)`) told a product with 3,000 older reviews
         # "No feedback has been collected" beside a 12-week rating chart.

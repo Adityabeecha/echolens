@@ -115,7 +115,7 @@ function qs(params?: Record<string, string>): string {
  */
 export const LEARNED_VIEWS = ["map", "fixes"] as const;
 export type LearnedView = (typeof LEARNED_VIEWS)[number];
-export const SETTINGS_SECTIONS = ["general", "costs", "calibration"] as const;
+export const SETTINGS_SECTIONS = ["general", "costs", "sensitivity", "honesty", "integrations", "calibration"] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 export function canonicalRoute(r: Route): Route {
