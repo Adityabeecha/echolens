@@ -42,7 +42,7 @@ const withV = (version: string) => (/^v/i.test(version) ? version : `v${version}
 
 export function TimelineChart({
   points, releases = [], overlay, mode = "bars", height = 200,
-  unit = "negative reviews", overlayLabel = "matching this case", ariaLabel, formatDate = shortDate,
+  unit = "negative reviews", overlayLabel = "matching this case", ariaLabel, formatDate = shortDate, minimal = false,
 }: {
   points: TimelinePoint[];
   releases?: TimelineRelease[];
@@ -56,19 +56,22 @@ export function TimelineChart({
   /** What the chart shows, for assistive tech. */
   ariaLabel: string;
   formatDate?: (iso: string) => string;
+  /** The approved compact bars and pencil note; detailed charts retain axes. */
+  minimal?: boolean;
 }) {
+  const m = minimal ? { top: releases.length > 1 ? 34 : 24, right: 0, bottom: 0, left: 0 } : M;
   const [ref, width] = useElementWidth<HTMLDivElement>();
   const [active, setActive] = useState<number | null>(null);
   const liveId = useId();
   const n = points.length;
-  const innerW = Math.max(0, width - M.left - M.right);
-  const innerH = Math.max(0, height - M.top - M.bottom);
+  const innerW = Math.max(0, width - m.left - m.right);
+  const innerH = Math.max(0, height - m.top - m.bottom);
   const band = n > 0 ? innerW / n : 0;
   const index = useMemo(() => new Map(points.map((p, i) => [p.date, i])), [points]);
   const over = useMemo(() => new Map((overlay ?? []).map((p) => [p.date, p.value])), [overlay]);
   const max = niceMax(Math.max(1, ...points.map((p) => p.value), ...(overlay ?? []).map((p) => p.value)));
-  const x = (i: number) => M.left + band * i + band / 2;
-  const y = (v: number) => M.top + innerH - (v / max) * innerH;
+  const x = (i: number) => m.left + band * i + band / 2;
+  const y = (v: number) => m.top + innerH - (v / max) * innerH;
 
   // Pins on days inside the range, labels staggered over two rows when close.
   const pins = useMemo(() => {
@@ -77,12 +80,13 @@ export function TimelineChart({
     return releases
       .filter((r) => index.has(r.date))
       .map((r) => {
-        const px = M.left + band * (index.get(r.date) as number) + band / 2;
+        const px = m.left + band * (index.get(r.date) as number) + band / 2;
         row = px - lastX < 96 ? 1 - row : 0;
         lastX = px;
-        return { ...r, px, row, label: r.kind === "hotfix" ? `hotfix ${withV(r.version)}` : `${withV(r.version)} shipped` };
+        return { ...r, px, row, label: r.kind === "hotfix" ? `hotfix ${withV(r.version)}`
+          : minimal ? `version ${r.version.replace(/^v/i, "")} ships →` : `${withV(r.version)} shipped` };
       });
-  }, [releases, index, band]);
+  }, [releases, index, band, minimal]);
 
   const tickEvery = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(innerW / 72))));
   const peak = points.reduce((best, p) => (p.value > best.value ? p : best), points[0] ?? { date: "", value: 0 });
@@ -100,7 +104,7 @@ export function TimelineChart({
 
   const pick = (clientX: number, rect: DOMRect) => {
     if (band <= 0) return;
-    const i = Math.floor((clientX - rect.left - M.left) / band);
+    const i = Math.floor((clientX - rect.left - m.left) / band);
     setActive(i >= 0 && i < n ? i : null);
   };
 
@@ -130,15 +134,15 @@ export function TimelineChart({
           }}
         >
           {/* gridlines: 0, half, max */}
-          {[0, 0.5, 1].map((f) => (
+          {!minimal && [0, 0.5, 1].map((f) => (
             <g key={f}>
-              <line className="el-chart__grid" x1={M.left} x2={width - M.right} y1={y(max * f)} y2={y(max * f)} />
-              <text className="el-chart__tick" x={M.left - 6} y={y(max * f) + 3.5} textAnchor="end">
+              <line className="el-chart__grid" x1={m.left} x2={width - m.right} y1={y(max * f)} y2={y(max * f)} />
+              <text className="el-chart__tick" x={m.left - 6} y={y(max * f) + 3.5} textAnchor="end">
                 {Math.round(max * f)}
               </text>
             </g>
           ))}
-          {points.map((p, i) => i % tickEvery === 0 && (
+          {!minimal && points.map((p, i) => i % tickEvery === 0 && (
             <text key={p.date} className="el-chart__tick" x={x(i)} y={height - 6} textAnchor="middle">
               {formatDate(p.date)}
             </text>
@@ -148,8 +152,8 @@ export function TimelineChart({
             const h = Math.max(p.value > 0 ? 1.5 : 0, (p.value / max) * innerH);
             const w = Math.max(1, Math.min(18, band * 0.68));
             return (
-              <rect key={p.date} className={`el-chart__bar${active === i ? " is-active" : ""}`}
-                    x={x(i) - w / 2} y={M.top + innerH - h} width={w} height={h} rx={Math.min(2, w / 3)} />
+              <rect key={p.date} className={`el-chart__bar${releases.some((r) => r.date <= p.date) ? " is-after" : ""}${active === i ? " is-active" : ""}`}
+                    x={x(i) - w / 2} y={m.top + innerH - h} width={w} height={h} rx={Math.min(2, w / 3)} />
             );
           }) : (
             <path className="el-chart__line" d={linePath(points)} />
@@ -159,23 +163,23 @@ export function TimelineChart({
 
           {pins.map((p) => (
             <g key={`${p.version}-${p.date}`} className={`el-chart__pin el-chart__pin--${p.kind}`}>
-              <line x1={p.px} x2={p.px} y1={M.top - 4 - p.row * 13} y2={M.top + innerH} />
-              <circle cx={p.px} cy={M.top - 4 - p.row * 13} r={2.6} />
-              <text x={p.px + 5} y={M.top - 1 - p.row * 13}
-                    textAnchor={p.px > width - 110 ? "end" : "start"}
-                    dx={p.px > width - 110 ? -10 : 0}>{p.label}</text>
+              <line x1={p.px} x2={p.px} y1={m.top - 4 - p.row * 13} y2={m.top + innerH} />
+              <circle cx={p.px} cy={m.top - 4 - p.row * 13} r={2.6} />
+              <text x={minimal ? (p.px < 160 ? 0 : p.px - 5) : p.px + 5} y={m.top - 7 - p.row * 13}
+                    textAnchor={minimal ? (p.px < 160 ? "start" : "end") : p.px > width - 110 ? "end" : "start"}
+                    dx={!minimal && p.px > width - 110 ? -10 : 0}>{p.label}</text>
             </g>
           ))}
 
           {cur && active != null && (
-            <line className="el-chart__cursor" x1={x(active)} x2={x(active)} y1={M.top} y2={M.top + innerH} />
+            <line className="el-chart__cursor" x1={x(active)} x2={x(active)} y1={m.top} y2={m.top + innerH} />
           )}
         </svg>
       )}
       {cur && active != null && width > 0 && (
         <div className="el-chart__tip" aria-hidden
              // Below the release-pin labels, never on top of them.
-             style={{ left: Math.min(Math.max(8, x(active) - 90), width - 188), top: M.top + 6 }}>
+             style={{ left: Math.max(0, Math.min(Math.max(8, x(active) - 90), width - 188)), top: m.top + 6 }}>
           <div className="el-chart__tip-date">{formatDate(cur.date)}</div>
           <div><b className="el-num">{cur.value}</b> {unit}</div>
           {over.has(cur.date) && (
@@ -189,6 +193,7 @@ export function TimelineChart({
         </div>
       )}
       <span id={liveId} className="el-sr-only" aria-live="polite">{tipText}</span>
+      {n === 0 && <span className="el-chart__empty">No reviews in this period. Connect a source or choose a longer period.</span>}
     </div>
   );
 }

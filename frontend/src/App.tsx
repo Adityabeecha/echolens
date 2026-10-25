@@ -6,8 +6,7 @@ import { CaseTab, GLOBAL_SCREENS, LEARNED_VIEWS, LearnedView, SETTINGS_SECTIONS,
 import { useRouter } from "./router";
 import { clearAsyncCache, useWorkWatcher } from "./hooks";
 import { C, T, sans } from "./theme";
-import { Sidebar } from "./components/Sidebar";
-import { AppHeader, Crumb } from "./components/AppHeader";
+import { AppHeader } from "./components/AppHeader";
 import { Logo } from "./components/Logo";
 import { Icon } from "./components/Icon";
 import { AskDrawer, isAskShortcut } from "./components/AskDrawer";
@@ -25,7 +24,6 @@ import { ThemeToggle } from "./components/ThemeToggle";
 import { FirstRunTour } from "./components/FirstRunTour";
 import { markTourSeen, tourSeen } from "./tourState";
 import { ThemeMode, applyTheme, persistTheme, resolveTheme } from "./themeMode";
-import { persistSidebarCollapsed, resolveSidebarCollapsed } from "./sidebarState";
 
 // Route-level code splitting. Today, Cases and the case detail are where
 // nearly every visit starts and stays, so they ship in the main bundle; the
@@ -37,13 +35,7 @@ const Onboarding = lazy(() => import("./screens/Onboarding").then((m) => ({ defa
 const Portfolio = lazy(() => import("./screens/Portfolio").then((m) => ({ default: m.Portfolio })));
 const Backlog = lazy(() => import("./screens/Backlog").then((m) => ({ default: m.Backlog })));
 const LearnedPatterns = lazy(() => import("./screens/LearnedPatterns").then((m) => ({ default: m.LearnedPatterns })));
-
-/** What each screen is called in the header's breadcrumb. */
-const CRUMB: Partial<Record<Screen, string>> = {
-  today: "Today", cases: "Cases & Signals", case: "Cases & Signals", plan: "Quarter Plan",
-  intelligence: "Intelligence", memory: "Intelligence", portfolio: "Portfolio", sources: "Sources",
-  settings: "Settings", ask: "Ask", onboarding: "Add a product",
-};
+const DesignGallery = import.meta.env.DEV ? lazy(() => import("./components/casefile/DesignGallery")) : null;
 
 /** The wait while a lazily loaded screen's chunk arrives. */
 function ScreenChunk({ children, fallback = <Centered>Loading…</Centered> }: {
@@ -53,8 +45,14 @@ function ScreenChunk({ children, fallback = <Centered>Loading…</Centered> }: {
 }
 
 export default function App() {
+  if (DesignGallery && window.location.pathname === "/design") {
+    return <Suspense fallback={<Centered>Loading the design library…</Centered>}><DesignGallery /></Suspense>;
+  }
+  return <WorkspaceApp />;
+}
+
+function WorkspaceApp() {
   const [theme, setTheme] = useState<ThemeMode>(() => resolveTheme());
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => resolveSidebarCollapsed());
   // Today is home: the first thing you see is what needs you, not a list of
   // everything the detector has ever noticed.
   const { route, navigate, back, backTarget, setParams } =
@@ -88,9 +86,6 @@ export default function App() {
     persistTheme(theme);
   }, [theme]);
 
-  useEffect(() => {
-    persistSidebarCollapsed(sidebarCollapsed);
-  }, [sidebarCollapsed]);
 
   // The active product comes from the URL, so a refresh or a shared link lands
   // on the product you were actually looking at.
@@ -337,13 +332,6 @@ export default function App() {
   // viewer is not offered buttons the server would refuse.
   const canAct = canReview() && !guest && activeId != null;
   const askShortcut = /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? "\u2318 K" : "Ctrl K";
-  const crumbs: Crumb[] = [];
-  if (!GLOBAL_SCREENS.includes(screen) && productName) {
-    crumbs.push({ label: productName, onClick: () => go("today") });
-  }
-  crumbs.push({ label: CRUMB[screen] ?? screen,
-                onClick: screen === "case" ? () => go("cases") : undefined });
-  if (screen === "case" && caseId != null) crumbs.push({ label: `Case #${caseId}`, mono: true });
 
   return (
     <>
@@ -351,7 +339,7 @@ export default function App() {
       inert={askOpen ? true : undefined}
       className="el-shell"
       style={{
-        display: "flex",
+        display: "flex", flexDirection: "column",
         // dvh, not vh: on mobile browsers `100vh` measures the viewport WITHOUT
         // the address bar, so the bottom of the app sat permanently under it.
         height: "100dvh",
@@ -362,70 +350,18 @@ export default function App() {
         overflow: "hidden"
       }}
     >
-      {(
-        <Sidebar
-          // Keyed on the product for the same reason every screen is: child
-          // effects flush BEFORE parent effects, so on a product switch the
-          // sidebar's own fetch fired while api.ts still held the previous
-          // _productId — showing the old product's running cases under the new
-          // product's name. Remounting makes the scope change unmissable.
-          key={activeId ?? "none"}
-          screen={screen}
-          go={go}
-          onLogout={guest ? () => leaveDemo(true) : logout}
-          onAsk={openAsk}
-          askShortcut={askShortcut}
-          onLogoClick={onLogo}
-          liveKey={reloadKey}
-          products={products}
-          activeId={activeId}
-          onSwitchProduct={switchProduct}
-          onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
-          onDeleteProduct={setDeleting}
-          theme={theme}
-          onThemeChange={setTheme}
-          collapsed={sidebarCollapsed}
-          onCollapsedChange={setSidebarCollapsed}
-        />
-      )}
-
-      <div className="el-workspace" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column",
-                    overflow: "hidden" }}>
-        {guest && (
-          <div className="el-demo-banner" role="region" aria-label="Demo">
-            <span>You're exploring the demo</span>
-            <span aria-hidden>·</span>
-            <button type="button" onClick={() => leaveDemo(true)}>Sign in</button>
-            <span aria-hidden>·</span>
-            <button type="button" onClick={() => leaveDemo(false)}>Exit demo</button>
-          </div>
-        )}
-        <div className="el-mobile-context" aria-label="Current workspace">
-          <button type="button" className="el-mobile-context__brand" onClick={onLogo}
-                  aria-label={guest ? "EchoLens home page" : "Today"}>
-            <Logo size={24} decorative />
-            <strong>EchoLens</strong>
-          </button>
-          <span className="el-mobile-context__actions">
-            <span className="el-mobile-context__product">{productName ?? "Workspace"}</span>
-            <button type="button" className="el-mobile-context__ask" onClick={openAsk} aria-label="Ask">
-              <Icon name="search" size={16} />
-            </button>
-            <ThemeToggle mode={theme} onChange={setTheme} compact />
-          </span>
-        </div>
-        {!onboarding && (
-          <AppHeader
-            crumbs={crumbs}
-            productId={activeId}
-            liveKey={reloadKey}
-            onAsk={openAsk}
-            askShortcut={askShortcut}
-            onRunInvestigation={canAct ? () => setNewCaseOpen(true) : undefined}
-            onImportCsv={canAct ? () => go("sources", { import: "1" }) : undefined}
-            onOpenCosts={guest ? undefined : () => go("settings", { section: "costs" })}
-          />
-        )}
+      <AppHeader key={activeId ?? "none"} screen={screen} go={go} products={products} productId={activeId}
+        onSwitchProduct={switchProduct} onLogo={onLogo} onAsk={openAsk} askShortcut={askShortcut}
+        theme={theme} onThemeChange={setTheme} onLogout={guest ? () => leaveDemo(true) : logout}
+        onAddProduct={() => navigate({ screen: "onboarding", productId: null })} liveKey={reloadKey} guest={guest}
+        onRunInvestigation={canAct ? () => setNewCaseOpen(true) : undefined}
+        onImportCsv={canAct ? () => go("sources", { import: "1" }) : undefined} />
+      {guest && <div className="el-demo-banner" role="region" aria-label="Demo">
+        <span>You're exploring the demo</span><span aria-hidden>·</span>
+        <button type="button" onClick={() => leaveDemo(true)}>Sign in</button><span aria-hidden>·</span>
+        <button type="button" onClick={() => leaveDemo(false)}>Exit demo</button>
+      </div>}
+      <main id="main-content" className="el-workspace">
         <ErrorBoundary // The tab is part of the key: a TraceTab that threw stayed broken when
           // you switched to Finding, because nothing in the key had changed.
           resetKey={`${screen}:${caseId}:${route.tab ?? ""}:${activeId}`} onGoHome={() => go("today")}>
@@ -576,7 +512,7 @@ export default function App() {
             </ScreenChunk>
           )}
         </ErrorBoundary>
-      </div>
+      </main>
 
       {deleting && (
         <DeleteProductModal

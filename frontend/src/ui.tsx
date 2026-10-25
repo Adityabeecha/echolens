@@ -1,6 +1,6 @@
 import { ButtonHTMLAttributes, CSSProperties, Children, ReactNode, useCallback, useRef, useState } from "react";
 import { Icon, IconName } from "./components/Icon";
-import { C, MEASURE, R, S, T, mono } from "./theme";
+import { C, MEASURE, R, S, T, mono, serif } from "./theme";
 import { lastFailure } from "./requestState";
 
 // Small monospace uppercase section label used across the design.
@@ -556,8 +556,9 @@ export function ScreenHeader({
         <h1
           style={{
             margin: 0,
-            fontSize: T.lg,
-            fontWeight: 600,
+            fontSize: "clamp(32px, 4vw, 56px)",
+            fontFamily: serif,
+            fontWeight: 500,
             letterSpacing: "var(--el-ls-tight)",
             lineHeight: "var(--el-lh-tight)",
             color: C.text
