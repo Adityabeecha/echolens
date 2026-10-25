@@ -259,6 +259,12 @@ function handle(status: number): void {
 }
 
 /** A stable, human-readable message for fetch and API failures. */
+export class DemoRefreshedError extends Error {
+  constructor() {
+    super("This demo case was refreshed — the demo is rebuilt with today's data.");
+  }
+}
+
 export function errorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (error instanceof RequestTimeout) {
@@ -280,6 +286,10 @@ async function get<T>(path: string): Promise<T> {
     if (!r.ok) {
       handle(r.status);
       noteFailure("http");
+      if (r.status === 404) {
+        const body = await r.json().catch(() => null);
+        if (body?.demo_refreshed === true) throw new DemoRefreshedError();
+      }
       throw new Error(`${path} → ${r.status}`);
     }
     return r.json();
@@ -636,6 +646,8 @@ export interface Investigation {
 // v13: the unified case list. One lifecycle, one status vocabulary, one card —
 // this is what Today, Cases and every "open problems" list read from.
 export interface CaseRow {
+  /** Backend decision order: supported findings before working leads. */
+  decision_rank: number;
   /** Null for queued work: it has no investigation yet. */
   id: number | null;
   queue_id: number | null;

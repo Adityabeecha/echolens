@@ -354,14 +354,21 @@ def claim_next(session: Session, product_id: int | None, daily_limit: int,
     candidate. (Postgres and SQLite alike — no locking dialect needed.)
     """
     from sqlalchemy import update
+    from echolens.orchestrator.automatic import demo_product_ids
 
     now = as_of or datetime.now(timezone.utc)
+    demos = demo_product_ids(session)
+    if product_id in demos:
+        return None
     # Reclaim anything a previous worker died holding, before deciding there is
     # nothing to run.
     requeue_abandoned(session, product_id, now)
     if investigations_today(session, product_id, now) >= daily_limit:
         return None
     for row in pending(session, product_id):
+        anomaly = session.get(AnomalyEvent, row.anomaly_id) if row.anomaly_id else None
+        if row.product_id in demos or (anomaly is not None and anomaly.product_id in demos):
+            continue
         res = session.execute(
             update(QueuedInvestigation)
             .where(QueuedInvestigation.id == row.id, QueuedInvestigation.status == "queued")
