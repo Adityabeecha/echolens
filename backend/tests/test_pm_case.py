@@ -415,7 +415,8 @@ def test_api_share_link_lifecycle_and_public_read(client, monkeypatch):
     assert pub.status_code == 200
     body = pub.json()
     assert set(body) == {"headline", "impact", "why", "quotes", "actions", "markdown",
-                         "product", "shared_at"}
+                         "product", "shared_at", "verdict"}
+    assert set(body["verdict"]) == {"support_level", "needs_review", "confidence", "fix"}
     assert "ev_0" not in body["markdown"]
 
     assert client.delete(f"/findings/{fid}/share", headers=_token(client, "reviewer")).status_code == 200

@@ -1,145 +1,140 @@
-import { useEffect, useState } from "react";
+import { MouseEvent, useState } from "react";
 import { api, endSession, setGuest, setRole } from "../api";
 import { useAsync } from "../hooks";
-import { C, MEASURE, R, S, T, mono, sans } from "../theme";
-import { Login, TracePreview, Wordmark } from "./Login";
-
-// The whole loop, in the order the product walks it. Short on purpose: this is
-// the picture a visitor should leave with, not documentation.
-const LOOP: { step: string; detail: string; color: string }[] = [
-  { step: "Detect", detail: "A spike or a new complaint theme in your reviews", color: C.muted },
-  { step: "Investigate", detail: "An agent tests competing causes, step by step", color: C.info },
-  { step: "Evidence", detail: "Every claim cites a quote you can open", color: C.accent },
-  { step: "Decide & plan", detail: "Approve, park or won't-fix — ranked by impact", color: C.text2 },
-  { step: "File the issue", detail: "GitHub, Linear or Jira, evidence attached", color: C.text2 },
-  { step: "Verify the fix", detail: "Complaints are watched after it ships", color: C.good },
-  { step: "Learn", detail: "Confirmed fixes become patterns for next time", color: C.good },
-];
+import { Button } from "../ui";
+import { SerifHeadline } from "../components/casefile";
+import { LogoLockup } from "../components/Logo";
+import { Login } from "./Login";
+import { ExampleCase } from "./landing/ExampleCase";
+import { HowItWorks } from "./landing/HowItWorks";
+import { HonestyChecks } from "./landing/HonestyChecks";
+import "./landing/public.css";
 
 /**
- * The public front door. A visitor used to land on a sign-in form for a product
- * they had never seen; now they see what it does, how the loop works, and — on
- * a deployment that allows it — a one-click way into the live demo. Sign-in is
- * one step away, and the demo is never hidden behind an account link.
+ * The public front door (design/approved/landing.html): what EchoLens does,
+ * the loop in five steps, the honesty checks it cannot skip, and a one-click
+ * way into the live demo. Sign-in opens as a sheet over this page.
  *
- * `?signin` opens the sign-in view directly (bookmarks, the login QA script).
+ * `?signin` opens the sign-in sheet directly (bookmarks, "Sign in" from the
+ * demo banner, the login QA script).
  */
 export function Landing({ onAuthed }: { onAuthed: () => void }) {
   const [signingIn, setSigningIn] = useState(
     () => typeof window !== "undefined" && new URLSearchParams(window.location.search).has("signin"));
-  const [narrow, setNarrow] = useState(typeof window !== "undefined" && window.innerWidth < 900);
-  // If the call fails (backend asleep), the page still renders; only the demo
-  // button waits for the deployment to say guests are allowed.
+  // The demo is offered unless the server says guests are off. If the call
+  // fails (a free-tier backend asleep), the button stays: the page should not
+  // hide its main door because of one slow request.
   const cfg = useAsync(() => api.authConfig(), []);
-  const guestAllowed = !!cfg.data?.allow_guest;
-
-  useEffect(() => {
-    const onResize = () => setNarrow(window.innerWidth < 900);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
+  const demoOn = cfg.data?.allow_guest !== false;
 
   const explore = () => {
     setGuest(true);
     endSession();
-    // Explicitly viewer, as on the sign-in view: a stale "admin" from an old
-    // session must not unlock UI the server will refuse.
+    // Explicitly viewer: a stale "admin" from an old session must not unlock
+    // UI the server will refuse. Boot re-confirms this against /auth/me.
     setRole("viewer");
     onAuthed();
   };
-
-  if (signingIn) return <Login onAuthed={onAuthed} onBack={() => setSigningIn(false)} />;
+  const openSignIn = () => setSigningIn(true);
+  const closeSignIn = () => {
+    setSigningIn(false);
+    if (new URLSearchParams(window.location.search).has("signin")) {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  };
+  // In-page links: the router owns hashes, so scroll (and move focus) by hand.
+  const jump = (id: string) => (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    const target = document.getElementById(id);
+    target?.scrollIntoView();
+    target?.focus({ preventScroll: true });
+  };
 
   return (
-    <div className="el-landing"
-      style={{ height: "100dvh", overflowY: "auto", overflowX: "hidden", background: C.bg,
-               color: C.text, fontFamily: sans }}>
-      <div style={{ maxWidth: 1080, margin: "0 auto",
-                    padding: narrow ? `${S[6]} ${S[5]} ${S[10]}` : `${S[8]} ${S[8]} ${S[12]}` }}>
-        {/* Right padding: App pins the theme toggle to this corner. */}
-        <header style={{ display: "flex", alignItems: "center", gap: S[3], paddingRight: 56 }}>
-          <Wordmark />
-          <span style={{ flex: 1 }} />
-          <button onClick={() => setSigningIn(true)} className="el-btn el-btn--sm"
-            style={{ color: C.text2, fontWeight: 500 }}>
-            Sign in
-          </button>
-        </header>
+    <div className="pub-page el-landing">
+      <header className="pub-wrap pub-top">
+        <LogoLockup size={30} />
+        <nav aria-label="Page" className="pub-top__nav">
+          <a href="#how" onClick={jump("how")}>How it works</a>
+          <a href="#honest" onClick={jump("honest")}>Why you can trust it</a>
+        </nav>
+        <span className="pub-top__spacer" />
+        {demoOn ? (
+          <>
+            <button type="button" className="pub-top__signin" onClick={openSignIn}>Sign in</button>
+            <Button variant="primary" className="pub-btn pub-top__demo" onClick={explore}>
+              <span>Explore <span className="pub-top__demo-long">the live </span>demo</span>
+            </Button>
+          </>
+        ) : (
+          <Button variant="primary" className="pub-btn" onClick={openSignIn}>Sign in</Button>
+        )}
+      </header>
 
-        <section style={{ display: "grid", gap: narrow ? S[8] : S[10], alignItems: "center",
-                          gridTemplateColumns: narrow ? "1fr" : "minmax(0, 1.1fr) minmax(0, 1fr)",
-                          marginTop: narrow ? S[8] : S[12] }}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: T.display, fontWeight: 700, letterSpacing: "-0.02em",
-                         lineHeight: "var(--el-lh-tight)", textWrap: "balance" as const }}>
+      <main>
+        <section className="pub-wrap pub-hero" aria-labelledby="pub-hero-title">
+          <div className="pub-hero__copy">
+            <div className="pub-kicker">FEEDBACK FORENSICS FOR APP MAKERS</div>
+            <SerifHeadline as="h1" size="hero" id="pub-hero-title">
               Find the root cause before the reviews pile up.
-            </h1>
-            <p style={{ fontSize: T.md, color: C.muted, marginTop: S[4], maxWidth: MEASURE,
-                        lineHeight: "var(--el-lh-normal)" }}>
-              EchoLens watches your app-store reviews and feedback, notices what changed,
-              and investigates it the way an analyst would — then follows the fix through
-              to the reviews that prove it worked. Every conclusion is backed by evidence
-              you can click.
+            </SerifHeadline>
+            <p className="pub-lede">
+              EchoLens reads your app-store reviews and GitHub issues, notices when something breaks,
+              and finds out why — with proof you can click. Then it tells you if your fix worked.
             </p>
-            <div style={{ display: "flex", gap: S[3], marginTop: S[6], flexWrap: "wrap",
-                          alignItems: "center" }}>
-              {guestAllowed && (
-                <button onClick={explore} className="el-btn el-btn--primary"
-                  style={{ padding: `${S[3]} ${S[6]}`, fontSize: T.md }}>
+            <div className="pub-actions">
+              {demoOn && (
+                <Button variant="primary" className="pub-btn pub-btn--lg" onClick={explore}>
                   Explore the live demo
-                </button>
+                </Button>
               )}
-              <button onClick={() => setSigningIn(true)}
-                className={`el-btn ${guestAllowed ? "el-btn--ghost" : "el-btn--primary"}`}
-                style={{ padding: `${S[3]} ${S[6]}`, fontSize: T.md }}>
-                Sign in
-              </button>
+              <Button variant={demoOn ? "ghost" : "primary"} className="pub-btn pub-btn--lg" onClick={openSignIn}>
+                Connect your app
+              </Button>
             </div>
-            {guestAllowed && (
-              <div style={{ fontSize: T.sm, color: C.dim, marginTop: S[2] }}>
-                No account needed: a real product's data, read-only.
-              </div>
+            <div className="pub-note">
+              {demoOn ? "No sign-up for the demo · " : ""}works with Google Play, App Store, GitHub and CSV exports
+            </div>
+          </div>
+          <ExampleCase />
+        </section>
+
+        <section id="how" tabIndex={-1} className="pub-band" aria-labelledby="pub-how-title">
+          <div className="pub-wrap pub-stack">
+            <h2 id="pub-how-title" className="pub-h2">From a pile of reviews to one clear answer.</h2>
+            <HowItWorks />
+          </div>
+        </section>
+
+        <section id="honest" tabIndex={-1} className="pub-wrap pub-honest pub-stack" aria-labelledby="pub-honest-title">
+          <div className="pub-honest__intro">
+            <h2 id="pub-honest-title" className="pub-h2">We'd rather say “not sure” than guess.</h2>
+            <p>Every answer passes the same honesty checks, written in code — not in a prompt.
+              When the proof isn't there, EchoLens says so.</p>
+          </div>
+          <HonestyChecks />
+        </section>
+
+        <section className="pub-wrap pub-cta-wrap" aria-label="Get started">
+          <div className="pub-cta">
+            {demoOn ? (
+              <>
+                <h2>See it solve a real problem. No sign-up.</h2>
+                <Button variant="primary" className="pub-btn" onClick={explore}>Explore the live demo</Button>
+              </>
+            ) : (
+              <>
+                <h2>Point EchoLens at your app.</h2>
+                <Button variant="primary" className="pub-btn" onClick={openSignIn}>Sign in</Button>
+              </>
             )}
           </div>
-
-          <div style={{ padding: narrow ? S[5] : S[6], background: C.bgRaised,
-                        border: `1px solid ${C.border2}`, borderRadius: R.card }}>
-            <div style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".1em", color: C.faint }}>
-              ONE INVESTIGATION, AS IT HAPPENS
-            </div>
-            <TracePreview />
-          </div>
         </section>
+      </main>
 
-        <section aria-labelledby="el-loop-title" style={{ marginTop: narrow ? S[10] : S[12] }}>
-          <h2 id="el-loop-title" style={{ margin: 0, fontFamily: mono, fontSize: T.micro,
-                                          letterSpacing: ".1em", color: C.faint, fontWeight: 500 }}>
-            THE WHOLE LOOP
-          </h2>
-          <ol style={{ listStyle: "none", margin: `${S[4]} 0 0`, padding: 0, display: "grid", gap: S[3],
-                       gridTemplateColumns: narrow ? "1fr" : "repeat(7, minmax(0, 1fr))" }}>
-            {LOOP.map((l, i) => (
-              <li key={l.step} style={{ display: "flex", flexDirection: narrow ? "row" : "column",
-                                        gap: S[2], alignItems: narrow ? "baseline" : "stretch" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: S[2] }}>
-                  <span style={{ fontFamily: mono, fontSize: T.xs, color: C.faint, minWidth: 18 }}>
-                    {String(i + 1).padStart(2, "0")}
-                  </span>
-                  <span style={{ height: 2, flex: narrow ? "none" : 1, width: narrow ? 12 : undefined,
-                                 background: l.color, borderRadius: R.sm, opacity: 0.8 }} />
-                </div>
-                <div>
-                  <div style={{ fontSize: T.base, fontWeight: 600, color: C.text }}>{l.step}</div>
-                  <div style={{ fontSize: T.sm, color: C.muted, marginTop: S[1],
-                                lineHeight: "var(--el-lh-snug)" }}>
-                    {l.detail}
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </section>
-      </div>
+      {signingIn && (
+        <Login onAuthed={onAuthed} onClose={closeSignIn} onExplore={demoOn ? explore : undefined} />
+      )}
     </div>
   );
 }

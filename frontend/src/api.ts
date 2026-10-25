@@ -605,6 +605,15 @@ export interface ShareBrief {
   markdown: string;
   product?: string | null;
   shared_at?: string | null;
+  /** Public share only: just enough for an honest verdict stamp. */
+  verdict?: ShareVerdict | null;
+}
+export interface ShareVerdict {
+  support_level: string | null;
+  needs_review: boolean;
+  /** 0–1, already capped by the honesty checks. */
+  confidence: number;
+  fix: { status: string } | null;
 }
 export interface HistoryEvent {
   at: string | null;
@@ -1452,6 +1461,8 @@ export const api = {
       google_enabled: boolean;
       allow_guest: boolean;
       auth_required: boolean;
+      /** True only while a self-service first (admin) account can be created. */
+      signup_open?: boolean;
     }>("/auth/config"),
   me: () => get<AuthUser>("/auth/me"),
   products: () => get<{ products: ProductRow[]; active_product_id: number | null }>("/products"),

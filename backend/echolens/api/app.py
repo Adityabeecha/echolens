@@ -804,12 +804,22 @@ def auth_config() -> dict:
     """What sign-in options this deployment offers, and whether guests are let
     in. Unauthenticated on purpose: the login screen has to read it before a
     token exists. It exposes only the public OAuth client id, which is designed
-    to be embedded in a web page."""
+    to be embedded in a web page.
+
+    `signup_open`: whether /auth/signup would accept a self-service first
+    account right now (dev only, before anyone exists), so the sign-in form
+    offers "Create the admin account" only when it can work."""
+    signup_open = False
+    if not settings.auth_required:
+        from echolens.db.models import User
+        with session_scope() as session:
+            signup_open = session.scalar(select(User.id).limit(1)) is None
     return {
         "google_client_id": settings.google_client_id,
         "google_enabled": bool(settings.google_client_id),
         "allow_guest": settings.allow_guest,
         "auth_required": settings.auth_required,
+        "signup_open": signup_open,
     }
 
 
@@ -3205,7 +3215,17 @@ def public_share(token: str, request: Request) -> dict:
         brief = share_brief(session, finding)
         from echolens.db.models import Product
         prod = session.get(Product, finding.product_id) if finding.product_id else None
-        return {**brief, "product": prod.name if prod else None,
+        # Just enough for the page's verdict stamp to be honest (a hunch never
+        # reads as confirmed): the support level, any open review flag, the
+        # fix outcome and the stated confidence. No ids.
+        fj = finding.json or {}
+        watch = session.scalars(select(FixWatch).where(
+            FixWatch.investigation_id == finding.investigation_id).order_by(FixWatch.id.desc())).first()
+        verdict = {"support_level": fj.get("support_level"),
+                   "needs_review": bool(fj.get("needs_review")),
+                   "confidence": round(float(fj.get("confidence", finding.confidence or 0.0)), 2),
+                   "fix": {"status": watch.status} if watch else None}
+        return {**brief, "product": prod.name if prod else None, "verdict": verdict,
                 "shared_at": aware_utc(link.created_at).isoformat() if link.created_at else None}
 
 

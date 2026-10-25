@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { OnboardStatus, Snapshot, SourcePreview, api, isAdmin, isGuest } from "../api";
 import { plural } from "../format";
 import { useDialog } from "../hooks";
-import { C, MEASURE, R, S, T, mono, sans } from "../theme";
-import { Button, Dot, Label } from "../ui";
+import { C } from "../theme";
+import { Button, Dot } from "../ui";
 import { Icon } from "../components/Icon";
+import { Logo } from "../components/Logo";
+import { ReleaseChart, SerifHeadline, StatTile } from "../components/casefile";
 import {
   backfillProgressView,
   emptyBackfillMessage,
@@ -12,10 +14,11 @@ import {
   sourceProgressLabel,
   sourceRecoveryGuidance,
 } from "../onboardingProgress";
+import "./landing/public.css";
 
 interface Props {
   onDone: () => void; // land on Today for the new product
-  /** Hand off to Cases → Signals, where triage actually happens. */
+  /** Hand off to All problems → spikes, where triage actually happens. */
   onReviewSignals: () => void;
   onManageSources: () => void;
   canSkip: boolean;
@@ -29,7 +32,8 @@ interface Props {
 }
 
 /**
- * Add a product: choose sources → hands-off backfill → live health snapshot.
+ * First run / Add a product: three short questions (store link → GitHub →
+ * anything else), then plain progress while it backfills, ending on Today.
  *
  * A LAYER over the running app, not a screen that replaces it. It used to own
  * the whole window with the nav hidden, so landing here with nothing to add —
@@ -47,26 +51,21 @@ export function Onboarding({
 
   const body = !isAdmin()
     ? <NoAccess guest={isGuest()} />
-    : (
-      <>
-        <WizardHeader phase={phase} product={product} />
-        {phase === "form" ? (
-        <OnboardForm
-          onStarted={(p, id) => {
-            // Switch scope FIRST: everything started from here belongs to the
-            // product being onboarded, not the one that happened to be active.
-            onProductCreated(id, p);
-            setProduct(p);
-            setPhase("running");
-          }}
-            canSkip={canSkip}
-            onCancel={onCancel}
-          />
-        ) : (
-          <Backfilling product={product} onDone={onDone}
-            onReviewSignals={onReviewSignals} onManageSources={onManageSources} />
-        )}
-      </>
+    : phase === "form" ? (
+      <OnboardForm
+        onStarted={(p, id) => {
+          // Switch scope FIRST: everything started from here belongs to the
+          // product being onboarded, not the one that happened to be active.
+          onProductCreated(id, p);
+          setProduct(p);
+          setPhase("running");
+        }}
+        canSkip={canSkip}
+        onCancel={onCancel}
+      />
+    ) : (
+      <Backfilling product={product} onDone={onDone}
+        onReviewSignals={onReviewSignals} onManageSources={onManageSources} />
     );
 
   return (
@@ -86,25 +85,18 @@ export function Onboarding({
         style={{
           position: "fixed", inset: 0, zIndex: 41, overflow: "auto",
           display: "flex", alignItems: "flex-start", justifyContent: "center",
-          padding: S[6],
+          padding: 24,
         }}
       >
-        <div className={`el-onboarding-dossier${phase === "running" ? " is-running" : ""}`} style={{
-          position: "relative", width: "100%", maxWidth: 860, margin: "auto",
-          // Scroll inside the viewport so a 720px-tall screen never pushes the
-          // primary action (sticky footer below) off the bottom.
-          maxHeight: "calc(100dvh - 48px)", overflowY: "auto",
-          background: C.bg, border: `1px solid ${C.border3}`,
-          borderRadius: R.overlay, boxShadow: "var(--el-e4)",
-          padding: `${S[8]} ${S[8]} ${S[10]}`,
+        <div className={`el-onboarding-dossier pub-dossier${phase === "running" ? " is-running" : ""}`} style={{
+          position: "relative", width: "100%", margin: "auto",
+          // Scroll inside the viewport so a short screen never pushes the
+          // primary action off the bottom.
+          maxHeight: "calc(100dvh - 48px)", overflowY: "auto", boxShadow: "var(--el-e4)",
         }}>
           {/* The X. Onboarding is never mandatory. */}
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="el-btn el-btn--sm"
-            style={{ position: "absolute", top: S[4], right: S[4], color: C.dim, padding: S[1] }}
-          >
+          <button onClick={onClose} aria-label="Close" className="pub-close"
+            style={{ position: "absolute", top: 16, right: 16 }}>
             <Icon name="close" size={16} />
           </button>
           {body}
@@ -114,63 +106,39 @@ export function Onboarding({
   );
 }
 
-/** The wizard's heading, which changes with the phase. */
-function WizardHeader({ phase, product }: { phase: "form" | "running"; product: string }) {
+/** Logo, a quiet label, then the serif headline — every phase opens the same way. */
+function Heading({ title, children }: { title: string; children?: ReactNode }) {
   return (
-    <div style={{ marginBottom: S[6] }}>
-      <div style={{ display: "flex", alignItems: "center", gap: S[3], marginBottom: S[2] }}>
-        <Logo />
-        <Label>Add your product</Label>
+    <div className="pub-run__head">
+      <div style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--el-muted)", fontSize: 14 }}>
+        <Logo size={24} decorative /> Add a product
       </div>
-      <h1 style={{ fontSize: T.xl, fontWeight: 700, letterSpacing: "-.01em",
-                   margin: `0 0 ${S[2]}` }}>
-        {phase === "form" ? "Point EchoLens at your app" : `Setting up ${product}`}
-      </h1>
-      <p style={{ fontSize: T.base, color: C.muted, lineHeight: "var(--el-lh-normal)",
-                  margin: 0, maxWidth: 560 }}>
-        {phase === "form"
-          ? "Connect Play Store and choose the GitHub data you need. Optional sources can add broader customer and developer context before EchoLens builds the baseline."
-          : "EchoLens is checking each source and building your baseline. You can continue to Today while it runs."}
-      </p>
+      <SerifHeadline as="h1" size="card" style={{ paddingRight: 40 }}>{title}</SerifHeadline>
+      {children && <p className="pub-run__lede">{children}</p>}
     </div>
   );
 }
 
 /**
- * The screen a non-admin gets instead of the wizard.
+ * The screen a non-admin gets instead of the questions.
  *
  * Reached two ways: a guest exploring a demo whose workspace has no products
  * yet, or a signed-in viewer/reviewer who clicked "Add a product". Both used
- * to land on a form that 403s on submit, with the nav hidden because
- * onboarding renders fullscreen — a dead end with no back button.
+ * to land on a form that 403s on submit — a dead end with no back button.
  */
 function NoAccess({ guest }: { guest: boolean }) {
   return (
-    <div style={{ maxWidth: 520 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: S[3], marginBottom: S[4] }}>
-        <Logo />
-        <Label>Add your product</Label>
-      </div>
-      <h1 style={{ fontSize: T.xl, fontWeight: 700, letterSpacing: "-.01em",
-                   margin: `0 0 ${S[3]}` }}>
-        {guest ? "Connecting a product needs an account" : "You need admin access to add a product"}
-      </h1>
-      <p style={{ fontSize: T.base, color: C.muted, lineHeight: "var(--el-lh-normal)", margin: 0 }}>
+    <div className="pub-run">
+      <Heading title={guest ? "Connecting an app needs an account" : "Only an admin can add a product"}>
         {guest
-          ? "Backfilling an app pulls 90 days of reviews and issues, which costs money to run — so it is kept to the workspace owner. Close this and carry on exploring; everything else is browsable."
-          : "Ask an admin to connect one, then everything here becomes available to you."}
-      </p>
+          ? "Reading 90 days of reviews and issues costs money to run, so it is kept to the workspace owner. Close this and carry on exploring — everything else in the demo is open to you."
+          : "Ask an admin to connect it. Once they have, everything here works for you too."}
+      </Heading>
     </div>
   );
 }
 
-function Logo() {
-  return (
-    <div className="el-brand-mark el-brand-mark--light" style={{ width: 24, height: 24 }}><span /></div>
-  );
-}
-
-// ── step 1: connect sources ─────────────────────────────────────────────
+// ── the three questions ─────────────────────────────────────────────────
 
 const GITHUB_OPTIONS = [
   { source: "github", label: "Issues & releases" },
@@ -196,41 +164,83 @@ type AdditionalSources = {
   stack_overflow: string;
 };
 
+/**
+ * A pasted Play Store link becomes its package ("…/details?id=com.lumo.app"
+ * → "com.lumo.app"); anything else is passed through trimmed, and the server
+ * still validates it.
+ */
+function packageFrom(raw: string): string {
+  const value = raw.trim();
+  if (!/play\.google\.com|[?&]id=/i.test(value)) return value;
+  try {
+    const url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
+    return url.searchParams.get("id")?.trim() || value;
+  } catch {
+    return value.match(/[?&]id=([^&#\s]+)/)?.[1] ?? value;
+  }
+}
+
+const QUESTIONS = ["Where do people review your app?", "Is the code on GitHub?", "Anywhere else people talk about it?"];
+
 function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: string, productId: number) => void; canSkip: boolean; onCancel: () => void }) {
-  const [pkg, setPkg] = useState("");
+  const [step, setStep] = useState(0);
+  const [store, setStore] = useState("");
   const [repo, setRepo] = useState("");
   const [name, setName] = useState("");
   const [githubMode, setGithubMode] = useState<"all" | "specific">("all");
   const [githubSources, setGithubSources] = useState<string[]>(["github"]);
-  const [showAdditional, setShowAdditional] = useState(false);
   const [additional, setAdditional] = useState<AdditionalSources>({
     app_store: "", chrome_web_store: "", hacker_news: "", stack_overflow: "",
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const admin = isAdmin();
+  const pkg = packageFrom(store);
   // Look before you leap: the listing / repo behind what was typed, so a typo
   // shows up as "that's not my app" before a 90-day backfill starts.
   const pkgPreview = useSourcePreview("play_store", pkg, admin);
   const repoPreview = useSourcePreview("github", repo, admin);
   const storeTitle = pkgPreview.data?.ok ? pkgPreview.data.title : undefined;
+  const titleRef = useRef<HTMLHeadingElement>(null);
+
+  const selectedGithub = (): string[] => githubMode === "all"
+    ? GITHUB_OPTIONS.map((option) => option.source)
+    : githubSources;
+
+  /** Each step's own check; null means it may move on. */
+  const problem = (at: number): string | null => {
+    if (at === 0 && !pkg) return "Paste your app's Play Store link, or its package name.";
+    if (at === 1 && repo.trim() && selectedGithub().length === 0) return "Select at least one GitHub data type.";
+    return null;
+  };
+
+  const go = (to: number) => {
+    setError(null);
+    setStep(to);
+    // Move focus to the new question so keyboard and screen-reader users
+    // hear it, rather than staying on a button that just changed meaning.
+    requestAnimationFrame(() => titleRef.current?.focus());
+  };
+
+  const next = () => {
+    const p = problem(step);
+    if (p) { setError(p); return; }
+    if (step < 2) go(step + 1); else void submit();
+  };
 
   const submit = async () => {
-    if (!pkg.trim() || !admin) return;
-    const selectedGithub = githubMode === "all"
-      ? GITHUB_OPTIONS.map((option) => option.source)
-      : githubSources;
-    if (repo.trim() && selectedGithub.length === 0) {
-      setError("Select at least one GitHub data type.");
-      return;
+    if (!admin) return;
+    for (const at of [0, 1]) {
+      const p = problem(at);
+      if (p) { setStep(at); setError(p); return; }
     }
     setBusy(true);
     setError(null);
     try {
       const r = await api.onboard({
-        play_store: pkg.trim(),
+        play_store: pkg,
         github: repo.trim() || undefined,
-        github_sources: repo.trim() ? selectedGithub : undefined,
+        github_sources: repo.trim() ? selectedGithub() : undefined,
         product: name.trim() || storeTitle || undefined,
         app_store: additional.app_store.trim() || undefined,
         chrome_web_store: additional.chrome_web_store.trim() || undefined,
@@ -245,83 +255,119 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
     }
   };
 
+  const onEnter = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") { e.preventDefault(); next(); }
+  };
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: S[4] }}>
-      <Field label="Play Store package" hint="Required — copy it from the store URL (id=…)">
-        <input autoFocus value={pkg} onChange={(e) => setPkg(e.target.value)} placeholder="e.g. com.spotify.music"
-          onKeyDown={(e) => e.key === "Enter" && submit()} style={inputStyle} />
-        <PreviewLine state={pkgPreview} />
-      </Field>
-      <Field label="GitHub repo" hint="Optional — issues and releases sharpen the investigation">
-        <input value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="e.g. signalapp/Signal-Android"
-          onKeyDown={(e) => e.key === "Enter" && submit()} style={inputStyle} />
-        <PreviewLine state={repoPreview} />
-      </Field>
-      <fieldset disabled={!repo.trim()} style={{ margin: 0, padding: `${S[3]} ${S[4]}`, border: `1px solid ${C.border2}`, borderRadius: R.control, opacity: repo.trim() ? 1 : 0.6 }}>
-        <legend style={{ padding: `0 ${S[2]}`, color: C.text2, fontSize: T.sm, fontWeight: 600 }}>GitHub data</legend>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: `${S[2]} ${S[5]}` }}>
-          <Choice checked={githubMode === "all"} type="radio" name="github-mode" label="All GitHub data" onChange={() => setGithubMode("all")} />
-          <Choice checked={githubMode === "specific"} type="radio" name="github-mode" label="Choose specific" onChange={() => setGithubMode("specific")} />
-        </div>
-        {githubMode === "specific" && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: `${S[2]} ${S[5]}`, marginTop: S[3], paddingTop: S[3], borderTop: `1px solid ${C.border2}` }}>
-            {GITHUB_OPTIONS.map((option) => (
-              <Choice key={option.source} checked={githubSources.includes(option.source)} type="checkbox" label={option.label}
-                onChange={() => setGithubSources((current) => current.includes(option.source)
-                  ? current.filter((source) => source !== option.source)
-                  : [...current, option.source])} />
-            ))}
-          </div>
-        )}
-        <div style={{ color: C.faint, fontSize: T.xs, marginTop: S[2] }}>
-          {repo.trim() ? "Discussions require a configured GitHub token." : "Enter a GitHub repo above to choose what to pull."}
-        </div>
-      </fieldset>
+    <div className="pub-run">
+      <Heading title="Point EchoLens at your app">
+        Three quick questions. Only the first one is required.
+      </Heading>
 
-      <button type="button" onClick={() => setShowAdditional((open) => !open)} aria-expanded={showAdditional}
-        className="el-btn" style={{ alignSelf: "flex-start", background: "transparent", border: `1px solid ${C.border3}`, borderRadius: R.control, color: C.text2, padding: `${S[2]} ${S[3]}`, fontSize: T.base }}>
-        {showAdditional ? "Hide additional sources" : "+ Additional sources"}
-      </button>
-      {showAdditional && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(230px, 100%), 1fr))", gap: S[4], padding: S[4], background: C.card, border: `1px solid ${C.border2}`, borderRadius: R.card }}>
-          <AdditionalField label="App Store app ID" placeholder="e.g. 324684580" value={additional.app_store} onChange={(value) => setAdditional((current) => ({ ...current, app_store: value }))} />
-          <AdditionalField label="Chrome extension ID" placeholder="32-character ID" value={additional.chrome_web_store} onChange={(value) => setAdditional((current) => ({ ...current, chrome_web_store: value }))} />
-          <AdditionalField label="Hacker News search" placeholder="e.g. your product or company name" value={additional.hacker_news} onChange={(value) => setAdditional((current) => ({ ...current, hacker_news: value }))} />
-          <AdditionalField label="Stack Overflow tag" placeholder="e.g. your-product" value={additional.stack_overflow} onChange={(value) => setAdditional((current) => ({ ...current, stack_overflow: value }))} />
-          <div style={{ gridColumn: "1 / -1", color: C.faint, fontSize: T.sm }}>All additional sources are optional.</div>
-        </div>
-      )}
-      <Field label="Display name"
-             hint={storeTitle ? "Optional — defaults to the store listing's name" : "Optional — defaults to the package name"}>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={storeTitle ? storeTitle : "e.g. Spotify"}
-          onKeyDown={(e) => e.key === "Enter" && submit()} style={inputStyle} />
-      </Field>
-
-      {error && (
-        <div style={{ padding: `${S[2]} ${S[3]}`, border: `1px solid ${C.bad}55`, background: `${C.bad}14`, borderRadius: R.control, color: C.bad, fontSize: T.base }}>
-          {error}
-        </div>
-      )}
-
-      <div style={{ display: "flex", alignItems: "center", gap: S[3], marginTop: S[1],
-                    position: "sticky", bottom: 0, background: C.bg, zIndex: 1,
-                    padding: `${S[3]} 0`, borderTop: `1px solid ${C.border}`, flexWrap: "wrap" }}>
-        <button onClick={submit} disabled={!pkg.trim() || busy || !admin}
-          title={admin ? undefined : "You need admin access to connect a product."}
-          className="el-btn el-btn--primary"
-          style={{ borderRadius: R.control, padding: `${S[3]} ${S[6]}`, fontWeight: 600, fontSize: T.md, fontFamily: sans, cursor: pkg.trim() && !busy && admin ? "pointer" : "not-allowed", opacity: pkg.trim() && !busy && admin ? 1 : 0.5 }}>
-          {busy ? "Starting backfill…" : "Start backfill"}
-        </button>
-        {canSkip && (
-          <button onClick={onCancel} className="el-btn"
-            style={{ background: "transparent", color: C.muted, border: "none", fontSize: T.base }}>
-            Cancel
-          </button>
-        )}
-        {!admin && (
-          <span style={{ fontSize: T.sm, color: C.faint }}>You need admin access to connect a product.</span>
-        )}
+      <div className="pub-progress" aria-label={`Question ${step + 1} of 3`}>
+        <span className="pub-progress__bars" aria-hidden>
+          {[0, 1, 2].map((i) => <span key={i} className={i <= step ? "is-done" : ""} />)}
+        </span>
+        <span>STEP {step + 1} OF 3</span>
       </div>
+
+      <form className="pub-question" noValidate onSubmit={(e) => { e.preventDefault(); next(); }}>
+        <h2 ref={titleRef} tabIndex={-1} className="pub-question__title" style={{ outline: "none" }}>
+          {QUESTIONS[step]}
+        </h2>
+
+        {step === 0 && (
+          <Field label="Play Store link or package"
+            hint="Paste the link to your app's store page, or the package name after id= (for example com.spotify.music).">
+            <input autoFocus className="pub-input" value={store} onChange={(e) => { setStore(e.target.value); setError(null); }}
+              onKeyDown={onEnter} placeholder="https://play.google.com/store/apps/details?id=…"
+              aria-invalid={!!error} spellCheck={false} autoCapitalize="off" />
+            {pkg && pkg !== store.trim() && (
+              <span className="pub-field__hint">Package: <code>{pkg}</code></span>
+            )}
+            <PreviewLine state={pkgPreview} />
+          </Field>
+        )}
+
+        {step === 1 && (
+          <>
+            <Field label="GitHub repo (optional)"
+              hint="Issues and releases let EchoLens connect complaints to the code that shipped.">
+              <input autoFocus className="pub-input" value={repo} onChange={(e) => { setRepo(e.target.value); setError(null); }}
+                onKeyDown={onEnter} placeholder="e.g. signalapp/Signal-Android" spellCheck={false} autoCapitalize="off" />
+              <PreviewLine state={repoPreview} />
+            </Field>
+            {repo.trim() && (
+              <fieldset style={{ margin: 0, padding: 0, border: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+                <legend className="pub-field__label" style={{ padding: 0, marginBottom: 10 }}>What to read from GitHub</legend>
+                <div className="pub-choices">
+                  <Choice checked={githubMode === "all"} type="radio" name="github-mode" label="Everything" onChange={() => setGithubMode("all")} />
+                  <Choice checked={githubMode === "specific"} type="radio" name="github-mode" label="Let me choose" onChange={() => setGithubMode("specific")} />
+                </div>
+                {githubMode === "specific" && (
+                  <div className="pub-choices">
+                    {GITHUB_OPTIONS.map((option) => (
+                      <Choice key={option.source} checked={githubSources.includes(option.source)} type="checkbox" label={option.label}
+                        onChange={() => setGithubSources((current) => current.includes(option.source)
+                          ? current.filter((source) => source !== option.source)
+                          : [...current, option.source])} />
+                    ))}
+                  </div>
+                )}
+                <span className="pub-field__hint">Discussions need a GitHub token set up on the server.</span>
+              </fieldset>
+            )}
+          </>
+        )}
+
+        {step === 2 && (
+          <>
+            <div className="pub-grid2">
+              <Field label="App Store app ID" hint="Optional">
+                <input className="pub-input" value={additional.app_store} placeholder="e.g. 324684580" onKeyDown={onEnter}
+                  onChange={(e) => setAdditional((current) => ({ ...current, app_store: e.target.value }))} />
+              </Field>
+              <Field label="Chrome extension ID" hint="Optional">
+                <input className="pub-input" value={additional.chrome_web_store} placeholder="32-character ID" onKeyDown={onEnter}
+                  onChange={(e) => setAdditional((current) => ({ ...current, chrome_web_store: e.target.value }))} />
+              </Field>
+              <Field label="Hacker News search" hint="Optional">
+                <input className="pub-input" value={additional.hacker_news} placeholder="your product or company name" onKeyDown={onEnter}
+                  onChange={(e) => setAdditional((current) => ({ ...current, hacker_news: e.target.value }))} />
+              </Field>
+              <Field label="Stack Overflow tag" hint="Optional">
+                <input className="pub-input" value={additional.stack_overflow} placeholder="e.g. your-product" onKeyDown={onEnter}
+                  onChange={(e) => setAdditional((current) => ({ ...current, stack_overflow: e.target.value }))} />
+              </Field>
+            </div>
+            <Field label="What should we call it?"
+              hint={storeTitle ? `Optional — defaults to the store listing's name, ${storeTitle}.` : "Optional — defaults to the package name."}>
+              <input className="pub-input" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={onEnter}
+                placeholder={storeTitle ?? "e.g. Spotify"} />
+            </Field>
+          </>
+        )}
+
+        {error && <div role="alert" className="pub-error">{error}</div>}
+
+        <div className="pub-run__nav">
+          <Button type="submit" variant="primary" className="pub-btn" loading={busy} disabled={!admin}
+            title={admin ? undefined : "You need admin access to connect a product."}>
+            {step === 2 ? (busy ? "Starting…" : "Start reading reviews")
+              : step === 1 && !repo.trim() ? "Skip — no GitHub" : "Next"}
+          </Button>
+          {step > 0 && (
+            <Button type="button" variant="ghost" className="pub-btn" onClick={() => go(step - 1)} disabled={busy}>
+              Back
+            </Button>
+          )}
+          {canSkip && step === 0 && (
+            <Button type="button" variant="quiet" onClick={onCancel}>Cancel</Button>
+          )}
+          {!admin && <span className="pub-field__hint">You need admin access to connect a product.</span>}
+        </div>
+      </form>
     </div>
   );
 }
@@ -330,20 +376,20 @@ function Choice({ checked, type, name, label, onChange }: {
   checked: boolean; type: "radio" | "checkbox"; name?: string; label: string; onChange: () => void;
 }) {
   return (
-    <label style={{ display: "inline-flex", alignItems: "center", gap: S[2], color: C.text2, fontSize: T.sm, cursor: "pointer" }}>
-      <input type={type} name={name} checked={checked} onChange={onChange} style={{ accentColor: C.accent }} />
+    <label>
+      <input type={type} name={name} checked={checked} onChange={onChange} />
       {label}
     </label>
   );
 }
 
-function AdditionalField({ label, placeholder, value, onChange }: {
-  label: string; placeholder: string; value: string; onChange: (value: string) => void;
-}) {
+function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  // A real <label> wrapping the control, so every input announces its name.
   return (
-    <label style={{ display: "block" }}>
-      <span style={{ display: "block", marginBottom: S[2], color: C.text2, fontSize: T.sm, fontWeight: 600 }}>{label}</span>
-      <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} style={inputStyle} />
+    <label className="pub-field">
+      <span className="pub-field__label">{label}</span>
+      {hint && <span className="pub-field__hint">{hint}</span>}
+      {children}
     </label>
   );
 }
@@ -389,12 +435,12 @@ function useSourcePreview(kind: "play_store" | "github", raw: string, enabled: b
 function PreviewLine({ state }: { state: PreviewState }) {
   const { data, loading } = state;
   if (!data && !loading) return null;
-  let tone: string = C.dim;
+  let tone = "";
   let icon = "search";
-  let text: React.ReactNode = "Looking it up…";
+  let text: ReactNode = "Looking it up…";
   if (data && !loading) {
     if (data.ok) {
-      tone = C.good;
+      tone = " is-ok";
       icon = "check";
       const facts = data.source === "play_store"
         ? [data.developer, data.ratings != null ? `${compact(data.ratings)} ratings` : null,
@@ -403,56 +449,27 @@ function PreviewLine({ state }: { state: PreviewState }) {
            data.stars != null ? `${compact(data.stars)} stars` : null];
       text = (
         <>
-          <span style={{ color: C.text2, fontWeight: 600 }}>{data.title}</span>
-          {facts.filter(Boolean).length > 0 && (
-            <span style={{ color: C.muted }}> · {facts.filter(Boolean).join(" · ")}</span>
-          )}
+          <b>{data.title}</b>
+          {facts.filter(Boolean).length > 0 && <> · {facts.filter(Boolean).join(" · ")}</>}
         </>
       );
     } else {
       // Not found is worth a warning; slow or unreachable is only a note.
-      tone = data.kind === "not_found" || data.kind === "invalid" ? C.accent : C.dim;
-      icon = data.kind === "not_found" || data.kind === "invalid" ? "warning" : "info";
+      const warn = data.kind === "not_found" || data.kind === "invalid";
+      tone = warn ? " is-warn" : "";
+      icon = warn ? "warning" : "info";
       text = data.reason ?? "Couldn't check this one — you can still continue.";
     }
   }
   return (
-    <span role="status" aria-live="polite"
-      style={{ display: "flex", alignItems: "center", gap: S[2], marginTop: S[2],
-               fontSize: T.sm, color: tone, minHeight: 18 }}>
+    <span role="status" aria-live="polite" className={`pub-preview${tone}`}>
       <Icon name={icon} size={13} style={{ flex: "none" }} />
       <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{text}</span>
     </span>
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint: string; children: React.ReactNode }) {
-  // A real <label> wrapping the control, as Login.tsx already does. This was a
-  // <div> with no htmlFor and no aria-label, so all three inputs on the first
-  // screen a new admin sees announced as "edit, blank" to a screen reader.
-  return (
-    <label style={{ display: "block" }}>
-      <span style={{ display: "flex", alignItems: "baseline", gap: S[2], marginBottom: S[2] }}>
-        <span style={{ fontSize: T.base, fontWeight: 600, color: C.text2 }}>{label}</span>
-        <span style={{ fontSize: T.sm, color: C.faint }}>{hint}</span>
-      </span>
-      {children}
-    </label>
-  );
-}
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  background: C.bgRaised,
-  border: `1px solid ${C.border3}`,
-  borderRadius: R.control,
-  color: C.text,
-  fontFamily: mono,
-  fontSize: T.md,
-  padding: `${S[3]} ${S[3]}`
-};
-
-// ── step 2: live backfill + snapshot ────────────────────────────────────
+// ── live backfill + snapshot ────────────────────────────────────────────
 
 function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
   product: string; onDone: () => void; onReviewSignals: () => void;
@@ -535,29 +552,31 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
     }
   };
 
+  const heading = <Heading title={`Reading ${product}'s reviews`}>
+    EchoLens is checking each source and learning what normal looks like. You can go to Today while it runs.
+  </Heading>;
+
   if (err && !status) return (
-    <div role="alert" style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: S[3] }}>
-      <div style={{ color: C.bad, fontSize: T.base }}>We couldn't check setup progress — {err}</div>
-      <button onClick={() => setPollAttempt((attempt) => attempt + 1)} className="el-btn el-btn--primary">
-        Check again
-      </button>
-      <button onClick={onDone} className="el-btn" style={{ color: C.muted }}>
-        Continue to Today
-      </button>
+    <div className="pub-run">
+      {heading}
+      <div role="alert" className="pub-error">We couldn't check setup progress — {err}</div>
+      <div className="pub-run__nav">
+        <Button variant="primary" className="pub-btn" onClick={() => setPollAttempt((attempt) => attempt + 1)}>Check again</Button>
+        <Button variant="ghost" className="pub-btn" onClick={onDone}>Continue to Today</Button>
+      </div>
     </div>
   );
   if (!status) return (
-    <div className="el-onboarding-connecting" role="status">
-      <span className="el-onboarding-spinner" aria-hidden="true" />
-      <div>
-        <div style={{ color: C.text2, fontWeight: 600 }}>Checking source status…</div>
-        <div style={{ color: C.muted, fontSize: T.sm, marginTop: S[1] }}>
-          This normally takes only a moment.
+    <div className="pub-run">
+      {heading}
+      <div className="el-onboarding-connecting" role="status">
+        <span className="el-onboarding-spinner" aria-hidden="true" />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 600 }}>Checking your sources…</div>
+          <div className="pub-field__hint">This normally takes only a moment.</div>
         </div>
+        <Button variant="ghost" className="pub-btn" onClick={onDone}>Continue to Today</Button>
       </div>
-      <button onClick={onDone} className="el-btn" style={{ color: C.accent }}>
-        Continue to Today
-      </button>
     </div>
   );
 
@@ -572,12 +591,9 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
   const githubItems = status.sources
     .filter((source) => source.source.startsWith("github"))
     .reduce((total, source) => total + source.items_last_run, 0);
-  // What Cases will actually offer to triage: pending anomalies become Signals
-  // rows there. `top_themes` are NOT signals — they are the most frequent
-  // phrases in the corpus, capped at k=6 and computed by word frequency, so
-  // they double-count paraphrases ("broken again" and "broken today" are one
-  // complaint). Adding them here promised "6 signals in Cases" and handed over
-  // to a screen offering none of them.
+  // Pending anomalies are what All problems will offer to triage as spikes.
+  // `top_themes` are NOT spikes — they are the most frequent phrases, by word
+  // count, and double-count paraphrases — so they are never added in here.
   const found = anomalies.length;
   const progress = status.progress ?? {
     checked_sources: status.sources.filter((source) => source.status === "healthy" || source.status === "error").length,
@@ -594,225 +610,196 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
     Math.max(0, Math.floor((now - lastProgressAt) / 1000)),
   );
   const activeElapsed = progressView.elapsedLabel.replace(" elapsed", "");
+  // The one plain sentence: "Reading 1,240 reviews… found 3 spikes".
+  const reviewsLine = `${snap.reviews.toLocaleString()} ${plural(snap.reviews, "review")}`;
+  const spikesLine = found > 0 ? `found ${found} ${plural(found, "spike")}` : "no spikes yet";
+  const plain = ready ? `Read ${reviewsLine} — ${spikesLine}.` : `Reading ${reviewsLine}… ${spikesLine}`;
 
   return (
-    <div className="el-onboarding-backfill" style={{ display: "flex", flexDirection: "column", gap: S[5] }}>
-      {err && status && (
-        <div role="alert" style={{ padding: `${S[2]} ${S[3]}`, border: `1px solid ${C.bad}55`,
-                      background: `${C.bad}12`, borderRadius: R.control, color: C.text3,
-                      fontSize: T.sm, lineHeight: "var(--el-lh-normal)" }}>
-          <Icon name="warning" size={14} style={{ display: "inline", verticalAlign: "-2px" }} /> We couldn't refresh setup progress — {err}. The information below may be out of date.
-          <span className="el-onboarding-alert__actions">
-            <button onClick={() => setPollAttempt((attempt) => attempt + 1)} className="el-btn"
-              style={{ color: C.accent, border: `1px solid var(--el-accent-line)`, borderRadius: R.control, padding: `${S[1]} ${S[2]}` }}>
-              {pollingStopped ? "Check again" : "Refresh now"}
-            </button>
-            <button onClick={onDone} className="el-btn" style={{ color: C.muted }}>
-              Continue to Today
-            </button>
-          </span>
-        </div>
-      )}
-      <section className={`el-onboarding-progress${status.backfilling ? " is-active" : ""}`}
-        aria-label="Backfill progress">
-        <div className="el-sr-only" role="status" aria-live="polite">
-          {ready
-            ? progress.failed_sources > 0
-              ? `Setup finished with ${progress.failed_sources} ${plural(progress.failed_sources, "source")} needing attention.`
-              : "Product setup finished."
-            : progressView.countLabel}
-        </div>
-        <div className="el-onboarding-progress__summary">
-          <div>
-            <div style={{ fontSize: T.md, fontWeight: 600, color: C.text }}>
-              {ready
-                ? progress.failed_sources > 0
-                  ? `Setup finished with ${progress.failed_sources} ${plural(progress.failed_sources, "source")} needing attention`
-                  : "Your product is ready"
-                : "Checking your sources"}
+    <div className="pub-run">
+      {heading}
+      <div className="el-onboarding-backfill" style={{ display: "flex", flexDirection: "column" }}>
+        <div className="pub-reading" style={{ borderTop: 0, paddingTop: 0 }}>
+          <div className="pub-reading__line" aria-live="polite">{plain}</div>
+          {ready && found === 0 && hasReviews && (
+            <div className="pub-reading__sub">
+              That's normal on day one: EchoLens needs a few days of history before it can tell a surge from noise.
             </div>
-            <div style={{ fontSize: T.sm, color: C.muted, marginTop: S[1] }}>
-              {ready
-                ? progress.failed_sources > 0
-                  ? "Working sources and collected feedback are ready to use."
-                  : "Every connected source has been checked."
-                : "Collection continues safely in the background if you leave this screen."}
-            </div>
-          </div>
-          <div className="el-onboarding-progress__measure">
-            <div className="el-onboarding-progress__count">{progressView.countLabel}</div>
-            <div className="el-onboarding-progress__timing">
-              <span>{progressView.elapsedLabel}</span>
-              <span>{progressView.expectedLabel}</span>
-            </div>
-          </div>
-          <div className="el-onboarding-progress__primary-action">
-            <button onClick={onDone} className="el-btn el-btn--primary"
-              style={{ borderRadius: R.control, padding: `${S[2]} ${S[4]}`, fontWeight: 600 }}>
-              {status.backfilling ? "Continue to Today" : "Go to Today"}
-            </button>
-            {status.backfilling && <span>Collection keeps running</span>}
-          </div>
+          )}
         </div>
-        <div className="el-onboarding-progress__track" role="progressbar"
-          aria-label={progressView.countLabel} aria-valuemin={0}
-          aria-valuemax={progress.total_sources} aria-valuenow={progress.checked_sources}>
-          <span style={{ width: `${progressView.percent}%` }} />
-        </div>
-        <div className="el-onboarding-progress__activity">
-          <span className="el-onboarding-live-dot" aria-hidden="true" />
-          <span>{activityLabel}</span>
-          {status.backfilling && <span className="el-onboarding-progress__cutoff">
-            {progressView.cutoffLabel}
-          </span>}
-        </div>
-        <details className="el-onboarding-progress__details">
-          <summary>How live collection works</summary>
-          <p>Sources run independently. Each card updates as soon as that source responds;
-            one slow or failed connection does not block the others.</p>
-        </details>
-      </section>
-      {/* source health */}
-      <div className="el-onboarding-source-list" aria-label="Connected source activity">
-        {status.sources.map((s) => {
-          const color = s.status === "error" ? C.bad : s.status === "healthy" ? C.good : C.accent;
-          const label = sourceProgressLabel(s);
-          const retryKey = `${s.source}:${s.identifier}`;
-          const running = s.status !== "error" && s.status !== "healthy";
-          return (
-            <article key={s.source + s.identifier}
-              className={`el-onboarding-source el-onboarding-source--${s.status}`}>
-              <div className="el-onboarding-source__identity">
-                <div className="el-onboarding-source__header">
-                  <Dot color={color} pulse={status.backfilling && running} />
-                  <span style={{ fontSize: T.base, fontWeight: 600 }}>
-                    {SOURCE_LABELS[s.source] || s.source}
-                  </span>
-                </div>
-                <div className="el-onboarding-source__identifier" title={s.identifier}>
-                  {s.identifier}
-                </div>
-              </div>
-              <div className="el-onboarding-source__result">
-                <span style={{ fontSize: T.sm, color: s.status === "error" ? C.bad : C.text3 }}>
-                  {running ? `Fetching and processing · ${activeElapsed}` : label}
-                </span>
-                {s.status === "error" && (
-                  <>
-                    <span className="el-onboarding-source__guidance">
-                      {sourceRecoveryGuidance(s.last_error)}
-                    </span>
-                    <div className="el-onboarding-source__actions">
-                      <button onClick={() => retrySource(s.source, s.identifier)}
-                        disabled={retrying === retryKey} className="el-btn"
-                        style={{ color: C.accent, border: `1px solid var(--el-accent-line)`, borderRadius: R.control, padding: `${S[1]} ${S[2]}`, whiteSpace: "nowrap" }}>
-                        {retrying === retryKey ? "Retrying…" : "Retry source"}
-                      </button>
-                      <button onClick={onManageSources} className="el-btn"
-                        style={{ color: C.muted, padding: `${S[1]} ${S[2]}` }}>
-                        Review connection
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            </article>
-          );
-        })}
-      </div>
 
-      {hasReviews ? (
-        <SnapshotView snap={snap} />
-      ) : (
-        <div style={{ padding: `${S[6]} ${S[5]}`, border: `1px dashed ${C.border4}`, borderRadius: R.card, textAlign: "center", color: C.dim, fontSize: T.base }}>
-          {emptyBackfillMessage({
-            backfilling: status.backfilling,
-            failedSources: progress.failed_sources,
-            githubItems,
+        {err && (
+          <div role="alert" className="pub-error">
+            We couldn't refresh setup progress — {err}. What you see below may be out of date.
+            <span className="el-onboarding-alert__actions">
+              <Button size="sm" variant="ghost" onClick={() => setPollAttempt((attempt) => attempt + 1)}>
+                {pollingStopped ? "Check again" : "Refresh now"}
+              </Button>
+              <Button size="sm" variant="quiet" onClick={onDone}>Continue to Today</Button>
+            </span>
+          </div>
+        )}
+
+        <section className={`el-onboarding-progress${status.backfilling ? " is-active" : ""}`}
+          aria-label="Backfill progress">
+          <div className="el-sr-only" role="status" aria-live="polite">
+            {ready
+              ? progress.failed_sources > 0
+                ? `Setup finished with ${progress.failed_sources} ${plural(progress.failed_sources, "source")} needing attention.`
+                : "Product setup finished."
+              : progressView.countLabel}
+          </div>
+          <div className="el-onboarding-progress__summary">
+            <div>
+              <div style={{ fontSize: 17, fontWeight: 600 }}>
+                {ready
+                  ? progress.failed_sources > 0
+                    ? `Finished, with ${progress.failed_sources} ${plural(progress.failed_sources, "source")} needing attention`
+                    : "Your product is ready"
+                  : "Checking your sources"}
+              </div>
+              <div className="pub-field__hint" style={{ marginTop: 4 }}>
+                {ready
+                  ? progress.failed_sources > 0
+                    ? "Working sources and what they collected are ready to use."
+                    : "Every connected source has been checked."
+                  : "Collection keeps going safely if you leave this screen."}
+              </div>
+            </div>
+            <div className="el-onboarding-progress__measure">
+              <div className="el-onboarding-progress__count">{progressView.countLabel}</div>
+              <div className="el-onboarding-progress__timing">
+                <span>{progressView.elapsedLabel}</span>
+                <span>{progressView.expectedLabel}</span>
+              </div>
+            </div>
+            {status.backfilling && (
+              <div className="el-onboarding-progress__primary-action">
+                <Button variant="primary" className="pub-btn" onClick={onDone}>Continue to Today</Button>
+                <span>Collection keeps running</span>
+              </div>
+            )}
+          </div>
+          <div className="el-onboarding-progress__track" role="progressbar"
+            aria-label={progressView.countLabel} aria-valuemin={0}
+            aria-valuemax={progress.total_sources} aria-valuenow={progress.checked_sources}>
+            <span style={{ width: `${progressView.percent}%` }} />
+          </div>
+          <div className="el-onboarding-progress__activity">
+            <span className="el-onboarding-live-dot" aria-hidden="true" />
+            <span>{activityLabel}</span>
+            {status.backfilling && <span className="el-onboarding-progress__cutoff">
+              {progressView.cutoffLabel}
+            </span>}
+          </div>
+          <details className="el-onboarding-progress__details">
+            <summary>How live collection works</summary>
+            <p>Sources run independently. Each one updates as soon as it responds;
+              one slow or failed connection does not hold up the others.</p>
+          </details>
+        </section>
+
+        {/* source health */}
+        <div className="el-onboarding-source-list" aria-label="Connected source activity">
+          {status.sources.map((s) => {
+            const color = s.status === "error" ? C.stampRed : s.status === "healthy" ? C.green : C.pencil;
+            const label = sourceProgressLabel(s);
+            const retryKey = `${s.source}:${s.identifier}`;
+            const running = s.status !== "error" && s.status !== "healthy";
+            return (
+              <article key={s.source + s.identifier}
+                className={`el-onboarding-source el-onboarding-source--${s.status}`}>
+                <div className="el-onboarding-source__identity">
+                  <div className="el-onboarding-source__header">
+                    <Dot color={color} pulse={status.backfilling && running} />
+                    <span style={{ fontSize: 15, fontWeight: 600 }}>
+                      {SOURCE_LABELS[s.source] || s.source}
+                    </span>
+                  </div>
+                  <div className="el-onboarding-source__identifier" title={s.identifier}>
+                    {s.identifier}
+                  </div>
+                </div>
+                <div className="el-onboarding-source__result">
+                  <span style={{ fontSize: 14, color: s.status === "error" ? "var(--el-ink)" : "var(--el-body)" }}>
+                    {running ? `Fetching and processing · ${activeElapsed}` : label}
+                  </span>
+                  {s.status === "error" && (
+                    <>
+                      <span className="el-onboarding-source__guidance">
+                        {sourceRecoveryGuidance(s.last_error)}
+                      </span>
+                      <div className="el-onboarding-source__actions">
+                        <Button size="sm" variant="ghost" onClick={() => retrySource(s.source, s.identifier)}
+                          loading={retrying === retryKey}>
+                          {retrying === retryKey ? "Retrying…" : "Retry source"}
+                        </Button>
+                        <Button size="sm" variant="quiet" onClick={onManageSources}>
+                          Review connection
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </article>
+            );
           })}
         </div>
-      )}
 
-      {/* What we found — a summary and a handoff, not a third place to triage.
-          This list used to be its own format, so the same themes appeared here,
-          on the feed, and nowhere else the same way. Triage happens in one
-          place: Cases → Signals. */}
-      {ready && (found > 0 || snap.top_themes.length > 0) && (
-        <div style={{ padding: `${S[4]} ${S[5]}`, background: C.card, border: `1px solid ${C.border2}`,
-                      borderRadius: R.card }}>
-          <Label style={{ marginBottom: S[1], color: C.info }}>WHAT WE FOUND</Label>
-          {found > 0 ? (
-            <>
-              <div style={{ fontSize: T.md, color: C.text2, lineHeight: "var(--el-lh-normal)" }}>
-                {found} detected {plural(found, "spike")} worth a look in {product}'s feedback.
-              </div>
-              <div style={{ fontSize: T.sm, color: C.dim, marginTop: S[2],
-                            lineHeight: "var(--el-lh-normal)" }}>
-                {found === 1 ? "It's" : "They're"} waiting under Signals at the bottom of
-                Cases. Tick what's worth investigating and it queues — nothing is lost by
-                not choosing now.
-              </div>
-            </>
-          ) : (
-            // No spike yet is the NORMAL first-run state: the detector needs a
-            // baseline before it can call anything anomalous. Saying so beats
-            // implying the backfill found nothing.
-            <div style={{ fontSize: T.md, color: C.text2, lineHeight: "var(--el-lh-normal)" }}>
-              No spike yet — EchoLens needs a few days of history before it can tell a
-              surge from normal noise. What people complain about most so far:
-            </div>
-          )}
-          {snap.top_themes.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: S[2], marginTop: S[3] }}>
+        {hasReviews ? (
+          <SnapshotView snap={snap} />
+        ) : (
+          <div className="pub-notice">
+            {emptyBackfillMessage({
+              backfilling: status.backfilling,
+              failedSources: progress.failed_sources,
+              githubItems,
+            })}
+          </div>
+        )}
+
+        {/* What people mention most — a summary and a handoff, not a third
+            place to triage. Triage happens in one place: All problems. */}
+        {ready && snap.top_themes.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <SerifHeadline as="h2" size="section">What people mention most</SerifHeadline>
+            <div className="pub-themes">
               {snap.top_themes.slice(0, 6).map((t) => (
-                <span key={t.label}
-                  style={{ fontSize: T.sm, color: C.text3, background: C.bgRaised,
-                           border: `1px solid ${C.border3}`, borderRadius: R.pill,
-                           padding: `${S[1]} ${S[3]}` }}>
-                  {t.label} <span style={{ color: C.faint, fontFamily: mono,
-                                           fontSize: T.micro }}>{t.count}</span>
-                </span>
+                <span key={t.label}>{t.label}<small>{t.count}</small></span>
               ))}
             </div>
-          )}
-        </div>
-      )}
-
-      {/* data-quality disclosures */}
-      {(snap.data_quality.note || snap.data_quality.non_english_note) && (
-        <div style={{ display: "flex", flexDirection: "column", gap: S[2] }}>
-          {snap.data_quality.note && <Notice text={snap.data_quality.note} />}
-          {snap.data_quality.non_english_note && <Notice text={snap.data_quality.non_english_note} />}
-        </div>
-      )}
-
-      {/* CTA */}
-      <div style={{ display: "flex", alignItems: "center", gap: S[3], marginTop: S[1],
-                    flexWrap: "wrap" }}>
-        {ready && <button onClick={onDone} className="el-btn"
-          style={{ background: C.accent, color: C.onAccent,
-                   border: "none", borderRadius: R.control, padding: `${S[3]} ${S[6]}`, fontWeight: 600,
-                   fontSize: T.md, cursor: "pointer" }}>
-          Go to Today
-        </button>}
-        {ready && found > 0 && (
-          <button onClick={onReviewSignals} className="el-btn"
-            style={{ background: "transparent", color: C.accent,
-                     border: `1px solid var(--el-accent-line)`, borderRadius: R.control, padding: `${S[3]} ${S[5]}`,
-                     fontWeight: 500, fontSize: T.md, fontFamily: sans }}>
-            Review {found} {plural(found, "signal")} in Cases
-          </button>
+            {found > 0 && (
+              <div className="pub-field__hint">
+                {found === 1 ? "The spike is" : `The ${found} spikes are`} waiting in All problems. Pick what's worth
+                investigating — nothing is lost by not choosing now.
+              </div>
+            )}
+          </div>
         )}
-        {/* No spike to review, but the corpus is worth exploring. Cases can
-            still cluster it into candidate themes on demand. */}
-        {ready && found === 0 && snap.top_themes.length > 0 && (
-          <button onClick={onReviewSignals} className="el-btn"
-            style={{ background: "transparent", color: C.text3,
-                     border: `1px solid ${C.border3}`, borderRadius: R.control,
-                     padding: `${S[3]} ${S[5]}`, fontWeight: 500, fontSize: T.md,
-                     fontFamily: sans }}>
-            Explore the feedback in Cases
-          </button>
+
+        {/* data-quality disclosures */}
+        {(snap.data_quality.note || snap.data_quality.non_english_note) && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {snap.data_quality.note && <Notice text={snap.data_quality.note} />}
+            {snap.data_quality.non_english_note && <Notice text={snap.data_quality.non_english_note} />}
+          </div>
+        )}
+
+        {ready && (
+          <div className="pub-run__nav">
+            <Button variant="primary" className="pub-btn" onClick={onDone}>Go to Today</Button>
+            {found > 0 && (
+              <Button variant="ghost" className="pub-btn" onClick={onReviewSignals}>
+                Review {found} {plural(found, "spike")}
+              </Button>
+            )}
+            {/* No spike to review, but the reviews are worth exploring. */}
+            {found === 0 && snap.top_themes.length > 0 && (
+              <Button variant="ghost" className="pub-btn" onClick={onReviewSignals}>
+                Explore the reviews
+              </Button>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -821,58 +808,32 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
 
 function SnapshotView({ snap }: { snap: Snapshot }) {
   const delta = snap.rating_delta;
-  const deltaColor = delta == null ? C.muted : delta >= 0 ? C.good : C.bad;
-  const deltaArrow = delta == null ? null : delta >= 0 ? "arrowUp" : "arrowDown";
-  const max = Math.max(1, ...snap.weekly.map((w) => w.count));
-
-  const tiles = [
-    { label: "REVIEWS (90D)", value: snap.reviews.toLocaleString(), color: C.text },
-    {
-      label: "RATING NOW",
-      value: snap.rating_now != null ? `${snap.rating_now.toFixed(1)}★` : "—",
-      color: C.text,
-      sub: delta != null ? (
-        <>
-          {deltaArrow && <Icon name={deltaArrow} size={10} style={{ display: "inline" }} />}
-          {" "}{Math.abs(delta).toFixed(2)} vs last wk
-        </>
-      ) : undefined,
-      subColor: deltaColor
-    },
-    { label: "REVIEWS / DAY", value: String(snap.avg_per_day), color: C.text },
-    { label: "NEGATIVE", value: snap.negatives.toLocaleString(), color: C.accent },
-  ];
+  const ratingCaption = delta == null
+    ? "average rating right now"
+    : `rating now, ${delta >= 0 ? "up" : "down"} ${Math.abs(delta).toFixed(2)} on last week`;
+  const weekly = snap.weekly.map((w) => ({ date: w.week_start, value: w.count }));
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: S[4] }}>
-      <div style={{ display: "flex", gap: S[2], flexWrap: "wrap" }}>
-        {tiles.map((t) => (
-          <div key={t.label} style={{ flex: 1, minWidth: 130, padding: `${S[3]} ${S[4]}`, background: C.card, border: `1px solid ${C.border2}`, borderRadius: R.card }}>
-            <div style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".1em", color: C.faint }}>{t.label}</div>
-            <div style={{ fontSize: T.xl, fontWeight: 700, fontFamily: mono, color: t.color, marginTop: S[2] }}>{t.value}</div>
-            {t.sub && <div style={{ fontFamily: mono, fontSize: T.micro, color: t.subColor, marginTop: S[1] }}>{t.sub}</div>}
-          </div>
-        ))}
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div className="pub-snapshot">
+        <StatTile value={snap.reviews.toLocaleString()} caption="reviews from the last 90 days" />
+        <StatTile value={snap.rating_now != null ? `${snap.rating_now.toFixed(1)}★` : "—"} caption={ratingCaption} />
+        <StatTile value={String(snap.avg_per_day)} caption="reviews a day, on average" />
+        <StatTile value={snap.negatives.toLocaleString()}
+          caption={`1–2★ reviews, ${snap.reviews ? Math.round((snap.negatives / snap.reviews) * 100) : 0}% of all`} />
       </div>
-
-      {/* weekly volume bars */}
-      <div style={{ padding: `${S[4]} ${S[4]}`, background: C.card, border: `1px solid ${C.border2}`, borderRadius: R.card }}>
-        <Label style={{ marginBottom: S[3] }}>REVIEW VOLUME · LAST 12 WEEKS</Label>
-        <div style={{ display: "flex", alignItems: "flex-end", gap: S[1], height: 56 }}>
-          {snap.weekly.map((w) => (
-            <div key={w.week_start} title={`${w.week_start}: ${w.count}`}
-              style={{ flex: 1, height: `${Math.max(4, (w.count / max) * 100)}%`, borderRadius: "3px 3px 0 0", background: C.accent, opacity: 0.9 }} />
-          ))}
-        </div>
-      </div>
+      {weekly.length > 0 && (
+        <ReleaseChart points={weekly} height={84} unit="reviews" ariaLabel="Reviews per week, last 12 weeks"
+          caption="Reviews per week, last 12 weeks" />
+      )}
     </div>
   );
 }
 
 function Notice({ text }: { text: string }) {
   return (
-    <div style={{ display: "flex", gap: S[2], padding: `${S[2]} ${S[3]}`, border: `1px solid ${C.border3}`, background: C.card2, borderRadius: R.control, color: C.muted, fontSize: T.sm, lineHeight: "var(--el-lh-normal)" }}>
-      <Icon name="info" size={14} style={{ color: C.info, flex: "none" }} />
+    <div className="pub-notice">
+      <Icon name="info" size={14} style={{ flex: "none", marginTop: 3 }} />
       {text}
     </div>
   );
