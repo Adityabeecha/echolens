@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from echolens.db.models import Review
 from echolens.detector.detect import reference_now
-from echolens.textkit import tokenize
+from echolens.textkit import clean_headline, tokenize
 from echolens.timeutil import aware_utc
 from echolens.tools._util import match_score
 
@@ -257,7 +257,7 @@ def decision_doc(finding_json: dict, recommendations: list, impact: dict, status
     else:
         what_to_do = finding_json.get("what_would_settle_it") or "Gather more evidence before acting."
     return {
-        "whats_broken": finding_json.get("summary", ""),
+        "whats_broken": clean_headline(finding_json.get("summary", "")),
         "how_bad": impact_line(impact),
         "what_to_do": what_to_do,
     }

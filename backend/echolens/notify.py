@@ -123,6 +123,7 @@ def _incident_contexts(session: Session, findings: list[Finding], *,
     """
     from echolens.cases import _headline
     from echolens.detector.incidents import group
+    from echolens.textkit import clean_headline
 
     products = {f.product_id for f in findings}
     out = []
@@ -202,7 +203,7 @@ def _incident_contexts(session: Session, findings: list[Finding], *,
             out.append({"key": f"{product_id}:{kind}:{min(a.id for a in members) if members else ident}",
                         "product_id": product_id, "members": [a.id for a in members],
                         "finding_ids": [f.id for f in related_findings], "finding": representative,
-                        "title": _headline(lead) if lead else representative.summary,
+                        "title": _headline(lead) if lead else clean_headline(representative.summary),
                         "z": max((a.z or 0. for a in members), default=0.),
                         "member_count": len(members) or 1})
     return out

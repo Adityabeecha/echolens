@@ -1241,7 +1241,9 @@ export interface PortfolioProduct {
   open_problems: number;
   regressions: number;
   untriaged: number;
-  negative_rate_pct: number;
+  /** null when the last 7 days are too thin for a rate; see negative_rate_reason. */
+  negative_rate_pct: number | null;
+  negative_rate_reason?: string | null;
   negative_rate_delta_pct: number | null;
   confirmed_fixes: number;
   has_data: boolean;

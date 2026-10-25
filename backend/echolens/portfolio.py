@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from echolens.db.models import (
     AnomalyEvent, Finding, FixWatch, Investigation, Product, Review)
 from echolens.impact import severity
+from echolens.textkit import clean_headline
 from echolens.themes import CHRONIC_DAYS
 from echolens.timeutil import aware_utc
 
@@ -115,7 +116,7 @@ def _load_board(session: Session, products: list[Product], now: datetime) -> dic
     ids = [p.id for p in products]
     data = {pid: {"watches": [], "resolved": [], "latest": {}, "untriaged": 0, "waiting_incidents": 0,
                   "sources": [], "chronic": [], "rates": (None, None),
-                  "has_reviews": False} for pid in ids}
+                  "recent_reviews": 0, "has_reviews": False} for pid in ids}
     if not ids:
         return data
     for w in session.scalars(select(FixWatch).where(FixWatch.product_id.in_(ids))).all():
@@ -158,6 +159,7 @@ def _load_board(session: Session, products: list[Product], now: datetime) -> dic
             .group_by(Review.product)).all():
         data[names[name]]["rates"] = (_rate(rec_n or 0, rec_neg or 0),
                                       _rate(base_n or 0, base_neg or 0))
+        data[names[name]]["recent_reviews"] = int(rec_n or 0)
     # Whether ANY feedback exists (not just in the last 7 days), for has_data.
     for name in session.scalars(select(Review.product).where(
             Review.product.in_(list(names))).distinct()).all():
@@ -202,7 +204,7 @@ def product_snapshot(session: Session, product: Product, now: datetime,
         elif sev["band"] == "medium":
             medium += 1
         if top_problem is None or sev["score"] > top_problem["sev_score"]:
-            top_problem = {"investigation_id": inv.id, "summary": f.summary,
+            top_problem = {"investigation_id": inv.id, "summary": clean_headline(f.summary),
                            "band": sev["band"], "sev_score": sev["score"]}
     if high:
         score += W_SEV1 * high
@@ -259,6 +261,15 @@ def product_snapshot(session: Session, product: Product, now: datetime,
 
     band, band_label = _band(score)
     reasons.sort(key=lambda r: -r["weight"])
+    has_data = bool(sources) or data["has_reviews"]
+    # A product with data but no usable recent window gets null AND the reason,
+    # so the board shows "—" with an explanation rather than "null% negative".
+    rate_reason = None
+    if recent is None and has_data:
+        n_recent = data.get("recent_reviews", 0)
+        rate_reason = ("no reviews in the last 7 days" if n_recent == 0 else
+                       f"only {_n(n_recent, 'review')} in the last 7 days — "
+                       f"too few for a rate (needs {MIN_RATE_SAMPLE})")
     return {
         "product_id": pid,
         "product": product.name,
@@ -276,12 +287,13 @@ def product_snapshot(session: Session, product: Product, now: datetime,
         "regressions": len(regressed),
         "untriaged": waiting,
         "negative_rate_pct": round(100 * recent, 1) if recent is not None else None,
+        "negative_rate_reason": rate_reason,
         "negative_rate_delta_pct": round(100 * delta, 1) if has_rate else None,
         "confirmed_fixes": len(confirmed_inv),
         # Whether ANY feedback exists, not whether the last 7 days had some: the
         # old test (`bool(recent)`) told a product with 3,000 older reviews
         # "No feedback has been collected" beside a 12-week rating chart.
-        "has_data": bool(sources) or data["has_reviews"],
+        "has_data": has_data,
     }
 
 
