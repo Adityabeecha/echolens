@@ -1,20 +1,17 @@
-import { ReactNode, useState } from "react";
-import {
-  CaseRow, ConfirmedFix, Freshness, PortfolioProduct, RatingBreakdown, ReleaseMarker, api,
-  canReview, getActiveProduct, isAdmin, isGuest
-} from "../api";
-import { formatRoute } from "../nav";
-import { CaseCard } from "../components/CaseCard";
+import { lazy, Suspense, useEffect, useState } from "react";
+import { CaseRow, RequestPlanItem, api, canReview, getActiveProduct, isAdmin, isGuest } from "../api";
+import { EmptyState, ListRow, SerifHeadline, stampFor } from "../components/casefile";
 import { withToast } from "../components/Toast";
-import { ago, plural } from "../format";
+import { plural } from "../format";
 import { useAsync } from "../hooks";
-import { statusMeta } from "../status";
-import { C, MEASURE, R, S, T, mono } from "../theme";
-import { Icon } from "../components/Icon";
-import {
-  BeforeAfterChart, Button, EmptyState, ErrorState, Label, ScreenBody, ScreenHeader,
-  RatingTrend, Skeleton
-} from "../ui";
+import { Button, ErrorState, ScreenBody, Skeleton } from "../ui";
+import { FocusProblem } from "./today/FocusProblem";
+import { GoodNews, openEngineering } from "./today/GoodNews";
+import { CollectionNote, HealthDetails, QueuedWork, WeeklyUpdate } from "./today/TodayDetails";
+import { headline, liveStep, openProblems, plainWords } from "./today/model";
+import "./today/today.css";
+
+const SpecModal = lazy(() => import("../components/SpecModal").then(m => ({ default:m.SpecModal })));
 
 interface Props {
   productName: string | null;
@@ -22,848 +19,158 @@ interface Props {
   onGoCases: (tab?: string) => void;
   onGoSources: () => void;
   onGoPlan: () => void;
-  /** Opens the add-product overlay. Admin-only; absent for everyone else. */
   onAddProduct?: () => void;
-  /** Returns a guest to the sign-in screen. */
   onSignIn?: () => void;
   reloadKey: number;
   bumpReload: () => void;
 }
 
-/**
- * Today — the answer to "what needs me right now".
- *
- * Every other screen answered a question about EchoLens's internals: which
- * anomalies were detected, which investigations ran, what they cost. None
- * answered the question a PM actually opens the app with. This one does, top to
- * bottom: how are we doing, what needs me, what is running, what is biggest,
- * what changed this week.
- *
- * Deliberately absent: raw anomalies. Today is for decisions; signals live at
- * the bottom of Cases where they can be triaged in a batch.
- */
-export function Today({
-  productName, onOpenCase, onGoCases, onGoSources, onGoPlan, onAddProduct, onSignIn,
-  reloadKey, bumpReload
-}: Props) {
-  const cases = useAsync(() => api.cases(), [reloadKey]);
-  const portfolio = useAsync(() => api.portfolio(), [reloadKey]);
-  const snapshot = useAsync(() => api.snapshot(), [reloadKey]);
-  const sources = useAsync(() => api.sources(), [reloadKey]);
-  const brief = useAsync(() => api.brief(), [reloadKey]);
-  const fixwatch = useAsync(() => api.fixwatch(), [reloadKey]);
-  // Releases, the rating-drop breakdown and freshness. Optional context: if it
-  // fails, the score strip still renders, just without the extras.
-  const overview = useAsync(() => api.overview(), [reloadKey]);
+/** One decision first. All sentences and measurements come from stored data. */
+export function Today({ productName, onOpenCase, onGoCases, onGoSources, onGoPlan, onAddProduct,
+  onSignIn, reloadKey, bumpReload }: Props) {
+  const productId = getActiveProduct();
+  const cases = useAsync(() => api.cases(), [productId, reloadKey]);
+  const portfolio = useAsync(() => api.portfolio(), [productId, reloadKey]);
+  const fixwatch = useAsync(() => api.fixwatch(), [productId, reloadKey]);
+  const live = useAsync(() => api.liveInvestigations(), [productId, reloadKey]);
+  const snapshot = useAsync(() => api.snapshot(), [productId, reloadKey]);
+  const sources = useAsync(() => api.sources(), [productId, reloadKey]);
+  const brief = useAsync(() => api.brief(), [productId, reloadKey]);
+  const requests = useAsync(() => api.backlogPlan(undefined, "requests"), [productId, reloadKey]);
+  const rows = cases.data?.cases ?? [];
+  const watches = fixwatch.data?.watches ?? [];
+  const problems = openProblems(rows, watches);
+  const focus = problems[0];
+  const overview = useAsync(() => api.overview(focus?.id ?? undefined), [productId, reloadKey, focus?.id]);
+  const timeline = useAsync(() => api.timeline(30), [productId, reloadKey]);
+  const metrics = overview.data?.focus?.investigation_id === focus?.id ? overview.data?.focus ?? null : null;
+  const [spec, setSpec] = useState<RequestPlanItem | null>(null);
   const [cancelling, setCancelling] = useState<number | null>(null);
   const [collecting, setCollecting] = useState(false);
-  // Dismissed this session; the server remembers it for next time.
-  const [dismissedFixes, setDismissedFixes] = useState<number[]>([]);
+  const guest = isGuest();
+  const reviewer = canReview() && !guest;
+  const product = productName ?? cases.data?.product ?? "Your product";
+  const me = portfolio.data?.products.find(p => p.product_id === productId) ?? null;
+  const hasData = me?.has_data ?? ((snapshot.data?.reviews ?? 0) > 0 || rows.length > 0);
+  const stale = (sources.data?.connected ?? []).filter(s => s.stale || s.error);
+  const spikes = cases.data?.incidents?.length ?? cases.data?.signals.filter(s => !s.dismissed).length ?? me?.untriaged ?? 0;
+  const running = rows.filter(r => r.status === "running");
+  const queued = rows.filter(r => r.status === "queued");
+  const decisions = problems.filter(r => ["needs_review", "needs_human", "regressed"].includes(r.status)).length;
+  const loading = cases.loading || portfolio.loading || fixwatch.loading || sources.loading || (overview.loading && !metrics);
+  const requestRows = [...(requests.data?.proposed ?? []), ...(requests.data?.deferred ?? [])]
+    .filter((r): r is RequestPlanItem => r.kind === "request");
+  const fixes = overview.data?.confirmed_fixes ?? [];
+  const also = problems.slice(1, 5);
+  const extra = problems.length - 1 - also.length;
+  const date = new Date();
+  const greeting = date.getHours() < 12 ? "Good morning" : date.getHours() < 18 ? "Good afternoon" : "Good evening";
 
-  const rows = cases.data?.cases ?? [];
-  const product = productName ?? cases.data?.product ?? null;
-  // Joined on product_id, falling back to the name. Matching on the name alone
-  // meant any divergence between /products' spelling and /portfolio's dropped
-  // the match — and ScoreStrip returns null when it does, so the score and the
-  // verdict, the most prominent things on the home screen, vanished with no
-  // error and no empty state.
-  const activeId = getActiveProduct();
-  const me = (portfolio.data?.products ?? []).find(
-    (p) => (activeId != null && p.product_id === activeId) || p.product === product,
-  ) ?? null;
+  // Poll only while work is active, and wait for each read to finish first.
+  useEffect(() => {
+    if (live.loading || live.refreshing || !(running.length + queued.length)) return;
+    const timer = window.setTimeout(live.reload, 5000);
+    return () => window.clearTimeout(timer);
+  }, [live.data, live.loading, live.refreshing, live.reload, running.length, queued.length]);
 
-  const staleSources = (sources.data?.connected ?? []).filter((s) => s.stale || s.error);
-  // Detected but not yet triaged. Today used to say "Nothing needs you" while
-  // Cases, on the same data, said "17 signals waiting for you".
-  const untriaged = me?.untriaged ?? 0;
-  // The backend ranks confirmed findings before leads, then impact and recency.
-  const needsYou = rows.filter((r) => statusMeta(r.status).needsYou).sort((a, b) => a.decision_rank - b.decision_rank);
-  const running = rows.filter((r) => r.status === "running");
-  const queued = rows.filter((r) => r.status === "queued");
-
-  // Fixes proven to have worked: the answer to "did any of this matter?".
-  // Only terminal-confirmed watches carry a chart, and only those are shown —
-  // a watch still in its observation window has nothing to report yet.
-  const VERIFIED_LIMIT = 3;
-  // Recently confirmed fixes get their own card (below), so they are left out
-  // of the longer-running list rather than shown twice.
-  const confirmedFixes = (overview.data?.confirmed_fixes ?? [])
-    .filter((f) => !dismissedFixes.includes(f.watch_id));
-  const celebrated = new Set(confirmedFixes.map((f) => f.watch_id));
-  const verifiedCases = new Set<number>();
-  const verifiedFixes = (fixwatch.data?.watches ?? [])
-    .filter((w) => w.status === "confirmed" && w.chart && !celebrated.has(w.id))
-    .filter((w) => {
-      if (verifiedCases.has(w.investigation_id)) return false;
-      verifiedCases.add(w.investigation_id);
-      return true;
-    })
-    .slice(0, VERIFIED_LIMIT);
-
-  // "Open" = a real problem with no verified fix. Ranked by how bad it is, and
-  // deduped against the action queue so Today never shows one case twice.
-  // `id` is null for queued rows, so a null must never make it into the dedupe
-  // set — one null would hide every other null-id row.
-  const surfaced = new Set(needsYou.map((r) => r.id).filter((id): id is number => id != null));
-  // Belt-and-braces against showing one case twice, once as an open problem and
-  // once as a verified fix — claims that contradict each other.
-  //
-  // derive_status() already prevents it: a confirmed watch resolves to
-  // `verified_fixed`, which is not in the filter below. But that lives in the
-  // backend and this list is a hardcoded literal, so the two can drift. Added
-  // BEFORE allOpenProblems is computed, since that reads the set.
-  for (const w of verifiedFixes) surfaced.add(w.investigation_id);
-  const allOpenProblems = rows
-    .filter((r) => ["resolved", "needs_review", "needs_human", "regressed"].includes(r.status))
-    .filter((r) => r.id == null || !surfaced.has(r.id))
-    // A product decision closes the question for this list: won't-fix is out
-    // for good, parked is out until its revisit date (the server computes
-    // `hidden`, so the date logic lives in one place).
-    .filter((r) => !r.decision?.hidden)
-    .sort((a, b) =>
-      (b.severity_score ?? 0) - (a.severity_score ?? 0) ||
-      (b.impact?.affected_pct ?? 0) - (a.impact?.affected_pct ?? 0));
-  const OPEN_PROBLEM_LIMIT = 5;
-  const openProblems = allOpenProblems.slice(0, OPEN_PROBLEM_LIMIT);
-  const hiddenOpenProblems = allOpenProblems.length - openProblems.length;
-
-  const cancelQueued = async (row: CaseRow) => {
+  const cancel = async (row: CaseRow) => {
     if (row.queue_id == null) return;
     setCancelling(row.queue_id);
-    await withToast(() => api.cancelQueued(row.queue_id!), {
-      success: "Removed from the queue.",
-      failure: "Couldn't cancel that queued item"
+    const result = await withToast(() => api.cancelQueued(row.queue_id!), {
+      success:"Removed from the queue.", failure:"Couldn't cancel that queued item",
     });
     setCancelling(null);
-    bumpReload();
+    if (result) { cases.reload(); live.reload(); bumpReload(); }
   };
-
-  const collectNow = async () => {
+  const collect = async () => {
     setCollecting(true);
     await withToast(() => api.collectorsRun(), {
-      success: (r) => {
-        const got = r.results.reduce((n, x) => n + x.inserted, 0);
-        return `Collected ${got} new ${plural(got, "item")}.`;
-      },
-      failure: "Couldn't collect"
+      success:r => `Collected ${r.results.reduce((n, x) => n + x.inserted, 0)} new items.`,
+      failure:"Couldn't collect. Check your sources and try again.",
     });
     setCollecting(false);
-    bumpReload();
+    sources.reload(); overview.reload(); bumpReload();
   };
+  const retry = () => { cases.reload(); overview.reload(); portfolio.reload(); fixwatch.reload(); };
 
-  const loading = cases.loading && !cases.data;
-
-  return (
-    <div className={`el-today${running.length + queued.length === 0 ? " el-today--no-flight" : ""}`} style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <ScreenHeader
-        title="Today"
-        product={product}
-        subtitle="What needs you right now"
-        right={
-          <span className="el-today-header-actions" style={{ display: "inline-flex", alignItems: "center", gap: S[4] }}>
-            {overview.data && (
-              <SyncedNote f={overview.data.freshness} busy={collecting}
-                          onCollect={canReview() ? collectNow : undefined} />
-            )}
-            <span className="el-live-summary" style={{ display: "inline-flex", alignItems: "center", gap: S[2],
-                           fontSize: T.sm, color: C.muted }}>
-              {running.length > 0 && (
-                <span aria-hidden style={{ width: 6, height: 6, borderRadius: "50%",
-                              background: C.accent, animation: "elPulse 1.6s infinite" }} />
-              )}
-              {loading ? "Checking investigations" : running.length > 0
-                ? `${running.length} ${plural(running.length, "investigation")} running`
-                : "No active investigations"}
-            </span>
-            {/* Out in the open, not buried in the product switcher's dropdown:
-                adding a product is the main thing an owner comes here to do
-                when the workspace is thin. */}
-            {onAddProduct && isAdmin() && (
-              <Button variant="ghost" size="sm" icon="plus" onClick={onAddProduct}>
-                Add a product
-              </Button>
-            )}
-          </span>
-        }
-      />
-
-      <ScreenBody>
-        <AccessNote onSignIn={onSignIn} />
-        {cases.error ? (
-          <ErrorState onRetry={cases.reload} />
-        ) : (
-          <>
-            <section className="el-attention-brief" aria-labelledby="attention-brief-title">
-              <div>
-                <h2 id="attention-brief-title">
-                  {loading
-                    ? "Reading today's signals…"
-                    : needsYou.length + staleSources.length === 0 && untriaged > 0
-                    ? `${untriaged} ${plural(untriaged, "incident")} waiting for triage`
-                    : needsYou.length + staleSources.length === 0
-                    ? "Everything important is moving"
-                    : `${needsYou.length + staleSources.length} ${plural(needsYou.length + staleSources.length, "decision")} waiting`}
-                </h2>
-                <p>
-                  {loading
-                    ? "Checking decisions, source health, and active investigations."
-                    : needsYou.length + staleSources.length === 0 && untriaged > 0
-                    ? "No finding needs a decision yet. Pick which signals become investigations."
-                    : needsYou.length + staleSources.length === 0
-                    ? `No finding or feedback source needs a decision${product ? ` for ${product}` : ""}.`
-                    : "Review the evidence that changed enough to need a human call."}
-                </p>
-              </div>
-              <div className="el-attention-brief__activity" aria-label="Investigation activity">
-                <strong>{loading ? "—" : running.length}</strong>
-                <span>{loading ? "checking activity" : `${plural(running.length, "investigation")} running`}</span>
-              </div>
-            </section>
-
-            <ScoreStrip
-              me={me}
-              weekly={snapshot.data?.weekly ?? []}
-              releases={overview.data?.releases ?? []}
-              breakdown={overview.data?.rating_breakdown ?? null}
-              onOpenCase={onOpenCase}
-              loading={portfolio.loading && !portfolio.data}
-            />
-
-            {/* ── a. what needs you ─────────────────────────────────── */}
-            <Section
-              title="Needs you"
-              count={needsYou.length + staleSources.length
-                     || (untriaged > 0 ? 1 : 0)}
-              color={C.accent}
-              emphasis
-            >
-              {loading ? (
-                <Skeleton rows={2} height={62} />
-              ) : needsYou.length === 0 && staleSources.length === 0 ? (
-                untriaged > 0 ? (
-                  <ActionRow
-                    title={`${untriaged} ${plural(untriaged, "incident")} detected, not yet investigated`}
-                    detail="Spikes and rising complaints EchoLens noticed. Choose which become cases."
-                    action="Review signals"
-                    onAction={() => onGoCases("all")}
-                  />
-                ) : (
-                  <Reassurance running={running.length} queued={queued.length} product={product} />
-                )
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: S[2], maxWidth: MEASURE }}>
-                  {staleSources.length > 0 && (
-                    <ActionRow
-                      title={`${staleSources.length} feedback ${plural(staleSources.length, "source")} need attention`}
-                      detail={staleSources.some((source) => source.error)
-                        ? "One or more collectors failed. Some findings may be based on older data."
-                        : "Collection is stale. Refresh the sources before relying on new findings."}
-                      action="Review sources"
-                      onAction={onGoSources}
-                    />
-                  )}
-                  {needsYou.map((r) => (
-                    <CaseCard
-                      key={`case-${r.id}`}
-                      row={r}
-                      compact
-                      onOpen={(row) => row.id != null && onOpenCase(row.id, row.status)}
-                    />
-                  ))}
-                </div>
-              )}
-            </Section>
-
-            {/* ── b. what the machine is doing ──────────────────────── */}
-            <Section title="Running & queued" count={running.length + queued.length}>
-              {loading ? (
-                <Skeleton rows={1} height={72} />
-              ) : running.length + queued.length === 0 ? (
-                <div className="el-quiet-state">
-                  <span className="el-quiet-state__mark" aria-hidden />
-                  <div>
-                    <strong>Nothing in flight</strong>
-                    <p>No investigation is running or queued for {product ?? "this product"}.</p>
-                  </div>
-                  <Button variant="quiet" size="sm" onClick={() => onGoCases("all")}>
-                    Browse signals <Icon name="arrowRight" size={13} />
-                  </Button>
-                </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: S[2], maxWidth: MEASURE }}>
-                  {running.map((r) => (
-                    <CaseCard key={`run-${r.id}`} row={r} compact
-                              onOpen={(row) => row.id != null && onOpenCase(row.id, row.status)} />
-                  ))}
-                  {queued.map((r) => (
-                    <CaseCard
-                      key={`q-${r.queue_id}`}
-                      row={r}
-                      compact
-                      busy={r.queue_id != null && cancelling === r.queue_id}
-                      onAction={cancelQueued}
-                    />
-                  ))}
-                </div>
-              )}
-            </Section>
-
-            {/* ── c. what is biggest ────────────────────────────────── */}
-            <Section
-              title="Top open problems"
-              // The TOTAL, not the truncated list. This read openProblems.length
-              // AFTER slice(0,5), so 30 open problems rendered as
-              // "TOP OPEN PROBLEMS · 5" — a count the user had no reason to
-              // doubt and no way to correct.
-              // Open problems already shown under "Needs you" count too; a
-              // HIGH-severity finding above sat beside "Top open problems · 0".
-              count={allOpenProblems.length + needsYou.filter((r) =>
-                ["resolved", "needs_review", "needs_human", "regressed"].includes(r.status)).length}
-              action={{ label: "Plan the quarter", onClick: onGoPlan }}
-            >
-              {openProblems.length === 0 ? (
-                <div className="el-quiet-state">
-                  <span className="el-quiet-state__mark is-good" aria-hidden />
-                  <div>
-                    <strong>{needsYou.length > 0 ? "Everything open is already above" : "No open problems"}</strong>
-                    <p>{needsYou.length > 0
-                      ? "Nothing else is waiting behind the action queue."
-                      : `Nothing is sitting unaddressed for ${product ?? "this product"}.`}</p>
-                  </div>
-                </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: S[2], maxWidth: MEASURE }}>
-                  {openProblems.map((r) => (
-                    <CaseCard key={`open-${r.id}`} row={r}
-                              onOpen={(row) => row.id != null && onOpenCase(row.id, row.status)} />
-                  ))}
-                  {hiddenOpenProblems > 0 && (
-                    <Button variant="quiet" size="sm"
-                      onClick={() => onGoCases("needs-review")}
-                      style={{ alignSelf: "flex-start", color: C.accent }}
-                    >
-                      {hiddenOpenProblems} more open{" "}
-                      {hiddenOpenProblems === 1 ? "problem" : "problems"} in Cases
-                      <Icon name="arrowRight" size={13} />
-                    </Button>
-                  )}
-                </div>
-              )}
-            </Section>
-
-            {/* ── fixes confirmed in the last two weeks ─────────────── */}
-            {/* Rendered only when one exists; a dismissed card stays gone. */}
-            {confirmedFixes.length > 0 && (
-              <Section title="Fix confirmed" count={confirmedFixes.length} color={C.good}>
-                <div style={{ display: "flex", flexDirection: "column", gap: S[3],
-                              maxWidth: MEASURE }}>
-                  {confirmedFixes.map((f) => (
-                    <FixConfirmedCard key={`confirmed-${f.watch_id}`} fix={f}
-                      onOpenCase={onOpenCase}
-                      onDismissed={() => setDismissedFixes((d) => [...d, f.watch_id])} />
-                  ))}
-                </div>
-              </Section>
-            )}
-
-            {/* ── d. what actually worked ───────────────────────────── */}
-            {/* Rendered only when there is something proven. An empty state
-                here would be a permanent "nothing worked yet" on the home
-                screen of a product that simply has not shipped a fix. */}
-            {verifiedFixes.length > 0 && (
-              <Section title="Fixes verified" count={verifiedFixes.length} color={C.good}>
-                <div style={{ display: "flex", flexDirection: "column", gap: S[3],
-                              maxWidth: MEASURE }}>
-                  {verifiedFixes.map((w) => (
-                    <button
-                      key={`fix-${w.id}`}
-                      onClick={() => onOpenCase(w.investigation_id, "resolved")}
-                      className="el-card el-card--click"
-                      aria-label={`Case ${w.investigation_id}: ${w.metric} — fix verified`}
-                      style={{ textAlign: "left", padding: `${S[3]} ${S[4]}`,
-                               display: "block", width: "100%" }}
-                    >
-                      <div style={{ display: "flex", alignItems: "baseline", gap: S[2],
-                                    flexWrap: "wrap" }}>
-                        <span style={{ fontFamily: mono, fontSize: T.sm, color: C.good }}>
-                          VERIFIED
-                        </span>
-                        <span style={{ fontSize: T.md, color: C.text2 }}>{w.metric}</span>
-                        <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint }}>
-                          case #{w.investigation_id}
-                        </span>
-                      </div>
-                      {w.chart && <BeforeAfterChart chart={w.chart} compact />}
-                    </button>
-                  ))}
-                </div>
-              </Section>
-            )}
-
-            {/* ── e. what changed ───────────────────────────────────── */}
-            <Section title="This week">
-              {brief.data?.quiet ? (
-                <div style={{ fontSize: T.base, color: C.muted, padding: `${S[4]} ${S[5]}` }}>
-                  Quiet week — nothing new
-                </div>
-              ) : brief.data && brief.data.lines.length > 0 ? (
-                <div style={{ maxWidth: MEASURE, padding: `${S[4]} ${S[5]}`,
-                              background: C.card, border: `1px solid ${C.border2}`,
-                              borderRadius: R.card,
-                              display: "flex", flexDirection: "column", gap: S[2] }}>
-                  <Label style={{ marginBottom: S[1] }}>{brief.data.generated}</Label>
-                  {brief.data.lines.map((line, i) => (
-                    <div key={i} style={{ fontSize: T.base,
-                                          lineHeight: "var(--el-lh-normal)",
-                                          color: i === 0 ? C.text2 : C.text3 }}>
-                      <Cited text={line} onOpen={(id) => onOpenCase(id, "resolved")} />
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <EmptyState
-                  title="No week to report yet"
-                  body={`Once cases start resolving for ${product ?? "this product"}, the week's new problems, verified fixes and regressions land here.`}
-                />
-              )}
-            </Section>
-          </>
-        )}
-      </ScreenBody>
-    </div>
-  );
-}
-
-/**
- * One line explaining why "Add a product" is not on this screen.
- *
- * A control that is simply absent reads as a missing feature. A guest needs to
- * know an account unlocks it; a reviewer needs to know it is admin-only, which
- * is otherwise invisible — the button vanishes with no explanation, and the
- * only way to find out is to ask.
- */
-function AccessNote({ onSignIn }: { onSignIn?: () => void }) {
-  const guest = isGuest();
-  // Admins have the button, so they need no explanation.
-  if (isAdmin()) return null;
-
-  return (
-    <div className="el-access-note" style={{ display: "flex", alignItems: "center", gap: S[3], flexWrap: "wrap",
-                  maxWidth: MEASURE, marginBottom: S[5], padding: `${S[3]} ${S[4]}`,
-                  background: C.bgRaised, border: `1px solid ${C.border2}`,
-                  borderRadius: R.card, fontSize: T.sm, color: C.muted }}>
-      <Icon name="info" size={14} style={{ color: C.info, flex: "none" }} />
-      <span style={{ flex: 1, minWidth: 220 }}>
-        {guest
-          ? "You're exploring a demo product. Sign in to connect your own app and run investigations on it."
-          : "Connecting a new product is admin-only — it attaches collectors that keep pulling, so it stays with the workspace owner. You can investigate and review everything here."}
-      </span>
-      {guest && onSignIn && (
-        <Button variant="ghost" size="sm" onClick={onSignIn}>Sign in</Button>
-      )}
-    </div>
-  );
-}
-
-/**
- * The header strip: how this product is doing, in one number and one sentence.
- *
- * The score is the same attention score the Portfolio ranks by — one definition,
- * so a product cannot be "on fire" on one screen and fine on another. The arrow
- * and the sparkline are labelled with what they actually measure rather than
- * being left to imply that the score itself has a history we do not keep.
- */
-function ScoreStrip({
-  me, weekly, releases, breakdown, onOpenCase, loading
-}: {
-  me: PortfolioProduct | null;
-  weekly: { week_start: string; count: number; avg_rating: number | null }[];
-  releases: ReleaseMarker[];
-  breakdown: RatingBreakdown | null;
-  onOpenCase: (id: number, status?: string) => void;
-  loading: boolean;
-}) {
-  // Health labels: they read the right way round for a number where higher is
-  // better. The band key itself still comes from the attention score.
-  const BAND: Record<string, { color: string; label: string }> = {
-    on_fire: { color: C.bad, label: "Needs you today" },
-    attention: { color: C.accent, label: "Needs attention" },
-    watch: { color: C.info, label: "Watch" },
-    healthy: { color: C.good, label: "Healthy" }
-  };
-
-  if (loading) {
-    return <div style={{ maxWidth: MEASURE, height: 120, borderRadius: R.card,
-                         background: C.card, border: `1px solid ${C.border2}`,
-                         marginBottom: S[8], animation: "elSkeleton 1.6s infinite" }} />;
-  }
-  if (!me) return null;
-
-  const band = BAND[me.band] ?? BAND.healthy;
-  const delta = me.negative_rate_delta_pct;
-  const ratings = weekly.map((w) => w.avg_rating).filter((r): r is number => r != null);
-
-  // This is the most important object on the home screen, so it is built to
-  // read that way: raised surface, a real shadow, and a band-coloured wash
-  // behind the number. Previously it was the same flat card as everything
-  // below it and the eye had no reason to land here first.
-  return (
-    <section className="el-score-docket"
-      aria-label="Product score"
-      style={{
-        maxWidth: MEASURE, marginBottom: S[8], padding: `${S[5]} ${S[6]}`,
-        background: C.card,
-        border: `1px solid ${C.border3}`, borderRadius: R.card,
-        position: "relative", overflow: "hidden",
-        display: "flex", alignItems: "center", gap: S[6], flexWrap: "wrap"
-      }}
-    >
-      {/* Band colour as a top rule rather than a barely-visible border tint. */}
-      <span aria-hidden style={{ position: "absolute", inset: "0 0 auto 0", height: 2,
-                    background: band.color }} />
-
-      <div style={{ flex: "none" }}>
-        <span title="0–100. Higher is healthier: 100 minus the attention score, which open problems, regressions, waiting signals and worsening sentiment add to.">
-          <Label>Health · higher is better</Label>
-        </span>
-        <div style={{ display: "flex", alignItems: "baseline", gap: S[3], marginTop: S[2] }}>
-          <span className="el-num"
-            title={`Health ${Math.round(me.health)} of 100 — 100 minus the attention score`}
-            style={{ fontSize: T.xl, fontWeight: 700, color: band.color, lineHeight: 1 }}>
-            {Math.round(me.health)}
-          </span>
-          {me.has_data && delta != null && delta !== 0 && (
-            <span
-              title="Share of reviews that are negative, last 7 days vs the prior month"
-              style={{ display: "inline-flex", alignItems: "center", gap: 2,
-                       fontFamily: mono, fontSize: T.sm,
-                       color: delta > 0 ? C.bad : C.good, whiteSpace: "nowrap" }}
-            >
-              negative reviews <Icon name={delta > 0 ? "arrowUp" : "arrowDown"} size={12} />
-              {Math.round(Math.abs(delta))} pts
-            </span>
-          )}
-        </div>
-        <div style={{ fontSize: T.sm, color: C.muted, marginTop: S[1] }}>
-          {me.health_label ?? band.label}
+  return <div className="today-v2"><ScreenBody style={{ padding:"36px var(--el-gutter) 64px" }}>
+    <div className="today-v2__content">
+      <div className="today-intro" aria-busy={loading}>
+        <div className="today-greeting">{greeting} · {product} · {date.toLocaleDateString(undefined, { weekday:"long", month:"long", day:"numeric" })} · health{" "}
+          <strong>{me?.has_data ? me.health : "—"}</strong>/100
+          <span title="Health is higher when fewer problems and review spikes need attention."> · higher is healthier</span></div>
+        <SerifHeadline>{loading ? "Reading today's reviews…" : cases.error ? "Your problems couldn't be loaded."
+          : headline({ focus, count:problems.length, drag:metrics?.rating_drag, hasData,
+            spikes, stale:stale.length })}</SerifHeadline>
+        <div className="today-summary">
+          {loading ? "Checking investigations" : <>
+            <Button variant="quiet" onClick={() => onGoCases("needs-review")}>{decisions} {plural(decisions, "decision")} waiting</Button>
+            <span>{running.length} {plural(running.length, "investigation")} running{queued.length > 0 ? ` · ${queued.length} waiting to start` : ""}</span>
+          </>}
         </div>
       </div>
 
-      {ratings.length > 1 && (
-        <div style={{ flex: "none" }}>
-          <RatingTrend weekly={weekly} releases={releases} color={C.accent}
-                       width={140} height={34} title="Average star rating by week" />
-          <Label style={{ marginTop: S[1] }}>
-            Avg rating · {weekly.length} weeks
-            {releases.length > 0 ? ` · ${releases.length} ${plural(releases.length, "release")}` : ""}
-          </Label>
-        </div>
-      )}
+      {cases.error ? <ErrorState title="Your problems couldn't be loaded" detail="Try again to refresh Today." onRetry={retry} />
+        : loading ? <div className="today-placeholder" role="status" aria-label="Reading your problems"><Skeleton rows={4} height={54} /></div>
+        : focus ? <FocusProblem row={focus} metrics={metrics} timeline={timeline.data} loading={timeline.loading}
+            onOpen={() => onOpenCase(focus.id!, focus.status)}
+            onTicket={reviewer && focus.finding_id != null ? () => openEngineering(focus.id!) : undefined} />
+        : <EmptyState title={stale.length ? "Refresh your feedback before deciding." : spikes > 0 ? "Choose which review spikes to investigate."
+            : hasData ? "Nothing needs a decision from you." : "Connect your first feedback source."}
+          action={<Button variant="primary" onClick={stale.length ? onGoSources : spikes > 0 || hasData ? () => onGoCases("all") : onGoSources}>
+            {stale.length ? "Review sources" : spikes > 0 ? "Review the spikes" : hasData ? "See all problems" : "Connect a source"}</Button>}>
+          {stale.length ? "Some feedback is out of date. Check your sources before calling this a quiet day."
+            : running.length + queued.length > 0 ? `EchoLens is working through ${running.length + queued.length} ${plural(running.length + queued.length, "investigation")}. You can follow the work below.`
+            : watches.some(w => w.status === "watching") ? "EchoLens is watching the complaints after your shipped fixes. Their progress is below."
+            : me?.has_data ? "EchoLens is watching connected reviews for new complaints. Any problem that needs your decision will appear here."
+            : "Connect reviews so EchoLens can spot what changed and show you the proof."}
+        </EmptyState>}
+      {overview.error && !loading && <p className="today-muted">The latest measurements couldn't be loaded. Stored problems are still available. <Button variant="quiet" onClick={overview.reload}>Retry measurements</Button></p>}
 
-      <div style={{ flex: 1, minWidth: 260 }}>
-        <p style={{ margin: 0, fontSize: T.md, color: C.text2,
-                    lineHeight: "var(--el-lh-normal)" }}>
-          {sentence(me)}
-        </p>
-        {me.top_problem && (
-          <Button
-            variant="quiet"
-            size="sm"
-            onClick={() => onOpenCase(me.top_problem!.investigation_id, "resolved")}
-            style={{ marginTop: S[2], marginLeft: `calc(-1 * ${S[3]})`, maxWidth: "100%" }}
-          >
-            <span className="el-mono" style={{ fontSize: T.xs, color: C.accent }}>
-              case #{me.top_problem.investigation_id}
-            </span>
-            <span className="el-truncate" style={{ color: C.muted }}>
-              {me.top_problem.summary}
-            </span>
-          </Button>
-        )}
+      <div className="today-columns">
+        <section className="today-section" aria-labelledby="today-also-title">
+          <SerifHeadline as="h2" size="section" id="today-also-title">Also worth a look</SerifHeadline>
+          <div>
+            {also.map(row => <ListRow key={row.id} variant={stampFor(row)} title={plainWords(row.title)}
+              detail={stampFor(row) === "hunch" ? "A hunch — needs a second source" : "Proof ready for your decision"}
+              onClick={() => onOpenCase(row.id!, row.status)} />)}
+            {requestRows.slice(0, 1).map(row => <ListRow key={row.slug} variant="request" title={plainWords(row.summary)}
+              detail={`${row.count} requesting ${plural(row.count, "review")} · read the spec`} onClick={() => setSpec(row)} />)}
+            {running.map(row => {
+              const step = live.data?.investigations.find(i => i.id === row.id)?.current_step;
+              return <ListRow key={row.id} variant="live" title={`Looking into: ${plainWords(row.title)}`}
+                detail={<em className="today-live-step">{row.paused ? "Paused — open the problem to continue" : liveStep(step ?? null)}</em>}
+                onClick={() => onOpenCase(row.id!, "running")} />;
+            })}
+          </div>
+          {requests.loading && <p className="today-muted">Reading repeated requests…</p>}
+          {requests.error && <p className="today-muted">Repeated requests couldn't be loaded. <Button variant="quiet" onClick={requests.reload}>Retry requests</Button></p>}
+          {!also.length && !requestRows.length && !running.length && !requests.loading && !requests.error && <p className="today-muted">No other problems or repeated requests to show. New ones will appear as your sources update.</p>}
+          {extra > 0 && <p className="today-muted">{extra} more {plural(extra, "problem")} in All problems.</p>}
+          {live.error && running.length > 0 && <p className="today-muted">Live progress couldn't be refreshed. Open a problem for its stored steps.</p>}
+          <div className="today-actions"><Button variant="quiet" onClick={() => onGoCases("all")}>See all problems →</Button>
+            <Button variant="quiet" onClick={onGoPlan}>Plan what to fix</Button></div>
+        </section>
+        <section className="today-section" aria-labelledby="today-good-title">
+          <SerifHeadline as="h2" size="section" id="today-good-title">Good news</SerifHeadline>
+          {fixwatch.error ? <p className="today-muted">Fix checks couldn't be loaded. <Button variant="quiet" onClick={fixwatch.reload}>Try again</Button></p>
+            : <GoodNews fixes={fixes} watches={watches} onOpen={onOpenCase} onReload={() => { overview.reload(); fixwatch.reload(); }} />}
+        </section>
       </div>
 
-      {breakdown?.dropped && <RatingDrop b={breakdown} onOpenCase={onOpenCase} />}
-    </section>
-  );
-}
-
-/**
- * Where a rating drop came from, as a compact horizontal bar per theme.
- *
- * Labelled as an estimate in the heading, not a footnote: the split is an
- * attribution, and the method is one hover away. Bars are scaled to the
- * largest part, so a positive remainder (themes that improved) still reads.
- */
-function RatingDrop({ b, onOpenCase }: {
-  b: RatingBreakdown;
-  onOpenCase: (id: number, status?: string) => void;
-}) {
-  const star = (x: number) => `${x > 0 ? "+" : x < 0 ? "−" : ""}${Math.abs(x).toFixed(2)}★`;
-  const max = Math.max(0.01, ...b.parts.map((p) => Math.abs(p.contribution)));
-  return (
-    <div style={{ flexBasis: "100%", minWidth: 0, paddingTop: S[4],
-                  borderTop: `1px solid ${C.border2}` }}
-         role="group" aria-label="Rating drop breakdown">
-      <div style={{ display: "flex", alignItems: "baseline", gap: S[2], flexWrap: "wrap",
-                    marginBottom: S[2] }}>
-        <Label style={{ color: C.muted }}>
-          Rating {star(b.delta ?? 0)} vs prior {Math.round(b.window.prior_days / 7)} weeks
-        </Label>
-        <span title={b.method}
-          style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, cursor: "help" }}>
-          estimate · {b.rating_prior?.toFixed(2)}★ → {b.rating_now?.toFixed(2)}★
-        </span>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: S[1], maxWidth: 560 }}>
-        {b.parts.map((p) => {
-          const neg = p.contribution < 0;
-          const w = (Math.abs(p.contribution) / max) * 100;
-          return (
-            <div key={p.theme_id}
-              style={{ display: "grid", gridTemplateColumns: "minmax(110px,200px) 1fr 64px",
-                       gap: S[3], alignItems: "center", fontSize: T.sm }}>
-              <span className="el-truncate"
-                style={{ color: p.theme_id === "other" ? C.dim : C.text3 }}>
-                {p.label}
-                {p.case_id != null && (
-                  <button className="el-btn el-btn--sm"
-                    onClick={() => onOpenCase(p.case_id!, "resolved")}
-                    style={{ color: C.accent, fontFamily: mono, fontSize: T.xs, padding: 0,
-                             marginLeft: S[2], background: "none", display: "inline" }}>
-                    case #{p.case_id}
-                  </button>
-                )}
-              </span>
-              <span aria-hidden style={{ display: "block", height: 6, borderRadius: R.pill,
-                                         background: C.track, overflow: "hidden" }}>
-                <span style={{ display: "block", height: "100%", width: `${w}%`,
-                               borderRadius: R.pill, background: neg ? C.bad : C.good }} />
-              </span>
-              <span style={{ fontFamily: mono, fontSize: T.xs, textAlign: "right",
-                             color: neg ? C.bad : C.good, fontVariantNumeric: "tabular-nums" }}>
-                {star(p.contribution)}
-              </span>
-            </div>
-          );
-        })}
+      <div className="today-context">
+        <CollectionNote freshness={overview.data?.freshness} staleCount={stale.length} collecting={collecting}
+          onSources={onGoSources} onCollect={reviewer ? collect : undefined} />
+        {sources.error && <div className="today-context-line"><span>Source health couldn't be checked.</span><Button variant="quiet" onClick={onGoSources}>Review sources</Button></div>}
+        <WeeklyUpdate brief={brief.data} error={brief.error} onRetry={brief.reload} onOpen={id => onOpenCase(id, "resolved")} />
+        <HealthDetails product={me} snapshot={snapshot.data} overview={overview.data} onOpen={id => onOpenCase(id, "resolved")} />
+        <QueuedWork rows={queued} busy={cancelling} onCancel={reviewer ? cancel : undefined} onCases={() => onGoCases("queued")} />
+        {guest ? <div className="today-context-line"><span>You're exploring a demo product. Sign in to connect your own app and investigate its reviews.</span>
+          {onSignIn && <Button onClick={onSignIn}>Sign in</Button>}</div>
+          : isAdmin() && onAddProduct ? <div className="today-context-line"><span>Ready to track another app?</span><Button onClick={onAddProduct}>Add a product</Button></div>
+          : <p className="today-muted">Your workspace admin can connect another product.</p>}
       </div>
     </div>
-  );
-}
-
-/**
- * "Last synced 12 min ago", with Collect now once the data is older than the
- * stale threshold. A calm Today built on data that stopped arriving is the
- * most misleading screen in the app, so the age always sits in the header.
- */
-function SyncedNote({ f, busy, onCollect }: {
-  f: Freshness; busy: boolean; onCollect?: () => void;
-}) {
-  if (f.sources === 0) return null;
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: S[2],
-                   fontSize: T.sm, color: f.stale ? C.accent : C.muted }}>
-      <span title={f.last_synced_at ?? undefined}>
-        {f.last_synced_at ? `Last synced ${ago(f.age_minutes)}` : "Not synced yet"}
-      </span>
-      {f.stale && onCollect && (
-        <Button variant="ghost" size="sm" onClick={onCollect} disabled={busy}>
-          {busy ? "Collecting…" : "Collect now"}
-        </Button>
-      )}
-    </span>
-  );
-}
-
-/** One plain-English line explaining where the score came from. */
-function sentence(me: PortfolioProduct): string {
-  if (!me.has_data) {
-    return `No feedback has been collected for ${me.product} yet — connect a source and the score starts moving.`;
-  }
-  if (me.score === 0) {
-    return `Nothing is demanding attention on ${me.product}: no unfixed problems, no regressions, no signals waiting on a decision.`;
-  }
-  const drivers = me.reasons.slice(0, 2).map((r) => r.text);
-  const tail = drivers.length > 1 ? `${drivers[0]}, and ${drivers[1]}` : drivers[0];
-  return `${me.product}: ${tail}.`;
-}
-
-function Reassurance({ running, queued, product }: {
-  running: number; queued: number; product: string | null;
-}) {
-  const tail =
-    running > 0 && queued > 0
-      ? `${running} ${plural(running, "investigation")} running, ${queued} queued.`
-      : running > 0
-        ? `${running} ${plural(running, "investigation")} running.`
-        : queued > 0
-          ? `${queued} queued and waiting to run.`
-          : "Nothing is running either.";
-  return (
-    <div style={{ maxWidth: MEASURE, padding: `${S[5]} ${S[5]}`, borderRadius: R.card,
-                  background: C.card, border: `1px solid ${C.goodLine}`,
-                  display: "flex", alignItems: "center", gap: S[3] }}>
-      <span style={{ color: C.good, flex: "none", display: "grid", placeItems: "center",
-                     width: 26, height: 26, borderRadius: R.pill, background: C.goodBg }}>
-        <Icon name="check" size={15} />
-      </span>
-      <div>
-        <div style={{ fontSize: T.md, fontWeight: 600, color: C.text2 }}>
-          Nothing needs you{product ? ` on ${product}` : ""} — {tail}
-        </div>
-        <div style={{ fontSize: T.sm, color: C.dim, marginTop: S[1] }}>
-          No findings awaiting review, no stalled cases, every source reporting.
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** A non-case thing that still needs a decision — a stale source, for instance. */
-function ActionRow({ title, detail, action, onAction }: {
-  title: string; detail?: string | null; action: string; onAction: () => void;
-}) {
-  return (
-    <div className="el-card el-action-row" style={{ display: "flex", alignItems: "stretch", overflow: "hidden" }}>
-      <span aria-hidden style={{ width: 1, flex: "none", background: C.bad }} />
-      <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: S[4],
-                    padding: `${S[3]} ${S[4]}` }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: T.base, fontWeight: 600, color: C.text }}>{title}</div>
-          {detail && (
-            <div className="el-truncate" style={{ fontSize: T.sm, color: C.dim,
-                          marginTop: S[1] }}>
-              {detail}
-            </div>
-          )}
-        </div>
-        <Button variant="primary" size="sm" onClick={onAction} style={{ flex: "none" }}>
-          {action}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-/**
- * A section heading.
- *
- * `emphasis` exists because "Needs you" and "This week" had identical visual
- * weight — one is a queue of things blocking the reader, the other is a digest.
- * Flat hierarchy on the home screen is why nothing looked prioritised.
- */
-function Section({ title, count, color, action, emphasis, children }: {
-  title: string;
-  count?: number;
-  color?: string;
-  action?: { label: string; onClick: () => void };
-  emphasis?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <section className={`el-today-section el-today-section--${title.toLowerCase().replace(/[^a-z]+/g, "-").replace(/(^-|-$)/g, "")}${emphasis ? " is-emphasis" : ""}`} style={{ marginBottom: S[8] }}>
-      <div className="el-section-heading" style={{ display: "flex", alignItems: "center", gap: S[3], marginBottom: S[3],
-                    maxWidth: MEASURE }}>
-        {emphasis ? (
-          <h2 style={{ margin: 0, display: "flex", alignItems: "center", gap: S[2],
-                       fontSize: T.md, fontWeight: 600, color: color ?? C.text2 }}>
-            {title}
-            {count != null && count > 0 && (
-              <span className="el-num" style={{ fontSize: T.xs, fontWeight: 600,
-                            color: C.onAccent, background: color ?? C.accent,
-                            borderRadius: R.pill, padding: `1px ${S[2]}`, lineHeight: "var(--el-lh-normal)" }}>
-                {count}
-              </span>
-            )}
-          </h2>
-        ) : (
-          <Label style={{ color: color ?? C.faint }}>
-            {title}{count != null ? ` · ${count}` : ""}
-          </Label>
-        )}
-        <div className="el-section-heading__spacer" style={{ flex: 1 }} />
-        {action && (
-          <Button variant="quiet" size="sm" onClick={action.onClick}>
-            {action.label}
-          </Button>
-        )}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-/**
- * A fix that verification just confirmed. Calm, not confetti: what dropped,
- * the before/after when there is one, and the obvious next step — telling the
- * people who complained.
- */
-function FixConfirmedCard({ fix, onOpenCase, onDismissed }: {
-  fix: ConfirmedFix;
-  onOpenCase: (id: number, status?: string) => void;
-  onDismissed: () => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  // The reply drafts live on the case's Engineering tab.
-  const reply = () => {
-    window.location.hash = formatRoute({ screen: "case", id: fix.investigation_id,
-                                         tab: "engineering", productId: getActiveProduct(),
-                                         params: { replies: "1" } });
-  };
-  const dismiss = async () => {
-    setBusy(true);
-    const r = await withToast(() => api.dismissFix(fix.watch_id), {
-      success: "Dismissed. It won't come back on your Today.",
-      failure: "Couldn't dismiss that card",
-    });
-    setBusy(false);
-    if (r) onDismissed();
-  };
-  return (
-    <div className="el-card" style={{ padding: `${S[3]} ${S[4]}`, borderColor: C.goodLine }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: S[2], flexWrap: "wrap" }}>
-        <Icon name="check" size={14} style={{ color: C.good, flex: "none" }} />
-        <button onClick={() => onOpenCase(fix.investigation_id, "resolved")} className="el-btn"
-          style={{ fontSize: T.md, fontWeight: 600, color: C.text, textAlign: "left",
-                   // .el-btn is nowrap; a long headline must wrap, not widen Today.
-                   whiteSpace: "normal", overflowWrap: "anywhere", flex: "1 1 0", minWidth: 0 }}>
-          {fix.headline}
-        </button>
-        <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint }}>
-          case #{fix.investigation_id}
-        </span>
-      </div>
-      {fix.chart && <BeforeAfterChart chart={fix.chart} compact />}
-      <div style={{ display: "flex", gap: S[2], flexWrap: "wrap", marginTop: S[3] }}>
-        {fix.reply_count > 0 && (
-          <Button size="sm" variant="primary" icon="reply" onClick={reply}>
-            Reply to affected reviewers ({fix.reply_count})
-          </Button>
-        )}
-        {canReview() && (
-          <Button size="sm" variant="ghost" loading={busy} onClick={dismiss}>Dismiss</Button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** Turn "…case #12…" into a link, so the brief is navigable prose. */
-function Cited({ text, onOpen }: { text: string; onOpen: (id: number) => void }) {
-  return (
-    <>
-      {text.split(/(case #\d+)/g).map((part, i) => {
-        const m = part.match(/^case #(\d+)$/);
-        if (!m) return <span key={i}>{part}</span>;
-        return (
-          <button key={i} onClick={() => onOpen(parseInt(m[1], 10))}
-            className="el-btn el-btn--sm"
-            style={{ color: C.accent, fontFamily: mono, fontSize: T.sm,
-                     padding: 0, display: "inline", background: "none" }}>
-            {part}
-          </button>
-        );
-      })}
-    </>
-  );
+    {spec && <Suspense fallback={<p role="status">Opening the request…</p>}><SpecModal slug={spec.slug} title={spec.summary} onClose={() => setSpec(null)} /></Suspense>}
+  </ScreenBody></div>;
 }

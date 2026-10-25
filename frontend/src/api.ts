@@ -827,6 +827,16 @@ export interface Overview {
   freshness: Freshness;
   /** Fixes confirmed in the last 14 days that you have not dismissed (max 3). */
   confirmed_fixes?: ConfirmedFix[];
+  /** Present only when the caller requests one product-owned investigation. */
+  focus?: TodayFocus | null;
+}
+export interface TodayFocus {
+  investigation_id: number;
+  /** This theme's estimated pull on the rating: recent 7 days vs prior 28. */
+  rating_drag: number | null;
+  one_star_share: { matching: number; total: number; pct: number | null; days: number };
+  quote: { text: string; evidence_id: string; source: string; ref: string } | null;
+  release: { version: string; date: string; days_after: number } | null;
 }
 export interface ConfirmedFix {
   watch_id: number;
@@ -835,6 +845,8 @@ export interface ConfirmedFix {
   headline: string;
   metric: string;
   drop_pct: number | null;
+  baseline_rate?: number | null;
+  post_rate?: number | null;
   fixed_in_version: string | null;
   confirmed_at: string;
   chart: FixStatus["chart"];
@@ -933,6 +945,10 @@ export interface FixWatchRow {
   // Only present on a terminal status — the server sends null while watching.
   chart: FixStatus["chart"];
   fix_date: string | null;
+  fixed_in_version?: string | null;
+  release_seen_at?: string | null;
+  window_days?: number;
+  dismissed_today?: boolean;
 }
 export interface FixWatchResp {
   watches: FixWatchRow[];
@@ -1644,7 +1660,8 @@ export const api = {
   resume: (id: number) => post(scoped(`/investigations/${id}/resume`)),
   escalate: (id: number) => post(scoped(`/investigations/${id}/escalate`)),
   sources: () => get<SourcesResp>(scoped("/sources")),
-  overview: () => get<Overview>(scoped("/today/overview")),
+  overview: (investigationId?: number) => get<Overview>(scoped("/today/overview" +
+    (investigationId != null ? `?investigation_id=${investigationId}` : ""))),
   // Not scoped: which source types exist is global, not per-product.
   availableSources: () => get<AvailableSourcesResp>("/sources/available"),
   fixwatch: () => get<FixWatchResp>(scoped("/fixwatch")),
