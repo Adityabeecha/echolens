@@ -281,16 +281,61 @@ def _headline(a: AnomalyEvent) -> str:
     if a.type == "fix_regression":
         return f"Fix didn't hold — “{metric}” complaints continue"
     if a.type == "theme_volume_surge":
+        term = spike_term(metric)
+        if term:
+            return f"More complaints about “{term}” in your reviews"
         label = metric.split(" share of")[0].split(" on ")[0].strip() or "complaints"
         return f"{label[:1].upper()}{label[1:]} rising in your reviews"
     if a.type == "issue_velocity_surge":
-        label = metric.split(" per week")[0].strip() or "issue reports"
-        return f"{label[:1].upper()}{label[1:]} piling up on GitHub"
+        term = spike_term(metric)
+        return f"More GitHub issues about “{term}”" if term else "More GitHub issues than usual"
     if a.type == "rating_drop":
         return "Average rating is falling"
     if a.type == "negative_review_spike":
         return "1-star reviews are spiking"
     return (a.description or metric or "Signal detected").strip()
+
+
+def spike_term(metric: str | None) -> str | None:
+    """The topic inside a detector metric: "'quick unlock' issue reports per
+    week" -> "quick unlock". None when the metric names no quoted topic."""
+    m = re.search(r"'([^']+)'", metric or "")
+    return m.group(1) if m else None
+
+
+def plain_summary(a: AnomalyEvent) -> str:
+    """What happened, in one sentence a person can act on: how many, against
+    what is normal, and one real example. Built from the detector's own
+    description, so it costs no query. The list used to say "GitHub issues ·
+    7d window", which told nobody anything."""
+    d = a.description or ""
+    ex = re.search(r"Example: “(.+?)”", d)
+    example = f" For example: “{ex.group(1)}”" if ex else ""
+    term = spike_term(a.metric)
+    if a.type == "issue_velocity_surge":
+        n = re.search(r"(\d+) new issues this week", d)
+        usual = re.search(r"Usual: ~(\d+) a week", d)
+        about = f" mentioning “{term}”" if term else ""
+        if n:
+            base = f"{n.group(1)} new GitHub issues{about} in the last 7 days"
+            if usual and usual.group(1) == "0":
+                base += ", where a normal week has almost none."
+            elif usual:
+                base += f", against about {usual.group(1)} in a normal week."
+            else:
+                base += "."
+            return base + example
+    if a.type == "theme_volume_surge":
+        m = re.search(r"(\d+)% of recent negatives vs (\d+)% baseline", d)
+        if m and term:
+            return (f"“{term}” comes up in {m.group(1)}% of 1–2★ reviews this week, "
+                    f"up from {m.group(2)}% before.{example}")
+    if a.type == "negative_review_spike" and a.delta:
+        return f"{abs(a.delta):.0%} {'more' if a.delta > 0 else 'fewer'} 1★ reviews than usual this week."
+    # Anything else: the description without the statistics notation.
+    clean = re.sub(r"\s*\(z=[^)]*\)", "", d.split(" Usual:")[0].split(" Example:")[0])
+    clean = re.sub(r";?\s*same window and theme as the review signal\.?", ".", clean).strip()
+    return (clean + example).strip()
 
 
 def merged_into(session: Session, case_id: int) -> int | None:
@@ -556,6 +601,7 @@ def signal_rows(session: Session, product_id: int | None,
             "id": a.id,
             "slug": a.slug,
             "title": _headline(a),
+            "summary": plain_summary(a),
             "type": a.type,
             "metric": a.metric,
             "z": a.z,

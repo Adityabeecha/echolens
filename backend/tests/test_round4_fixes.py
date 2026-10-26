@@ -300,3 +300,17 @@ def test_settings_names_the_repo_a_problem_would_be_filed_into(api_db_r4):
     gh = next(t for t in client.get(f"/integrations/trackers?product_id={pid}").json()["trackers"]
               if t["id"] == "github")
     assert gh["target"] == "brave/brave-browser"
+
+
+def test_a_spike_says_what_happened_in_plain_words():
+    """The row used to read "'quick unlock' issue reports piling up on GitHub ·
+    GitHub issues · 7d window": no count, no normal, no example."""
+    from echolens.cases import _headline, plain_summary
+    from echolens.db.models import AnomalyEvent
+    a = AnomalyEvent(type="issue_velocity_surge", metric="'quick unlock' issue reports per week",
+                     description="'quick unlock' issue reports: 9 new issues this week (z=1.2); same window "
+                                 "and theme as the review signal. Usual: ~2 a week. Example: “Unlock fails”")
+    assert _headline(a) == "More GitHub issues about “quick unlock”"
+    s = plain_summary(a)
+    assert s.startswith("9 new GitHub issues mentioning “quick unlock” in the last 7 days, against about 2")
+    assert "Unlock fails" in s and "z=" not in s
