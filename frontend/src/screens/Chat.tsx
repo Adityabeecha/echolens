@@ -289,6 +289,7 @@ function InvestigateCard({ step, launchedId, queued, launchError, busy, onStart,
                   display: "flex", flexDirection: "column", gap: S[2] }}>
       <div style={{ fontSize: T.sm, color: C.text3, lineHeight: "var(--el-lh-normal)" }}>
         Start an investigation into “{step.question}”
+        {step.cost && <div style={{ marginTop: 2, fontSize: T.xs }}>{step.cost}</div>}
       </div>
       {launchedId != null ? (
         <button onClick={() => onOpen(launchedId)} className="el-btn el-btn--ghost"

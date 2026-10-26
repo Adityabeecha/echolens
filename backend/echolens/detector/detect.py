@@ -380,7 +380,8 @@ def detect_theme_surges(session: Session, as_of: datetime | None = None,
     # demo default and are dropped once a real operator configures their terms.
     extra = settings.extra_theme_terms
     theme_terms = ([(t, f"'{t}' complaints") for t in extra] if extra
-                   else _derived_terms([analysis_text(r) for r in reviews if (r.rating or 5) <= 2]))
+                   else _derived_terms([analysis_text(r) for r in reviews if (r.rating or 5) <= 2],
+                                       product=_own_words(session, product)))
     for term, label in theme_terms:
         terms = terms_of(term)
         # English translation when there is one, so a Spanish complaint about
@@ -452,7 +453,7 @@ def detect_issue_velocity(session: Session, as_of: datetime | None = None,
     issue_terms = ([(t, f"'{t}' issue reports") for t in settings.extra_theme_terms]
                    if settings.extra_theme_terms
                    else [(term, f"'{term}' issue reports") for term, _ in _derived_terms(
-                       list(texts.values()), k=3, product=product)])
+                       list(texts.values()), k=3, product=_own_words(session, product))])
     for term, label in issue_terms:
         terms = terms_of(term)
         # Every word of the topic, not any: "open database" counted every issue
@@ -501,6 +502,21 @@ def detect_issue_velocity(session: Session, as_of: datetime | None = None,
             severity=_severity(z),
         ))
     return out
+
+
+def _own_words(session: Session, product: str | None) -> str:
+    """The product's own names: display name, repo and package. A topic made
+    only of these says nothing ("bitwarden", "bitwarden android" were
+    Bitwarden's two spikes, hiding a real autofill crash)."""
+    if not product:
+        return ""
+    from echolens.db.models import Product
+    row = session.scalars(select(Product).where(Product.name == product)).first()
+    parts = [product]
+    if row is not None:
+        parts += [(row.github_repo or "").replace("/", " "),
+                  (row.package_name or "").replace(".", " ").replace("com ", " ")]
+    return " ".join(parts)
 
 
 def _example(text: str | None, cap: int = 110) -> str:
@@ -819,7 +835,10 @@ def _retire_untouched_issue_spikes(session: Session, product_id: int, kept: set[
     from echolens.db.models import Investigation, QueuedInvestigation, TriageDecision
     stale = session.scalars(select(AnomalyEvent).where(
         AnomalyEvent.product_id == product_id,
-        AnomalyEvent.type == "issue_velocity_surge",
+        # Topic spikes of both kinds. A review topic made of the product's own
+        # name ("bitwarden") stayed listed after the detector stopped making it.
+        AnomalyEvent.type.in_(("issue_velocity_surge", "theme_volume_surge")),
+        AnomalyEvent.slug.like(f"p{product_id}-auto-%"),
         AnomalyEvent.status == "pending",
         AnomalyEvent.merged_into_id.is_(None),
         AnomalyEvent.slug.not_in(kept or {""}),

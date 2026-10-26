@@ -233,6 +233,17 @@ def derive_status(inv: Investigation, finding: Finding | None,
         return DISMISSED, "You challenged this finding; it was re-opened as a new case."
     if inv.status == "budget_exhausted":
         return NEEDS_HUMAN, "Budget ran out before a cause cleared the evidence bar."
+    if (inv.status in ("failed", "insufficient_evidence") and finding is None
+            and ((inv.data_notes or [""])[-1] or "").startswith("Investigation could not run")):
+        # Never ran far enough to weigh anything (no AI key, outage): not a
+        # decision for anyone. It filled Today's "worth your time" card and the
+        # decision count. Kept, openable, with "Try again" on the page. Older
+        # rows were stored as insufficient_evidence with the raw exception.
+        note = inv.data_notes[-1].removeprefix("Investigation could not run: ")
+        if "internal error stopped it" in note:
+            note = ("EchoLens couldn't reach its AI service" if "credential" in note.lower()
+                    or "api_key" in note else "something went wrong on EchoLens's side")
+        return DISMISSED, f"Didn't finish — {note}"
     if inv.status == "failed":   # ended by the zombie watchdog; its note says why
         return NEEDS_HUMAN, ((inv.data_notes or [None])[-1]
                              or "The investigation stopped before it finished.")

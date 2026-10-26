@@ -110,6 +110,19 @@ export function CaseDetail({
   const proofKey = inv ? `${inv.finding?.id ?? 0}:${inv.evidence.length}:${inv.evidence.filter((e) => e.rejected).length}:${inv.status}` : "";
   const cites = useAsync(() => (inv?.finding ? api.citations(caseId) : Promise.resolve(null)), [caseId, proofKey]);
   const cfg = useAsync(() => api.guardsConfig(), []);
+  const [retrying, setRetrying] = useState(false);
+  const tryAgain = async () => {
+    if (!inv) return;
+    setRetrying(true);
+    try {
+      const r = await api.startInvestigation({ description: inv.title });
+      onOpenCase?.(r.investigation_id);
+    } catch (e) { setError(errorMessage(e)); }
+    finally { setRetrying(false); }
+  };
+  // The same per-problem numbers Today shows. The page used the WHOLE app's
+  // rating fall (−0.89★) where Today said this problem costs −0.23★.
+  const measured = useAsync(() => api.overview(caseId).then((o) => o.focus ?? null), [caseId, proofKey]);
   const wide = useMediaQuery(RAIL_QUERY);
   const [lit, setLit] = useState<Lit>(null);
   const [issueOpen, setIssueOpen] = useState(false);
@@ -175,6 +188,10 @@ export function CaseDetail({
     : current?.kind === "reason" ? reasons.find((r) => r.id === current.id)?.letters ?? [] : []);
   const order = afterUpdate(inv, exhibits);
   const impact = f?.impact;
+  const didntRun = !f && ["failed", "insufficient_evidence"].includes(inv.status)
+    && (inv.data_notes?.[inv.data_notes.length - 1] ?? "").startsWith("Investigation could not run");
+  const drag = measured.data?.rating_drag ?? null;
+  const sharePct = measured.data?.one_star_share?.pct ?? null;
   const sure = f ? Math.round(f.confidence * 100) : null;
   const blocked = blockedReason(inv);
 
@@ -208,9 +225,12 @@ export function CaseDetail({
           </div>
           <DecisionChip decision={inv.product_decision} />
           <span className="cv-bar__spacer" />
-          <Button variant="primary" disabled={!!blocked} title={blocked ?? undefined} onClick={() => setIssueOpen(true)}>
-            Send to GitHub</Button>
-          <Button variant="ghost" disabled={!!blocked} title={blocked ?? undefined} onClick={() => setShipOpen(true)}>Fix shipped</Button>
+          {/* Nothing to send or ship when the run never produced an answer. */}
+          {!didntRun && <>
+            <Button variant="primary" disabled={!!blocked} title={blocked ?? undefined} onClick={() => setIssueOpen(true)}>
+              Send to GitHub</Button>
+            <Button variant="ghost" disabled={!!blocked} title={blocked ?? undefined} onClick={() => setShipOpen(true)}>Fix shipped</Button>
+          </>}
           {blocked && f && <span className="cv-why-disabled">{blocked}</span>}
         </div>
       </header>
@@ -227,7 +247,8 @@ export function CaseDetail({
           {blockedDraft && <div className="cv-eyebrow">Drafted, not proven — kept apart from the answer</div>}
           <div className="cv-titlerow">
             <SerifHeadline as="h1" size="case">{inv.title}</SerifHeadline>
-            {verdict === "live" ? <LiveDot label={inv.case_status === "queued" ? "WAITING" : "LIVE"} />
+            {didntRun ? <span className="cv-didnt-run">Didn't finish</span>
+              : verdict === "live" ? <LiveDot label={inv.case_status === "queued" ? "WAITING" : "LIVE"} />
               : <Stamp variant={verdict} rotation={-6}
                   title={hunch ? "Hunch: not proven by two independent kinds of source yet" : undefined} />}
           </div>
@@ -236,10 +257,21 @@ export function CaseDetail({
             <div className="cv-banner"><b>Needs another look.</b> {f.needs_review.reason}</div>
           )}
           {inv.data_notes?.length > 0 && (
-            <div className="cv-banner">{inv.data_notes.map((n, i) => <div key={i}>{n}</div>)}</div>
+            <div className="cv-banner">{didntRun
+              ? <div>{inv.case_why || "This investigation didn't finish."}</div>
+              : inv.data_notes.map((n, i) => <div key={i}>{n}</div>)}</div>
           )}
 
-          {!f ? (
+          {didntRun ? (
+            <section className="cv-section">
+              <h2 className="cv-label">What happened</h2>
+              <p className="cv-story">
+                This investigation stopped before it could weigh any evidence, so there is no answer to judge
+                and nothing here counts as proof. Running it again usually works once the reason above is sorted out.
+              </p>
+              <Button variant="primary" loading={retrying} onClick={() => void tryAgain()}>Try again</Button>
+            </section>
+          ) : !f ? (
             <section className="cv-section">
               <h2 className="cv-label">What's happening</h2>
               <p className="cv-story">
@@ -268,14 +300,14 @@ export function CaseDetail({
                     );
                   })}
                 </p>
-                {((impact?.rating_impact && !hunch) || impact?.affected_pct || order) ? (
+                {((drag && !hunch) || sharePct || order) ? (
                   <div className="cv-chips">
                     {/* A rating loss is only pinned on a proven cause, never on a hunch. */}
-                    {impact && impact.rating_impact > 0 && !hunch && (
-                      <span title="Estimated rating lost against the usual level"><b className="is-bad">−{impact.rating_impact.toFixed(2)}★</b> rating</span>
+                    {drag != null && drag > 0 && !hunch && (
+                      <span title="This problem's pull on the rating: last 7 days against the 28 before"><b className="is-bad">−{drag.toFixed(2)}★</b> estimated rating loss</span>
                     )}
-                    {impact && impact.affected_pct > 0 && (
-                      <span title="Share of recent 1–2★ reviews that describe this problem"><b>{Math.round(impact.affected_pct)}%</b> of recent 1–2★ reviews</span>
+                    {sharePct != null && sharePct > 0 && (
+                      <span title="One-star reviews in the last 30 days that describe this problem"><b>{Math.round(sharePct)}%</b> of one-star reviews in 30 days</span>
                     )}
                     {order && (
                       <span title={`Release ${order.release.letter} on ${order.release.date}; first complaint ${order.first.letter} on ${order.first.date}`}>

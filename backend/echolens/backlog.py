@@ -370,6 +370,11 @@ def backlog(session: Session, product_id: int | None = None,
         finding = latest.get(inv.id)
         if finding is None:
             continue
+        # A challenged finding was dismissed in All problems (and re-opened as a
+        # new case); Plan still proposed it — #7 on the demo was "fix this
+        # quarter" while the problem list said dismissed.
+        if finding.status == "challenged":
+            continue
         # v15: the product decision outranks the ranking. Won't-fix leaves the
         # backlog for good; parked leaves it until its revisit date. Both are
         # reported back (not silently dropped) so the plan can say what it is

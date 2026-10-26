@@ -549,13 +549,18 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
     }
   };
 
-  const heading = <Heading title={`Reading ${product}'s reviews`}>
-    EchoLens is checking each source and learning what normal looks like. You can go to Today while it runs.
-  </Heading>;
+  // Still said "Reading Bitwarden's reviews" on the finished screen.
+  const heading = (done = false) => done
+    ? <Heading title={`${product} is ready`}>
+        Every source has been read once. EchoLens keeps reading them on its own from now on.
+      </Heading>
+    : <Heading title={`Reading ${product}'s reviews`}>
+        EchoLens is checking each source and learning what normal looks like. You can go to Today while it runs.
+      </Heading>;
 
   if (err && !status) return (
     <div className="pub-run">
-      {heading}
+      {heading()}
       <div role="alert" className="pub-error">We couldn't check setup progress — {err}</div>
       <div className="pub-run__nav">
         <Button variant="primary" className="pub-btn" onClick={() => setPollAttempt((attempt) => attempt + 1)}>Check again</Button>
@@ -565,7 +570,7 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
   );
   if (!status) return (
     <div className="pub-run">
-      {heading}
+      {heading()}
       <div className="el-onboarding-connecting" role="status">
         <span className="el-onboarding-spinner" aria-hidden="true" />
         <div style={{ flex: 1 }}>
@@ -619,7 +624,7 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
 
   return (
     <div className="pub-run">
-      {heading}
+      {heading(ready)}
       <div className="el-onboarding-backfill" style={{ display: "flex", flexDirection: "column" }}>
         <div className="pub-reading" style={{ borderTop: 0, paddingTop: 0 }}>
           <div className="pub-reading__line" aria-live="polite">{plain}</div>

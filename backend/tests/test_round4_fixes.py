@@ -281,7 +281,7 @@ def test_sources_count_forum_items_and_explain_an_empty_search(api_db_r4):
         p = Product(name="B"); s.add(p); s.flush()
         for src in ("hacker_news", "stack_overflow"):
             s.add(CollectorState(source=src, identifier="Brave Browser", product="B", product_id=p.id,
-                                 status="healthy", last_run_at=datetime(2026, 10, 26)))
+                                 status="healthy", last_run_at=datetime.now()))
         s.add(FeedbackEntry(channel="hacker_news", ext_id="hn1", text="Brave is fast", product="B",
                             created_at=datetime(2026, 10, 25)))
         s.commit(); pid = p.id
@@ -314,3 +314,91 @@ def test_a_spike_says_what_happened_in_plain_words():
     s = plain_summary(a)
     assert s.startswith("9 new GitHub issues mentioning “quick unlock” in the last 7 days, against about 2")
     assert "Unlock fails" in s and "z=" not in s
+
+
+# --- Fourth pass: the end-to-end product walkthrough (Bitwarden + demo) ---
+
+def test_plan_never_proposes_a_challenged_problem():
+    from echolens.backlog import backlog
+    from echolens.db.models import AnomalyEvent, Finding, Investigation, Product
+    _, Session = _db()
+    with Session() as s:
+        p = Product(name="L"); s.add(p); s.flush()
+        for n, status in ((1, "approved"), (2, "challenged")):
+            a = AnomalyEvent(slug=f"a{n}", type="manual", metric="m", delta=0, z=0, window="7d",
+                             description="d", status="closed", product_id=p.id)
+            s.add(a); s.flush()
+            inv = Investigation(anomaly_id=a.id, status="resolved", product_id=p.id); s.add(inv); s.flush()
+            s.add(Finding(investigation_id=inv.id, summary=f"problem {n}", confidence=0.8, status=status,
+                          json={"summary": f"problem {n}", "impact": {"affected_volume": 5}}, product_id=p.id))
+        s.commit()
+        titles = [i.get("summary") or i.get("title") for i in backlog(s, p.id)["items"]]
+    assert any("problem 1" in (t or "") for t in titles)
+    assert not any("problem 2" in (t or "") for t in titles)
+
+
+def test_a_why_question_asks_before_starting_a_paid_investigation(api_db_r4):
+    from echolens.db.models import Investigation, Product, Review
+    client, Session = api_db_r4
+    with Session() as s:
+        p = Product(name="B"); s.add(p); s.flush()
+        s.add(Review(source="play_store", ext_id="r1", rating=1, text="crashes", created_at=datetime(2026, 10, 20),
+                     product="B"))
+        s.commit(); pid = p.id
+    r = client.post("/chat", json={"message": "why is the battery draining?", "product_id": pid}).json()
+    assert r.get("investigation_id") is None and r["next_step"]["kind"] == "investigate"
+    assert "costs at most $" in r["next_step"]["cost"]
+    with Session() as s:
+        assert s.query(Investigation).count() == 0
+
+
+def test_spikes_ignore_the_products_repo_and_package_names():
+    from echolens.db.models import Product
+    from echolens.detector.detect import _derived_terms, _own_words
+    _, Session = _db()
+    with Session() as s:
+        s.add(Product(name="Bitwarden", github_repo="bitwarden/android", package_name="com.x8bit.bitwarden"))
+        s.commit()
+        own = _own_words(s, "Bitwarden")
+    texts = ["bitwarden android keeps stopping autofill crash"] * 6
+    terms = [t for t, _ in _derived_terms(texts, k=5, product=own)]
+    assert "bitwarden android" not in terms and "bitwarden" not in terms
+    assert any("autofill" in t for t in terms)
+
+
+def test_a_run_that_could_not_start_is_failed_in_plain_words():
+    import importlib
+    from echolens.db.models import Investigation
+    api_module = importlib.import_module("echolens.api.app")
+    _, Session = _db()
+    with Session() as s:
+        inv = Investigation(status="running"); s.add(inv); s.flush()
+        api_module._fail_investigation(s, inv, api_module._plain_failure(
+            "Missing credentials. Please pass an `api_key`"))
+        assert inv.status == "failed"
+        assert "AI key" in inv.data_notes[-1] and "api_key" not in inv.data_notes[-1]
+
+
+def test_topic_lists_skip_filler_words():
+    from echolens.textkit import top_themes
+    texts = ["please fix autofill because every time it fails"] * 5
+    labels = [t["label"] for t in top_themes(texts)]
+    assert "please fix" not in labels and "every time" not in labels and "because" not in labels
+    assert any("autofill" in l for l in labels)
+
+
+def test_a_run_that_never_started_is_not_a_decision_waiting():
+    from types import SimpleNamespace
+    from echolens.cases import DISMISSED, derive_status
+    inv = SimpleNamespace(status="failed", data_notes=["Investigation could not run: the AI service took too long."])
+    status, why = derive_status(inv, None, None)
+    assert status == DISMISSED and why.startswith("Didn't finish") and "took too long" in why
+
+
+def test_older_failed_runs_with_raw_errors_are_also_set_aside_in_plain_words():
+    from types import SimpleNamespace
+    from echolens.cases import DISMISSED, derive_status
+    inv = SimpleNamespace(status="insufficient_evidence", data_notes=[
+        "Investigation could not run: an internal error stopped it (Missing credentials. Please pass an `api_key`)."])
+    status, why = derive_status(inv, None, None)
+    assert status == DISMISSED and "AI service" in why and "api_key" not in why

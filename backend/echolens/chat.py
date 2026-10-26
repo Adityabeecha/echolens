@@ -20,6 +20,9 @@ INVESTIGATE_MARKERS = (
     "why did", "why are", "why is", "why has", "investigate", "look into",
     "what caused", "what's causing", "whats causing", "dig into", "find out",
 )
+# a direct instruction to open a case now, as opposed to a "why" question,
+# which gets a confirm card first (an investigation costs money)
+COMMAND_MARKERS = ("investigate", "look into", "dig into", "find out")
 # the user wants a ranked/aggregate view (→ answer from open problems by impact)
 RANK_MARKERS = (
     "biggest", "worst", "top ", "most ", "highest", "what should we fix",

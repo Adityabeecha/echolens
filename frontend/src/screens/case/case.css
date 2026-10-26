@@ -140,3 +140,7 @@ textarea.cv-input { resize:vertical; line-height:1.5; }
 }
 @media (prefers-reduced-motion:reduce) { .cv-sentence { transition:none; } }
 .cv-steps .cf-step.is-first .el-btn--ghost { color:var(--el-focus-text); border-color:var(--el-focus-line); background:transparent; }
+
+/* A run that never produced an answer: a plain label, not a verdict stamp. */
+.cv-didnt-run { flex: none; align-self: flex-start; margin-top: 10px; padding: 6px 12px; border-radius: 999px;
+  border: 1px solid var(--el-line-strong); color: var(--el-muted); font-size: 13px; font-weight: 600; }
