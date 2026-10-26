@@ -118,6 +118,20 @@ export function CaseDetail({
   const [railSheet, setRailSheet] = useState(false);
   const lower: Lower = ROUTE_TO_LOWER[tab] ?? "steps";
   const lowerRef = useRef<HTMLElement | null>(null);
+  // The sticky exhibits rail sits just under the sticky header. The header
+  // wraps to two lines on narrower screens (and when it explains a disabled
+  // button), so a fixed offset let the rail's top slide underneath it.
+  const screenRef = useRef<HTMLDivElement | null>(null);
+  const barRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const bar = barRef.current, screen = screenRef.current;
+    if (!bar || !screen || typeof ResizeObserver === "undefined") return;
+    const set = () => screen.style.setProperty("--cv-bar-h", `${Math.ceil(bar.getBoundingClientRect().height)}px`);
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(bar);
+    return () => ro.disconnect();
+  });
   // A deep link to a lower tab (or /evidence) scrolls there once the case is in.
   const jumped = useRef(false);
   useEffect(() => {
@@ -181,8 +195,8 @@ export function CaseDetail({
   );
 
   return (
-    <div className="cv-screen">
-      <header className="cv-bar">
+    <div className="cv-screen" ref={screenRef}>
+      <header className="cv-bar" ref={barRef}>
         <div className="cv-bar__inner">
           <button type="button" className="cv-back" onClick={onBack}>← {backLabel}</button>
           <div className="cv-meta">
@@ -309,8 +323,8 @@ export function CaseDetail({
 
               <section className="cv-section" aria-labelledby="cv-next">
                 <h2 id="cv-next" className="cv-label">What to do next</h2>
-                <NextStepsBlock inv={inv} onSend={() => setIssueOpen(true)} onShipped={() => setShipOpen(true)} />
                 <VerdictActions inv={inv} onReload={load} onReviewed={onReviewed} onOpenCase={onOpenCase} />
+                <NextStepsBlock inv={inv} onSend={() => setIssueOpen(true)} onShipped={() => setShipOpen(true)} />
               </section>
             </>
           )}
@@ -324,6 +338,18 @@ export function CaseDetail({
       </main>
 
       <section ref={lowerRef} className="cv-more" aria-label="More about this problem" style={{ scrollMarginTop: 80 }}>
+        {/* The raw trace (tool calls, token budget) is for the curious, not the
+            answer: it stays folded until asked for, a deep link opens it, and a
+            case that is running or has no answer yet shows it straight away. */}
+        {!(tab in ROUTE_TO_LOWER || inv.status === "running" || !inv.finding) ? (
+          <button type="button" className="cv-more__open" onClick={() => onTab("trace")}>
+            <span>
+              <span className="cv-more__title">How EchoLens worked this out</span>
+              <span className="cv-more__sub">Every step it took, the discussion and the history</span>
+            </span>
+            <span aria-hidden="true">›</span>
+          </button>
+        ) : <>
         <PillTabs label="More about this problem" panelId="cv-lower" value={lower}
           tabs={[{ id: "steps", label: inv.status === "running" ? "Every step · live" : "Every step" },
                  { id: "discussion", label: "Discussion" },
@@ -337,6 +363,7 @@ export function CaseDetail({
           {lower === "more" && <MoreTab inv={inv} onReload={load} onGoPatterns={onGoPatterns}
             onOpenEvidence={openEvidence} onMerged={onMerged} />}
         </div>
+        </>}
       </section>
 
       {issueOpen && f && <IssuePreview inv={inv} onClose={() => setIssueOpen(false)} onFiled={load} />}

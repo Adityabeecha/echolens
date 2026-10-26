@@ -127,6 +127,7 @@ export function headline(decide: number, spikes: number, total: number): string 
   const s = spikes > 0 ? `${spikes} new ${plural(spikes, "spike")} to look at` : "";
   if (d && s) return `${d} · ${s}`;
   if (d) return `${d}.`;
+  if (s && total === 0) return `${spikes} new ${plural(spikes, "spike")} to look at.`;
   if (s) return `Nothing needs a decision · ${s}`;
   return total > 0 ? "Nothing needs a decision right now." : "No problems yet.";
 }

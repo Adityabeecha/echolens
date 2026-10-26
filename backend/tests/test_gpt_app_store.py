@@ -95,7 +95,7 @@ def test_malformed_entry_is_skipped_without_poisoning_batch(db, broken):
 
 
 @pytest.mark.parametrize("identifier", [
-    "123", " 123 ", "https://apps.apple.com/us/app/video/id123",
+    "123", " 123 ", "id123", "https://apps.apple.com/us/app/video/id123",
     "https://apps.apple.com/gb/app/id123?l=en-GB", "https://apps.apple.com/app/video/id123/",
 ])
 def test_registry_accepts_and_canonicalizes_ids_and_store_urls(db, identifier):
@@ -107,7 +107,7 @@ def test_registry_accepts_and_canonicalizes_ids_and_store_urls(db, identifier):
 
 
 @pytest.mark.parametrize("identifier", [
-    "", "id123", "123abc", "12/34", "１２３", "https://example.com/app/id123",
+    "", "123abc", "12/34", "１２３", "https://example.com/app/id123",
     "https://apps.apple.com.evil.test/us/app/id123", "https://apps.apple.com/us/app/no-id",
     "https://apps.apple.com/us/app/id123abc", "https://apps.apple.com@evil.test/app/id123",
 ])

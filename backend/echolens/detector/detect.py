@@ -103,7 +103,7 @@ def choose_windows(session: Session, as_of: datetime, product: str | None = None
 POST_TERMS = [("slow", "'app is slow' mentions")]
 
 
-def _derived_terms(texts: list[str], k: int = 5) -> list[tuple[str, str]]:
+def _derived_terms(texts: list[str], k: int = 5, product: str | None = None) -> list[tuple[str, str]]:
     """The themes THIS product's users actually complain about.
 
     Emergent, from the corpus in front of us, with no fixed keyword list — the
@@ -122,12 +122,15 @@ def _derived_terms(texts: list[str], k: int = 5) -> list[tuple[str, str]]:
     # A new term must share no word with one already accepted.
     out: list[tuple[str, str]] = []
     claimed: set[str] = set()
+    # The product's own name is in every report ("brave browser" topped
+    # Brave's issues) and says nothing about what is wrong.
+    own = set(tokenize(product or ""))
     for th in top_themes(usable, k=k * 3):
         label = (th.get("label") or "").strip()
         if not label:
             continue
         words = set(tokenize(label))
-        if not words or words & claimed:
+        if not words or words & claimed or words <= own:
             continue
         claimed |= words
         out.append((label, f"'{label}' complaints"))
@@ -431,17 +434,24 @@ def detect_issue_velocity(session: Session, as_of: datetime | None = None,
     stmt = select(Issue).where(Issue.created_at >= start)
     if product:
         stmt = stmt.where(Issue.product == product)
-    issues = session.scalars(stmt).all()
+    # Issues a CI bot files (Brave's "Test failure: … Bad news." runs, labelled
+    # bot/…) are build noise, not anyone's feedback.
+    issues = [i for i in session.scalars(stmt).all() if not _bot_filed(i)]
     out: list[Candidate] = []
     from echolens.config import settings
+    from echolens.textkit import issue_boilerplate, issue_text
+    # Template headings and checklists are in every issue, so they would always
+    # be the "top theme". Mine and match on each issue's own words only.
+    boilerplate = issue_boilerplate([i.body_snippet or "" for i in issues])
+    texts = {i.id: issue_text(i.title, i.body_snippet, boilerplate) for i in issues}
     # ISSUE_TERMS are Lumo-demo specific; a real product uses its own themes.
     issue_terms = ([(t, f"'{t}' issue reports") for t in settings.extra_theme_terms]
                    if settings.extra_theme_terms
                    else [(term, f"'{term}' issue reports") for term, _ in _derived_terms(
-                       [f"{i.title} {i.body_snippet or ''}" for i in issues], k=3)])
+                       list(texts.values()), k=3, product=product)])
     for term, label in issue_terms:
         terms = terms_of(term)
-        hits = [i for i in issues if match_score(i.title + " " + i.body_snippet, terms) > 0]
+        hits = [i for i in issues if match_score(texts[i.id], terms) > 0]
         series = _daily_counts(hits, lambda i: i.created_at.date(), start, as_of)
         baseline, recent = series[:-win.recent], series[-win.recent:]
         z, delta = _zscore(recent, baseline)
@@ -476,6 +486,11 @@ def detect_issue_velocity(session: Session, as_of: datetime | None = None,
             severity=_severity(z),
         ))
     return out
+
+
+def _bot_filed(issue: Issue) -> bool:
+    labels = [str(l).lower() for l in (issue.labels or [])]
+    return any(l == "bot" or l.startswith(("bot/", "bot:")) or "automated" in l for l in labels)
 
 
 def very_low_volume(session: Session, as_of: datetime, win: Windows,
@@ -749,9 +764,32 @@ def scan(session: Session, as_of: datetime | None = None, persist: bool = True,
             session.flush()
             _merge_legacy(session, product_id, c.slug, ev)
         events.append(ev)
+    if persist and product_id is not None:
+        _retire_untouched_issue_spikes(session, product_id, {e.slug for e in events})
     if persist:
         session.flush()
     return events
+
+
+def _retire_untouched_issue_spikes(session: Session, product_id: int, kept: set[str]) -> None:
+    """Close issue-topic spikes this scan no longer finds, if nobody has
+    touched them. Before issue templates were stripped, "brief summary" and
+    "searched existing" were spikes on every templated repo, and an upsert-only
+    scan left them pending for good. A spike someone triaged, investigated or
+    merged keeps its status; only an unopened, no-longer-true one goes."""
+    from echolens.db.models import Investigation, QueuedInvestigation, TriageDecision
+    stale = session.scalars(select(AnomalyEvent).where(
+        AnomalyEvent.product_id == product_id,
+        AnomalyEvent.type == "issue_velocity_surge",
+        AnomalyEvent.status == "pending",
+        AnomalyEvent.merged_into_id.is_(None),
+        AnomalyEvent.slug.not_in(kept or {""}),
+    )).all()
+    for ev in stale:
+        opened = any(session.scalar(select(m.id).where(m.anomaly_id == ev.id).limit(1)) is not None
+                     for m in (Investigation, QueuedInvestigation, TriageDecision))
+        if not opened:
+            ev.status = "closed"
 
 
 def _resolve_product_id(session: Session, product: str | None,

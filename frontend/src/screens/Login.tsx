@@ -132,6 +132,14 @@ export function Login({ onAuthed, onClose, onExplore }: {
               </Button>
             </form>
 
+            {/* People asked what an account means before they sign in. */}
+            {!signup && (
+              <p className="pub-sheet__note" style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: "var(--el-muted)" }}>
+                EchoLens is in beta. Accounts are set up by your workspace admin{googleId ? " or with an allowed Google account" : ""};
+                no card is needed, and AI spend is capped each month in Settings. The demo needs no account at all.
+              </p>
+            )}
+
             {signupOpen && (
               <div className="pub-foot">
                 {signup ? "Already have an account? " : "Setting up EchoLens for the first time? "}

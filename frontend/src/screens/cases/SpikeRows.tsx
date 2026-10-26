@@ -1,3 +1,4 @@
+import { Dropdown } from "../../components/casefile";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import type { Incident, IntentCounts, SignalRow, SpikeStrength, ThemeCandidate, ThemeOverride } from "../../api";
 import { plural, when } from "../../format";
@@ -235,10 +236,8 @@ export function ThemeMenu({ theme, others, onEdit }: {
           )}
           {mode === "merge" && (
             <div className="pr-menu__merge">
-              <select className="pr-input" value={into} onChange={(e) => setInto(e.target.value)} aria-label="Merge into">
-                <option value="">Choose one…</option>
-                {targets.map((t) => <option key={t.slug} value={t.slug}>{t.statement}</option>)}
-              </select>
+              <Dropdown block label="Merge into" value={into} placeholder="Choose one…"
+                options={targets.map((t) => ({ value: t.slug, label: t.statement }))} onChange={setInto} />
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                 <Button variant="quiet" size="sm" type="button" onClick={() => setMode("menu")}>Back</Button>
                 <Button variant="primary" size="sm" disabled={saving || !into}

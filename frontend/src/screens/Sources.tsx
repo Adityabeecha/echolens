@@ -1,15 +1,20 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, canReview, isAdmin } from "../api";
 import { count, duration, plural, relativeWhen, when } from "../format";
 import { useAsync, useDialog } from "../hooks";
 import { Button, Centered, ErrorState } from "../ui";
-import { SerifHeadline } from "../components/casefile";
+import { Dropdown, SerifHeadline } from "../components/casefile";
 import { ImportPanel } from "./sources/ImportPanel";
+import { toast } from "../components/Toast";
 import "./settings/ps.css";
 
 /** The collector's status, as one of four plain states. */
-type State = "healthy" | "late" | "broken" | "reading" | "waiting";
-function stateOf(status: string): State {
+type State = "healthy" | "late" | "broken" | "reading" | "waiting" | "off" | "empty";
+function stateOf(status: string, volume?: string): State {
+  if (status === "Unavailable") return "off";
+  // Read without error but found nothing: a green "Healthy" next to "0 items"
+  // read as either a broken search or a silent failure.
+  if (status === "Healthy" && /^0 /.test(volume ?? "")) return "empty";
   if (status === "Healthy") return "healthy";
   if (status === "Error" || status === "Disconnected") return "broken";
   if (status === "Syncing…") return "reading";
@@ -18,6 +23,7 @@ function stateOf(status: string): State {
 }
 const STATE_WORDS: Record<State, string> = {
   healthy: "Healthy", late: "Late", broken: "Broken", reading: "Reading now", waiting: "Not read yet",
+  off: "Can't be read", empty: "Nothing found yet",
 };
 
 /**
@@ -31,6 +37,12 @@ export function Sources({ onAddProduct, productName, openImport = false }: {
   openImport?: boolean;
 }) {
   const { data, loading, error, reload } = useAsync(() => api.sources(), []);
+  // Check back every few seconds while a new product's first read runs.
+  useEffect(() => {
+    if (!data?.reading_first) return;
+    const timer = window.setTimeout(reload, 5000);
+    return () => window.clearTimeout(timer);
+  }, [data, reload]);
   const [showConnect, setShowConnect] = useState(false);
   const [showImport, setShowImport] = useState(openImport);
   const [busy, setBusy] = useState<string | null>(null);
@@ -63,7 +75,13 @@ export function Sources({ onAddProduct, productName, openImport = false }: {
     setMsg(null);
     try {
       const r = await api.collectorsRetry(source, identifier);
-      setMsg(r.error ? `Reading ${identifier} didn't work: ${r.error}` : `Read ${identifier} — ${count(r.inserted)} new ${plural(r.inserted, "item")}.`);
+      // A toast as well as the banner: the banner sits at the top of the page,
+      // out of sight when "Read now" was pressed on a row further down.
+      const said = r.error ? `Reading ${identifier} didn't work: ${r.error}`
+        : r.inserted ? `Read ${identifier} — ${count(r.inserted)} new ${plural(r.inserted, "item")}.`
+        : `Read ${identifier} — up to date, nothing new since the last read.`;
+      setMsg(said);
+      if (r.error) toast.fail(said); else toast.ok(said);
       reload();
     } catch (e) {
       setMsg(String(e).replace("Error: ", ""));
@@ -79,8 +97,10 @@ export function Sources({ onAddProduct, productName, openImport = false }: {
       const r = await api.collectorsRun();
       const got = r.results.reduce((n, x) => n + x.inserted, 0);
       const failed = r.results.filter((x) => x.error).length;
-      setMsg(`Read ${count(got)} new ${plural(got, "item")} across ${r.results.length} ${plural(r.results.length, "source")} in ${r.duration_seconds.toFixed(1)}s${
-        failed ? ` — ${failed} ${plural(failed, "source needs", "sources need")} a look.` : "."}`);
+      const said = `Read ${count(got)} new ${plural(got, "item")} across ${r.results.length} ${plural(r.results.length, "source")} in ${r.duration_seconds.toFixed(1)}s${
+        failed ? ` — ${failed} ${plural(failed, "source needs", "sources need")} a look.` : "."}`;
+      setMsg(said);
+      if (failed) toast.info(said); else toast.ok(said);
       reload();
     } catch (e) {
       setMsg(String(e).replace("Error: ", ""));
@@ -111,11 +131,18 @@ export function Sources({ onAddProduct, productName, openImport = false }: {
   }
 
   const connected = data?.connected ?? [];
-  const states = connected.map((s) => stateOf(s.status));
+  const states = connected.map((s) => stateOf(s.status, s.volume));
   const needLook = states.filter((s) => s === "broken" || s === "late").length;
+  // Off sources (can't run on this server) are neither reading nor broken.
+  const off = states.filter((s) => s === "off").length;
+  const offNote = off ? `${off} more ${off === 1 ? "is" : "are"} connected but can't be read on this server — the reason is on ${off === 1 ? "its row" : "each row"}.` : "";
+  const live = connected.length - off;
+  // "All 7 sources are reading normally" next to "0 items" read as healthy and
+  // empty; during the first read it is neither yet.
   const answer = connected.length === 0 ? "Nothing connected yet."
-    : needLook === 0 ? `${connected.length === 1 ? "Your source is" : `All ${connected.length} sources are`} reading normally.`
-    : `${needLook} of ${connected.length} ${plural(connected.length, "source")} ${needLook === 1 ? "needs" : "need"} a look.`;
+    : data?.reading_first ? `Reading ${connected.length === 1 ? "your source" : `all ${connected.length} sources`} for the first time…`
+    : needLook === 0 ? `${live === 1 ? "Your source is" : `All ${live} sources are`} reading normally.`
+    : `${needLook} of ${live} ${plural(live, "source")} ${needLook === 1 ? "needs" : "need"} a look.`;
 
   return (
     <div className="ps-screen">
@@ -167,6 +194,7 @@ export function Sources({ onAddProduct, productName, openImport = false }: {
             {onAddProduct && admin && <Button variant="ghost" size="sm" icon="plus" onClick={onAddProduct}>Add a product</Button>}
           </div>
           <SerifHeadline as="h1" size="page">{answer}</SerifHeadline>
+          {offNote && !data?.reading_first && <p className="ps-note" style={{ marginTop: 8 }}>{offNote}</p>}
         </header>
 
         {msg && <div role="status" aria-live="polite" className="ps-banner">{msg}</div>}
@@ -197,14 +225,14 @@ export function Sources({ onAddProduct, productName, openImport = false }: {
               {connected.map((s, i) => {
                 const st = states[i];
                 const key = `${s.source}-${s.identifier}`;
-                const real = !!(s.source && s.identifier);
+                const real = !!(s.source && s.identifier) && st !== "off";
                 return (
                   <div key={`${i}-${s.name}-${s.detail}`} className="ps-source">
                     <div className="ps-source__name">
                       <strong>{s.name}</strong>
                       <span title={s.detail}>{s.detail}</span>
                     </div>
-                    <span className={`ps-state is-${st === "waiting" ? "late" : st}`}>
+                    <span className={`ps-state is-${st === "waiting" || st === "off" || st === "empty" ? "late" : st}`}>
                       <i className="ps-dot" aria-hidden />{STATE_WORDS[st]}
                     </span>
                     <div className="ps-source__when" title={s.why || undefined}>
@@ -300,10 +328,9 @@ function ConnectForm({ onDone }: { onDone: () => void }) {
       <div className="ps-row" style={{ alignItems: "flex-end" }}>
         <label className="ps-field" style={{ flex: "1 1 180px" }}>
           <span>What to read</span>
-          <select className="ps-select" value={source} onChange={(e) => setSource(e.target.value)} aria-label="Source type">
-            {options.length === 0 ? <option value="play_store">Google Play</option>
-              : options.map((o) => <option key={o.source} value={o.source}>{o.label}</option>)}
-          </select>
+          <Dropdown block label="Source type" value={source} onChange={setSource}
+            options={options.length === 0 ? [{ value: "play_store", label: "Google Play" }]
+              : options.map((o) => ({ value: o.source, label: o.label }))} />
         </label>
         <label className="ps-field" style={{ flex: "2 1 240px" }}>
           <span>Which one</span>

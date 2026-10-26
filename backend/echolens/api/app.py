@@ -1156,13 +1156,16 @@ def sources_available() -> dict:
     the form without a collector behind it — the connect form and _BUILDERS
     cannot drift apart.
     """
-    from echolens.collectors.registry import SOURCE_INFO, _BUILDERS
+    from echolens.collectors.registry import SOURCE_INFO, UNAVAILABLE_SOURCES, _BUILDERS
 
     return {"sources": [
         {"source": s,
          "label": SOURCE_INFO.get(s, {}).get("label", s.replace("_", " ").title()),
          "hint": SOURCE_INFO.get(s, {}).get("hint", "")}
-        for s in sorted(_BUILDERS)
+        for s in sorted(_BUILDERS) if s not in UNAVAILABLE_SOURCES
+    ], "unavailable": [
+        {"source": s, "label": SOURCE_INFO.get(s, {}).get("label", s), "reason": why}
+        for s, why in UNAVAILABLE_SOURCES.items()
     ]}
 
 
@@ -1177,7 +1180,9 @@ def connect_source(body: ConnectSource, user: dict = Depends(require_role("admin
     raw PACKAGE rather than the one being viewed. Nothing errored; the data just
     filed itself somewhere invisible.
     """
-    from echolens.collectors.registry import add_source
+    from echolens.collectors.registry import UNAVAILABLE_SOURCES, add_source
+    if body.source in UNAVAILABLE_SOURCES:
+        raise HTTPException(422, UNAVAILABLE_SOURCES[body.source])
     with session_scope() as session:
         product = body.product
         if body.product_id is not None:
@@ -1458,8 +1463,27 @@ def onboard(body: OnboardBody, user: dict = Depends(require_role("admin"))) -> d
     unknown_github = set(github_sources) - allowed_github
     if unknown_github:
         raise HTTPException(422, f"unknown GitHub source: {sorted(unknown_github)[0]}")
+    # Discussions are GraphQL-only, which GitHub never serves anonymously. Without
+    # a token the source could only ever fail (and "Retry" can't fix it), so it
+    # is left out and the response says so, instead of a red row on day one.
+    skipped_sources: list[dict] = []
+    if "github_discussions" in github_sources and not settings.github_token:
+        github_sources = [s for s in github_sources if s != "github_discussions"]
+        skipped_sources.append({"source": "github_discussions",
+                                "reason": "needs a GitHub token on the server"})
+        if repo and not github_sources:
+            raise HTTPException(422, "GitHub Discussions needs a GitHub token on the server. "
+                                     "Choose issues or pull requests as well, or skip GitHub for now.")
     if repo and not github_sources:
         raise HTTPException(422, "select at least one GitHub source")
+    # Checked before anything is saved: a bad App Store id used to raise inside
+    # the transaction and come back as a bare 500 after the product was half made.
+    if body.app_store and body.app_store.strip():
+        from echolens.collectors.app_store import parse_app_id
+        try:
+            parse_app_id(body.app_store)
+        except ValueError as err:
+            raise HTTPException(422, str(err))
     product = (body.product or "").strip() or body.play_store.strip()
     with session_scope() as session:
         from echolens.db.models import Product
@@ -1480,8 +1504,12 @@ def onboard(body: OnboardBody, user: dict = Depends(require_role("admin"))) -> d
             "stack_overflow": body.stack_overflow,
         }
         connected_additional = []
+        from echolens.collectors.registry import UNAVAILABLE_SOURCES
         for source, identifier in additional.items():
             if identifier and identifier.strip():
+                if source in UNAVAILABLE_SOURCES:
+                    skipped_sources.append({"source": source, "reason": UNAVAILABLE_SOURCES[source]})
+                    continue
                 add_source(session, source, identifier.strip(), product, pid)
                 connected_additional.append(source)
         from echolens.db.models import CollectorState
@@ -1499,7 +1527,8 @@ def onboard(body: OnboardBody, user: dict = Depends(require_role("admin"))) -> d
     return {"status": "backfilling", "product": product, "product_id": pid,
             "play_store": body.play_store.strip(), "github": repo,
             "github_sources": github_sources if repo else [],
-            "additional_sources": connected_additional}
+            "additional_sources": connected_additional,
+            "skipped_sources": skipped_sources}
 
 
 @app.get("/onboard/preview")
@@ -2448,12 +2477,34 @@ def search_embed(product_id: int | None = None,
         return {"embedded": embed_corpus(session, product=(prod.name if prod else None))}
 
 
+def _reading_first(session, prod) -> bool:
+    """True while a product has nothing collected yet and its sources have not
+    finished a first read. Until then "Nothing needs you", "health —", an
+    instant empty scan, or an investigation over empty tables all read as an
+    all-clear that was never measured."""
+    if prod is None or getattr(prod, "is_demo", False):
+        return False
+    from echolens.db.models import CollectorState, FeedbackEntry
+    for model in (Review, Issue, FeedbackEntry):
+        if session.scalar(select(model.id).where(model.product == prod.name).limit(1)) is not None:
+            return False
+    states = session.scalars(select(CollectorState).where(
+        CollectorState.product_id == prod.id, CollectorState.enabled == True)).all()  # noqa: E712
+    return any(s.status == "running" or (s.watermark is None and s.status != "error") for s in states)
+
+
+_READING_FIRST = ("EchoLens is still reading this product's first reviews. Spikes and "
+                  "investigations start once there is something to look at — usually a minute or two.")
+
+
 @app.post("/anomalies/scan")
 def anomalies_scan(product_id: int | None = None,
                    user: dict = Depends(require_role("reviewer"))) -> dict:
     from echolens.detector.detect import scan
     with session_scope() as session:
         p = _scope(session, product_id, user)
+        if _reading_first(session, p):
+            return {"detected": [], "product": p.name, "reading_first": True, "message": _READING_FIRST}
         events = scan(session, product=(p.name if p else None), product_id=(p.id if p else None))
         return {"detected": [e.slug for e in events], "product": p.name if p else None}
 
@@ -2708,6 +2759,10 @@ def start_investigation(request: Request, body: NewCase,
     with session_scope() as session:
         prod = _scope(session, body.product_id, user)
         pid = prod.id if prod else None
+        # Investigating before the first read only spends budget discovering
+        # empty tables (seen live: a Brave case burnt its steps that way).
+        if _reading_first(session, prod):
+            raise HTTPException(409, _READING_FIRST)
         opened_by = "anomaly"
         if body.anomaly_slug:
             anomaly_stmt = select(AnomalyEvent).where(
@@ -3611,14 +3666,20 @@ def finding_github_issue(finding_id: int, product_id: int | None = None,
 
 
 @app.get("/integrations/trackers")
-def integrations_trackers(user: dict = Depends(current_user)) -> dict:
-    """Which issue trackers this deployment can file to. Booleans only — the
-    credentials themselves never leave the server."""
+def integrations_trackers(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    """Which issue trackers this deployment can file to, and WHERE for this
+    product. Booleans and names only — credentials never leave the server.
+    "GitHub: Connected" hid that a Brave problem would be filed into
+    brave/brave-browser, a repo the team doesn't own."""
     from echolens.integrations.trackers import TRACKERS, configured_trackers
     configured = configured_trackers()
     labels = {"github": "GitHub", "linear": "Linear", "jira": "Jira"}
-    return {"trackers": [{"id": t, "label": labels[t], "configured": configured[t]}
-                         for t in TRACKERS]}
+    with session_scope() as session:
+        prod = _scope(session, product_id, user)
+        repo = _github_repo(session, prod.id if prod else None)
+    targets = {"github": repo, "jira": settings.jira_project_key or None, "linear": None}
+    return {"trackers": [{"id": t, "label": labels[t], "configured": configured[t],
+                          "target": targets.get(t)} for t in TRACKERS]}
 
 
 class TicketEdits(BaseModel):
@@ -4740,19 +4801,34 @@ _SOURCE_META = {
     "app_store": {"icon": "⌘", "label": "App Store reviews"},
     "github": {"icon": "⌥", "label": "GitHub issues + releases"},
     "csv": {"icon": "⇪", "label": "Imported reviews (CSV)"},
+    "github_activity": {"icon": "⌥", "label": "GitHub PRs + commits"},
+    "github_discussions": {"icon": "⌥", "label": "GitHub Discussions"},
+    "chrome_web_store": {"icon": "◍", "label": "Chrome Web Store reviews"},
+    "hacker_news": {"icon": "Y", "label": "Hacker News"},
+    "stack_overflow": {"icon": "?", "label": "Stack Overflow"},
 }
+
+
+# Sources stored as FeedbackEntry rows, by the channel they are filed under.
+_FEEDBACK_CHANNEL = {"hacker_news": "hacker_news", "stack_overflow": "stack_overflow",
+                     "github_discussions": "github_discussion", "github_activity": "github_pr"}
+# Search-based sources, with what to try when a search finds nothing.
+_SEARCHED = {"hacker_news": "Try the product's plain name, e.g. “Brave”.",
+             "stack_overflow": "Stack Overflow searches by tag; try the tag people use, e.g. “brave-browser”.",
+             "github_activity": "PRs and commits appear once the repo has recent activity."}
 
 
 @app.get("/sources")
 def sources(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     from echolens.collectors.registry import source_health
-    from echolens.db.models import CollectorState
+    from echolens.db.models import CollectorState, FeedbackEntry
     with session_scope() as session:
         prod = _scope(session, product_id, user)
         s_stmt = select(CollectorState)
         if prod is not None:
             s_stmt = s_stmt.where(CollectorState.product_id == prod.id)
         states = session.scalars(s_stmt).all()
+        from echolens.collectors.registry import inert_reason
         health = {(h["source"], h["identifier"]): h for h in source_health(
             session, product=(prod.name if prod else None))}
         connected = []
@@ -4765,6 +4841,12 @@ def sources(product_id: int | None = None, user: dict = Depends(current_user)) -
                     Review.product == st.product, Review.source == st.source)) or 0
             elif st.source == "github":
                 vol = session.scalar(select(func.count(Issue.id)).where(Issue.product == st.product)) or 0
+            elif st.source in _FEEDBACK_CHANNEL:
+                # Was hard-coded 0: Hacker News, Stack Overflow and PRs read
+                # dozens of items and still showed "Healthy · 0 items".
+                vol = session.scalar(select(func.count(FeedbackEntry.id)).where(
+                    FeedbackEntry.product == st.product,
+                    FeedbackEntry.channel == _FEEDBACK_CHANNEL[st.source])) or 0
             else:
                 vol = 0
             h = health.get((st.source, st.identifier), {})
@@ -4779,6 +4861,21 @@ def sources(product_id: int | None = None, user: dict = Depends(current_user)) -
                 why = f"collector failed at {when}: {st.last_error}"
             elif stale and h.get("stale_since"):
                 why = f"no successful pull since {h['stale_since']}"
+            elif vol == 0 and st.status == "healthy" and st.source in _SEARCHED:
+                # Read fine, found nothing: say so rather than a bare green badge.
+                why = (f"Read fine, but nothing matches “{st.identifier}” yet. "
+                       f"{_SEARCHED[st.source]}")
+            off = inert_reason(st.source)
+            if off:
+                # Connected before it became unreadable here (Chrome's endpoint
+                # died; Discussions without a token). Off, with the reason.
+                connected.append({
+                    "icon": meta["icon"], "name": meta["label"], "detail": f"{st.identifier} · {st.product}",
+                    "source": st.source, "identifier": st.identifier, "status": "Unavailable",
+                    "stale": False, "staleSince": None, "why": off, "lastSuccess": None,
+                    "lastPull": "not read", "volume": f"{vol:,} items", "error": None,
+                })
+                continue
             connected.append({
                 "icon": meta["icon"], "name": meta["label"], "detail": f"{st.identifier} · {st.product}",
                 "source": st.source, "identifier": st.identifier,
@@ -4823,8 +4920,10 @@ def sources(product_id: int | None = None, user: dict = Depends(current_user)) -
         from echolens.overview import freshness
         return {"connected": connected, "product": prod.name if prod else None,
                 "last_synced": freshness(session, prod),
+                "reading_first": _reading_first(session, prod),
                 # Not collected directly; each can arrive as a CSV import.
-                "available": ["Zendesk", "Intercom", "Discord community", "In-app feedback"]}
+                "available": ["Zendesk", "Intercom", "Discord community", "In-app feedback",
+                              "Chrome Web Store reviews"]}
 
 
 @app.get("/costs/summary")

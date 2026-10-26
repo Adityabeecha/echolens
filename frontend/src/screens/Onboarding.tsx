@@ -12,7 +12,7 @@ import {
   emptyBackfillMessage,
   progressActivityLabel,
   sourceProgressLabel,
-  sourceRecoveryGuidance,
+  sourceErrorView,
 } from "../onboardingProgress";
 import "./landing/public.css";
 
@@ -315,7 +315,7 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
                     ))}
                   </div>
                 )}
-                <span className="pub-field__hint">Discussions need a GitHub token set up on the server.</span>
+                <span className="pub-field__hint">Everything means issues, releases, pull requests and commits. Discussions are added too once a GitHub token is set up on the server.</span>
               </fieldset>
             )}
           </>
@@ -324,13 +324,9 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
         {step === 2 && (
           <>
             <div className="pub-grid2">
-              <Field label="App Store app ID" hint="Optional">
-                <input className="pub-input" value={additional.app_store} placeholder="e.g. 324684580" onKeyDown={onEnter}
+              <Field label="App Store link or ID" hint="Optional">
+                <input className="pub-input" value={additional.app_store} placeholder="apps.apple.com/… or 324684580" onKeyDown={onEnter}
                   onChange={(e) => setAdditional((current) => ({ ...current, app_store: e.target.value }))} />
-              </Field>
-              <Field label="Chrome extension ID" hint="Optional">
-                <input className="pub-input" value={additional.chrome_web_store} placeholder="32-character ID" onKeyDown={onEnter}
-                  onChange={(e) => setAdditional((current) => ({ ...current, chrome_web_store: e.target.value }))} />
               </Field>
               <Field label="Hacker News search" hint="Optional">
                 <input className="pub-input" value={additional.hacker_news} placeholder="your product or company name" onKeyDown={onEnter}
@@ -341,6 +337,7 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
                   onChange={(e) => setAdditional((current) => ({ ...current, stack_overflow: e.target.value }))} />
               </Field>
             </div>
+            <span className="pub-field__hint">Chrome Web Store reviews aren't available right now — Google stopped sharing them. You can import them as a CSV from Sources later.</span>
             <Field label="What should we call it?"
               hint={storeTitle ? `Optional — defaults to the store listing's name, ${storeTitle}.` : "Optional — defaults to the package name."}>
               <input className="pub-input" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={onEnter}
@@ -610,10 +607,15 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
     Math.max(0, Math.floor((now - lastProgressAt) / 1000)),
   );
   const activeElapsed = progressView.elapsedLabel.replace(" elapsed", "");
-  // The one plain sentence: "Reading 1,240 reviews… found 3 spikes".
-  const reviewsLine = `${snap.reviews.toLocaleString()} ${plural(snap.reviews, "review")}`;
+  // The one plain sentence: "Read 1,078 items from 7 sources — found 3 spikes".
+  // It counts everything collected; "65 reviews" alone sat next to "300 items
+  // pulled" with nothing saying the 65 were only the last 90 days.
+  const collected = status.sources.reduce((total, source) => total + (source.items_last_run || 0), 0);
+  const okSources = status.sources.filter((source) => source.status === "healthy").length;
+  const itemsLine = `${collected.toLocaleString()} ${plural(collected, "item")} from ${okSources} ${plural(okSources, "source")}`;
   const spikesLine = found > 0 ? `found ${found} ${plural(found, "spike")}` : "no spikes yet";
-  const plain = ready ? `Read ${reviewsLine} — ${spikesLine}.` : `Reading ${reviewsLine}… ${spikesLine}`;
+  const plain = ready ? `Read ${itemsLine} — ${spikesLine}.` : `Reading… ${itemsLine} so far, ${spikesLine}`;
+  const recentLine = `${snap.reviews.toLocaleString()} store ${plural(snap.reviews, "review")} are from the last 90 days — EchoLens watches those for spikes.`;
 
   return (
     <div className="pub-run">
@@ -621,6 +623,7 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
       <div className="el-onboarding-backfill" style={{ display: "flex", flexDirection: "column" }}>
         <div className="pub-reading" style={{ borderTop: 0, paddingTop: 0 }}>
           <div className="pub-reading__line" aria-live="polite">{plain}</div>
+          {ready && hasReviews && <div className="pub-reading__sub">{recentLine}</div>}
           {ready && found === 0 && hasReviews && (
             <div className="pub-reading__sub">
               That's normal on day one: EchoLens needs a few days of history before it can tell a surge from noise.
@@ -669,7 +672,7 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
             <div className="el-onboarding-progress__measure">
               <div className="el-onboarding-progress__count">{progressView.countLabel}</div>
               <div className="el-onboarding-progress__timing">
-                <span>{progressView.elapsedLabel}</span>
+                {progressView.elapsedLabel && <span>{progressView.elapsedLabel}</span>}
                 <span>{progressView.expectedLabel}</span>
               </div>
             </div>
@@ -724,22 +727,31 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
                   <span style={{ fontSize: 14, color: s.status === "error" ? "var(--el-ink)" : "var(--el-body)" }}>
                     {running ? `Fetching and processing · ${activeElapsed}` : label}
                   </span>
-                  {s.status === "error" && (
-                    <>
-                      <span className="el-onboarding-source__guidance">
-                        {sourceRecoveryGuidance(s.last_error)}
-                      </span>
-                      <div className="el-onboarding-source__actions">
-                        <Button size="sm" variant="ghost" onClick={() => retrySource(s.source, s.identifier)}
-                          loading={retrying === retryKey}>
-                          {retrying === retryKey ? "Retrying…" : "Retry source"}
-                        </Button>
-                        <Button size="sm" variant="quiet" onClick={onManageSources}>
-                          Review connection
-                        </Button>
-                      </div>
-                    </>
-                  )}
+                  {s.status === "error" && (() => {
+                    const view = sourceErrorView(s.last_error);
+                    return (
+                      <>
+                        <span className="el-onboarding-source__guidance">{view.guidance}</span>
+                        {s.last_error && (
+                          <details className="el-onboarding-source__technical">
+                            <summary>Technical details</summary>
+                            <code>{s.last_error}</code>
+                          </details>
+                        )}
+                        <div className="el-onboarding-source__actions">
+                          {view.canRetry && (
+                            <Button size="sm" variant="ghost" onClick={() => retrySource(s.source, s.identifier)}
+                              loading={retrying === retryKey}>
+                              {retrying === retryKey ? "Retrying…" : "Retry source"}
+                            </Button>
+                          )}
+                          <Button size="sm" variant="quiet" onClick={onManageSources}>
+                            Review connection
+                          </Button>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               </article>
             );
@@ -808,9 +820,12 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
 
 function SnapshotView({ snap }: { snap: Snapshot }) {
   const delta = snap.rating_delta;
-  const ratingCaption = delta == null
-    ? "average rating right now"
-    : `rating now, ${delta >= 0 ? "up" : "down"} ${Math.abs(delta).toFixed(2)} on last week`;
+  // A change is only shown when both weeks had enough reviews to compare.
+  const ratingCaption = delta != null
+    ? `rating this week, ${delta >= 0 ? "up" : "down"} ${Math.abs(delta).toFixed(2)} on last week`
+    : snap.rating_basis === "window"
+      ? "average over the last 90 days — too few reviews a week to compare weeks"
+      : "average rating this week";
   const weekly = snap.weekly.map((w) => ({ date: w.week_start, value: w.count }));
 
   return (

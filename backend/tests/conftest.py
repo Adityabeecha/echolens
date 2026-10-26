@@ -46,3 +46,22 @@ def session(engine):
     yield s
     s.rollback()
     s.close()
+
+
+@pytest.fixture()
+def api_db_r4(monkeypatch):
+    """The API over a fresh in-memory DB (round 4 fix tests)."""
+    from fastapi.testclient import TestClient
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from echolens.db import session as db_session
+    from echolens.db.models import Base
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, expire_on_commit=False)
+    monkeypatch.setattr(db_session, "_engine", engine)
+    monkeypatch.setattr(db_session, "_SessionLocal", Session)
+    monkeypatch.setattr(db_session, "get_engine", lambda db_url=None: engine)
+    from echolens.api.app import app
+    return TestClient(app), Session

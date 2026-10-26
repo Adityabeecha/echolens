@@ -5,7 +5,7 @@ import { PillTabs, SerifHeadline } from "../components/casefile";
 import { money } from "../format";
 import { useAsync } from "../hooks";
 import { SettingsSection } from "../nav";
-import { Button, Centered, ErrorState } from "../ui";
+import { Button, Centered, ErrorState, Skeleton } from "../ui";
 import { Calibration } from "./Calibration";
 import { Costs } from "./Costs";
 import { CostsSection, HonestySection, IntegrationsSection, SensitivitySection } from "./settings/Sections";
@@ -57,7 +57,14 @@ export function Settings({
         </div>
       );
     }
-    if (costs.loading && !costs.data) return <Centered>Loading settings…</Centered>;
+    // The section's shape while its numbers load, not a centred "Loading…"
+    // that read as the page hanging.
+    if (costs.loading && !costs.data) return (
+      <div className="ps-sections" role="status" aria-label="Loading settings">
+        <div style={{ height: 48, width: "60%", borderRadius: 12, background: "var(--el-soft)" }} />
+        <Skeleton rows={3} height={84} />
+      </div>
+    );
     if (costs.error || !costs.data) return <ErrorState title="Couldn't load your settings" onRetry={costs.reload} />;
     if (section === "costs") {
       // The per-problem ledger (was the Costs screen; /costs links land here).
@@ -83,6 +90,15 @@ export function Settings({
           <PillTabs label="Settings sections" panelId="ps-settings" value={section}
             tabs={SECTIONS} onChange={(s) => onSection?.(s)} />
         </div>
+        {/* Guests saw disabled controls with no reason up front, which read as
+            broken. Say what this page is before anything is greyed out. */}
+        {guest && (
+          <div className="ps-banner" role="note" style={{ marginBottom: 16 }}>
+            You're looking at the demo, so settings are shown but can't be changed. With your own account you set
+            how many problems EchoLens looks into a day, the most each one may cost, how sensitive spike detection is,
+            and where alerts go. The honesty checks stay on for everyone.
+          </div>
+        )}
         <div id="ps-settings" role="tabpanel" aria-label={SECTIONS.find((s) => s.id === section)?.label}>
           {body()}
         </div>
@@ -148,7 +164,10 @@ function TrackersPanel() {
           <span><i className={`ps-dot ${t.configured ? "is-healthy" : ""}`} aria-hidden
             style={{ display: "inline-block", marginRight: 8, background: t.configured ? undefined : "var(--el-line-strong)" }} />{t.label}</span>
           <span className="ps-muted" title={t.configured ? undefined : `Set ${ENV[t.id]} on the server`}>
-            {t.configured ? "Connected — problems can be sent here" : "Not set up on the server"}</span>
+            {!t.configured ? "Not set up on the server"
+              : t.target ? <>Problems are filed into <b style={{ fontFamily: "var(--el-mono)" }}>{t.target}</b></>
+              : t.id === "github" ? "Connected, but this product has no repo to file into"
+              : "Connected — problems can be sent here"}</span>
         </div>
       ))}
     </div>

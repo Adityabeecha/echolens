@@ -818,6 +818,8 @@ export interface SourcesResp {
   available: string[];
   product?: string | null;
   last_synced?: Freshness;
+  /** Nothing collected yet and the first read is still under way. */
+  reading_first?: boolean;
 }
 
 // Today overview: the context drawn around the score.
@@ -892,7 +894,9 @@ export interface ConfirmedFix {
 
 // Issue trackers a finding can be filed to.
 export type TrackerId = "github" | "linear" | "jira";
-export interface TrackerInfo { id: TrackerId; label: string; configured: boolean }
+export interface TrackerInfo { id: TrackerId; label: string; configured: boolean;
+  /** Where this product's problems are filed: a repo for GitHub, a project key for Jira. */
+  target?: string | null }
 export interface TicketResult {
   tracker: TrackerId; repo: string | null;
   /** GitHub issue number, Linear identifier ("ENG-12") or Jira key ("APP-3"). */
@@ -934,6 +938,8 @@ export interface Snapshot {
   rating_now: number | null;
   rating_prev: number | null;
   rating_delta: number | null;
+  /** "week": rating_now is this week's average; "window": too few reviews a week, so the period's average. */
+  rating_basis?: "week" | "window";
   weekly: { week_start: string; count: number; avg_rating: number | null }[];
   top_themes: SnapshotTheme[];
   non_english: number;
@@ -1584,10 +1590,13 @@ export const api = {
   deleteProduct: (id: number, confirmName: string) =>
     del<{ deleted: string }>(`/products/${id}?confirm=${encodeURIComponent(confirmName)}`),
   collect: () => post("/collect/run"),
-  scan: () => post<{ detected: string[] }>(scoped("/anomalies/scan")),
+  scan: () => post<{ detected: string[]; reading_first?: boolean; message?: string }>(scoped("/anomalies/scan")),
   cases: () => get<CaseView>(scoped("/cases")),
   triage: (run = false) =>
-    post<{ summary?: string; skipped_already_triaged?: number }>(scoped(`/anomalies/triage?run=${run}`)),
+    post<{ summary?: string; skipped_already_triaged?: number;
+           decisions?: { anomaly: string; decision: "investigate" | "ignore" | "merge"; reason: string;
+                         budget_tier: string | null; merge_into: string | null }[] }>(
+      scoped(`/anomalies/triage?run=${run}`)),
   // `id` is null for rows still in the queue — they have no Investigation yet.
   // They are included so the work-watcher can see queued work at all.
   investigations: () =>
@@ -1885,7 +1894,7 @@ export const api = {
   followupQuestions: (findingId: number) =>
     get<FollowupQuestions>(scoped(`/findings/${findingId}/followup-questions`)),
   /** Which issue trackers this deployment can file to (booleans, no secrets). */
-  trackers: () => get<{ trackers: TrackerInfo[] }>("/integrations/trackers"),
+  trackers: () => get<{ trackers: TrackerInfo[] }>(scoped("/integrations/trackers")),
   /** File a finding to GitHub, Linear or Jira — same ticket body everywhere. */
   createTicket: (findingId: number, tracker: TrackerId, edits?: { title?: string; body?: string }) =>
     post<TicketResult>(scoped(`/findings/${findingId}/ticket?tracker=${tracker}`), edits),

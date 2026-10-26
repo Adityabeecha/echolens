@@ -942,6 +942,9 @@ textarea::placeholder {
   min-width: 0;
 }
 .el-onboarding-source__guidance { color: var(--el-text-muted); font-size: var(--el-fs-xs); line-height: 1.45; }
+.el-onboarding-source__technical { font-size: 12px; color: var(--el-text-muted); }
+.el-onboarding-source__technical summary { cursor: pointer; width: max-content; }
+.el-onboarding-source__technical code { display: block; margin-top: 4px; font-family: var(--el-font-mono, "Geist Mono", monospace); font-size: 11px; overflow-wrap: anywhere; }
 .el-onboarding-source__actions { align-items: flex-start; flex-wrap: wrap; gap: var(--el-s1); }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2759,6 +2762,12 @@ body { background: var(--el-canvas-warm); }
   padding:8px 12px; color:var(--el-muted); background:var(--el-paper); font:14px var(--el-font); cursor:pointer; white-space:nowrap; }
 .el-ask-field kbd { color:var(--el-muted); font:11px var(--el-mono); }
 .el-topbar__new.el-btn { padding:8px 10px; min-height:36px; font-size:13px; }
+.el-product-picker .cf-dropdown__button.el-product-picker__button { border-color:transparent; background:none; padding:6px 8px; min-height:36px; gap:7px; }
+.el-product-picker .cf-dropdown__button.el-product-picker__button:hover { background:var(--el-soft); }
+.el-product-picker__button .cf-dropdown__value { max-width:160px; }
+.el-topbar__new .cf-dropdown__button.el-topbar__new-button { border-color:transparent; background:none; font-size:13px; padding:8px 10px; min-height:36px; gap:6px; }
+.el-topbar__new .cf-dropdown__button.el-topbar__new-button:hover { background:var(--el-soft); }
+.el-topbar__new .cf-dropdown__button.el-topbar__new-button .cf-dropdown__caret { display:none; }
 .el-topbar__more { display:grid; place-items:center; width:36px; height:36px; background:none; border:0; border-radius:12px; color:var(--el-muted); cursor:pointer; }
 .el-topbar__more:hover { background:var(--el-soft); color:var(--el-ink); }
 .el-menu-scrim { position:fixed; inset:0; z-index:40; }
@@ -2796,8 +2805,10 @@ body { background: var(--el-canvas-warm); }
 @media(max-width:767px) {
   :root { --el-gutter:20px; }
   .el-topbar__inner { padding:18px 20px; min-height:72px; gap:12px; }.el-logo-lockup__name { font-size:24px; }
-  .el-pill-nav,.el-ask-field,.el-topbar__new { display:none; }
-  .el-product-picker { margin-left:auto; }.el-product-picker select { max-width:90px; }.el-topbar__spacer { display:none; }
+  /* The bottom bar's "More" opens the same workspace menu: one gear, not two. */
+  .el-pill-nav,.el-ask-field,.el-topbar__new,.el-topbar__more { display:none; }
+  .el-product-picker { margin-left:auto; }.el-product-picker__button .cf-dropdown__value { max-width:120px; }.el-topbar__spacer { display:none; }
+  .el-product-picker .cf-dropdown__pop { left:auto; right:0; }
   .el-workspace { padding-bottom:calc(64px + env(safe-area-inset-bottom)); }
   .el-bottom-nav { position:fixed; z-index:35; bottom:0; left:0; right:0; display:grid; grid-template-columns:repeat(5,1fr);
     border-top:1px solid var(--el-line); background:var(--el-paper); padding:6px 8px calc(6px + env(safe-area-inset-bottom)); }
@@ -2809,3 +2820,9 @@ body { background: var(--el-canvas-warm); }
 @media(prefers-reduced-motion:reduce) {
   *,*::before,*::after { animation:none !important; scroll-behavior:auto !important; transition:none !important; }
 }
+/* Big monitors: the layout is built in px for a 1200px column, which left a
+   2560px screen two-thirds empty with small text. Scale the whole product up
+   instead, so a large screen reads like a large screen. */
+@media (min-width:1800px) { html { zoom:1.15; } }
+@media (min-width:2200px) { html { zoom:1.3; } }
+@media (min-width:2800px) { html { zoom:1.5; } }

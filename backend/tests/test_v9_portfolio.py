@@ -390,3 +390,19 @@ def test_transfer_stats_refuses_to_claim_a_speedup_without_evidence(session):
     from echolens.portfolio import transfer_stats
     stats = transfer_stats(session)
     assert stats["sufficient"] is False and stats["iterations_saved_pct"] is None
+
+
+def test_the_demo_never_lends_its_scripted_causes_to_a_real_product(session):
+    """Brave's YouTube crashes were seeded with the demo's "4K videos crash the
+    viewer", and every hypothesis then talked about "the Lumo viewer"."""
+    from echolens.patterns import matching_pattern
+    s = session
+    demo = _product(s, "Lumo (demo)", is_demo=True)
+    real = _product(s, "Brave")
+    _confirmed_fix(s, demo, cause="Background sync holds a wakelock, draining battery",
+                   fix="release the wakelock", terms=["battery", "drain", "sync"])
+    target = AnomalyEvent(slug="brave-new", type="theme_volume_surge", metric="battery mentions",
+                          delta=0.3, z=3.0, window="7d", description="battery draining fast after update",
+                          status="pending", product_id=real.id)
+    s.add(target); s.commit()
+    assert matching_pattern(s, target) is None

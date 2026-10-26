@@ -24,7 +24,8 @@ assert.equal(model.headline({ focus:hunch, count:2, drag:.84 }), "Two problems a
 assert.equal(model.headline({ focus:confirmed, count:1, drag:null }), "One problem is worth your time this week.");
 assert.equal(model.headline({ count:0, hasData:false }), "Your first review is the starting point.");
 assert.equal(model.headline({ count:0, hasData:true }), "Nothing needs you right now.");
-assert.equal(model.headline({ count:0, hasData:true, spikes:3 }), "Three review spikes are ready for a decision.");
+assert.equal(model.headline({ count:0, hasData:true, spikes:3 }), "EchoLens found three spikes worth a look.");
+assert.equal(model.headline({ count:0, hasData:true, spikes:3, stale:2 }), "EchoLens found three spikes worth a look.", "new spikes are the news, a broken source is housekeeping");
 assert.equal(model.headline({ count:0, hasData:true, stale:1 }), "One feedback source needs attention.");
 assert.deepEqual(Array.from(model.openProblems([confirmed,hunch], [{ investigation_id:1,status:"watching" }]), x=>x.id), [2]);
 assert.equal(model.liveStep({ kind:"TOOL",text:"search_github_issues(query='sync')" }), "Checking GitHub…");

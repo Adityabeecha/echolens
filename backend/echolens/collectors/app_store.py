@@ -23,8 +23,10 @@ MAX_PAGES = 10
 def parse_app_id(identifier: str) -> str:
     """Canonical numeric identity; never use an arbitrary input URL to fetch."""
     identifier = identifier.strip()
-    if re.fullmatch(r"[0-9]+", identifier):
-        return identifier
+    # "id1435127111" is how Apple shows the id in every store link; people
+    # copy it as is. It crashed onboarding with a 500.
+    if re.fullmatch(r"(?:id)?[0-9]+", identifier, re.I):
+        return identifier.lower().removeprefix("id")
     try:
         url = urlsplit(identifier)
         match = re.search(r"/id([0-9]+)/?$", url.path)
@@ -33,7 +35,8 @@ def parse_app_id(identifier: str) -> str:
             return match[1]
     except ValueError:
         pass
-    raise ValueError("App Store identifier must be digits or an apps.apple.com URL ending in id<digits>")
+    raise ValueError("That App Store ID wasn't recognised. Use the number from the app's store link "
+                     "(e.g. 1435127111) or paste the whole apps.apple.com link.")
 
 
 def _entries(payload) -> list:
@@ -137,11 +140,10 @@ class AppStoreCollector(Collector):
         # those stored rows as well, without rewriting their identity.
         tag = hashlib.sha1(self.product.encode("utf-8")).hexdigest()[:6]
         legacy_id = f"as_{tag}_{review_id}"
-        if session.scalars(select(Review).where(
-                Review.ext_id.in_([ext_id, legacy_id]), Review.product == self.product,
-                Review.source == self.source)).first():
+        if self.existing(session, Review, Review.ext_id, [ext_id, legacy_id], source=self.source):
             return False, wm
-        session.add(Review(
+        self.remember(Review, Review.ext_id, ext_id, True, source=self.source)
+        self.stage(session, Review, **dict(
             source=self.source, ext_id=ext_id, rating=int(raw_rating), text=text,
             version=_label(item, "im:version"), os_version=None,
             created_at=at, product=self.product,

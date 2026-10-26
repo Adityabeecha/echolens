@@ -165,10 +165,11 @@ class GitHubCollector(Collector):
         ext_id = _issue_ext_id(self.identifier, num)
         updated = _dt(item.get("updated_at"))
         wm = iso(updated) if updated else None
-        existing = session.scalars(select(Issue).where(
-            Issue.ext_id == ext_id, Issue.product == self.product)).first()
+        existing = self.existing(session, Issue, Issue.ext_id, ext_id)
         labels = [l.get("name") for l in item.get("labels", []) if isinstance(l, dict)]
         reactions = (item.get("reactions") or {}).get("total_count", 0)
+        if existing is True:      # added earlier in this same page
+            return False, wm
         if existing:  # refresh mutable fields, but it's not a NEW insert
             existing.state = item.get("state", existing.state)
             existing.reactions = reactions
@@ -180,12 +181,13 @@ class GitHubCollector(Collector):
         # wrong window and reads as fresh activity that never happened.
         if created is None:
             return False, wm
-        session.add(Issue(
+        self.stage(session, Issue,
             ext_id=ext_id, title=item.get("title", ""),
             body_snippet=(item.get("body") or "")[:2000],
             state=item.get("state", "open"), reactions=reactions,
             created_at=created, labels=labels, product=self.product,
-        ))
+        )
+        self.remember(Issue, Issue.ext_id, ext_id, True)
         return True, wm
 
     def _ingest_release(self, session: Session, item: dict) -> tuple[bool, str | None]:
@@ -201,13 +203,13 @@ class GitHubCollector(Collector):
         # get_release_notes matches it with a PREFIX LIKE ("3.2%"), so prefixing
         # the repo would break every version lookup the agent makes. Uniqueness
         # is enforced by the (version, product) pair at the query level.
-        if session.scalars(select(Release).where(
-                Release.version == version, Release.product == self.product)).first():
+        if self.existing(session, Release, Release.version, version):
             return False, iso(published) if published else None
-        session.add(Release(
+        self.remember(Release, Release.version, version, True)
+        self.stage(session, Release,
             version=version, notes=(item.get("body") or item.get("name") or "")[:4000],
             released_at=published, product=self.product,
-        ))
+        )
         return True, iso(published) if published else None
 
 

@@ -18,6 +18,7 @@ export function Backlog({onOpenInvestigation,onGoCases,onBack,backLabel}:Props) 
   const reviewer=canReview()&&!isGuest();
   if(!state.plan||!state.draft)return <div className="plan-v2"><ScreenBody>{state.error?<ErrorState title="Couldn't build your plan" detail={state.error} onRetry={state.reload}/>:<Skeleton rows={5} height={64}/>}</ScreenBody></div>;
   const draft=state.draft,plan=preview(state.plan,draft);
+  const hunches=(cases.data?.cases??[]).filter(c=>c.id!=null&&c.status==="needs_human");
   const setOverride=(id:number|string,patch:PlanOverride|null)=>{
     const overrides={...draft.overrides};
     if(patch==null)delete overrides[String(id)];else overrides[String(id)]={...overrides[String(id)],...patch};
@@ -62,7 +63,11 @@ export function Backlog({onOpenInvestigation,onGoCases,onBack,backLabel}:Props) 
     <div id="plan-items" role="tabpanel" aria-label="Planned items" tabIndex={0} className="pl-stack">
       <SerifHeadline as="h2" size="section">In the plan · {plan.proposed.length}</SerifHeadline>
       {plan.proposed.length?plan.proposed.map(i=>row(i,true)):<EmptyState title="Nothing fits this selection yet." action={<Button onClick={onGoCases}>See all problems</Button>}>
-        {plan.deferred.length?"Raise capacity or add one of the items below. Your explicit choices stay yours.":draft.kind === "requests"?"Repeated requests from your reviews will appear here. Connect feedback or check your sources to bring more in.":"Investigate a review spike first. Problems with a finding and no checked fix become planning candidates."}</EmptyState>}
+        {plan.deferred.length?"Raise capacity or add one of the items below. Your explicit choices stay yours.":draft.kind === "requests"?"Repeated requests from your reviews will appear here. Connect feedback or check your sources to bring more in.":hunches.length?"Only proven problems are planned. These were looked into but are still hunches — approve one and it can be planned:":"Investigate a review spike first. Problems with a finding and no checked fix become planning candidates."}
+        {/* "No problems ready" with two hunches sitting one screen away gave no next step. */}
+        {!plan.deferred.length&&draft.kind!=="requests"&&hunches.length>0&&<span style={{display:"flex",flexDirection:"column",gap:6,marginTop:12,alignItems:"center"}}>
+          {hunches.slice(0,5).map(h=><Button key={h.id} size="sm" variant="ghost" onClick={()=>onOpenInvestigation(h.id!,h.status)}>#{h.id} · {h.title}</Button>)}
+        </span>}</EmptyState>}
       <section className="pl-cut pl-stack"><SerifHeadline as="h2" size="section">Next time · {plan.deferred.length}</SerifHeadline>
         {plan.deferred.length?plan.deferred.map(i=>row(i,false)):<p className="pl-muted">Everything in this selection fits. Lower capacity to compare a smaller plan.</p>}
       </section>

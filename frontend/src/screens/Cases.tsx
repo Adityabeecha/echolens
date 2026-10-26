@@ -3,14 +3,14 @@ import {
   CASE_VIEW_FILTERS, CaseRow, CaseViewParams, Incident, SavedView, SignalRow, SpikeCategory, ThemeCandidate,
   api, canReview, errorMessage, isGuest,
 } from "../api";
-import { withToast } from "../components/Toast";
+import { toast, withToast } from "../components/Toast";
 import { money, plural } from "../format";
-import { useAsync } from "../hooks";
+import { useAsync, useDialog } from "../hooks";
 import { SEVERITY } from "../status";
 import { C, R, S, T } from "../theme";
 import { Button, ErrorState, Skeleton } from "../ui";
 import { Icon } from "../components/Icon";
-import { EmptyState, ListRow, PillTabs, SerifHeadline } from "../components/casefile";
+import { Dropdown, EmptyState, ListRow, PillTabs, SerifHeadline } from "../components/casefile";
 import {
   CATEGORY_GROUPS, LEGACY_TABS, PROBLEM_TABS, ProblemSort, ProblemTab, SORTS, detailLine, headline,
   inTab, needsDecision, sortRows, verdictOf,
@@ -61,6 +61,9 @@ export function Cases({
 }: Props) {
   // Order matters to the render checks in scripts/: cases first, then themes.
   const view = useAsync(() => api.cases(), [reloadKey]);
+  // A new product's first read: say so instead of an empty, "all clear" list.
+  const sourceState = useAsync(() => api.sources(), [reloadKey]);
+  const readingFirst = !!sourceState.data?.reading_first;
   const candidates = useAsync(() => api.feedCandidates(), [reloadKey]);
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
@@ -197,12 +200,22 @@ export function Cases({
     setBusy(null);
     if (result) { setSelected({}); setDismissing(false); setReason(""); bumpReload(); }
   };
-  const run = async (label: string, fn: () => Promise<unknown>, success: string) => {
+  const run = async <R,>(label: string, fn: () => Promise<R>, success: string | ((r: R) => string)) => {
     setBusy(label);
     await withToast(fn, { success, failure: `${label} didn't work` });
     setBusy(null);
     bumpReload();
   };
+  // "Pick for me" used to start investigations straight away, with no word on
+  // why one spike beat another. It now shows the picks and reasons first.
+  const [picks, setPicks] = useState<PickDecision[] | null>(null);
+  const previewPicks = async () => {
+    setBusy("Preview");
+    try { setPicks((await api.triage(false)).decisions ?? []); }
+    catch { toast.fail("EchoLens couldn't pick just now. Try again in a moment, or tick spikes yourself.", previewPicks); }
+    finally { setBusy(null); }
+  };
+  const titleOf = (slug: string) => view.data?.signals.find((x) => x.slug === slug)?.title ?? slug;
   // "Investigate now anyway": one deferred item, past today's limit.
   const runNow = async (row: CaseRow) => {
     if (row.queue_id == null) return;
@@ -231,6 +244,7 @@ export function Cases({
 
   const decide = open.filter(needsDecision).length;
   const fixed = open.filter((c) => verdictOf(c) === "fixWorked").length;
+  const firstDay = !!view.data && all.length === 0 && !filtered && !legacy && tab === "all" && spikeCount > 0;
 
   const row = (r: CaseRow) => (
     <ListRowWithExtra key={r.id != null ? `c-${r.id}` : `q-${r.queue_id}`} row={r} reviewer={reviewer}
@@ -254,6 +268,10 @@ export function Cases({
           </SerifHeadline>
         </header>
 
+        {/* A product's first days: no problem exists yet, only spikes. Six tabs
+            reading 0, filters with nothing to filter and a "No problems yet" box
+            pushed the spikes — the only content — below the fold. */}
+        {!firstDay && <>
         {/* tabs, source, search, sort — every value is in the URL */}
         <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
           <div className="pr-toolbar">
@@ -262,11 +280,9 @@ export function Cases({
                 ? `${t.label} ${tabCount(t.id)}` : t.label }))}
               onChange={(t) => setParams({ tab: t === "all" ? null : t })} />
             <span className="pr-toolbar__spacer" />
-            <select className="pr-select" aria-label="Where it came from" value={source}
-              onChange={(e) => setParams({ source: e.target.value || null })}>
-              <option value="">Any source</option>
-              {sources.map((s) => <option key={s} value={s}>{typeLabel(s)}</option>)}
-            </select>
+            <Dropdown label="Where it came from" value={source || ""}
+              options={[{ value: "", label: "Any source" }, ...sources.map((s) => ({ value: s, label: typeLabel(s) }))]}
+              onChange={(v) => setParams({ source: v || null })} />
             <input className="pr-search" type="search" value={search} onChange={(e) => setSearch(e.target.value)}
               placeholder="Search problems…" aria-label="Search problems" />
           </div>
@@ -274,26 +290,22 @@ export function Cases({
             <SavedViewsBar key={productId ?? "none"} productId={productId} params={{ ...params, q: search }}
               onApply={(next) => { setSearch(next.q ?? ""); setParams(next); }} />
             <span className="pr-toolbar__spacer" />
-            <select className="pr-select" aria-label="Sort" value={sort}
-              onChange={(e) => setParams({ sort: e.target.value === "important" ? null : e.target.value })}>
-              {SORTS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-            </select>
+            <Dropdown label="Sort" align="end" value={sort}
+              options={SORTS.map((s) => ({ value: s.id, label: s.label }))}
+              onChange={(v) => setParams({ sort: v === "important" ? null : v })} />
             <button type="button" className="pr-more" aria-expanded={moreOpen} onClick={() => setMoreOpen((o) => !o)}>
               {moreOpen ? "Fewer filters" : "More filters"}
             </button>
           </div>
           {moreOpen && (
             <div className="pr-filters-extra">
-              <select className="pr-select" aria-label="Severity" value={sev}
-                onChange={(e) => setParams({ sev: e.target.value || null })}>
-                <option value="">Any severity</option>
-                {Object.entries(SEVERITY).map(([k, m]) => (
-                  <option key={k} value={k}>{k === "unknown" ? "Impact unknown" : `${m.label} severity`}</option>))}
-              </select>
-              <select className="pr-select" aria-label="Time range" value={range}
-                onChange={(e) => setParams({ range: e.target.value || null })}>
-                {RANGES.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
-              </select>
+              <Dropdown label="Severity" value={sev || ""}
+                options={[{ value: "", label: "Any severity" }, ...Object.entries(SEVERITY).map(([k, m]) => (
+                  { value: k, label: k === "unknown" ? "Impact unknown" : `${m.label} severity` }))]}
+                onChange={(v) => setParams({ sev: v || null })} />
+              <Dropdown label="Time range" value={range}
+                options={RANGES.map((r) => ({ value: r.key, label: r.label }))}
+                onChange={(v) => setParams({ range: v || null })} />
             </div>
           )}
           {legacy && (
@@ -327,6 +339,7 @@ export function Cases({
             </details>
           )}
         </section>
+        </>}
 
         {/* ── New spikes: noticed, not yet a problem ── */}
         <section ref={spikesRef} className="pr-section" aria-labelledby="pr-spikes-title" style={{ scrollMarginTop: 16 }}>
@@ -334,28 +347,39 @@ export function Cases({
             <SerifHeadline as="h2" size="section" id="pr-spikes-title">New spikes</SerifHeadline>
             <span style={{ fontSize: T.sm, color: C.muted }}>{items.length} waiting</span>
             <span className="pr-head__spacer" />
-            <select className="pr-select" aria-label="Kind of spike" value={intent}
-              onChange={(e) => setParams({ intent: e.target.value || null })}>
-              <option value="">Every kind</option>
-              {CATEGORY_GROUPS.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
-            </select>
+            <Dropdown label="Kind of spike" align="end" value={intent || ""}
+              options={[{ value: "", label: "Every kind" }, ...CATEGORY_GROUPS.map((g) => ({ value: g.id as string, label: g.label }))]}
+              onChange={(v) => setParams({ intent: v || null })} />
             {reviewer && (
               <>
-                <Button variant="ghost" size="sm" disabled={!!busy} loading={busy === "Scan"}
-                  title="Look for new spikes in the latest reviews and issues"
-                  onClick={() => run("Scan", () => api.scan(), "Scan finished — anything new is listed below.")}>
+                <Button variant="ghost" size="sm" loading={busy === "Scan"}
+                  disabled={!!busy || readingFirst}
+                  title={readingFirst ? "Available once the first reviews have been read" : "Look for new spikes in the latest reviews and issues"}
+                  onClick={() => run("Scan", () => api.scan(), (r) => r.reading_first && r.message
+                    ? r.message : "Scan finished — anything new is listed below.")}>
                   Scan now</Button>
-                <Button variant="ghost" size="sm" disabled={!!busy} loading={busy === "Triage"}
-                  title="Let EchoLens pick which spikes are worth looking into (triage)"
-                  onClick={() => run("Triage", () => api.triage(true), "Done — the spikes worth it are being looked into.")}>
+                <Button variant="ghost" size="sm" disabled={!!busy || readingFirst} loading={busy === "Preview"}
+                  title="See which spikes EchoLens would look into, and why, before anything starts"
+                  onClick={previewPicks}>
                   Pick for me</Button>
               </>
             )}
           </div>
+          {picks && (
+            <PickPreview picks={picks} titleOf={titleOf} onCancel={() => setPicks(null)}
+              onStart={() => { setPicks(null); void run("Triage", () => api.triage(true),
+                (r) => r.summary || "Started — the picked spikes are being looked into."); }} />
+          )}
           <p className="pr-section__note">
             Things EchoLens noticed but hasn't looked into. Tick what's worth it and look into them together —
             they run one at a time, inside today's limit.
           </p>
+          {readingFirst && (
+            <EmptyState title="Still reading your first reviews.">
+              Spikes are found by comparing what people say over time, so there is nothing to compare until the first
+              read finishes — usually a minute or two. This list fills in on its own.
+            </EmptyState>
+          )}
 
           {groups.length === 0 && takenThemes.length === 0 && dismissedSpikes.length === 0 && (
             <EmptyState title="No new spikes.">
@@ -598,6 +622,53 @@ export function SavedViewsBar({ productId, params, onApply }: {
         Couldn't load saved views. <button className="el-btn el-btn--sm" onClick={views.reload}>Retry</button>
       </div>}
       {error && <div role="alert" style={{ fontSize: T.sm, color: C.ink }}>{error}</div>}
+    </div>
+  );
+}
+
+
+type PickDecision = { anomaly: string; decision: "investigate" | "ignore" | "merge"; reason: string;
+                      budget_tier: string | null; merge_into: string | null };
+
+/** What "Pick for me" would do, and why, before it spends anything. */
+function PickPreview({ picks, titleOf, onStart, onCancel }: {
+  picks: PickDecision[]; titleOf: (slug: string) => string; onStart: () => void; onCancel: () => void;
+}) {
+  const ref = useDialog(onCancel);
+  const go = picks.filter((p) => p.decision === "investigate");
+  const rest = picks.filter((p) => p.decision !== "investigate");
+  return (
+    <div className="el-overlay-scrim" onClick={onCancel}
+      style={{ position: "fixed", inset: 0, background: "var(--el-scrim)", zIndex: 60,
+        display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div ref={ref} role="dialog" aria-modal="true" aria-labelledby="pick-title" className="el-overlay-panel"
+        onClick={(e) => e.stopPropagation()}
+        style={{ background: "var(--el-bg)", borderRadius: 16, padding: 24, maxWidth: 560, width: "100%",
+          maxHeight: "80vh", overflow: "auto", boxShadow: "var(--el-shadow-lg, 0 20px 60px rgba(0,0,0,.25))" }}>
+        <SerifHeadline as="h2" size="section" id="pick-title">
+          {go.length ? `EchoLens would look into ${go.length === 1 ? "this one" : `these ${go.length}`}.`
+            : "Nothing here is worth an investigation yet."}
+        </SerifHeadline>
+        {go.length > 0 && <ul style={{ margin: "14px 0", paddingLeft: 18, display: "grid", gap: 10 }}>
+          {go.map((p) => <li key={p.anomaly}><strong>{titleOf(p.anomaly)}</strong>
+            <div style={{ fontSize: 13, color: "var(--el-muted)" }}>{p.reason}</div></li>)}
+        </ul>}
+        {rest.length > 0 && <details style={{ margin: "10px 0", fontSize: 13 }}>
+          <summary style={{ cursor: "pointer" }}>{rest.length} skipped — why</summary>
+          <ul style={{ paddingLeft: 18, display: "grid", gap: 8, marginTop: 8 }}>
+            {rest.map((p) => <li key={p.anomaly}><strong>{titleOf(p.anomaly)}</strong> — {p.decision === "merge"
+              ? `same problem as “${titleOf(p.merge_into ?? "")}”` : p.reason}</li>)}
+          </ul>
+        </details>}
+        <p style={{ fontSize: 13, color: "var(--el-muted)" }}>
+          Each one runs in the background, inside today's limit, and costs a few cents at most.
+        </p>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+          <Button variant="ghost" onClick={onCancel}>{go.length ? "Not now" : "Close"}</Button>
+          {go.length > 0 && <Button variant="primary" onClick={onStart}>
+            Look into {go.length === 1 ? "it" : `these ${go.length}`}</Button>}
+        </div>
+      </div>
     </div>
   );
 }

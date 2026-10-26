@@ -516,7 +516,10 @@ def signal_rows(session: Session, product_id: int | None,
     feed unreadable.
     """
     now = as_of or datetime.now(timezone.utc)
-    stmt = select(AnomalyEvent).where(AnomalyEvent.merged_into_id.is_(None))
+    # A closed anomaly that never became a case is finished with (a spike a
+    # rescan no longer finds, a cancelled theme): it is not something to pick.
+    stmt = select(AnomalyEvent).where(AnomalyEvent.merged_into_id.is_(None),
+                                      AnomalyEvent.status != "closed")
     if product_id is not None:
         stmt = stmt.where(AnomalyEvent.product_id == product_id)
     anomalies = list(session.scalars(stmt.order_by(AnomalyEvent.id.desc())).all())

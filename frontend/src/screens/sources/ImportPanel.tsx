@@ -1,3 +1,4 @@
+import { Dropdown } from "../../components/casefile";
 import { DragEvent, useEffect, useRef, useState } from "react";
 import { ImportField, ImportMapping, ImportPreview, api, errorMessage } from "../../api";
 import { Button } from "../../ui";
@@ -107,11 +108,10 @@ export function ImportPanel({ onDone, onCancel }: { onDone: (message: string) =>
             {FIELDS.map((f) => (
               <label key={f.id} className="ps-field" title={f.hint}>
                 <span>{f.label}{f.id === "text" ? " *" : ""}</span>
-                <select className="ps-select" value={mapping?.[f.id] ?? ""}
-                  onChange={(e) => setMapping({ ...(mapping ?? {}), [f.id]: e.target.value || null })}>
-                  <option value="">{f.id === "text" ? "Choose a column" : "Not in this file"}</option>
-                  {columns.map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
+                <Dropdown block label={f.label} value={mapping?.[f.id] ?? ""}
+                  options={[{ value: "", label: f.id === "text" ? "Choose a column" : "Not in this file" },
+                    ...columns.map((c) => ({ value: c, label: c }))]}
+                  onChange={(v) => setMapping({ ...(mapping ?? {}), [f.id]: v || null })} />
               </label>
             ))}
           </fieldset>

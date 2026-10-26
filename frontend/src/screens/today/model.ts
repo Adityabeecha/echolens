@@ -11,15 +11,21 @@ export function openProblems(rows: CaseRow[], watches: FixWatchRow[]): CaseRow[]
 }
 
 const numberWord = (n: number) => ["No", "One", "Two", "Three", "Four", "Five"][n] ?? String(n);
-export function headline({ focus, count, drag, hasData = true, spikes = 0, stale = 0 }: {
+export function headline({ focus, count, drag, hasData = true, spikes = 0, stale = 0, readingFirst = false, product }: {
   focus?: CaseRow; count: number; drag?: number | null; hasData?: boolean; spikes?: number; stale?: number;
+  readingFirst?: boolean; product?: string;
 }): string {
+  // Before the first read finishes, "Nothing needs you" is an all-clear nobody measured.
+  if (readingFirst) return `Reading ${product ? `${product}'s` : "your"} first reviews…`;
   if (focus && stampFor(focus) === "confirmed" && drag != null && drag > 0) {
     return `One bug costs about ${drag.toFixed(2)} ${drag === 1 ? "star" : "stars"}.`;
   }
   if (count > 0) return `${numberWord(count)} ${count === 1 ? "problem is" : "problems are"} worth your time this week.`;
+  // New spikes are news; a source that couldn't be read is housekeeping. On a
+  // product's first day the headline led with the broken source and the three
+  // spikes onboarding had just announced were nowhere on Today.
+  if (spikes > 0) return `EchoLens found ${numberWord(spikes).toLowerCase()} ${spikes === 1 ? "spike" : "spikes"} worth a look.`;
   if (stale > 0) return `${numberWord(stale)} feedback ${stale === 1 ? "source needs" : "sources need"} attention.`;
-  if (spikes > 0) return `${numberWord(spikes)} review ${spikes === 1 ? "spike is" : "spikes are"} ready for a decision.`;
   return hasData ? "Nothing needs you right now." : "Your first review is the starting point.";
 }
 
