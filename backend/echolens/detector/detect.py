@@ -14,6 +14,7 @@ from __future__ import annotations
 import statistics
 from collections import defaultdict
 from dataclasses import dataclass, field
+import re
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
@@ -394,14 +395,17 @@ def detect_theme_surges(session: Session, as_of: datetime | None = None,
         if z < SEV3_Z or statistics.mean(recent) < 3:
             continue
         cutoff = (as_of - timedelta(days=win.recent)).date()
-        hits = sum(1 for r in reviews
+        matched = [r for r in reviews
                    if (r.rating or 5) <= 2 and cutoff < r.created_at.date() <= as_of.date()
-                   and match_score(analysis_text(r), terms) > 0)
+                   and match_score(analysis_text(r), terms) > 0]
+        hits = len(matched)
+        newest = max(matched, key=lambda r: r.created_at, default=None)
         out.append(Candidate(
             slug=f"auto-theme-{term.replace(' ', '-')}", type="theme_volume_surge",
             metric=f"{label} share of negative reviews", delta=delta, z=z, window=f"{win.recent}d",
             description=f"{label}: {statistics.mean(recent):.0f}% of recent negatives vs "
-                        f"{statistics.mean(baseline):.0f}% baseline (z={z}).{win.note}",
+                        f"{statistics.mean(baseline):.0f}% baseline (z={z}).{win.note}"
+                        + (f" Example: “{_example(newest.text)}”" if newest is not None else ""),
             severity=_severity(z),
             support=hits,
         ))
@@ -451,7 +455,10 @@ def detect_issue_velocity(session: Session, as_of: datetime | None = None,
                        list(texts.values()), k=3, product=product)])
     for term, label in issue_terms:
         terms = terms_of(term)
-        hits = [i for i in issues if match_score(texts[i.id], terms) > 0]
+        # Every word of the topic, not any: "open database" counted every issue
+        # that said "open" (39 a week on KeePassXC, really a handful).
+        # The topic was mined as a phrase, so it is counted as one.
+        hits = [i for i in issues if _says(texts[i.id], terms)]
         series = _daily_counts(hits, lambda i: i.created_at.date(), start, as_of)
         baseline, recent = series[:-win.recent], series[-win.recent:]
         z, delta = _zscore(recent, baseline)
@@ -474,11 +481,19 @@ def detect_issue_velocity(session: Session, as_of: datetime | None = None,
         expected = baseline_rate * len(recent)
         if z <= 0 or recent_count <= expected:
             continue
+        # The usual rate and one real title, so the row can say "9 new issues
+        # this week, about 2 in a normal week, e.g. …" instead of "7d window".
+        cutoff = as_of - timedelta(days=win.recent)
+        newest = max((i for i in hits if _aware(i.created_at) > cutoff),
+                     key=lambda i: i.created_at, default=None)
+        weekly = baseline_rate * 7
         out.append(Candidate(
             slug=f"auto-issues-{term.split()[0]}", type="issue_velocity_surge",
             metric=f"{label} per week", delta=delta, z=z, window=f"{RECENT_DAYS}d",
             description=f"{label}: {recent_count:.0f} new issues this week (z={z}); "
-                        f"same window and theme as the review signal.",
+                        f"same window and theme as the review signal. Usual: ~{weekly:.0f} a week."
+                        + (f" Example: “{_example_about(newest.title, texts[newest.id], terms)}”"
+                           if newest is not None else ""),
             # The measured z, not max(z, SEV2_Z). Forcing SEV2 made every
             # surviving candidate look at least moderately severe, and scan()'s
             # noise gate exempts SEV1/SEV2 from the z check — so the floor
@@ -486,6 +501,30 @@ def detect_issue_velocity(session: Session, as_of: datetime | None = None,
             severity=_severity(z),
         ))
     return out
+
+
+def _example(text: str | None, cap: int = 110) -> str:
+    """One real line people wrote, short enough for a list row."""
+    t = " ".join((text or "").split()).replace("“", "\"").replace("”", "\"")
+    return t if len(t) <= cap else t[: cap - 1].rstrip() + "…"
+
+
+def _example_about(title: str | None, text: str, terms: list[str]) -> str:
+    """The title when it names the topic, else the sentence that does. A title
+    like "Can not install 2.8.0" under "system tray" read as a wrong example."""
+    if _says(title, terms):
+        return _example(title)
+    for sentence in re.split(r"(?<=[.!?])\s+|\n", text or ""):
+        if _says(sentence, terms):
+            return _example(sentence)
+    return _example(title)
+
+
+def _says(text: str | None, terms: list[str]) -> bool:
+    """The topic's words, together and in order, as whole words: "open
+    database" no longer matches "opens" next to "database" three lines down."""
+    flat = f" {re.sub(r'[^a-z0-9]+', ' ', (text or '').lower())} "
+    return f" {' '.join(terms)} " in flat
 
 
 def _bot_filed(issue: Issue) -> bool:

@@ -755,6 +755,8 @@ export interface Incident {
   strength?: SpikeStrength;
 }
 export interface SignalRow {
+  /** What happened in one plain sentence: how many, against normal, one real example. */
+  summary?: string;
   id?: number;
   slug: string;
   title: string;

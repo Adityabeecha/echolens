@@ -241,11 +241,16 @@ def _anomaly_headline(session, a: AnomalyEvent, top_themes: dict | None = None) 
     if a.type == "fix_regression":
         return f"Fix didn't hold — “{metric}” complaints continue"
     if a.type == "theme_volume_surge":
+        from echolens.cases import spike_term
+        term = spike_term(metric)
+        if term:
+            return f"More complaints about “{term}”"
         label = metric.split(" share of")[0].split(" on ")[0].strip() or "complaints"
         return f"{label[:1].upper()}{label[1:]} rising"
     if a.type == "issue_velocity_surge":
-        label = metric.split(" per week")[0].strip() or "issue reports"
-        return f"{label[:1].upper()}{label[1:]} piling up on GitHub"
+        from echolens.cases import spike_term
+        term = spike_term(metric)
+        return f"More GitHub issues about “{term}”" if term else "More GitHub issues than usual"
     if a.type == "rating_drop":
         return "Average rating falling"
     if a.type == "negative_review_spike":

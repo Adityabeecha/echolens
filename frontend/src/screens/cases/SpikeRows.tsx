@@ -87,8 +87,10 @@ export function SpikeRow({ signal, selected, onToggle, onLook, busy }: {
         aria-label={`Select: ${signal.title}`} />}
       left={<Strength value={strength} z={signal.z} />}
       title={signal.title}
-      meta={<>{[typeLabel(signal.type), `${signal.window} window`, noticed(signal.age_days)]
-        .filter(Boolean).join(" · ")}</>}
+      // The sentence says what happened; "GitHub issues · 7d window" did not.
+      meta={<>{signal.summary
+        ? [signal.summary, noticed(signal.age_days)].filter(Boolean).join(" · ")
+        : [typeLabel(signal.type), `${signal.window} window`, noticed(signal.age_days)].filter(Boolean).join(" · ")}</>}
       actions={<LookInto onLook={onLook} busy={busy} />} />
   );
 }
