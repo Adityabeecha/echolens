@@ -152,6 +152,76 @@ def _signals_answer(hits: list[dict], prefix: str = "") -> dict:
                     "investigated it — so there's no verified cause yet."}
 
 
+# the user wants to know what people are SAYING (→ answer from the reviews)
+FEEDBACK_MARKERS = (
+    "complaining", "complain about", "review", "users say", "people say", "saying",
+    "feedback", "users hate", "users want", "asking for", "users like",
+)
+# Words that make up "what are users complaining about in the store reviews?"
+# itself. Anything left over is a topic ("…about tabs"), which goes to search.
+_GENERAL_WORDS = {
+    "what", "are", "is", "the", "our", "my", "users", "user", "people", "customers", "complaining",
+    "complain", "complaint", "complaints", "about", "most", "mostly", "main", "top", "biggest",
+    "in", "on", "google", "play", "app", "apple", "store", "stores", "and", "reviews", "review",
+    "saying", "say", "said", "feedback", "hate", "want", "like", "asking", "for", "lately",
+    "recently", "this", "week", "month", "do", "does", "of", "all", "with", "from",
+}
+
+
+def _not_confirmed_yet(session: Session, product_id: int | None, label: str) -> str:
+    """"Nothing investigated" was said even after two cases had run and landed
+    as hunches; say what actually happened."""
+    stmt = select(Investigation.id)
+    if product_id is not None:
+        stmt = stmt.where(Investigation.product_id == product_id)
+    n = len(session.scalars(stmt).all())
+    if not n:
+        return f"Nothing{label} has been investigated yet, so I can't name a cause."
+    return (f"EchoLens has looked into {n} problem{'s' if n != 1 else ''}{label}, but none is "
+            "confirmed yet, so I can't name a proven cause.")
+
+
+def _feedback_answer(session: Session, product_id: int | None, product_name: str | None) -> dict | None:
+    """What the reviews themselves say, counted, with one quote per theme. It
+    reads the reviews EchoLens collected instead of only its case records, and
+    says plainly that this is what people wrote, not a verified cause."""
+    from datetime import timedelta
+    from sqlalchemy import func
+    from echolens.db.models import Review
+    from echolens.detector.detect import reference_now
+    from echolens.textkit import is_probably_english, top_themes
+    from echolens.tools._util import snippet
+    days = 90
+    since = reference_now(session, product_name) - timedelta(days=days)
+    scope = [Review.created_at >= since] + ([Review.product == product_name] if product_name else [])
+    # Two bounded queries, whatever the size of the corpus.
+    total = session.scalar(select(func.count(Review.id)).where(*scope)) or 0
+    rows = session.execute(select(Review.ext_id, Review.rating, Review.text)
+                           .where(*scope, Review.rating <= 2)
+                           .order_by(Review.created_at.desc()).limit(2000)).all()
+    negatives = [r for r in rows if is_probably_english(r.text)]
+    themes = [t for t in top_themes([r.text or "" for r in negatives], k=6) if t.get("count", 0) >= 2][:3]
+    if not themes:
+        return None
+    snap = {"window_days": days, "negatives": len(rows), "reviews": total}
+    parts, quotes = [], []
+    for t in themes:
+        words = t["label"].lower().split()
+        quote = next((r for r in negatives if all(w in (r.text or "").lower() for w in words)), None)
+        parts.append(f"“{t['label']}” ({t['count']} reviews)")
+        if quote is not None:
+            quotes.append({"theme": t["label"], "ref": quote.ext_id, "rating": quote.rating,
+                           "text": snippet(quote.text or "", 180)})
+    lead = quotes[0] if quotes else None
+    return {"type": "answer", "citations": [], "grounded": True, "basis": basis_raw_search(),
+            "quotes": quotes,
+            "text": (f"In the last {snap['window_days']} days, {snap['negatives']} of {snap['reviews']} reviews"
+                     f"{' for ' + product_name if product_name else ''} were 1–2★. The most common complaints: "
+                     + ", ".join(parts) + "."
+                     + (f" One reviewer: “{lead['text']}”" if lead else "")
+                     + " This is what people wrote, not a verified cause — ask me to investigate one to find out why.")}
+
+
 def route(session: Session, message: str, product_id: int | None = None,
           product_name: str | None = None) -> dict:
     """Decide how to answer, using ONLY the active product's cases. Returns:
@@ -163,6 +233,15 @@ def route(session: Session, message: str, product_id: int | None = None,
     if not msg:
         return {"type": "answer", "text": "Ask me about a complaint, a cause, or what to fix next.",
                 "citations": [], "basis": basis_none()}
+
+    # "What are users complaining about most?" is a question about the reviews,
+    # not about cases. The "most" sent it down the ranking path, which answered
+    # from GitHub spike titles while 364 store reviews sat unread.
+    if (any(m in msg for m in FEEDBACK_MARKERS) and not any(m in msg for m in INVESTIGATE_MARKERS)
+            and not set(tokenize(msg)) - _GENERAL_WORDS):
+        said = _feedback_answer(session, product_id, product_name)
+        if said is not None:
+            return said
 
     # A ranking question with nothing investigated yet used to fall through to
     # "No investigations yet" — or, via the ask agent, five model calls and
@@ -178,7 +257,7 @@ def route(session: Session, message: str, product_id: int | None = None,
             n = len(waiting)
             return {"type": "answer", "citations": [], "grounded": True,
                     "basis": basis_signals(), "signals": signals, "signal_count": n,
-                    "text": (f"Nothing{label} has been investigated yet, so I can't name a cause. "
+                    "text": (_not_confirmed_yet(session, product_id, label) + " "
                              f"There {'is' if n == 1 else 'are'} {n} incident{'s' if n != 1 else ''} waiting. "
                              f"The strongest incident is “{top['title']}”"
                              + (f", followed by {rest}" if rest else "") +

@@ -1476,6 +1476,14 @@ def onboard(body: OnboardBody, user: dict = Depends(require_role("admin"))) -> d
                                      "Choose issues or pull requests as well, or skip GitHub for now.")
     if repo and not github_sources:
         raise HTTPException(422, "select at least one GitHub source")
+    # Checked before anything is saved: a bad App Store id used to raise inside
+    # the transaction and come back as a bare 500 after the product was half made.
+    if body.app_store and body.app_store.strip():
+        from echolens.collectors.app_store import parse_app_id
+        try:
+            parse_app_id(body.app_store)
+        except ValueError as err:
+            raise HTTPException(422, str(err))
     product = (body.product or "").strip() or body.play_store.strip()
     with session_scope() as session:
         from echolens.db.models import Product
@@ -3658,14 +3666,20 @@ def finding_github_issue(finding_id: int, product_id: int | None = None,
 
 
 @app.get("/integrations/trackers")
-def integrations_trackers(user: dict = Depends(current_user)) -> dict:
-    """Which issue trackers this deployment can file to. Booleans only — the
-    credentials themselves never leave the server."""
+def integrations_trackers(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    """Which issue trackers this deployment can file to, and WHERE for this
+    product. Booleans and names only — credentials never leave the server.
+    "GitHub: Connected" hid that a Brave problem would be filed into
+    brave/brave-browser, a repo the team doesn't own."""
     from echolens.integrations.trackers import TRACKERS, configured_trackers
     configured = configured_trackers()
     labels = {"github": "GitHub", "linear": "Linear", "jira": "Jira"}
-    return {"trackers": [{"id": t, "label": labels[t], "configured": configured[t]}
-                         for t in TRACKERS]}
+    with session_scope() as session:
+        prod = _scope(session, product_id, user)
+        repo = _github_repo(session, prod.id if prod else None)
+    targets = {"github": repo, "jira": settings.jira_project_key or None, "linear": None}
+    return {"trackers": [{"id": t, "label": labels[t], "configured": configured[t],
+                          "target": targets.get(t)} for t in TRACKERS]}
 
 
 class TicketEdits(BaseModel):
@@ -4795,10 +4809,19 @@ _SOURCE_META = {
 }
 
 
+# Sources stored as FeedbackEntry rows, by the channel they are filed under.
+_FEEDBACK_CHANNEL = {"hacker_news": "hacker_news", "stack_overflow": "stack_overflow",
+                     "github_discussions": "github_discussion", "github_activity": "github_pr"}
+# Search-based sources, with what to try when a search finds nothing.
+_SEARCHED = {"hacker_news": "Try the product's plain name, e.g. “Brave”.",
+             "stack_overflow": "Stack Overflow searches by tag; try the tag people use, e.g. “brave-browser”.",
+             "github_activity": "PRs and commits appear once the repo has recent activity."}
+
+
 @app.get("/sources")
 def sources(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     from echolens.collectors.registry import source_health
-    from echolens.db.models import CollectorState
+    from echolens.db.models import CollectorState, FeedbackEntry
     with session_scope() as session:
         prod = _scope(session, product_id, user)
         s_stmt = select(CollectorState)
@@ -4818,6 +4841,12 @@ def sources(product_id: int | None = None, user: dict = Depends(current_user)) -
                     Review.product == st.product, Review.source == st.source)) or 0
             elif st.source == "github":
                 vol = session.scalar(select(func.count(Issue.id)).where(Issue.product == st.product)) or 0
+            elif st.source in _FEEDBACK_CHANNEL:
+                # Was hard-coded 0: Hacker News, Stack Overflow and PRs read
+                # dozens of items and still showed "Healthy · 0 items".
+                vol = session.scalar(select(func.count(FeedbackEntry.id)).where(
+                    FeedbackEntry.product == st.product,
+                    FeedbackEntry.channel == _FEEDBACK_CHANNEL[st.source])) or 0
             else:
                 vol = 0
             h = health.get((st.source, st.identifier), {})
@@ -4832,6 +4861,10 @@ def sources(product_id: int | None = None, user: dict = Depends(current_user)) -
                 why = f"collector failed at {when}: {st.last_error}"
             elif stale and h.get("stale_since"):
                 why = f"no successful pull since {h['stale_since']}"
+            elif vol == 0 and st.status == "healthy" and st.source in _SEARCHED:
+                # Read fine, found nothing: say so rather than a bare green badge.
+                why = (f"Read fine, but nothing matches “{st.identifier}” yet. "
+                       f"{_SEARCHED[st.source]}")
             off = inert_reason(st.source)
             if off:
                 # Connected before it became unreadable here (Chrome's endpoint

@@ -63,6 +63,7 @@ function screen(role, status = "Healthy") {
     // Shared parts, the import panel and the stylesheet render as named stubs.
     "../components/casefile": new Proxy({}, { get: (_, key) => String(key) }),
     "./sources/ImportPanel": { ImportPanel: "ImportPanel" },
+    "../components/Toast": { toast: { ok() {}, info() {}, fail() {} } },
     "./settings/ps.css": {},
   };
   vm.runInNewContext(compile("../src/screens/Sources.tsx"), { exports,

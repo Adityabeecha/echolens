@@ -5,12 +5,16 @@ import { useAsync, useDialog } from "../hooks";
 import { Button, Centered, ErrorState } from "../ui";
 import { Dropdown, SerifHeadline } from "../components/casefile";
 import { ImportPanel } from "./sources/ImportPanel";
+import { toast } from "../components/Toast";
 import "./settings/ps.css";
 
 /** The collector's status, as one of four plain states. */
-type State = "healthy" | "late" | "broken" | "reading" | "waiting" | "off";
-function stateOf(status: string): State {
+type State = "healthy" | "late" | "broken" | "reading" | "waiting" | "off" | "empty";
+function stateOf(status: string, volume?: string): State {
   if (status === "Unavailable") return "off";
+  // Read without error but found nothing: a green "Healthy" next to "0 items"
+  // read as either a broken search or a silent failure.
+  if (status === "Healthy" && /^0 /.test(volume ?? "")) return "empty";
   if (status === "Healthy") return "healthy";
   if (status === "Error" || status === "Disconnected") return "broken";
   if (status === "Syncing…") return "reading";
@@ -19,7 +23,7 @@ function stateOf(status: string): State {
 }
 const STATE_WORDS: Record<State, string> = {
   healthy: "Healthy", late: "Late", broken: "Broken", reading: "Reading now", waiting: "Not read yet",
-  off: "Can't be read",
+  off: "Can't be read", empty: "Nothing found yet",
 };
 
 /**
@@ -71,7 +75,13 @@ export function Sources({ onAddProduct, productName, openImport = false }: {
     setMsg(null);
     try {
       const r = await api.collectorsRetry(source, identifier);
-      setMsg(r.error ? `Reading ${identifier} didn't work: ${r.error}` : `Read ${identifier} — ${count(r.inserted)} new ${plural(r.inserted, "item")}.`);
+      // A toast as well as the banner: the banner sits at the top of the page,
+      // out of sight when "Read now" was pressed on a row further down.
+      const said = r.error ? `Reading ${identifier} didn't work: ${r.error}`
+        : r.inserted ? `Read ${identifier} — ${count(r.inserted)} new ${plural(r.inserted, "item")}.`
+        : `Read ${identifier} — up to date, nothing new since the last read.`;
+      setMsg(said);
+      if (r.error) toast.fail(said); else toast.ok(said);
       reload();
     } catch (e) {
       setMsg(String(e).replace("Error: ", ""));
@@ -87,8 +97,10 @@ export function Sources({ onAddProduct, productName, openImport = false }: {
       const r = await api.collectorsRun();
       const got = r.results.reduce((n, x) => n + x.inserted, 0);
       const failed = r.results.filter((x) => x.error).length;
-      setMsg(`Read ${count(got)} new ${plural(got, "item")} across ${r.results.length} ${plural(r.results.length, "source")} in ${r.duration_seconds.toFixed(1)}s${
-        failed ? ` — ${failed} ${plural(failed, "source needs", "sources need")} a look.` : "."}`);
+      const said = `Read ${count(got)} new ${plural(got, "item")} across ${r.results.length} ${plural(r.results.length, "source")} in ${r.duration_seconds.toFixed(1)}s${
+        failed ? ` — ${failed} ${plural(failed, "source needs", "sources need")} a look.` : "."}`;
+      setMsg(said);
+      if (failed) toast.info(said); else toast.ok(said);
       reload();
     } catch (e) {
       setMsg(String(e).replace("Error: ", ""));
@@ -119,7 +131,7 @@ export function Sources({ onAddProduct, productName, openImport = false }: {
   }
 
   const connected = data?.connected ?? [];
-  const states = connected.map((s) => stateOf(s.status));
+  const states = connected.map((s) => stateOf(s.status, s.volume));
   const needLook = states.filter((s) => s === "broken" || s === "late").length;
   // Off sources (can't run on this server) are neither reading nor broken.
   const off = states.filter((s) => s === "off").length;
@@ -220,7 +232,7 @@ export function Sources({ onAddProduct, productName, openImport = false }: {
                       <strong>{s.name}</strong>
                       <span title={s.detail}>{s.detail}</span>
                     </div>
-                    <span className={`ps-state is-${st === "waiting" || st === "off" ? "late" : st}`}>
+                    <span className={`ps-state is-${st === "waiting" || st === "off" || st === "empty" ? "late" : st}`}>
                       <i className="ps-dot" aria-hidden />{STATE_WORDS[st]}
                     </span>
                     <div className="ps-source__when" title={s.why || undefined}>

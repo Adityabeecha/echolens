@@ -100,9 +100,21 @@ def _loaded_resolution_rate(d: dict) -> float:
 def _fix_next(d: dict, resolution_rate: float, now) -> dict | None:
     """Rank open problems by severity × volume × persistence × (1 − resolution)."""
     confirmed = {w.investigation_id for w in d["watches"] if w.status == "confirmed"}
-    best, best_score = None, -1.0
     from echolens.review import decision_hides
-    for inv in d["invs"] + d["pending"]:
+    # A proven cause always outranks a hunch. The brief said "Fix next" about a
+    # 40%-sure Brave hunch while every other screen refused to act on it; with
+    # only hunches, the next step is a decision, not a fix.
+    for pool, proven in ((d["invs"], True), (d["pending"], False)):
+        pick = _best_open(d, pool, confirmed, resolution_rate, now, decision_hides)
+        if pick is not None:
+            return {**pick, "proven": proven}
+    return None
+
+
+def _best_open(d: dict, pool: list, confirmed: set, resolution_rate: float, now,
+               decision_hides) -> dict | None:
+    best, best_score = None, -1.0
+    for inv in pool:
         if inv.id in confirmed:
             continue
         f = d["latest"].get(inv.id)
@@ -182,7 +194,11 @@ def _compose(d: dict, now) -> dict:
         lines.append(f"• Chronic: “{chronic[0]['label']}” unresolved {chronic[0]['age_days']}d "
                      f"(case #{chronic[0]['cases'][0]}).")
     if fix_next:
-        lines.append(f"→ Fix next: {fix_next['summary']} (case #{fix_next['investigation_id']}).")
+        if fix_next["proven"]:
+            lines.append(f"→ Fix next: {fix_next['summary']} (case #{fix_next['investigation_id']}).")
+        else:
+            lines.append(f"→ Decide next: {fix_next['summary']} (case #{fix_next['investigation_id']}) "
+                         "is not proven yet — approve it, challenge it, or give it more budget.")
 
     return {
         "generated": now.date().isoformat(),

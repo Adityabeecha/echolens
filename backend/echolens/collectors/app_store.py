@@ -23,8 +23,10 @@ MAX_PAGES = 10
 def parse_app_id(identifier: str) -> str:
     """Canonical numeric identity; never use an arbitrary input URL to fetch."""
     identifier = identifier.strip()
-    if re.fullmatch(r"[0-9]+", identifier):
-        return identifier
+    # "id1435127111" is how Apple shows the id in every store link; people
+    # copy it as is. It crashed onboarding with a 500.
+    if re.fullmatch(r"(?:id)?[0-9]+", identifier, re.I):
+        return identifier.lower().removeprefix("id")
     try:
         url = urlsplit(identifier)
         match = re.search(r"/id([0-9]+)/?$", url.path)
@@ -33,7 +35,8 @@ def parse_app_id(identifier: str) -> str:
             return match[1]
     except ValueError:
         pass
-    raise ValueError("App Store identifier must be digits or an apps.apple.com URL ending in id<digits>")
+    raise ValueError("That App Store ID wasn't recognised. Use the number from the app's store link "
+                     "(e.g. 1435127111) or paste the whole apps.apple.com link.")
 
 
 def _entries(payload) -> list:

@@ -305,10 +305,24 @@ _COMMENT = re.compile(r"<!--.*?-->", re.S)
 # Links, fenced code and inline code are pasted context (logs, stack traces,
 # URLs), not the reporter's words: "github com" was a top "theme".
 _NOISE = re.compile(r"```.*?```|`[^`\n]*`|!\[[^\]]*\]\([^)]*\)|<[^>\n]+>|https?://\S+|www\.\S+", re.S)
+# Build and environment stamps ("Brave: 1.95.102 Chromium: 153.0.8010.48
+# (Official Build) (64-bit) Revision: 72a3…") are pasted into most reports;
+# "official build" became a spike on Brave.
+_ENV = re.compile(r"\b(?:chromium|revision|build|version)\b\s*[:|]?\s*\d\S*|\(official build\)|\(\d{2}-bit\)"
+                  r"|\b\d+(?:\.\d+){2,}\S*", re.I)
 
 
 def _norm_line(line: str) -> str:
     return re.sub(r"\W+", " ", line.lower()).strip()
+
+
+# "- Brand/model: OnePlus 11", "OS: macOS 15": a form field and its answer.
+_FIELD = re.compile(r"^\s*[-*]?\s*([A-Za-z][\w /()-]{1,30}?)\s*:\s*\S")
+
+
+def _field_key(line: str) -> str | None:
+    m = _FIELD.match(line)
+    return f"field:{_norm_line(m.group(1))}" if m and len(m.group(1).split()) <= 4 else None
 
 
 def issue_boilerplate(bodies: list[str], share: float = 0.08, min_issues: int = 5) -> set[str]:
@@ -320,8 +334,12 @@ def issue_boilerplate(bodies: list[str], share: float = 0.08, min_issues: int = 
         return set()
     counts: Counter = Counter()
     for body in bodies:
-        counts.update({_norm_line(l) for l in _COMMENT.sub(" ", body or "").splitlines()
-                       if _norm_line(l)})
+        lines = _COMMENT.sub(" ", body or "").splitlines()
+        # A field label repeated across issues is the template asking for
+        # environment details ("Brand/model:", "Operating system:"); the
+        # answers differ, so the whole line never repeats word for word.
+        counts.update({_norm_line(l) for l in lines if _norm_line(l)}
+                      | {k for l in lines if (k := _field_key(l))})
     floor = max(8, int(len(bodies) * share))
     return {line for line, n in counts.items() if n >= floor}
 
@@ -330,9 +348,10 @@ def issue_text(title: str | None, body: str | None, boilerplate: set[str] | None
     """An issue's own words: its title plus body lines that are not template
     headings, checklists, comments or repo-wide boilerplate."""
     keep = []
-    for line in _NOISE.sub(" ", _COMMENT.sub(" ", body or "")).splitlines():
+    for line in _ENV.sub(" ", _NOISE.sub(" ", _COMMENT.sub(" ", body or ""))).splitlines():
         norm = _norm_line(line)
-        if not norm or _TEMPLATE_LINE.match(line) or (boilerplate and norm in boilerplate):
+        if not norm or _TEMPLATE_LINE.match(line) or (boilerplate and (
+                norm in boilerplate or _field_key(line) in boilerplate)):
             continue
         keep.append(line.strip())
     return " ".join([title or "", *keep]).strip()

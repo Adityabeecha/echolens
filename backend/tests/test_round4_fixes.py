@@ -194,3 +194,109 @@ def test_sources_that_cannot_run_here_show_as_off_not_broken(api_db_r4, monkeypa
     with Session() as s:
         assert [c.source for c in configured_sources(s, pid)] == ["play_store"]
         assert [h["source"] for h in source_health(s, "Old")] == ["play_store"]
+
+
+# --- Third pass: the Brave walkthrough on the live site ---
+
+def test_an_empty_filtered_review_search_says_what_the_filters_hid():
+    from echolens.db.models import Review
+    from echolens.tools.search_reviews import search_reviews
+    _, Session = _db()
+    with Session() as s:
+        s.add(Review(source="play_store", ext_id="y1", rating=1, text="YouTube crashes with shields on",
+                     created_at=datetime(2026, 9, 1, 12), product="B"))
+        s.commit()
+        out = search_reviews(s, "ad blocker shield YouTube crash", date_from="2026-10-01", product="B")
+        assert out["total_matches"] == 0 and "1 reviews match" in out["hint"]
+        assert "hint" not in search_reviews(s, "YouTube", product="B")
+
+
+def test_ask_answers_what_users_complain_about_from_the_reviews():
+    from echolens.chat import route
+    from echolens.db.models import Review
+    _, Session = _db()
+    with Session() as s:
+        for i in range(12):
+            s.add(Review(source="play_store", ext_id=f"t{i}", rating=1,
+                         text="tabs disappear after the update, history gone",
+                         created_at=datetime(2026, 10, 20 - i % 5, 12), product="B"))
+        s.commit()
+        r = route(s, "What are users complaining about most in reviews?", product_name="B")
+    assert r["basis"]["kind"] == "raw_search"
+    assert "reviews" in r["text"] and "not a verified cause" in r["text"]
+
+
+def test_the_brief_never_says_fix_next_about_a_hunch():
+    from echolens.brief import _fix_next
+    from echolens.db.models import Finding, Investigation
+    from datetime import timezone
+    now = datetime(2026, 10, 26, tzinfo=timezone.utc)
+    inv = Investigation(id=84, status="needs_human", created_at=datetime(2026, 10, 20, tzinfo=timezone.utc))
+    f = Finding(id=1, investigation_id=84, summary="YouTube crashes", confidence=0.4, status="pending",
+                json={"impact": {"affected_volume": 9}})
+    d = {"invs": [], "pending": [inv], "latest": {84: f}, "watches": [], "decisions": {}}
+    pick = _fix_next(d, 0.0, now)
+    assert pick["investigation_id"] == 84 and pick["proven"] is False
+
+
+def test_issue_topics_skip_bots_build_stamps_and_the_product_name():
+    from echolens.detector.detect import _bot_filed, _derived_terms
+    from echolens.db.models import Issue
+    from echolens.textkit import issue_boilerplate, issue_text
+    assert _bot_filed(Issue(labels=["ci-concern", "bot/type/test"]))
+    assert not _bot_filed(Issue(labels=["bug"]))
+    body = "Tabs vanish. Brave: 1.95.102 Chromium: 153.0.8010.48 (Official Build) (64-bit)"
+    text = issue_text("Tabs vanish", body)
+    assert "Official" not in text and "153" not in text
+    bodies = [f"- Brand/model: Pixel {i}\nVertical tabs freeze when pinned" for i in range(20)]
+    bp = issue_boilerplate(bodies)
+    assert "Brand" not in issue_text("x", bodies[0], bp)
+    terms = [t for t, _ in _derived_terms(["Brave Browser vertical tabs freeze"] * 6, product="Brave Browser")]
+    assert "brave browser" not in terms
+
+
+def test_app_store_ids_copied_with_the_id_prefix_are_accepted():
+    from echolens.collectors.app_store import parse_app_id
+    assert parse_app_id("id1435127111") == "1435127111"
+    assert parse_app_id("1435127111") == "1435127111"
+
+
+def test_onboarding_with_a_bad_app_store_id_is_a_clear_422_not_a_500(api_db_r4, monkeypatch):
+    import importlib
+    api_module = importlib.import_module("echolens.api.app")
+    monkeypatch.setattr(api_module, "_onboard_bg", lambda *a: None)
+    monkeypatch.setattr(api_module, "_onboard_watchdog", lambda *a: None)
+    client, _ = api_db_r4
+    base = {"play_store": "keepass2android.keepass2android", "product": "K2A"}
+    bad = client.post("/onboard", json={**base, "app_store": "not-an-id"})
+    assert bad.status_code == 422 and "App Store" in bad.json()["detail"]
+    ok = client.post("/onboard", json={**base, "app_store": "id1435127111"})
+    assert ok.status_code == 200 and "app_store" in ok.json()["additional_sources"]
+
+
+def test_sources_count_forum_items_and_explain_an_empty_search(api_db_r4):
+    from echolens.db.models import CollectorState, FeedbackEntry, Product
+    client, Session = api_db_r4
+    with Session() as s:
+        p = Product(name="B"); s.add(p); s.flush()
+        for src in ("hacker_news", "stack_overflow"):
+            s.add(CollectorState(source=src, identifier="Brave Browser", product="B", product_id=p.id,
+                                 status="healthy", last_run_at=datetime(2026, 10, 26)))
+        s.add(FeedbackEntry(channel="hacker_news", ext_id="hn1", text="Brave is fast", product="B",
+                            created_at=datetime(2026, 10, 25)))
+        s.commit(); pid = p.id
+    rows = {c["source"]: c for c in client.get(f"/sources?product_id={pid}").json()["connected"]}
+    assert rows["hacker_news"]["volume"] == "1 items"
+    assert rows["stack_overflow"]["volume"] == "0 items" and "tag" in rows["stack_overflow"]["why"]
+
+
+def test_settings_names_the_repo_a_problem_would_be_filed_into(api_db_r4):
+    from echolens.db.models import CollectorState, Product
+    client, Session = api_db_r4
+    with Session() as s:
+        p = Product(name="B"); s.add(p); s.flush()
+        s.add(CollectorState(source="github", identifier="brave/brave-browser", product="B", product_id=p.id))
+        s.commit(); pid = p.id
+    gh = next(t for t in client.get(f"/integrations/trackers?product_id={pid}").json()["trackers"]
+              if t["id"] == "github")
+    assert gh["target"] == "brave/brave-browser"

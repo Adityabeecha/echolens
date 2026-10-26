@@ -58,7 +58,10 @@ def search_reviews(
     ranked += augment(query, rows, set(ranked), analysis_text, limit or 8,
                       session=session, model=Review)
     items, total = cap_items(ranked, limit)
+    hint = _widen_hint(session, terms, product, date_from or date_to, version_prefix, os_version,
+                       rating_min, rating_max) if total == 0 else None
     return {
+        **({"hint": hint} if hint else {}),
         "total_matches": total,
         "returned": len(items),
         "reviews": [
@@ -75,3 +78,22 @@ def search_reviews(
             for r in items
         ],
     }
+
+
+def _widen_hint(session: Session, terms: list[str], product: str | None, dated, version_prefix,
+                os_version, rating_min, rating_max) -> str | None:
+    """Why a filtered search came back empty, when the words alone do match.
+    Brave's case asked for "ad blocker shield YouTube crash" inside a narrow
+    window, got 0, and spent its last steps re-asking the same way."""
+    if not terms or not (dated or version_prefix or os_version or rating_min is not None
+                         or rating_max is not None):
+        return None
+    stmt = select(Review.text, Review.created_at)
+    if product:
+        stmt = stmt.where(Review.product == product)
+    hits = [at for text, at in session.execute(stmt).all() if match_score(text or "", terms) > 0]
+    if not hits:
+        return None
+    return (f"0 within these filters, but {len(hits)} reviews match the words with no filters "
+            f"({min(hits).date().isoformat()} to {max(hits).date().isoformat()}). "
+            "Widen or drop the date/version/rating filters.")

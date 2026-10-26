@@ -106,9 +106,17 @@ def cross_product_pattern(session: Session, anomaly: AnomalyEvent,
     if theme["id"] == "other":
         return None
 
+    # The demo's verified causes are a scripted story, not knowledge. Borrowed
+    # into a real app they read as real: Brave's YouTube crashes were seeded
+    # with "4K videos crash the viewer" from Lumo, and every hypothesis then
+    # talked about "the Lumo viewer". Demo and real products never share.
+    me = session.get(Product, pid) if pid is not None else None
+    demo_side = bool(me.is_demo) if me is not None else False
     best, best_key = None, (0, 0)
     for other in session.scalars(select(Product)).all():
         if pid is not None and other.id == pid:
+            continue
+        if bool(other.is_demo) != demo_side:
             continue
         for p in patterns(session, other.id):
             if p["verified_count"] < min_verified:

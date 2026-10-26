@@ -3,9 +3,9 @@ import {
   CASE_VIEW_FILTERS, CaseRow, CaseViewParams, Incident, SavedView, SignalRow, SpikeCategory, ThemeCandidate,
   api, canReview, errorMessage, isGuest,
 } from "../api";
-import { withToast } from "../components/Toast";
+import { toast, withToast } from "../components/Toast";
 import { money, plural } from "../format";
-import { useAsync } from "../hooks";
+import { useAsync, useDialog } from "../hooks";
 import { SEVERITY } from "../status";
 import { C, R, S, T } from "../theme";
 import { Button, ErrorState, Skeleton } from "../ui";
@@ -206,6 +206,16 @@ export function Cases({
     setBusy(null);
     bumpReload();
   };
+  // "Pick for me" used to start investigations straight away, with no word on
+  // why one spike beat another. It now shows the picks and reasons first.
+  const [picks, setPicks] = useState<PickDecision[] | null>(null);
+  const previewPicks = async () => {
+    setBusy("Preview");
+    try { setPicks((await api.triage(false)).decisions ?? []); }
+    catch { toast.fail("EchoLens couldn't pick just now. Try again in a moment, or tick spikes yourself.", previewPicks); }
+    finally { setBusy(null); }
+  };
+  const titleOf = (slug: string) => view.data?.signals.find((x) => x.slug === slug)?.title ?? slug;
   // "Investigate now anyway": one deferred item, past today's limit.
   const runNow = async (row: CaseRow) => {
     if (row.queue_id == null) return;
@@ -348,13 +358,18 @@ export function Cases({
                   onClick={() => run("Scan", () => api.scan(), (r) => r.reading_first && r.message
                     ? r.message : "Scan finished — anything new is listed below.")}>
                   Scan now</Button>
-                <Button variant="ghost" size="sm" disabled={!!busy || readingFirst} loading={busy === "Triage"}
-                  title="Let EchoLens pick which spikes are worth looking into (triage)"
-                  onClick={() => run("Triage", () => api.triage(true), "Done — the spikes worth it are being looked into.")}>
+                <Button variant="ghost" size="sm" disabled={!!busy || readingFirst} loading={busy === "Preview"}
+                  title="See which spikes EchoLens would look into, and why, before anything starts"
+                  onClick={previewPicks}>
                   Pick for me</Button>
               </>
             )}
           </div>
+          {picks && (
+            <PickPreview picks={picks} titleOf={titleOf} onCancel={() => setPicks(null)}
+              onStart={() => { setPicks(null); void run("Triage", () => api.triage(true),
+                (r) => r.summary || "Started — the picked spikes are being looked into."); }} />
+          )}
           <p className="pr-section__note">
             Things EchoLens noticed but hasn't looked into. Tick what's worth it and look into them together —
             they run one at a time, inside today's limit.
@@ -607,6 +622,53 @@ export function SavedViewsBar({ productId, params, onApply }: {
         Couldn't load saved views. <button className="el-btn el-btn--sm" onClick={views.reload}>Retry</button>
       </div>}
       {error && <div role="alert" style={{ fontSize: T.sm, color: C.ink }}>{error}</div>}
+    </div>
+  );
+}
+
+
+type PickDecision = { anomaly: string; decision: "investigate" | "ignore" | "merge"; reason: string;
+                      budget_tier: string | null; merge_into: string | null };
+
+/** What "Pick for me" would do, and why, before it spends anything. */
+function PickPreview({ picks, titleOf, onStart, onCancel }: {
+  picks: PickDecision[]; titleOf: (slug: string) => string; onStart: () => void; onCancel: () => void;
+}) {
+  const ref = useDialog(onCancel);
+  const go = picks.filter((p) => p.decision === "investigate");
+  const rest = picks.filter((p) => p.decision !== "investigate");
+  return (
+    <div className="el-overlay-scrim" onClick={onCancel}
+      style={{ position: "fixed", inset: 0, background: "var(--el-scrim)", zIndex: 60,
+        display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div ref={ref} role="dialog" aria-modal="true" aria-labelledby="pick-title" className="el-overlay-panel"
+        onClick={(e) => e.stopPropagation()}
+        style={{ background: "var(--el-bg)", borderRadius: 16, padding: 24, maxWidth: 560, width: "100%",
+          maxHeight: "80vh", overflow: "auto", boxShadow: "var(--el-shadow-lg, 0 20px 60px rgba(0,0,0,.25))" }}>
+        <SerifHeadline as="h2" size="section" id="pick-title">
+          {go.length ? `EchoLens would look into ${go.length === 1 ? "this one" : `these ${go.length}`}.`
+            : "Nothing here is worth an investigation yet."}
+        </SerifHeadline>
+        {go.length > 0 && <ul style={{ margin: "14px 0", paddingLeft: 18, display: "grid", gap: 10 }}>
+          {go.map((p) => <li key={p.anomaly}><strong>{titleOf(p.anomaly)}</strong>
+            <div style={{ fontSize: 13, color: "var(--el-muted)" }}>{p.reason}</div></li>)}
+        </ul>}
+        {rest.length > 0 && <details style={{ margin: "10px 0", fontSize: 13 }}>
+          <summary style={{ cursor: "pointer" }}>{rest.length} skipped — why</summary>
+          <ul style={{ paddingLeft: 18, display: "grid", gap: 8, marginTop: 8 }}>
+            {rest.map((p) => <li key={p.anomaly}><strong>{titleOf(p.anomaly)}</strong> — {p.decision === "merge"
+              ? `same problem as “${titleOf(p.merge_into ?? "")}”` : p.reason}</li>)}
+          </ul>
+        </details>}
+        <p style={{ fontSize: 13, color: "var(--el-muted)" }}>
+          Each one runs in the background, inside today's limit, and costs a few cents at most.
+        </p>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+          <Button variant="ghost" onClick={onCancel}>{go.length ? "Not now" : "Close"}</Button>
+          {go.length > 0 && <Button variant="primary" onClick={onStart}>
+            Look into {go.length === 1 ? "it" : `these ${go.length}`}</Button>}
+        </div>
+      </div>
     </div>
   );
 }

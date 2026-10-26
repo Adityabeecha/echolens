@@ -48,7 +48,8 @@ export function TeamRules({ productName, onOpenInvestigation }: { productName: s
     finally { setBusy(false); }
   };
   const form = <form onSubmit={(event) => { event.preventDefault(); void save(); }}>
-    <label className="learned-field" htmlFor="learned-rule-text">{editing != null ? 'Edit the rule' : 'What should EchoLens remember?'}<textarea id="learned-rule-text" value={draft} onChange={(event) => setDraft(event.target.value)} rows={3} maxLength={2000} autoFocus /></label>
+    <label className="learned-field" htmlFor="learned-rule-text">{editing != null ? 'Edit the rule' : 'What should EchoLens remember?'}<textarea id="learned-rule-text" value={draft} onChange={(event) => setDraft(event.target.value)} rows={3} maxLength={2000} autoFocus
+      placeholder="One plain sentence about your product, e.g. “Crashes in the PDF viewer come from the upstream engine, not our code.”" /></label>
     <div className="learned-row"><Button variant="primary" type="submit" loading={busy} disabled={!draft.trim()}>{editing != null ? 'Save rule' : 'Add rule'}</Button><Button type="button" disabled={busy} onClick={() => { setAdding(false); setEditing(null); setDraft(''); setSaveError(null); }}>Cancel</Button></div>
   </form>;
   return <section className="learned-stack" aria-label="Rules you’ve taught it">

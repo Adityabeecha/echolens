@@ -19,7 +19,9 @@ export function CostsSection({ data, children }: { data: CostsSummary; children?
   const top = Math.max(0.0001, ...rows.map((r) => r.month_to_date));
   return (
     <div className="ps-sections">
-      <SerifHeadline as="h1" size="page">{money(data.month_to_date)} of {money(data.budget)} this month.</SerifHeadline>
+      {/* The budget is per product; the breakdown below is every product. Said
+          outright, since the two side by side read as one number disagreeing. */}
+      <SerifHeadline as="h1" size="page">{data.product ? `${data.product}: ` : ""}{money(data.month_to_date)} of {money(data.budget)} this month.</SerifHeadline>
       <div className="ps-panel">
         <div className="ps-row" style={{ justifyContent: "space-between" }}>
           <span>
@@ -38,7 +40,8 @@ export function CostsSection({ data, children }: { data: CostsSummary; children?
       </div>
       {rows.length > 1 && (
         <section className="ps-section" aria-labelledby="ps-by-product">
-          <h2 id="ps-by-product">By product, this month</h2>
+          <h2 id="ps-by-product">Every product, this month</h2>
+          <span className="ps-muted">Each product has its own monthly budget; the line above is {data.product || "this product"} only.</span>
           <div className="ps-breakdown">
             {rows.map((r) => (
               <div key={r.product_id}>

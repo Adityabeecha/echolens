@@ -164,7 +164,10 @@ function TrackersPanel() {
           <span><i className={`ps-dot ${t.configured ? "is-healthy" : ""}`} aria-hidden
             style={{ display: "inline-block", marginRight: 8, background: t.configured ? undefined : "var(--el-line-strong)" }} />{t.label}</span>
           <span className="ps-muted" title={t.configured ? undefined : `Set ${ENV[t.id]} on the server`}>
-            {t.configured ? "Connected — problems can be sent here" : "Not set up on the server"}</span>
+            {!t.configured ? "Not set up on the server"
+              : t.target ? <>Problems are filed into <b style={{ fontFamily: "var(--el-mono)" }}>{t.target}</b></>
+              : t.id === "github" ? "Connected, but this product has no repo to file into"
+              : "Connected — problems can be sent here"}</span>
         </div>
       ))}
     </div>
