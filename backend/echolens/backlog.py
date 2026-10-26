@@ -189,6 +189,19 @@ def historical_fix_days(session: Session, product_id: int | None) -> float | Non
     return round(statistics.median(spans), 1) if spans else None
 
 
+def history_bucket(calendar_days: float) -> str:
+    """Coarse size from how long past fixes took end to end. Elapsed time runs
+    several times the hands-on work, so the thresholds sit well above the
+    bucket sizes themselves."""
+    if calendar_days <= 3:
+        return "trivial"
+    if calendar_days <= 10:
+        return "small"
+    if calendar_days <= 30:
+        return "medium"
+    return "large"
+
+
 _UNSET = object()
 
 
@@ -219,7 +232,13 @@ def estimate_effort(session: Session, finding: Finding,
     if history is None:
         history = historical_fix_days(session, product_id)
     if history is not None:
-        return {"days": history, "basis": f"median past fix took {history:.0f}d",
+        # The track record is CALENDAR time from case to shipped fix — queues,
+        # reviews and release trains included — not engineer-days. Used as days
+        # it made every item bigger than a sprint, so nothing ever fit the plan.
+        # It is a size signal instead: the same coarse buckets labels map to.
+        bucket = history_bucket(history)
+        return {"days": EFFORT_BUCKETS[bucket],
+                "basis": f"median past fix took {history:.0f}d end to end — sized as {bucket}",
                 "known": True}
     return {"days": DEFAULT_EFFORT, "basis": "no effort signal yet", "known": False}
 

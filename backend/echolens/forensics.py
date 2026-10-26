@@ -476,7 +476,9 @@ def _highlight(quotes: list[str], text: str) -> str | None:
 
 
 _ISSUE_REF = re.compile(r"^issue\s+(\S+)$")
-_RELEASE_REF = re.compile(r"^release\s+v?(\S+)$")
+# "release v3.2.0" from the tool, or the release page URL a stored exhibit keeps
+# (…/releases/tag/v3.2.0). Missing the URL form left those exhibits undated.
+_RELEASE_REF = re.compile(r"^(?:release\s+|https?://\S+/releases/tag/)v?([^\s/]+)$")
 
 
 def _exhibit_meta(session: Session, evs: list, product: str | None) -> dict[str, dict]:
@@ -509,8 +511,11 @@ def _exhibit_meta(session: Session, evs: list, product: str | None) -> dict[str,
             issue_rows.setdefault(ext, at)
     release_rows: dict[str, datetime] = {}
     if versions:
-        release_rows = dict(session.execute(scoped(select(Release.version, Release.released_at)
-                                                   .where(Release.version.in_(versions)), Release)).all())
+        # Stored versions may or may not carry a leading "v"; key by the bare form.
+        wanted = versions + [f"v{v}" for v in versions]
+        for ver, at in session.execute(scoped(select(Release.version, Release.released_at)
+                                              .where(Release.version.in_(wanted)), Release)).all():
+            release_rows.setdefault(ver.lstrip("vV"), at)
 
     out: dict[str, dict] = {}
     for e in evs:
