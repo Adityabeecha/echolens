@@ -121,7 +121,10 @@ export function Cases({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [all, tab, legacy, sev, source, range, q, sort]);
   const filtered = !!(sev || source || range || q);
-  const tabCount = (t: ProblemTab) => open.filter((c) => inTab(c, t)).length;
+  // Requests waiting under New spikes count toward the Requests tab: it said
+  // "Requests 0" above two listed requests.
+  const tabCount = (t: ProblemTab) => open.filter((c) => inTab(c, t)).length
+    + (t === "requests" ? (candidates.data?.requests ?? []).length : 0);
 
   // ── New spikes ──
   const signals = view.data?.signals ?? [];
@@ -148,8 +151,10 @@ export function Cases({
   const rank = (i: Item) => i.kind === "incident" ? SEV_RANK[strengthOf(i.incident)]
     : i.kind === "signal" ? SEV_RANK[strengthOf(i.signal)] : 0;
   items.sort((a, b) => rank(b) - rank(a) || b.z - a.z);
-  const spikeCount = incidents.length + lone.length;
-  const selectable = spikeCount + themes.length;
+  // Spikes, not groups: onboarding said "found 2 spikes" and this page said
+  // "1 new spike" for the same two, grouped into one incident.
+  const spikeCount = incidents.reduce((n, i) => n + Math.max(1, i.members?.length ?? 1), 0) + lone.length;
+  const selectable = incidents.length + lone.length + themes.length;
   const groups = CATEGORY_GROUPS.filter((g) => !intent || g.id === intent)
     .map((g) => ({ ...g, items: items.filter((i) => i.category === g.id) }))
     .filter((g) => g.items.length > 0);
@@ -324,10 +329,15 @@ export function Cases({
               action={filtered ? (
                 <Button onClick={() => { setSearch(""); setParams({ sev: null, source: null, range: null, q: null }); }}>
                   Clear filters</Button>
+              ) : tab === "requests" && requests.length > 0 ? (
+                <Button onClick={() => spikesRef.current?.scrollIntoView({ block: "start" })}>See the requests</Button>
               ) : spikeCount > 0 ? (
                 <Button onClick={() => spikesRef.current?.scrollIntoView({ block: "start" })}>See the new spikes</Button>
               ) : undefined}>
-              {filtered ? "Widen the filters, or clear them to see every problem." : emptyBody(tab, spikeCount)}
+              {filtered ? "Widen the filters, or clear them to see every problem."
+                : tab === "requests" && requests.length > 0
+                  ? `${requests.length} ${plural(requests.length, "request")} from your reviews ${requests.length === 1 ? "is" : "are"} waiting under New spikes. Investigate one to turn it into a problem.`
+                  : emptyBody(tab, spikeCount)}
             </EmptyState>
           ) : (
             <div className="pr-list">{rows.map(row)}</div>

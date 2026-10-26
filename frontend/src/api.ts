@@ -1457,6 +1457,8 @@ export interface ChatNextStep {
   slug?: string;
   allowed: boolean;
   reason: string | null;
+  /** "Takes a few minutes · costs at most $0.75", when Ask asks before spending. */
+  cost?: string;
 }
 /** One live progress line while Ask works ("Searching reviews for 'paywall'…"). */
 export interface ChatStep {

@@ -108,6 +108,9 @@ export function IncidentRow({ incident, members, selected, onToggle, onLook, bus
       left={<Strength value={strengthOf(incident)} z={incident.z} />}
       title={incident.title}
       meta={<>
+        {/* The strongest spike's plain sentence, then the grouping. */}
+        {(members.find((m) => m.slug === incident.lead) ?? members[0])?.summary &&
+          <span>{(members.find((m) => m.slug === incident.lead) ?? members[0]).summary} · </span>}
         <span>{members.length} related spikes in the same window</span>
         <button type="button" className="pr-link" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
           {open ? "hide them" : "show them"}

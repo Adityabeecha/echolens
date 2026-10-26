@@ -3,14 +3,22 @@ import { ago, plural } from "../../format";
 import { Button, RatingTrend } from "../../ui";
 import { plainWords } from "./model";
 
-export function WeeklyUpdate({ brief, error, onRetry, onOpen }: {
+export function WeeklyUpdate({ brief, error, onRetry, onOpen, spikes = 0 }: {
   brief: WeeklyBrief | null; error: string | null; onRetry: () => void; onOpen: (id: number) => void;
+  /** Spikes waiting: the brief covers proven problems only, so "quiet week"
+   *  under "EchoLens found two spikes" contradicted the page. */
+  spikes?: number;
 }) {
+  const quiet = spikes > 0
+    ? `no problems proven yet — ${spikes} ${plural(spikes, "spike")} waiting above`
+    : "quiet week — nothing new";
   return <details className="today-details"><summary>This week · {error ? "couldn't load the update"
-    : brief?.quiet ? "quiet week — nothing new" : brief?.new_problems.length ? `${brief.new_problems.length} new ${plural(brief.new_problems.length, "problem")}` : "your weekly brief"}</summary>
+    : brief?.quiet ? quiet : brief?.new_problems.length ? `${brief.new_problems.length} new ${plural(brief.new_problems.length, "problem")}` : "your weekly brief"}</summary>
     {error ? <p className="today-muted">The weekly update couldn't be loaded. <Button variant="quiet" onClick={onRetry}>Try again</Button></p>
       : !brief ? <p className="today-muted">Reading this week's update…</p>
-      : brief.quiet ? <p className="today-muted">Quiet week — nothing new. EchoLens is still checking connected sources for new complaints and fixes.</p>
+      : brief.quiet ? <p className="today-muted">{spikes > 0
+          ? "Nothing has been investigated and proven this week yet. Pick a spike above and EchoLens will look into it."
+          : "Quiet week — nothing new. EchoLens is still checking connected sources for new complaints and fixes."}</p>
       : brief.lines.length > 0 ? <div className="today-brief">
         <p className="today-muted">Updated {new Date(brief.generated).toLocaleDateString(undefined, { month:"long", day:"numeric" })}</p>
         {brief.lines.map((line, i) => <p key={i}>{line.split(/(case #\d+)/gi).map((part, j) => {

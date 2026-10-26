@@ -55,7 +55,8 @@ export function Today({ productName, onOpenCase, onGoCases, onGoSources, onGoPla
   const stale = (sources.data?.connected ?? []).filter(s => s.stale || s.error);
   const readingFirst = !!sources.data?.reading_first;
   // `||`, not `??`: no incidents is an empty list, and it hid real spikes.
-  const spikes = cases.data?.incidents?.length || cases.data?.signals.filter(s => !s.dismissed).length || me?.untriaged || 0;
+  // Individual spikes, counted the same way onboarding and All problems count them.
+  const spikes = cases.data?.signals.filter(s => !s.dismissed).length || me?.untriaged || 0;
   // Name what jumped, in the topic's own words ("quick unlock", "system tray").
   const spikeTopics = (cases.data?.signals ?? []).filter(s => !s.dismissed)
     .map(s => (s.metric.match(/'([^']+)'/)?.[1] ?? "").trim()).filter(Boolean)
@@ -192,7 +193,7 @@ export function Today({ productName, onOpenCase, onGoCases, onGoSources, onGoPla
         <CollectionNote freshness={overview.data?.freshness} staleCount={stale.length} collecting={collecting}
           onSources={onGoSources} onCollect={reviewer ? collect : undefined} />
         {sources.error && <div className="today-context-line"><span>Source health couldn't be checked.</span><Button variant="quiet" onClick={onGoSources}>Review sources</Button></div>}
-        <WeeklyUpdate brief={brief.data} error={brief.error} onRetry={brief.reload} onOpen={id => onOpenCase(id, "resolved")} />
+        <WeeklyUpdate brief={brief.data} error={brief.error} onRetry={brief.reload} onOpen={id => onOpenCase(id, "resolved")} spikes={spikes} />
         <HealthDetails product={me} snapshot={snapshot.data} overview={overview.data} onOpen={id => onOpenCase(id, "resolved")} />
         <QueuedWork rows={queued} busy={cancelling} onCancel={reviewer ? cancel : undefined} onCases={() => onGoCases("queued")} />
         {guest ? <div className="today-context-line"><span>You're exploring a demo product. Sign in to connect your own app and investigate its reviews.</span>

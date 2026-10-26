@@ -25,6 +25,15 @@ STOPWORDS = {
     "their", "about", "after", "since", "really", "much", "back", "want", "cant",
     "dont", "doesnt", "isnt", "im", "ive", "its",
 }
+# Words that never make a topic on their own, though search still matches
+# them: "because", "every time", "please fix" topped Bitwarden's "What people
+# mention most" next to "master password" and "auto fill".
+_FILLER = {
+    "because", "every", "time", "times", "please", "fix", "fixed", "thing", "things",
+    "something", "anything", "everything", "always", "never", "make", "made", "need",
+    "needs", "know", "think", "thanks", "thank", "good", "great", "bad", "use", "using",
+    "used", "lot", "lots", "everytime", "anymore", "already", "ever",
+}
 
 _WORD_RE = re.compile(r"[a-zA-Z']+")
 _VER_RE = re.compile(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?")
@@ -275,9 +284,10 @@ def top_themes(texts: list[str], k: int = 6) -> list[dict]:
     bi: Counter[str] = Counter()
     for t in texts:
         toks = tokenize(t)
-        uni.update(toks)
+        uni.update(w for w in toks if w not in _FILLER)
         for a, b in zip(toks, toks[1:]):
-            bi[f"{a} {b}"] += 1
+            if a not in _FILLER and b not in _FILLER:
+                bi[f"{a} {b}"] += 1
 
     scored: list[tuple[float, int, str]] = []
     for phrase, c in bi.items():

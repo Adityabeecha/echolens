@@ -589,9 +589,25 @@ def _run_claimed_bg(queue_id: int, investigation_id: int, tier: str) -> None:
         q.finish(session, queue_id, investigation_id, ok=ok)
 
 
+def _plain_failure(error: str) -> str:
+    """Why a run stopped, in words for the person reading the case. The raw
+    exception (an OpenAI "Missing credentials…" message) went into the case
+    itself; it belongs in the server log."""
+    low = (error or "").lower()
+    if any(k in low for k in ("api_key", "credential", "authentication", "401", "incorrect api")):
+        return "EchoLens couldn't reach its AI service — the server's AI key is missing or was refused"
+    if any(k in low for k in ("rate limit", "429", "quota", "insufficient_quota")):
+        return "the AI service is over its limit right now"
+    if "timed out" in low or "timeout" in low:
+        return "the AI service took too long to answer"
+    return "something went wrong on EchoLens's side"
+
+
 def _fail_investigation(session, inv_row, reason: str) -> None:
-    """End a case honestly instead of leaving it stuck at "running"."""
-    inv_row.status = "insufficient_evidence"
+    """End a case honestly instead of leaving it stuck at "running". It is
+    "failed", not "insufficient_evidence": nothing was weighed, so it must not
+    read (or be stamped) as a hunch that lost on the evidence."""
+    inv_row.status = "failed"
     inv_row.resolved_at = datetime.now(timezone.utc)
     notes = list(inv_row.data_notes or [])
     notes.append(f"Investigation could not run: {reason}.")
@@ -606,7 +622,8 @@ def _mark_investigation_failed(investigation_id: int, error: str) -> None:
         with session_scope() as session:
             row = session.get(Investigation, investigation_id)
             if row is not None and row.status == "running":
-                _fail_investigation(session, row, f"an internal error stopped it ({error[:120]})")
+                log.error("investigation_failed", investigation_id=investigation_id, error=error[:500])
+                _fail_investigation(session, row, _plain_failure(error))
     except Exception as err:
         log.error("mark_failed_failed", investigation_id=investigation_id, error=str(err))
 
@@ -4279,6 +4296,21 @@ def _chat_respond(body: "ChatBody", user: dict, on_step=None) -> dict:
                             "text": f"{f.summary} — case #{inv.id}. This was already "
                                     "investigated; start a new one if it's back."}
 
+        # A question ("why is the battery draining?") used to open a paid case
+        # on the spot. Only a direct command starts one; a question gets the
+        # confirm card, with what it costs at most.
+        if (decision.get("type") == "launch" and not body.force_investigate
+                and not any(c in message.lower() for c in chat_mod.COMMAND_MARKERS)):
+            cap = float(_limits(session, pid)["per_case_budget"])
+            out = _chat_finish({"type": "answer", "citations": [], "basis": chat_mod.basis_none(),
+                                "can_investigate": True,
+                                "text": "EchoLens hasn't looked into that yet. An investigation reads the "
+                                        "reviews, issues and releases for it and takes a few minutes. "
+                                        "Start one below if it's worth it."}, user, message)
+            if out.get("next_step"):
+                out["next_step"]["cost"] = f"Takes a few minutes · costs at most ${cap:.2f}"
+            return out
+
         if decision.get("type") == "launch" and prod is not None and prod.is_demo and not body.force_investigate:
             return _chat_finish({"type": "answer", "citations": [],
                 "basis": chat_mod.basis_none(), "can_investigate": True,
@@ -4819,7 +4851,8 @@ _FEEDBACK_CHANNEL = {"hacker_news": "hacker_news", "stack_overflow": "stack_over
                      "github_discussions": "github_discussion", "github_activity": "github_pr"}
 # Search-based sources, with what to try when a search finds nothing.
 _SEARCHED = {"hacker_news": "Try the product's plain name, e.g. “Brave”.",
-             "stack_overflow": "Stack Overflow searches by tag; try the tag people use, e.g. “brave-browser”.",
+             "stack_overflow": "Stack Overflow searches by tag: open a question about your product there and use "
+                               "the tag shown under it (often the name with a dash, like “my-app”).",
              "github_activity": "PRs and commits appear once the repo has recent activity."}
 
 
