@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import insert, select
 from sqlalchemy.orm import Session
 
 from echolens.db.models import CollectorState
@@ -53,6 +53,49 @@ class Collector(ABC):
         self.product = product or identifier
         self.product_id = product_id
         self._fetch_fn = fetch_fn             # injectable for tests
+        self._known: dict[tuple, dict] = {}   # per-run dedup lookups, see existing()
+        self._buffer: dict | None = None      # new rows of the batched page, see stage()
+
+    # ── dedup lookups ───────────────────────────────────────────────────
+
+    def existing(self, session: Session, model, key_col, keys, **filters):
+        """The already-stored row for any of `keys`, or None.
+
+        One query per (table, key) per run, then memory. Looking each item up
+        separately cost a database round trip per item; over a remote pooled
+        connection a 300-review backfill spent minutes on lookups alone.
+        """
+        if isinstance(keys, str):
+            keys = [keys]
+        cache_key = (model, key_col.key, tuple(sorted(filters.items())))
+        rows = self._known.get(cache_key)
+        if rows is None:
+            stmt = select(model).where(model.product == self.product)
+            for name, value in filters.items():
+                stmt = stmt.where(getattr(model, name) == value)
+            with session.no_autoflush:
+                rows = {getattr(r, key_col.key): r for r in session.scalars(stmt).all()}
+            self._known[cache_key] = rows
+        for k in keys:
+            if k in rows:
+                return rows[k]
+        return None
+
+    def stage(self, session: Session, model, **fields) -> None:
+        """Add a new row. During the batched page it is buffered and written with
+        one bulk INSERT per table; on the item-by-item path it is a plain add.
+        (The ORM inserts row by row when it must read back each new id, and
+        nothing here needs them.)"""
+        if self._buffer is not None:
+            self._buffer.setdefault(model, []).append(fields)
+        else:
+            session.add(model(**fields))
+
+    def remember(self, model, key_col, key, row, **filters) -> None:
+        """Record a row added this run, so a repeat later in the page is a duplicate."""
+        rows = self._known.get((model, key_col.key, tuple(sorted(filters.items()))))
+        if rows is not None:
+            rows[key] = row
 
     # ── watermark / health persistence ─────────────────────────────────
 
@@ -96,6 +139,23 @@ class Collector(ABC):
                        else self.fetch(since=st.watermark, limit=limit))
                 result.fetched = len(raw)
                 newest = st.watermark
+                self._known = {}
+                # Fast path: the whole page in one savepoint and one flush, so
+                # inserts go out batched. Any failure (a malformed item, a
+                # constraint) rolls back only this attempt and the careful
+                # item-by-item path below takes over with identical results.
+                fast = self._ingest_page(session, raw)
+                if fast is not None:
+                    raw = []
+                    for inserted, wm in fast:
+                        if inserted:
+                            result.inserted += 1
+                        else:
+                            result.skipped_duplicate += 1
+                        if wm and (newest is None or wm > newest):
+                            newest = wm
+                else:
+                    self._known = {}
                 # Commit the cursor only for a fully ingested page. Even sorted
                 # rows can share a timestamp, and prefetched rows may arrive in
                 # any order: a partial checkpoint could exclude a failed row.
@@ -148,6 +208,26 @@ class Collector(ABC):
         # persist; if even this flush fails, let session_scope own the rollback.
         session.flush()
         return result
+
+    def _ingest_page(self, session: Session, raw: list[dict]) -> list[tuple] | None:
+        """All items in one savepoint and one flush; None if anything failed."""
+        if not raw:
+            return []
+        self._buffer = {}
+        try:
+            with session.begin_nested():
+                with session.no_autoflush:
+                    outcomes = [self.ingest_item(session, item) for item in raw]
+                for model, rows in self._buffer.items():
+                    session.execute(insert(model), rows)
+                session.flush()
+            return outcomes
+        except Exception as err:
+            log.info("collector_batch_fallback", source=self.source, id=self.identifier,
+                     error=f"{type(err).__name__}: {err}")
+            return None
+        finally:
+            self._buffer = None
 
     # ── subclass hooks ──────────────────────────────────────────────────
 

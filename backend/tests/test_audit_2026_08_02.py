@@ -81,14 +81,18 @@ def test_onboard_connects_selected_github_and_optional_sources(api_db, monkeypat
     })
 
     assert response.status_code == 200
+    # Chrome's review endpoint is gone, and Discussions cannot run without a
+    # GitHub token (none in tests): both are skipped and reported, not added.
     assert response.json()["additional_sources"] == [
-        "app_store", "chrome_web_store", "hacker_news", "stack_overflow"]
+        "app_store", "hacker_news", "stack_overflow"]
+    assert {s["source"] for s in response.json()["skipped_sources"]} == {
+        "github_discussions", "chrome_web_store"}
     with Session() as session:
         rows = session.scalars(select(CollectorState)).all()
         sources = {row.source for row in rows}
     assert sources == {
-        "play_store", "github", "github_discussions", "github_activity",
-        "app_store", "chrome_web_store", "hacker_news", "stack_overflow",
+        "play_store", "github", "github_activity",
+        "app_store", "hacker_news", "stack_overflow",
     }
     assert all(row.status == "running" for row in rows)
     assert all(row.last_run_at is not None for row in rows)

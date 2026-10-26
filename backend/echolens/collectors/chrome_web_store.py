@@ -89,10 +89,10 @@ class ChromeWebStoreCollector(Collector):
             return False, None
         wm = iso(at)
         ext_id = f"cws_{native}"[:64]
-        if session.scalars(select(Review).where(
-                Review.ext_id == ext_id, Review.product == self.product)).first():
+        if self.existing(session, Review, Review.ext_id, ext_id):
             return False, wm
-        session.add(Review(
+        self.remember(Review, Review.ext_id, ext_id, True)
+        self.stage(session, Review, **dict(
             source="chrome_web_store", ext_id=ext_id, rating=int(rating),
             text=(item.get("text") or "").strip(),
             version=item.get("version"), os_version=None,

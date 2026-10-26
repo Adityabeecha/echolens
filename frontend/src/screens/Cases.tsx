@@ -10,7 +10,7 @@ import { SEVERITY } from "../status";
 import { C, R, S, T } from "../theme";
 import { Button, ErrorState, Skeleton } from "../ui";
 import { Icon } from "../components/Icon";
-import { EmptyState, ListRow, PillTabs, SerifHeadline } from "../components/casefile";
+import { Dropdown, EmptyState, ListRow, PillTabs, SerifHeadline } from "../components/casefile";
 import {
   CATEGORY_GROUPS, LEGACY_TABS, PROBLEM_TABS, ProblemSort, ProblemTab, SORTS, detailLine, headline,
   inTab, needsDecision, sortRows, verdictOf,
@@ -61,6 +61,9 @@ export function Cases({
 }: Props) {
   // Order matters to the render checks in scripts/: cases first, then themes.
   const view = useAsync(() => api.cases(), [reloadKey]);
+  // A new product's first read: say so instead of an empty, "all clear" list.
+  const sourceState = useAsync(() => api.sources(), [reloadKey]);
+  const readingFirst = !!sourceState.data?.reading_first;
   const candidates = useAsync(() => api.feedCandidates(), [reloadKey]);
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
@@ -197,7 +200,7 @@ export function Cases({
     setBusy(null);
     if (result) { setSelected({}); setDismissing(false); setReason(""); bumpReload(); }
   };
-  const run = async (label: string, fn: () => Promise<unknown>, success: string) => {
+  const run = async <R,>(label: string, fn: () => Promise<R>, success: string | ((r: R) => string)) => {
     setBusy(label);
     await withToast(fn, { success, failure: `${label} didn't work` });
     setBusy(null);
@@ -231,6 +234,7 @@ export function Cases({
 
   const decide = open.filter(needsDecision).length;
   const fixed = open.filter((c) => verdictOf(c) === "fixWorked").length;
+  const firstDay = !!view.data && all.length === 0 && !filtered && !legacy && tab === "all" && spikeCount > 0;
 
   const row = (r: CaseRow) => (
     <ListRowWithExtra key={r.id != null ? `c-${r.id}` : `q-${r.queue_id}`} row={r} reviewer={reviewer}
@@ -254,6 +258,10 @@ export function Cases({
           </SerifHeadline>
         </header>
 
+        {/* A product's first days: no problem exists yet, only spikes. Six tabs
+            reading 0, filters with nothing to filter and a "No problems yet" box
+            pushed the spikes — the only content — below the fold. */}
+        {!firstDay && <>
         {/* tabs, source, search, sort — every value is in the URL */}
         <div style={{ display: "flex", flexDirection: "column", gap: S[3] }}>
           <div className="pr-toolbar">
@@ -262,11 +270,9 @@ export function Cases({
                 ? `${t.label} ${tabCount(t.id)}` : t.label }))}
               onChange={(t) => setParams({ tab: t === "all" ? null : t })} />
             <span className="pr-toolbar__spacer" />
-            <select className="pr-select" aria-label="Where it came from" value={source}
-              onChange={(e) => setParams({ source: e.target.value || null })}>
-              <option value="">Any source</option>
-              {sources.map((s) => <option key={s} value={s}>{typeLabel(s)}</option>)}
-            </select>
+            <Dropdown label="Where it came from" value={source || ""}
+              options={[{ value: "", label: "Any source" }, ...sources.map((s) => ({ value: s, label: typeLabel(s) }))]}
+              onChange={(v) => setParams({ source: v || null })} />
             <input className="pr-search" type="search" value={search} onChange={(e) => setSearch(e.target.value)}
               placeholder="Search problems…" aria-label="Search problems" />
           </div>
@@ -274,26 +280,22 @@ export function Cases({
             <SavedViewsBar key={productId ?? "none"} productId={productId} params={{ ...params, q: search }}
               onApply={(next) => { setSearch(next.q ?? ""); setParams(next); }} />
             <span className="pr-toolbar__spacer" />
-            <select className="pr-select" aria-label="Sort" value={sort}
-              onChange={(e) => setParams({ sort: e.target.value === "important" ? null : e.target.value })}>
-              {SORTS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-            </select>
+            <Dropdown label="Sort" align="end" value={sort}
+              options={SORTS.map((s) => ({ value: s.id, label: s.label }))}
+              onChange={(v) => setParams({ sort: v === "important" ? null : v })} />
             <button type="button" className="pr-more" aria-expanded={moreOpen} onClick={() => setMoreOpen((o) => !o)}>
               {moreOpen ? "Fewer filters" : "More filters"}
             </button>
           </div>
           {moreOpen && (
             <div className="pr-filters-extra">
-              <select className="pr-select" aria-label="Severity" value={sev}
-                onChange={(e) => setParams({ sev: e.target.value || null })}>
-                <option value="">Any severity</option>
-                {Object.entries(SEVERITY).map(([k, m]) => (
-                  <option key={k} value={k}>{k === "unknown" ? "Impact unknown" : `${m.label} severity`}</option>))}
-              </select>
-              <select className="pr-select" aria-label="Time range" value={range}
-                onChange={(e) => setParams({ range: e.target.value || null })}>
-                {RANGES.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
-              </select>
+              <Dropdown label="Severity" value={sev || ""}
+                options={[{ value: "", label: "Any severity" }, ...Object.entries(SEVERITY).map(([k, m]) => (
+                  { value: k, label: k === "unknown" ? "Impact unknown" : `${m.label} severity` }))]}
+                onChange={(v) => setParams({ sev: v || null })} />
+              <Dropdown label="Time range" value={range}
+                options={RANGES.map((r) => ({ value: r.key, label: r.label }))}
+                onChange={(v) => setParams({ range: v || null })} />
             </div>
           )}
           {legacy && (
@@ -327,6 +329,7 @@ export function Cases({
             </details>
           )}
         </section>
+        </>}
 
         {/* ── New spikes: noticed, not yet a problem ── */}
         <section ref={spikesRef} className="pr-section" aria-labelledby="pr-spikes-title" style={{ scrollMarginTop: 16 }}>
@@ -334,18 +337,18 @@ export function Cases({
             <SerifHeadline as="h2" size="section" id="pr-spikes-title">New spikes</SerifHeadline>
             <span style={{ fontSize: T.sm, color: C.muted }}>{items.length} waiting</span>
             <span className="pr-head__spacer" />
-            <select className="pr-select" aria-label="Kind of spike" value={intent}
-              onChange={(e) => setParams({ intent: e.target.value || null })}>
-              <option value="">Every kind</option>
-              {CATEGORY_GROUPS.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
-            </select>
+            <Dropdown label="Kind of spike" align="end" value={intent || ""}
+              options={[{ value: "", label: "Every kind" }, ...CATEGORY_GROUPS.map((g) => ({ value: g.id as string, label: g.label }))]}
+              onChange={(v) => setParams({ intent: v || null })} />
             {reviewer && (
               <>
-                <Button variant="ghost" size="sm" disabled={!!busy} loading={busy === "Scan"}
-                  title="Look for new spikes in the latest reviews and issues"
-                  onClick={() => run("Scan", () => api.scan(), "Scan finished — anything new is listed below.")}>
+                <Button variant="ghost" size="sm" loading={busy === "Scan"}
+                  disabled={!!busy || readingFirst}
+                  title={readingFirst ? "Available once the first reviews have been read" : "Look for new spikes in the latest reviews and issues"}
+                  onClick={() => run("Scan", () => api.scan(), (r) => r.reading_first && r.message
+                    ? r.message : "Scan finished — anything new is listed below.")}>
                   Scan now</Button>
-                <Button variant="ghost" size="sm" disabled={!!busy} loading={busy === "Triage"}
+                <Button variant="ghost" size="sm" disabled={!!busy || readingFirst} loading={busy === "Triage"}
                   title="Let EchoLens pick which spikes are worth looking into (triage)"
                   onClick={() => run("Triage", () => api.triage(true), "Done — the spikes worth it are being looked into.")}>
                   Pick for me</Button>
@@ -356,6 +359,12 @@ export function Cases({
             Things EchoLens noticed but hasn't looked into. Tick what's worth it and look into them together —
             they run one at a time, inside today's limit.
           </p>
+          {readingFirst && (
+            <EmptyState title="Still reading your first reviews.">
+              Spikes are found by comparing what people say over time, so there is nothing to compare until the first
+              read finishes — usually a minute or two. This list fills in on its own.
+            </EmptyState>
+          )}
 
           {groups.length === 0 && takenThemes.length === 0 && dismissedSpikes.length === 0 && (
             <EmptyState title="No new spikes.">

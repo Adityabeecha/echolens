@@ -290,3 +290,49 @@ def top_themes(texts: list[str], k: int = 6) -> list[dict]:
 
     scored.sort(key=lambda x: (-x[0], x[2]))
     return [{"label": phrase, "count": count} for _, count, phrase in scored[:k]]
+
+
+# ── GitHub issue templates ───────────────────────────────────────────────
+#
+# Repos file every issue through a template ("### Brief Summary", "- [x] I have
+# searched existing issues…"). Counted as text, that boilerplate is the most
+# common phrase in the tracker, so it surfaced as spikes ("'searched existing'
+# issue reports piling up"). These helpers drop it before themes are mined.
+
+_TEMPLATE_LINE = re.compile(
+    r"^\s*(#{1,6}\s|[-*]\s*\[[ xX]\]|<!--|-->|\|?\s*:?-{3,}|\[[^\]]+\]:\s*#)")
+_COMMENT = re.compile(r"<!--.*?-->", re.S)
+# Links, fenced code and inline code are pasted context (logs, stack traces,
+# URLs), not the reporter's words: "github com" was a top "theme".
+_NOISE = re.compile(r"```.*?```|`[^`\n]*`|!\[[^\]]*\]\([^)]*\)|<[^>\n]+>|https?://\S+|www\.\S+", re.S)
+
+
+def _norm_line(line: str) -> str:
+    return re.sub(r"\W+", " ", line.lower()).strip()
+
+
+def issue_boilerplate(bodies: list[str], share: float = 0.08, min_issues: int = 5) -> set[str]:
+    """Normalised lines repeated word for word across many issues (at least
+    `share` of them, and never fewer than 8): the repo's issue and PR
+    templates, whatever their wording. People describing a bug never repeat
+    each other line for line; templates always do."""
+    if len(bodies) < min_issues:
+        return set()
+    counts: Counter = Counter()
+    for body in bodies:
+        counts.update({_norm_line(l) for l in _COMMENT.sub(" ", body or "").splitlines()
+                       if _norm_line(l)})
+    floor = max(8, int(len(bodies) * share))
+    return {line for line, n in counts.items() if n >= floor}
+
+
+def issue_text(title: str | None, body: str | None, boilerplate: set[str] | None = None) -> str:
+    """An issue's own words: its title plus body lines that are not template
+    headings, checklists, comments or repo-wide boilerplate."""
+    keep = []
+    for line in _NOISE.sub(" ", _COMMENT.sub(" ", body or "")).splitlines():
+        norm = _norm_line(line)
+        if not norm or _TEMPLATE_LINE.match(line) or (boilerplate and norm in boilerplate):
+            continue
+        keep.append(line.strip())
+    return " ".join([title or "", *keep]).strip()

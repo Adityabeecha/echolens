@@ -7,6 +7,7 @@ import {
   progressActivityLabel,
   sourceProgressLabel,
   sourceRecoveryGuidance,
+  sourceErrorView,
 } from "../src/onboardingProgress.ts";
 
 test("backfill progress reports checked sources, elapsed time, and expected window", () => {
@@ -32,7 +33,7 @@ test("failed sources use actionable language instead of appearing to sync", () =
     items_last_run: 0,
     last_error: "GitHub returned 404",
     never_collected: false,
-  }), "GitHub returned 404");
+  }), "We couldn't find it");
 });
 
 test("terminal failures replace the normal estimate with the timeout ceiling", () => {
@@ -84,13 +85,34 @@ test("live activity says whether the first source or another source is pending",
 
 test("every source error gives recovery guidance", () => {
   assert.equal(sourceRecoveryGuidance("request timed out"),
-    "The source did not respond. Retry it now; the other sources are unaffected.");
-  assert.equal(sourceRecoveryGuidance("GitHub returned 401 Unauthorized"),
-    "Check this source's access credentials, then retry it.");
+    "It's usually temporary. Retry now; the other sources are unaffected.");
   assert.equal(sourceRecoveryGuidance("repository returned 404"),
-    "Check the source identifier and visibility, then retry it.");
+    "Check the name or ID is right and the page is public, then retry.");
   assert.equal(sourceRecoveryGuidance("rate limit exceeded"),
-    "Wait a few minutes for the limit to reset, then retry it.");
+    "The source limits how often it can be read. Wait a few minutes, then retry.");
   assert.equal(sourceRecoveryGuidance("unexpected parser failure"),
-    "Retry this source. If it fails again, review its connection details.");
+    "Retry it. If it fails again, check its connection details.");
+});
+
+test("errors a retry cannot fix offer no retry and speak plainly", () => {
+  const token = sourceErrorView("RuntimeError: GitHub Discussions needs GITHUB_TOKEN — the GraphQL API has no anonymous access");
+  assert.equal(token.message, "Needs a GitHub access token");
+  assert.equal(token.canRetry, false);
+  const rejected = sourceErrorView("RuntimeError: GitHub issues HTTP 401: Bad credentials");
+  assert.equal(rejected.message, "The access token was rejected");
+  assert.equal(rejected.canRetry, false);
+  const slow = sourceErrorView("ReadTimeout: The read operation timed out");
+  assert.equal(slow.message, "The source took too long to answer");
+  assert.equal(slow.canRetry, true);
+  assert.ok(!/RuntimeError|ReadTimeout/.test(token.message + slow.message));
+});
+
+test("a finished run says Finished, not the cutoff, when one source timed out on its own", () => {
+  const view = backfillProgressView({
+    checked_sources: 8, failed_sources: 0, timed_out_sources: 1, total_sources: 8,
+    expected_seconds: 120, timeout_seconds: 180,
+    started_at: "2026-08-20T10:00:00+00:00",
+  }, Date.parse("2026-08-20T10:00:06+00:00"));
+  assert.equal(view.expectedLabel, "Finished");
+  assert.equal(view.elapsedLabel, "");
 });

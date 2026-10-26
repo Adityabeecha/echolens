@@ -33,21 +33,92 @@ export function backfillProgressView(progress: BackfillProgress, now = Date.now(
     ? Math.round((progress.checked_sources / progress.total_sources) * 100)
     : 0;
 
+  const finished = progress.total_sources > 0 && progress.checked_sources >= progress.total_sources;
+  // "Stopped after 3 min" only when the run really hit the cutoff. A source
+  // that timed out on its own in seconds is an error, not the batch stopping —
+  // showing both "0:06 elapsed" and "Stopped after 3 min" contradicted itself.
+  const hitCutoff = timedOut && elapsedSeconds >= progress.timeout_seconds;
+
   return {
     countLabel: `${progress.checked_sources} of ${progress.total_sources} sources checked`,
-    elapsedLabel: `${compactDuration(elapsedSeconds)} elapsed`,
-    expectedLabel: timedOut
+    // Elapsed keeps counting from the start, so it is only shown while running.
+    elapsedLabel: finished ? "" : `${compactDuration(elapsedSeconds)} elapsed`,
+    expectedLabel: hitCutoff
       ? `Stopped after ${timeoutMinutes} min`
       : terminalFailure
         ? "Finished with errors"
-        : `Usually under ${expectedMinutes} min`,
+        : finished
+          ? "Finished"
+          : `Usually under ${expectedMinutes} min`,
     cutoffLabel: `Unresponsive sources stop after ${timeoutMinutes} min and unlock Retry.`,
     percent,
   };
 }
 
+export interface SourceErrorView {
+  /** What went wrong, in plain words. */
+  message: string;
+  /** What to do about it. */
+  guidance: string;
+  /** False when retrying cannot help (a missing or rejected token). */
+  canRetry: boolean;
+}
+
+/** A collector's raw error ("RuntimeError: …", "ReadTimeout: …") as words a
+ *  person can act on. The raw text stays available as technical detail. */
+export function sourceErrorView(error: string | null): SourceErrorView {
+  const message = (error || "").toLowerCase();
+  if (/needs github_token|no anonymous access|token (is )?(missing|required)/.test(message)) {
+    return {
+      message: "Needs a GitHub access token",
+      guidance: "GitHub only shares this with a token. An admin adds GITHUB_TOKEN to the server settings; everything else keeps working without it.",
+      canRetry: false,
+    };
+  }
+  if (/\b401\b|bad credentials|unauthori[sz]ed/.test(message)) {
+    return {
+      message: "The access token was rejected",
+      guidance: "It has probably expired. An admin replaces the token in the server settings, then retries.",
+      canRetry: false,
+    };
+  }
+  if (/\b403\b|forbidden|permission/.test(message)) {
+    return {
+      message: "This source refused access",
+      guidance: "It may be private, or the token lacks permission. Check it is public, then retry.",
+      canRetry: true,
+    };
+  }
+  if (/\b404\b|not found|does not exist|invalid (id|identifier|package|repo)/.test(message)) {
+    return {
+      message: "We couldn't find it",
+      guidance: "Check the name or ID is right and the page is public, then retry.",
+      canRetry: true,
+    };
+  }
+  if (/rate.?limit|too many requests|\b429\b/.test(message)) {
+    return {
+      message: "Asked to slow down",
+      guidance: "The source limits how often it can be read. Wait a few minutes, then retry.",
+      canRetry: true,
+    };
+  }
+  if (/timeout|timed out|stopped responding|network|connection/.test(message)) {
+    return {
+      message: "The source took too long to answer",
+      guidance: "It's usually temporary. Retry now; the other sources are unaffected.",
+      canRetry: true,
+    };
+  }
+  return {
+    message: "This source couldn't be read",
+    guidance: "Retry it. If it fails again, check its connection details.",
+    canRetry: true,
+  };
+}
+
 export function sourceProgressLabel(source: SourceProgress): string {
-  if (source.status === "error") return source.last_error || "Source check failed";
+  if (source.status === "error") return sourceErrorView(source.last_error).message;
   if (source.status === "healthy") {
     return `${source.items_last_run.toLocaleString()} items pulled`;
   }
@@ -70,20 +141,7 @@ export function progressActivityLabel(
 }
 
 export function sourceRecoveryGuidance(error: string | null): string {
-  const message = (error || "").toLowerCase();
-  if (/401|403|unauthori[sz]ed|forbidden|credential|token|permission/.test(message)) {
-    return "Check this source's access credentials, then retry it.";
-  }
-  if (/404|not found|does not exist|invalid (id|identifier|package|repo)/.test(message)) {
-    return "Check the source identifier and visibility, then retry it.";
-  }
-  if (/rate.?limit|too many requests|\b429\b/.test(message)) {
-    return "Wait a few minutes for the limit to reset, then retry it.";
-  }
-  if (/timeout|timed out|stopped responding|network|connection/.test(message)) {
-    return "The source did not respond. Retry it now; the other sources are unaffected.";
-  }
-  return "Retry this source. If it fails again, review its connection details.";
+  return sourceErrorView(error).guidance;
 }
 
 export function emptyBackfillMessage({

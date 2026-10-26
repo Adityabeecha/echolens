@@ -89,7 +89,13 @@ function WorkspaceApp() {
 
   // The active product comes from the URL, so a refresh or a shared link lands
   // on the product you were actually looking at.
-  const activeId = route.productId ?? null;
+  // "Add a product" is an overlay with a product-less URL. Keep showing the
+  // product behind it: dropping it blanked the switcher ("Choose product") and
+  // Today's health ("—") while the dialog was open.
+  const lastProductRef = useRef<number | null>(null);
+  const createdProductRef = useRef<number | null>(null);
+  if (route.productId != null) lastProductRef.current = route.productId;
+  const activeId = route.productId ?? (route.screen === "onboarding" ? lastProductRef.current : null);
   const activeProduct = products.find((p) => p.id === activeId) ?? null;
   const productName = activeProduct?.name ?? null;
 
@@ -353,7 +359,7 @@ function WorkspaceApp() {
       <AppHeader key={activeId ?? "none"} screen={screen} go={go} products={products} productId={activeId}
         onSwitchProduct={switchProduct} onLogo={onLogo} onAsk={openAsk} askShortcut={askShortcut}
         theme={theme} onThemeChange={setTheme} onLogout={guest ? () => leaveDemo(true) : logout}
-        onAddProduct={() => navigate({ screen: "onboarding", productId: null })} liveKey={reloadKey} guest={guest}
+        onAddProduct={() => navigate({ screen: "onboarding", productId: activeId })} liveKey={reloadKey} guest={guest}
         onRunInvestigation={canAct ? () => setNewCaseOpen(true) : undefined}
         onImportCsv={canAct ? () => go("sources", { import: "1" }) : undefined} />
       {guest && <div className="el-demo-banner" role="region" aria-label="Demo">
@@ -377,7 +383,7 @@ function WorkspaceApp() {
               onGoCases={(tab) => go("cases", tab && tab !== "all" ? { tab } : undefined)}
               onGoSources={() => go("sources")}
               onGoPlan={() => go("plan")}
-              onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
+              onAddProduct={() => navigate({ screen: "onboarding", productId: activeId })}
               // A guest signing in is a sign-OUT of the guest visit: it clears
               // the guest flag and returns to the door.
               onSignIn={logout}
@@ -426,7 +432,7 @@ function WorkspaceApp() {
           {screen === "sources" && (
             <ScreenChunk>
               <Sources key={key} productName={productName} openImport={params.import === "1"}
-                       onAddProduct={() => navigate({ screen: "onboarding", productId: null })} />
+                       onAddProduct={() => navigate({ screen: "onboarding", productId: activeId })} />
             </ScreenChunk>
           )}
 
@@ -437,7 +443,7 @@ function WorkspaceApp() {
                 product={activeProduct}
                 onGoCosts={() => setParams({ section: "costs" })}
                 onGoSources={() => go("sources")}
-                onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
+                onAddProduct={() => navigate({ screen: "onboarding", productId: activeId })}
                 onDeleteProduct={setDeleting}
                 section={SETTINGS_SECTIONS.includes(params.section as SettingsSection)
                   ? params.section as SettingsSection : "general"}
@@ -484,7 +490,7 @@ function WorkspaceApp() {
               <Portfolio
                 onOpenProduct={switchProduct}
                 onOpenInvestigation={(id) => openCase(id, "resolved")}
-                onAddProduct={() => navigate({ screen: "onboarding", productId: null })}
+                onAddProduct={() => navigate({ screen: "onboarding", productId: activeId })}
               />
             </ScreenChunk>
           )}
@@ -498,6 +504,7 @@ function WorkspaceApp() {
                 onClose={closeOnboarding}
                 onProductCreated={(id) => {
                   // Scope everything to the new product straight away.
+                  createdProductRef.current = id;
                   setActiveProduct(id);
                   api.products().then((r) => setProducts(r.products)).catch(() => {});
                   api.activateProduct(id).catch(() => {});
@@ -557,6 +564,21 @@ function WorkspaceApp() {
 
   /** Leaving the wizard: adopt the new product, then land where asked. */
   function finishOnboarding(target: Screen, extra?: Record<string, string>) {
+    // Leave the wizard at once when the new product's id is known. Waiting for
+    // the product list first meant the click did nothing visible for seconds on
+    // a busy server (it is still saving the backfill), so people clicked again.
+    const created = createdProductRef.current;
+    if (created != null) {
+      setActiveProduct(created);
+      api.activateProduct(created).catch(() => {});
+      bumpReload();
+      navigate({ screen: target, productId: created, params: extra }, { replace: true });
+      api.products().then((r) => {
+        setProducts(r.products);
+        if (r.products.length === 1 && !tourSeen()) setTourOpen(true);
+      }).catch(() => {});
+      return;
+    }
     api.products().then((r) => {
       setProducts(r.products);
       // By created_at (then id), not array position. GET /products carries no

@@ -1,7 +1,7 @@
 import { CSSProperties, ReactNode, useEffect, useState } from "react";
 import { AlertSettings, CostsSummary, api } from "../../api";
 import { withToast } from "../../components/Toast";
-import { SerifHeadline } from "../../components/casefile";
+import { Dropdown, SerifHeadline } from "../../components/casefile";
 import "../../components/casefile/casefile.css";
 import { money } from "../../format";
 import { useAsync } from "../../hooks";
@@ -196,11 +196,10 @@ export function IntegrationsSection({ admin, why, trackers }: { admin: boolean; 
             <span style={{ width: 20 }} aria-hidden />
             <label className="ps-field" style={{ flex: 1 }}>
               <span>How serious before an instant alert?</span>
-              <select className="ps-select" value={a.alert_instant_min_severity} disabled={!admin || !!busy || !a.alerts_enabled}
-                title="ALERT_INSTANT_MIN_SEVERITY (0–1)"
-                onChange={(e) => save("sev", { alert_instant_min_severity: Number(e.target.value) })}>
-                {choices.map((c) => <option key={c.v} value={c.v}>{c.label}</option>)}
-              </select>
+              <Dropdown block label="How serious before an instant alert?" value={String(a.alert_instant_min_severity)}
+                disabled={!admin || !!busy || !a.alerts_enabled} title="ALERT_INSTANT_MIN_SEVERITY (0–1)"
+                options={choices.map((c) => ({ value: String(c.v), label: c.label }))}
+                onChange={(v) => save("sev", { alert_instant_min_severity: Number(v) })} />
             </label>
           </div>
           <label className="ps-toggle">

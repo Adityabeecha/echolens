@@ -1,5 +1,5 @@
 import { CaseRow, PlanItem, PlanOverride, PlanSegment } from "../../api";
-import { ListRow, stampFor } from "../../components/casefile";
+import { Dropdown, ListRow, stampFor } from "../../components/casefile";
 import { Button } from "../../ui";
 import { keyOf } from "./model";
 
@@ -32,10 +32,12 @@ export function PlanRow({item,inPlan,editable,segments,note,caseRow,onOpen,onTog
           {request ? item.verbatims.map((quote,i)=><blockquote key={i} className="pl-quote">“{quote}”</blockquote>)
             : <p className="pl-muted">{item.evidence_count} cited proof items · <span title={item.evidence_refs.join(" · ")}>Open the problem to read the sources.</span></p>}
           {editable && <div className="pl-actions">
-            {item.impact&&<label>Impact <select className="pl-input" aria-label={`Impact for ${item.summary}`} value={item.impact.level}
-              onChange={e=>onOverride({impact:Number(e.target.value)})}>{[1,2,3,4,5].map(n=><option key={n} value={n}>{n} · {["","Minimal","Low","Medium","High","Critical"][n]}</option>)}</select></label>}
-            <label>Priority group <select className="pl-input" aria-label={`Priority group for ${item.summary}`} value={item.segment?.key??""}
-              onChange={e=>onOverride({segment:e.target.value||null})}><option value="">None</option>{segments.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}</select></label>
+            {item.impact&&<label>Impact <Dropdown label={`Impact for ${item.summary}`} value={String(item.impact.level)}
+              options={[1,2,3,4,5].map(n=>({value:String(n),label:`${n} · ${["","Minimal","Low","Medium","High","Critical"][n]}`}))}
+              onChange={v=>onOverride({impact:Number(v)})}/></label>}
+            <label>Priority group <Dropdown label={`Priority group for ${item.summary}`} value={item.segment?.key??""}
+              options={[{value:"",label:"None"},...segments.map(s=>({value:s.key,label:s.label}))]}
+              onChange={v=>onOverride({segment:v||null})}/></label>
             <Button variant="quiet" onClick={()=>onOverride(null)}>Reset estimates</Button>
           </div>}
         </div>

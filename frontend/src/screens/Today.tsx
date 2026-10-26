@@ -53,7 +53,18 @@ export function Today({ productName, onOpenCase, onGoCases, onGoSources, onGoPla
   const me = portfolio.data?.products.find(p => p.product_id === productId) ?? null;
   const hasData = me?.has_data ?? ((snapshot.data?.reviews ?? 0) > 0 || rows.length > 0);
   const stale = (sources.data?.connected ?? []).filter(s => s.stale || s.error);
-  const spikes = cases.data?.incidents?.length ?? cases.data?.signals.filter(s => !s.dismissed).length ?? me?.untriaged ?? 0;
+  const readingFirst = !!sources.data?.reading_first;
+  // `||`, not `??`: no incidents is an empty list, and it hid real spikes.
+  const spikes = cases.data?.incidents?.length || cases.data?.signals.filter(s => !s.dismissed).length || me?.untriaged || 0;
+  // Name what jumped, in the topic's own words ("quick unlock", "system tray").
+  const spikeTopics = (cases.data?.signals ?? []).filter(s => !s.dismissed)
+    .map(s => (s.metric.match(/'([^']+)'/)?.[1] ?? "").trim()).filter(Boolean)
+    .filter((t, i, all) => all.indexOf(t) === i).slice(0, 3);
+  // A source that errored is not "out of date" — it could not be read at all.
+  const broken = stale.filter(s => s.error);
+  const sourceNote = broken.length
+    ? `${broken.length} ${plural(broken.length, "source")} couldn't be read; the rest are up to date.`
+    : "Some feedback is out of date. Check your sources before calling this a quiet day.";
   const running = rows.filter(r => r.status === "running");
   const queued = rows.filter(r => r.status === "queued");
   const decisions = problems.filter(r => ["needs_review", "needs_human", "regressed"].includes(r.status)).length;
@@ -65,6 +76,14 @@ export function Today({ productName, onOpenCase, onGoCases, onGoSources, onGoPla
   const extra = problems.length - 1 - also.length;
   const date = new Date();
   const greeting = date.getHours() < 12 ? "Good morning" : date.getHours() < 18 ? "Good afternoon" : "Good evening";
+
+  // While a new product's first read runs, check back every few seconds and
+  // refresh everything the moment it finishes.
+  useEffect(() => {
+    if (!readingFirst || sources.loading || sources.refreshing) return;
+    const timer = window.setTimeout(() => { sources.reload(); cases.reload(); portfolio.reload(); }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [readingFirst, sources.data, sources.loading, sources.refreshing, sources.reload, cases.reload, portfolio.reload]);
 
   // Poll only while work is active, and wait for each read to finish first.
   useEffect(() => {
@@ -97,11 +116,11 @@ export function Today({ productName, onOpenCase, onGoCases, onGoSources, onGoPla
     <div className="today-v2__content">
       <div className="today-intro" aria-busy={loading}>
         <div className="today-greeting">{greeting} · {product} · {date.toLocaleDateString(undefined, { weekday:"long", month:"long", day:"numeric" })} · health{" "}
-          <strong>{me?.has_data ? me.health : "—"}</strong>/100
+          <strong>{me?.has_data ? me.health : "—"}</strong>/100{readingFirst ? " (measured after the first read)" : ""}
           <span title="Health is higher when fewer problems and review spikes need attention."> · higher is healthier</span></div>
         <SerifHeadline>{loading ? "Reading today's reviews…" : cases.error ? "Your problems couldn't be loaded."
           : headline({ focus, count:problems.length, drag:metrics?.rating_drag, hasData,
-            spikes, stale:stale.length })}</SerifHeadline>
+            spikes, stale:stale.length, readingFirst, product })}</SerifHeadline>
         <div className="today-summary">
           {loading ? "Checking investigations" : <>
             <Button variant="quiet" onClick={() => onGoCases("needs-review")}>{decisions} {plural(decisions, "decision")} waiting</Button>
@@ -115,11 +134,22 @@ export function Today({ productName, onOpenCase, onGoCases, onGoSources, onGoPla
         : focus ? <FocusProblem row={focus} metrics={metrics} timeline={timeline.data} loading={timeline.loading}
             onOpen={() => onOpenCase(focus.id!, focus.status)}
             onTicket={reviewer && focus.finding_id != null ? () => openEngineering(focus.id!) : undefined} />
-        : <EmptyState title={stale.length ? "Refresh your feedback before deciding." : spikes > 0 ? "Choose which review spikes to investigate."
+        : readingFirst ? <EmptyState title="Your first reviews are on their way."
+            action={<Button variant="primary" onClick={onGoSources}>Watch the sources</Button>}>
+            EchoLens is reading every connected source for the first time. Spikes, health and problems show up
+            here as soon as there is something to measure — usually within a minute or two. Nothing is wrong yet;
+            nothing has been measured yet.
+          </EmptyState>
+        : <EmptyState title={spikes > 0 ? "Pick which spikes EchoLens should look into."
+            : stale.length ? (broken.length ? "Some sources couldn't be read." : "Refresh your feedback before deciding.")
             : hasData ? "Nothing needs a decision from you." : "Connect your first feedback source."}
-          action={<Button variant="primary" onClick={stale.length ? onGoSources : spikes > 0 || hasData ? () => onGoCases("all") : onGoSources}>
-            {stale.length ? "Review sources" : spikes > 0 ? "Review the spikes" : hasData ? "See all problems" : "Connect a source"}</Button>}>
-          {stale.length ? "Some feedback is out of date. Check your sources before calling this a quiet day."
+          action={<Button variant="primary" onClick={spikes > 0 || (!stale.length && hasData) ? () => onGoCases("all") : onGoSources}>
+            {spikes > 0 ? "Look at the spikes" : stale.length ? "Review sources" : hasData ? "See all problems" : "Connect a source"}</Button>}>
+          {spikes > 0
+            ? <>{spikeTopics.length > 0 ? <>Things that jumped: <strong>{spikeTopics.join(", ")}</strong>. </> : null}
+                Nothing is investigated until you choose — each one takes a few minutes and shows its proof.
+                {stale.length > 0 && <> {sourceNote}</>}</>
+            : stale.length ? sourceNote
             : running.length + queued.length > 0 ? `EchoLens is working through ${running.length + queued.length} ${plural(running.length + queued.length, "investigation")}. You can follow the work below.`
             : watches.some(w => w.status === "watching") ? "EchoLens is watching the complaints after your shipped fixes. Their progress is below."
             : me?.has_data ? "EchoLens is watching connected reviews for new complaints. Any problem that needs your decision will appear here."

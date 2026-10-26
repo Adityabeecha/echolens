@@ -89,10 +89,10 @@ class PlayStoreCollector(Collector):
             return False, None
         # Scoped by product: ext_id is only unique WITHIN a product, and an
         # unscoped lookup let one product's row hide another's.
-        if session.scalars(select(Review).where(
-                Review.ext_id == ext_id, Review.product == self.product)).first():
+        if self.existing(session, Review, Review.ext_id, ext_id):
             return False, wm
-        session.add(Review(
+        self.remember(Review, Review.ext_id, ext_id, True)
+        self.stage(session, Review, **dict(
             source="play_store", ext_id=ext_id,
             # A missing score must not become 0: every negativity filter is
             # `rating <= 2`, so 0 reads as the most negative value possible.

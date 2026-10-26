@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { CaseRow, Evidence, Investigation, api, canReview, errorMessage } from "../../api";
 import { withToast } from "../../components/Toast";
-import { ReleaseChart } from "../../components/casefile";
+import { Dropdown, ReleaseChart } from "../../components/casefile";
 import { useAsync } from "../../hooks";
 import { Button } from "../../ui";
 import { ProductDecisionCard, RecommendationRow, ShareCard } from "./CaseActions";
@@ -121,10 +121,10 @@ function MergeAction({ caseId, onMerged }: { caseId: number; onMerged: (id: numb
   return (
     <div className="cv-card">
       <label className="cv-field"><span>Merge problem #{caseId} into</span>
-        <select className="cv-input" value={target} disabled={busy} onChange={(e) => setTarget(e.target.value)}>
-          <option value="">{candidates.length ? "Choose a problem" : "No other open problems"}</option>
-          {candidates.map((c) => <option key={c.id} value={c.id!}>#{c.id} · {c.title}</option>)}
-        </select>
+        <Dropdown block label={`Merge problem #${caseId} into`} value={target} disabled={busy || !candidates.length}
+          placeholder={candidates.length ? "Choose a problem" : "No other open problems"}
+          options={candidates.map((c) => ({ value: String(c.id), label: `#${c.id} · ${c.title}` }))}
+          onChange={setTarget} />
       </label>
       <div style={{ fontSize: 13, color: "var(--el-muted)" }}>
         This one leaves the open lists. Its proof stays linked as related, and its links open the other problem.

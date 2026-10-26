@@ -20,6 +20,7 @@ from echolens.textkit import is_probably_english, top_themes
 from echolens.timeutil import aware_utc
 
 WEEKS = 12  # how much recent history to chart
+MIN_WEEK_REVIEWS = 10  # reviews per week before a week-on-week rating change means anything
 
 
 def _at(r: Review):
@@ -63,8 +64,17 @@ def health_snapshot(session: Session, product: str | None = None, days: int = 90
     weekly = _weekly_series(reviews, now, WEEKS)
     recent = [r.rating for r in reviews if _at(r) > now - timedelta(days=7)]
     prior = [r.rating for r in reviews if now - timedelta(days=14) < _at(r) <= now - timedelta(days=7)]
-    rating_now = round(statistics.mean(recent), 2) if recent else None
-    rating_prev = round(statistics.mean(prior), 2) if prior else None
+    # A week-on-week change needs enough reviews in BOTH weeks. With 5 reviews
+    # one 1★ moves the average by most of a star: KeePassXC showed "down 1.60
+    # on last week" while the detector, rightly, saw no drop at all.
+    comparable = len(recent) >= MIN_WEEK_REVIEWS and len(prior) >= MIN_WEEK_REVIEWS
+    if recent and len(recent) >= MIN_WEEK_REVIEWS:
+        rating_now, rating_basis = round(statistics.mean(recent), 2), "week"
+    else:
+        all_ratings = [r.rating for r in reviews if r.rating]
+        rating_now = round(statistics.mean(all_ratings), 2) if all_ratings else None
+        rating_basis = "window"
+    rating_prev = round(statistics.mean(prior), 2) if comparable else None
 
     low_volume = avg_per_day < LOW_VOLUME_PER_DAY
     return {
@@ -76,6 +86,7 @@ def health_snapshot(session: Session, product: str | None = None, days: int = 90
         "avg_per_day": round(avg_per_day, 1),
         "negatives": len(negatives),
         "rating_now": rating_now,
+        "rating_basis": rating_basis,
         "rating_prev": rating_prev,
         "rating_delta": (round(rating_now - rating_prev, 2)
                          if rating_now is not None and rating_prev is not None else None),

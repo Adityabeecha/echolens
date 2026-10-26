@@ -249,18 +249,32 @@ export function VerdictActions({ inv, onReload, onReviewed, onOpenCase }: {
     if (r.reopened_investigation_id) onOpenCase(r.reopened_investigation_id, "running");
   };
 
+  // The reviewer's verdict is the first decision on the page, so it is a pair of
+  // real buttons above the steps — it used to be two underlined text links
+  // below them, and after approving, disagreeing looked like a footnote.
+  const canApprove = reviewer && !approved && !(inv.finding?.grounding_violations?.length);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div className="cv-text-actions">
-        <button type="button" className="cv-text-btn" aria-expanded={open} disabled={!reviewer}
-          title={reviewer ? undefined : "Needs reviewer access"} onClick={() => setOpen((o) => !o)}>
-          Think this is wrong? Tell us what really caused it</button>
-        {reviewer && !approved && !(inv.finding?.grounding_violations?.length) && (
-          <button type="button" className="cv-text-btn" disabled={busy === "approve"} onClick={approve}
-            title="Approving records that the answer is right; it stays until a fix is confirmed">
-            {busy === "approve" ? "Saving…" : "Looks right — approve it"}</button>
-        )}
-        {approved && <span style={{ fontSize: 14, color: "var(--el-green)" }}>✓ You approved this answer.</span>}
+      <div className={`cv-verdict${approved ? " is-approved" : ""}`} role="group" aria-label="Your verdict">
+        <div className="cv-verdict__text">
+          {approved
+            ? <><span className="cv-verdict__title">✓ You approved this answer.</span>
+                <span className="cv-verdict__sub">It stays open until a fix is confirmed. Changed your mind? Reopen it.</span></>
+            : <><span className="cv-verdict__title">Is this right?</span>
+                <span className="cv-verdict__sub">{reviewer
+                  ? "Approve it to keep it, or tell EchoLens what it got wrong and it looks again."
+                  : "A reviewer approves the answer or sends it back."}</span></>}
+        </div>
+        <div className="cv-verdict__actions">
+          {canApprove && (
+            <Button variant="primary" loading={busy === "approve"} onClick={approve}
+              title="Approving records that the answer is right; it stays until a fix is confirmed">
+              Yes, approve it</Button>
+          )}
+          <Button variant="ghost" aria-expanded={open} disabled={!reviewer}
+            title={reviewer ? undefined : "Needs reviewer access"} onClick={() => setOpen((o) => !o)}>
+            {approved ? "Reopen, it isn't right" : "No, it isn't right"}</Button>
+        </div>
       </div>
       {open && (
         <div className="cv-card">

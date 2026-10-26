@@ -3,6 +3,8 @@ import { TimelineChart } from "../charts/TimelineChart";
 import { StampVariant } from "./stampFor";
 import "./casefile.css";
 export { stampFor } from "./stampFor";
+export { Dropdown } from "./Dropdown";
+export type { DropdownOption } from "./Dropdown";
 export type { StampInput, StampVariant } from "./stampFor";
 
 const VERDICT: Record<StampVariant, string> = {

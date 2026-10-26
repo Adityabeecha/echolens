@@ -46,6 +46,17 @@
 
 .cv-steps .cf-step.is-first .el-btn--primary { color:var(--el-highlight-ink); background:var(--el-focus-text); border-color:var(--el-focus-text); }
 .cv-steps .cf-step .cv-step-hint { font-size:13px; opacity:.75; flex-basis:100%; padding-left:28px; margin-top:-8px; }
+/* "Is this right?" — the reviewer's verdict, first in What to do next. */
+.cv-verdict { display:flex; flex-wrap:wrap; align-items:center; gap:16px 24px; border:1px solid var(--el-line-strong);
+  border-radius:18px; padding:18px 20px; background:var(--el-paper); }
+.cv-verdict.is-approved { background:color-mix(in srgb, var(--el-green) 7%, var(--el-paper));
+  border-color:color-mix(in srgb, var(--el-green) 35%, transparent); }
+.cv-verdict__text { flex:1 1 260px; display:flex; flex-direction:column; gap:4px; }
+.cv-verdict__title { font:500 22px var(--el-serif); color:var(--el-ink); }
+.cv-verdict.is-approved .cv-verdict__title { color:var(--el-green); }
+.cv-verdict__sub { font-size:14px; line-height:1.5; color:var(--el-muted); }
+.cv-verdict__actions { display:flex; gap:10px; flex-wrap:wrap; }
+.cv-verdict .el-btn { font-size:15px; padding:11px 18px; border-radius:12px; min-height:44px; }
 .cv-text-actions { display:flex; gap:20px; flex-wrap:wrap; align-items:center; }
 .cv-text-btn { font:14px var(--el-font); color:var(--el-muted); background:transparent; border:0; padding:4px 0; cursor:pointer; text-decoration:underline; text-underline-offset:3px; }
 .cv-text-btn:hover { color:var(--el-ink); }
@@ -66,7 +77,8 @@ textarea.cv-input { resize:vertical; line-height:1.5; }
 
 /* Exhibits rail */
 .cv-rail { flex:2 1 360px; min-width:0; display:flex; flex-direction:column; gap:14px; background:var(--el-soft); border-radius:24px;
-  padding:24px; align-self:flex-start; position:sticky; top:96px; max-height:calc(100dvh - 120px); overflow:auto; }
+  padding:24px; align-self:flex-start; position:sticky; top:calc(var(--cv-bar-h, 80px) + 16px);
+  max-height:calc(100dvh - var(--cv-bar-h, 80px) - 32px); overflow:auto; }
 .cv-rail__head { display:flex; justify-content:space-between; align-items:baseline; gap:12px; }
 .cv-rail__head h2 { margin:0; font:500 28px var(--el-serif); }
 .cv-rail__head span { font-size:13px; color:var(--el-muted); }
@@ -84,6 +96,12 @@ textarea.cv-input { resize:vertical; line-height:1.5; }
 /* More, below the fold */
 .cv-more { max-width:1200px; margin:0 auto; padding:0 32px 96px; display:flex; flex-direction:column; gap:20px; }
 .cv-more__panel { min-height:200px; }
+.cv-more__open { display:flex; align-items:center; justify-content:space-between; gap:16px; width:100%; text-align:left;
+  font:inherit; color:var(--el-ink); background:var(--el-soft); border:0; border-radius:18px; padding:18px 22px; cursor:pointer; min-height:44px; }
+.cv-more__open:hover { background:color-mix(in srgb, var(--el-ink) 6%, var(--el-soft)); }
+.cv-more__open:focus-visible { outline:2px solid var(--el-ink); outline-offset:2px; }
+.cv-more__title { display:block; font:500 22px var(--el-serif); }
+.cv-more__sub { display:block; font-size:14px; color:var(--el-muted); margin-top:2px; }
 .cv-trace-frame { height:min(72vh, 760px); display:flex; border:1px solid var(--el-line); border-radius:18px; overflow:hidden; }
 .cv-more__stack { display:flex; flex-direction:column; gap:28px; }
 .cv-more__stack > section { display:flex; flex-direction:column; gap:12px; }

@@ -1,15 +1,16 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, canReview, isAdmin } from "../api";
 import { count, duration, plural, relativeWhen, when } from "../format";
 import { useAsync, useDialog } from "../hooks";
 import { Button, Centered, ErrorState } from "../ui";
-import { SerifHeadline } from "../components/casefile";
+import { Dropdown, SerifHeadline } from "../components/casefile";
 import { ImportPanel } from "./sources/ImportPanel";
 import "./settings/ps.css";
 
 /** The collector's status, as one of four plain states. */
-type State = "healthy" | "late" | "broken" | "reading" | "waiting";
+type State = "healthy" | "late" | "broken" | "reading" | "waiting" | "off";
 function stateOf(status: string): State {
+  if (status === "Unavailable") return "off";
   if (status === "Healthy") return "healthy";
   if (status === "Error" || status === "Disconnected") return "broken";
   if (status === "Syncing…") return "reading";
@@ -18,6 +19,7 @@ function stateOf(status: string): State {
 }
 const STATE_WORDS: Record<State, string> = {
   healthy: "Healthy", late: "Late", broken: "Broken", reading: "Reading now", waiting: "Not read yet",
+  off: "Can't be read",
 };
 
 /**
@@ -31,6 +33,12 @@ export function Sources({ onAddProduct, productName, openImport = false }: {
   openImport?: boolean;
 }) {
   const { data, loading, error, reload } = useAsync(() => api.sources(), []);
+  // Check back every few seconds while a new product's first read runs.
+  useEffect(() => {
+    if (!data?.reading_first) return;
+    const timer = window.setTimeout(reload, 5000);
+    return () => window.clearTimeout(timer);
+  }, [data, reload]);
   const [showConnect, setShowConnect] = useState(false);
   const [showImport, setShowImport] = useState(openImport);
   const [busy, setBusy] = useState<string | null>(null);
@@ -113,9 +121,16 @@ export function Sources({ onAddProduct, productName, openImport = false }: {
   const connected = data?.connected ?? [];
   const states = connected.map((s) => stateOf(s.status));
   const needLook = states.filter((s) => s === "broken" || s === "late").length;
+  // Off sources (can't run on this server) are neither reading nor broken.
+  const off = states.filter((s) => s === "off").length;
+  const offNote = off ? `${off} more ${off === 1 ? "is" : "are"} connected but can't be read on this server — the reason is on ${off === 1 ? "its row" : "each row"}.` : "";
+  const live = connected.length - off;
+  // "All 7 sources are reading normally" next to "0 items" read as healthy and
+  // empty; during the first read it is neither yet.
   const answer = connected.length === 0 ? "Nothing connected yet."
-    : needLook === 0 ? `${connected.length === 1 ? "Your source is" : `All ${connected.length} sources are`} reading normally.`
-    : `${needLook} of ${connected.length} ${plural(connected.length, "source")} ${needLook === 1 ? "needs" : "need"} a look.`;
+    : data?.reading_first ? `Reading ${connected.length === 1 ? "your source" : `all ${connected.length} sources`} for the first time…`
+    : needLook === 0 ? `${live === 1 ? "Your source is" : `All ${live} sources are`} reading normally.`
+    : `${needLook} of ${live} ${plural(live, "source")} ${needLook === 1 ? "needs" : "need"} a look.`;
 
   return (
     <div className="ps-screen">
@@ -167,6 +182,7 @@ export function Sources({ onAddProduct, productName, openImport = false }: {
             {onAddProduct && admin && <Button variant="ghost" size="sm" icon="plus" onClick={onAddProduct}>Add a product</Button>}
           </div>
           <SerifHeadline as="h1" size="page">{answer}</SerifHeadline>
+          {offNote && !data?.reading_first && <p className="ps-note" style={{ marginTop: 8 }}>{offNote}</p>}
         </header>
 
         {msg && <div role="status" aria-live="polite" className="ps-banner">{msg}</div>}
@@ -197,14 +213,14 @@ export function Sources({ onAddProduct, productName, openImport = false }: {
               {connected.map((s, i) => {
                 const st = states[i];
                 const key = `${s.source}-${s.identifier}`;
-                const real = !!(s.source && s.identifier);
+                const real = !!(s.source && s.identifier) && st !== "off";
                 return (
                   <div key={`${i}-${s.name}-${s.detail}`} className="ps-source">
                     <div className="ps-source__name">
                       <strong>{s.name}</strong>
                       <span title={s.detail}>{s.detail}</span>
                     </div>
-                    <span className={`ps-state is-${st === "waiting" ? "late" : st}`}>
+                    <span className={`ps-state is-${st === "waiting" || st === "off" ? "late" : st}`}>
                       <i className="ps-dot" aria-hidden />{STATE_WORDS[st]}
                     </span>
                     <div className="ps-source__when" title={s.why || undefined}>
@@ -300,10 +316,9 @@ function ConnectForm({ onDone }: { onDone: () => void }) {
       <div className="ps-row" style={{ alignItems: "flex-end" }}>
         <label className="ps-field" style={{ flex: "1 1 180px" }}>
           <span>What to read</span>
-          <select className="ps-select" value={source} onChange={(e) => setSource(e.target.value)} aria-label="Source type">
-            {options.length === 0 ? <option value="play_store">Google Play</option>
-              : options.map((o) => <option key={o.source} value={o.source}>{o.label}</option>)}
-          </select>
+          <Dropdown block label="Source type" value={source} onChange={setSource}
+            options={options.length === 0 ? [{ value: "play_store", label: "Google Play" }]
+              : options.map((o) => ({ value: o.source, label: o.label }))} />
         </label>
         <label className="ps-field" style={{ flex: "2 1 240px" }}>
           <span>Which one</span>

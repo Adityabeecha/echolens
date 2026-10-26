@@ -4,6 +4,14 @@ import { useAsync } from '../../hooks';
 import { Button, ErrorState, Panel } from '../../ui';
 import { EmptyState, SerifHeadline } from '../../components/casefile';
 import { friendlyDate } from './model';
+// Examples of useful team knowledge, offered on an empty list. Each opens the
+// editor pre-filled so the team rewrites it for their app before saving.
+const STARTER_RULES = [
+  'Releases go out on Thursdays; complaints the next day usually point at that release.',
+  'Battery complaints on Android 14 are often the OS, not us — check other apps first.',
+  'Sync and login issues are owned by the backend team; everything else is mobile.',
+];
+
 export function TeamRules({ productName, onOpenInvestigation }: { productName: string | null; onOpenInvestigation: (id: number, status?: string) => void }) {
   const { data, loading, error, reload } = useAsync(() => api.teamRules(), []);
   const [rules, setRules] = useState<TeamRule[]>([]);
@@ -51,7 +59,13 @@ export function TeamRules({ productName, onOpenInvestigation }: { productName: s
     {saveError && <p className="learned-error" role="alert">{saveError}</p>}
     {undoId != null && <div role="status" className="learned-row"><span>Rule retired. It will no longer guide investigations.</span><Button disabled={busy} onClick={() => void update(undoId, { status: 'active' })}>Undo</Button></div>}
     {loading && !data ? <p role="status">Reading your team’s rules…</p> : error || !data ? <ErrorState title="We couldn’t read your team’s rules" onRetry={reload} /> : <>
-      {rules.filter((rule) => rule.status === 'active').length === 0 && <EmptyState title="No active rules yet.">When a reviewer corrects a problem or adds a rule, the lesson appears here. Add the context your team wishes every investigation knew.</EmptyState>}
+      {rules.filter((rule) => rule.status === 'active').length === 0 && <EmptyState title="No active rules yet.">When a reviewer corrects a problem or adds a rule, the lesson appears here. Add the context your team wishes every investigation knew.
+        {/* A blank list gave no idea what a good rule looks like. */}
+        {editable && <span className="learned-starters" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14, justifyContent: 'center' }}>
+          {STARTER_RULES.map((text) => <Button key={text} size="sm" type="button"
+            onClick={() => { setAdding(true); setEditing(null); setDraft(text); setSaveError(null); }}>{text}</Button>)}
+        </span>}
+      </EmptyState>}
       {rules.filter((rule) => showRetired || rule.status === 'active').map((rule) => <article key={rule.id} className="learned-rule">
         <div className="learned-row"><span className="learned-hint">{rule.origin === 'correction' ? 'Human correction · hint only' : 'Team rule · hint only'}</span>{rule.status === 'retired' && <span className="learned-meta">Retired</span>}</div>
         {editing === rule.id ? form : <p className="learned-rule-text">{rule.text}</p>}

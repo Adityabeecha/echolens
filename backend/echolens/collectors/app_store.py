@@ -137,11 +137,10 @@ class AppStoreCollector(Collector):
         # those stored rows as well, without rewriting their identity.
         tag = hashlib.sha1(self.product.encode("utf-8")).hexdigest()[:6]
         legacy_id = f"as_{tag}_{review_id}"
-        if session.scalars(select(Review).where(
-                Review.ext_id.in_([ext_id, legacy_id]), Review.product == self.product,
-                Review.source == self.source)).first():
+        if self.existing(session, Review, Review.ext_id, [ext_id, legacy_id], source=self.source):
             return False, wm
-        session.add(Review(
+        self.remember(Review, Review.ext_id, ext_id, True, source=self.source)
+        self.stage(session, Review, **dict(
             source=self.source, ext_id=ext_id, rating=int(raw_rating), text=text,
             version=_label(item, "im:version"), os_version=None,
             created_at=at, product=self.product,

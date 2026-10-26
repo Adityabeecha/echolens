@@ -1,3 +1,4 @@
+import { Dropdown } from "../../components/casefile";
 import { useEffect, useState } from "react";
 import {
   Investigation, ProductDecision, ProductDecisionKind, Recommendation, ShareState, api,
@@ -247,9 +248,7 @@ function LevelSelect({ label, value, onChange }: { label: string; value: string;
   return (
     <label style={{ display: "inline-flex", alignItems: "center", gap: S[1], fontSize: T.xs, color: C.muted }}>
       {label}
-      <select value={value} onChange={(e) => onChange(e.target.value)} style={inputStyle}>
-        {LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
-      </select>
+      <Dropdown label={label} value={value} options={LEVELS.map((l) => ({ value: l, label: l }))} onChange={onChange} />
     </label>
   );
 }

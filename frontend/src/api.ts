@@ -818,6 +818,8 @@ export interface SourcesResp {
   available: string[];
   product?: string | null;
   last_synced?: Freshness;
+  /** Nothing collected yet and the first read is still under way. */
+  reading_first?: boolean;
 }
 
 // Today overview: the context drawn around the score.
@@ -934,6 +936,8 @@ export interface Snapshot {
   rating_now: number | null;
   rating_prev: number | null;
   rating_delta: number | null;
+  /** "week": rating_now is this week's average; "window": too few reviews a week, so the period's average. */
+  rating_basis?: "week" | "window";
   weekly: { week_start: string; count: number; avg_rating: number | null }[];
   top_themes: SnapshotTheme[];
   non_english: number;
@@ -1584,7 +1588,7 @@ export const api = {
   deleteProduct: (id: number, confirmName: string) =>
     del<{ deleted: string }>(`/products/${id}?confirm=${encodeURIComponent(confirmName)}`),
   collect: () => post("/collect/run"),
-  scan: () => post<{ detected: string[] }>(scoped("/anomalies/scan")),
+  scan: () => post<{ detected: string[]; reading_first?: boolean; message?: string }>(scoped("/anomalies/scan")),
   cases: () => get<CaseView>(scoped("/cases")),
   triage: (run = false) =>
     post<{ summary?: string; skipped_already_triaged?: number }>(scoped(`/anomalies/triage?run=${run}`)),

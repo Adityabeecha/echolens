@@ -65,6 +65,15 @@ SOURCE_INFO: dict[str, dict[str, str]] = {
 }
 
 
+# Sources whose upstream no longer answers. Offering them only produced a red
+# row on day one (and a "Retry" that could never work), so they are not offered
+# or run until a working way to read them exists. Value: the plain reason.
+UNAVAILABLE_SOURCES: dict[str, str] = {
+    "chrome_web_store": ("Google stopped answering the review endpoint EchoLens used "
+                         "(every request now fails). Import Chrome reviews as a CSV instead."),
+}
+
+
 @dataclass
 class SourceConfig:
     source: str
@@ -91,8 +100,25 @@ def configured_sources(session: Session, product_id: int | None = None) -> list[
     if product_id is not None:
         stmt = stmt.where(CollectorState.product_id == product_id)
     rows = session.scalars(stmt).all()
+    # A source that was connected before its upstream died stays listed (so
+    # Sources can say why), but is not run: it could only fail every time.
     return [SourceConfig(r.source, r.identifier, r.product, r.product_id,
-                         r.id, r.watermark) for r in rows]
+                         r.id, r.watermark) for r in rows
+            if not inert_reason(r.source)]
+
+
+def inert_reason(source: str) -> str | None:
+    """Why a connected source cannot run at all on this server, or None. Such
+    a source is shown as off, not as broken: it is not late and not failing,
+    and counting it made every Today read "sources need attention"."""
+    if source in UNAVAILABLE_SOURCES:
+        return UNAVAILABLE_SOURCES[source]
+    if source == "github_discussions":
+        from echolens.config import settings
+        if not settings.github_token:
+            return ("GitHub Discussions needs a GitHub token on the server; GitHub has no "
+                    "anonymous access to them. Issues and releases are read without one.")
+    return None
 
 
 def add_source(session: Session, source: str, identifier: str, product: str | None = None,
@@ -323,6 +349,8 @@ def source_health(session: Session, product: str | None = None) -> list[dict]:
     if product:
         q = q.where(CollectorState.product == product)
     for st in session.scalars(q).all():
+        if inert_reason(st.source):
+            continue
         last = aware_utc(st.last_run_at)
         errored = st.status == "error"
         overdue = last is not None and (now - last) > ttl

@@ -64,10 +64,9 @@ class FeedbackCollector(Collector):
 
         ext_id = ext_id_for(self.channel, parsed["native_id"])
         wm = iso(created)
-        existing = session.scalars(
-            select(FeedbackEntry).where(
-                FeedbackEntry.ext_id == ext_id,
-                FeedbackEntry.product == self.product)).first()
+        existing = self.existing(session, FeedbackEntry, FeedbackEntry.ext_id, ext_id)
+        if existing is True:      # added earlier in this same page
+            return False, wm
         if existing:
             # Refresh what a re-fetch legitimately changes (replies, answered
             # state) without counting it as a new insert.
@@ -76,7 +75,7 @@ class FeedbackCollector(Collector):
                 existing.meta_json = parsed["meta"]
             return False, wm
 
-        session.add(FeedbackEntry(
+        self.stage(session, FeedbackEntry,
             channel=self.channel,
             ext_id=ext_id,
             text=text[:8000],
@@ -86,7 +85,8 @@ class FeedbackCollector(Collector):
             status=parsed.get("status"),
             created_at=created,
             meta_json=parsed.get("meta"),
-        ))
+        )
+        self.remember(FeedbackEntry, FeedbackEntry.ext_id, ext_id, True)
         return True, wm
 
 

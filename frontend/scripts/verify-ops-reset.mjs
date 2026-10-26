@@ -48,7 +48,7 @@ function screen(role, status = "Healthy") {
   let cursor = 0, resolve, reject, reloads = 0;
   const pending = new Promise((a, b) => { resolve = a; reject = b; });
   const dependencies = {
-    react: { useState(initial) { const i = cursor++; if (!(i in slots)) slots[i] = initial;
+    react: { useEffect() {}, useState(initial) { const i = cursor++; if (!(i in slots)) slots[i] = initial;
       return [slots[i], value => { slots[i] = typeof value === "function" ? value(slots[i]) : value; }]; } },
     "react/jsx-runtime": runtime,
     "../api": { isAdmin: () => role === "admin", canReview: () => role !== "viewer",

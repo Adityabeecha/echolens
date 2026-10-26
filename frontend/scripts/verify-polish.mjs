@@ -74,13 +74,16 @@ function casesFixture(quotes = 1) {
     { key: "battery", lead: "battery", title: "Battery drain", z: 2.8, members: ["battery", "battery-issues"] },
     { key: "spike", lead: "spike", title: "1-star reviews are spiking", z: 4.0, members: ["spike", "drop"] },
   ] };
-  let calls = 0;
+  // Each read answers by what it asked for, not by call order: Cases also
+  // reads the sources now, to hold scans while the first read is running.
+  const reads = { cases: board, sources: { connected: [], available: [] }, candidates: {
+    candidates: [], requests: [{ slug: "dark", statement: "Dark mode", count: quotes,
+      verbatims: Array(quotes).fill("Please add dark mode"), trend: [] }],
+  } };
   const h = harness("../src/screens/Cases.tsx", {
-    "../api": { api: {}, canReview: () => false },
-    "../hooks": { useAsync: () => ({ data: calls++ % 2 === 0 ? board : {
-      candidates: [], requests: [{ slug: "dark", statement: "Dark mode", count: quotes,
-        verbatims: Array(quotes).fill("Please add dark mode"), trend: [] }],
-    } }) },
+    "../api": { api: { cases: () => "cases", sources: () => "sources", feedCandidates: () => "candidates",
+      savedViews: () => "views" }, canReview: () => false },
+    "../hooks": { useAsync: (fn) => ({ data: reads[fn()] }) },
   });
   return h.render(m => m.Cases({ productName: "Polish", params: { signals: "1" }, setParams() {} }));
 }
