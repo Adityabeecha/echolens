@@ -13,6 +13,11 @@
 const v = (name: string) => `var(--el-${name})`;
 
 export const C = {
+  ink: v("ink"), paper: v("paper"), soft: v("soft"), line: v("line"), lineStrong: v("line-strong"),
+  body: v("body"), stampRed: v("stamp-red"), amber: v("amber"), pencil: v("pencil-blue"),
+  green: v("green"), greenBg: v("green-bg"), greenDeep: v("green-deep"),
+  highlighter: v("highlighter"), highlighterSoft: v("highlighter-soft"),
+  focus: v("focus"), focusText: v("focus-text"), focusMuted: v("focus-muted"), focusBody: v("focus-body"),
   // surface
   bg: v("bg"),
   bgRaised: v("bg-raised"),
@@ -56,14 +61,37 @@ export const C = {
   infoBg: v("info-bg"),
   infoLine: v("info-line"),
 
+  // Compatibility names: green fixes, red confirmed problems, blue pencil.
+  live: v("live"),
+  liveBg: v("live-bg"),
+  liveLine: v("live-line"),
+  cite: v("cite"),
+  citeBg: v("cite-bg"),
+  citeLine: v("cite-line"),
+  verified: v("verified"),
+  verifiedBg: v("verified-bg"),
+  verifiedLine: v("verified-line"),
+  lead: v("lead"),
+  leadBg: v("lead-bg"),
+  leadLine: v("lead-line"),
+  /** Legacy alias for the approved confirmed-problem red. */
+  regress: v("regress"),
+  regressBg: v("regress-bg"),
+  regressLine: v("regress-line"),
+
+  overlay: v("bg-overlay"),
+  inset: v("bg-inset"),
   track: v("track"),
 } as const;
 
 export const mono = "var(--el-mono)";
 export const sans = "var(--el-font)";
+export const serif = "var(--el-serif)";
 
-/** Type scale — seven steps, no half-pixels. */
+/** Approved headline and UI scales. */
 export const T = {
+  hero: "var(--el-fs-hero)", page: "var(--el-fs-page)", case: "var(--el-fs-case)",
+  card: "var(--el-fs-card)", section: "var(--el-fs-section)", story: "var(--el-fs-story)", stat: "var(--el-fs-stat)",
   micro: "var(--el-fs-micro)",
   xs: "var(--el-fs-xs)",
   sm: "var(--el-fs-sm)",
@@ -87,8 +115,9 @@ export const S = {
   12: "var(--el-s12)",
 } as const;
 
-/** Radius scale — controls 6, cards 10, overlays 14, pills full. */
+/** Approved controls, cards, overlays and case-file radii. */
 export const R = {
+  focus: "var(--el-r-focus)", exhibit: "var(--el-r-exhibit)", good: "var(--el-r-good)",
   sm: "var(--el-r-sm)",
   control: "var(--el-r-control)",
   card: "var(--el-r-card)",
@@ -104,33 +133,40 @@ export const E = {
   4: "var(--el-e4)",
 } as const;
 
-/** The one content measure. Replaces 20 hardcoded maxWidth values. */
+/**
+ * App content is centered at 1200px, including its side gutters.
+ */
 export const MEASURE = "var(--el-measure)";
+/** Public pages use the approved 1280px measure. */
+export const PUBLIC_MAX = "var(--el-public-max)";
 
 // Map a terminal-trace kind to its accent color (matches the design).
 export const KIND_COLOR: Record<string, string> = {
   THINK: C.muted,
-  TOOL: C.info,
-  EVID: C.accent,
-  UPDT: C.good,
-  FAIL: C.bad,
+  TOOL: C.live,
+  EVID: C.cite,
+  UPDT: C.verified,
+  // A refused step is an honesty check doing its job, not a regression, so it
+  // stays neutral (red is reserved for confirmed problems).
+  FAIL: C.text3,
   CHECK: C.faint,
   SPEC: C.accentHi, // v2.0 specialist delegation
-  REFUTE: C.info, // v5.0 counter-evidence duty (attempted refutation)
+  REFUTE: C.live, // v5.0 counter-evidence duty (attempted refutation)
 };
 
 export function statusColor(status: string): string {
   return (
     {
-      resolved: C.good,
+      resolved: C.verified,
       insufficient_evidence: C.text3,
-      needs_human: C.accent,
-      budget_exhausted: C.bad,
-      running: C.accent,
+      needs_human: C.lead,
+      budget_exhausted: C.muted,
+      running: C.live,
+      queued: C.live,
     }[status] ?? C.muted
   );
 }
 
 export function confColor(conf: number): string {
-  return conf >= 0.7 ? C.good : conf >= 0.5 ? C.accent : C.muted;
+  return conf >= 0.7 ? C.verified : conf >= 0.5 ? C.lead : C.muted;
 }

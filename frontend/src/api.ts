@@ -116,6 +116,9 @@ async function timed<T>(path: string, cancelWith: (AbortSignal | null)[],
 const SESSION_KEY = "echolens_session";
 const LEGACY_TOKEN_KEY = "echolens_token";
 let _session = localStorage.getItem(SESSION_KEY) === "1";
+let _sessionGeneration = 0;
+/** In-memory drafts and queued writes belong to the session that created them. */
+export function getSessionGeneration(): number { return _sessionGeneration; }
 // Drop any JWT an older build left behind; it must not linger in storage.
 localStorage.removeItem(LEGACY_TOKEN_KEY);
 let _onAuthError: (() => void) | null = null;
@@ -151,11 +154,13 @@ function scoped(path: string): string {
 
 /** Record a session the server just opened (its cookie is already set). */
 export function startSession(csrf?: string | null): void {
+  _sessionGeneration++;
   _session = true;
   _csrf = csrf ?? null;
   localStorage.setItem(SESSION_KEY, "1");
 }
 function forgetSession(): void {
+  _sessionGeneration++;
   _session = false;
   _csrf = null;
   localStorage.removeItem(SESSION_KEY);
@@ -191,6 +196,7 @@ const GUEST_KEY = "echolens_guest";
 let _guest = localStorage.getItem(GUEST_KEY) === "1";
 
 export function setGuest(on: boolean): void {
+  if (on !== _guest) _sessionGeneration++;
   _guest = on;
   if (on) localStorage.setItem(GUEST_KEY, "1");
   else localStorage.removeItem(GUEST_KEY);
@@ -259,6 +265,12 @@ function handle(status: number): void {
 }
 
 /** A stable, human-readable message for fetch and API failures. */
+export class DemoRefreshedError extends Error {
+  constructor() {
+    super("This demo case was refreshed — the demo is rebuilt with today's data.");
+  }
+}
+
 export function errorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (error instanceof RequestTimeout) {
@@ -280,6 +292,10 @@ async function get<T>(path: string): Promise<T> {
     if (!r.ok) {
       handle(r.status);
       noteFailure("http");
+      if (r.status === 404) {
+        const body = await r.json().catch(() => null);
+        if (body?.demo_refreshed === true) throw new DemoRefreshedError();
+      }
       throw new Error(`${path} → ${r.status}`);
     }
     return r.json();
@@ -326,7 +342,7 @@ async function del<T>(path: string): Promise<T> {
 
 // ── types ────────────────────────────────────────────────────────────
 
-export const CASE_VIEW_FILTERS = ["tab", "sev", "source", "range", "intent", "q"] as const;
+export const CASE_VIEW_FILTERS = ["tab", "sev", "source", "range", "intent", "q", "sort"] as const;
 export type CaseViewParams = Partial<Record<typeof CASE_VIEW_FILTERS[number], string>>;
 export interface SavedView {
   id: number;
@@ -551,6 +567,15 @@ export interface Finding {
   /** v15: evidence a reviewer struck, and the flag raised when that broke the two-source rule. */
   rejected_evidence?: { eid: string; user_id: number | null; at: string; note: string }[];
   needs_review?: { reason: string; at: string; eid: string } | null;
+  /** How strongly the cause is supported (investigator/graph.py _label_support). */
+  support_level?: "supported" | "single_channel" | null;
+  support_label?: string;
+  single_channel_note?: string;
+  /** Causal sentences without a citation, moved out of the prose. */
+  working_hypotheses?: string[];
+  working_hypothesis_label?: string;
+  /** trigger → mechanism → symptom → impact; null unless supported. */
+  causal_chain?: CausalChain | null;
 }
 export interface Recommendation {
   rank: number;
@@ -595,6 +620,15 @@ export interface ShareBrief {
   markdown: string;
   product?: string | null;
   shared_at?: string | null;
+  /** Public share only: just enough for an honest verdict stamp. */
+  verdict?: ShareVerdict | null;
+}
+export interface ShareVerdict {
+  support_level: string | null;
+  needs_review: boolean;
+  /** 0–1, already capped by the honesty checks. */
+  confidence: number;
+  fix: { status: string } | null;
 }
 export interface HistoryEvent {
   at: string | null;
@@ -605,6 +639,8 @@ export interface HistoryEvent {
   /** Who made it, for human decisions (email), when known. */
   by?: string | null;
   actual_cause?: string | null;
+  /** trigger → mechanism → symptom → impact, quoted from the case; null unless supported. */
+  causal_chain?: CausalChain | null;
 }
 export interface Investigation {
   id: number;
@@ -631,11 +667,15 @@ export interface Investigation {
   recommendations: Recommendation[];
   product_decision?: ProductDecision | null;
   extension?: ExtensionOffer | null;
+  /** One entry per honesty guard, derived from what this case stored. */
+  guards?: GuardResult[];
 }
 
 // v13: the unified case list. One lifecycle, one status vocabulary, one card —
 // this is what Today, Cases and every "open problems" list read from.
 export interface CaseRow {
+  /** Backend decision order: supported findings before working leads. */
+  decision_rank: number;
   /** Null for queued work: it has no investigation yet. */
   id: number | null;
   queue_id: number | null;
@@ -668,6 +708,13 @@ export interface CaseRow {
   estimate?: CostEstimate | null;
   /** The trust badge, for cases with a finding. */
   trust?: TrustSummary | null;
+  /** What the verdict stamp reads (see stampFor). */
+  support_level?: string | null;
+  needs_review?: boolean;
+  /** The fix watch's state: issue_open, waiting_for_release, watching, confirmed… */
+  fix_status?: string | null;
+  /** "feature_request" when the problem came from users' requests. */
+  intent?: string | null;
 }
 /**
  * Computed from a case's evidence rows. `label` is the badge sentence; it says
@@ -704,6 +751,8 @@ export interface Incident {
   window_start: string;
   window_end: string;
   intents: IntentCounts | null;
+  category?: SpikeCategory;
+  strength?: SpikeStrength;
 }
 export interface SignalRow {
   id?: number;
@@ -720,7 +769,19 @@ export interface SignalRow {
   window_end?: string | null;
   /** Null when no reviews sit behind the signal (e.g. a GitHub issue burst). */
   intents?: IntentCounts | null;
+  /** Which New-spikes group it belongs to. */
+  category?: SpikeCategory;
+  /** strong / medium / weak, from the detector's z bands. */
+  strength?: SpikeStrength;
+  /** Plain-word reason on every dismissed spike. */
+  dismissed_why?: string | null;
+  dismissed_decision?: string | null;
+  merge_into_anomaly_id?: number | null;
+  /** Hidden by a muted theme. */
+  muted?: boolean;
 }
+export type SpikeCategory = "bug" | "ux_confusion" | "performance" | "feature_request";
+export type SpikeStrength = "strong" | "medium" | "weak";
 export interface CaseView {
   product: string | null;
   product_id: number | null;
@@ -802,6 +863,16 @@ export interface Overview {
   freshness: Freshness;
   /** Fixes confirmed in the last 14 days that you have not dismissed (max 3). */
   confirmed_fixes?: ConfirmedFix[];
+  /** Present only when the caller requests one product-owned investigation. */
+  focus?: TodayFocus | null;
+}
+export interface TodayFocus {
+  investigation_id: number;
+  /** This theme's estimated pull on the rating: recent 7 days vs prior 28. */
+  rating_drag: number | null;
+  one_star_share: { matching: number; total: number; pct: number | null; days: number };
+  quote: { text: string; evidence_id: string; source: string; ref: string } | null;
+  release: { version: string; date: string; days_after: number } | null;
 }
 export interface ConfirmedFix {
   watch_id: number;
@@ -810,6 +881,8 @@ export interface ConfirmedFix {
   headline: string;
   metric: string;
   drop_pct: number | null;
+  baseline_rate?: number | null;
+  post_rate?: number | null;
   fixed_in_version: string | null;
   confirmed_at: string;
   chart: FixStatus["chart"];
@@ -908,6 +981,10 @@ export interface FixWatchRow {
   // Only present on a terminal status — the server sends null while watching.
   chart: FixStatus["chart"];
   fix_date: string | null;
+  fixed_in_version?: string | null;
+  release_seen_at?: string | null;
+  window_days?: number;
+  dismissed_today?: boolean;
 }
 export interface FixWatchResp {
   watches: FixWatchRow[];
@@ -947,6 +1024,30 @@ export interface AvailableSource {
 export interface AvailableSourcesResp {
   sources: AvailableSource[];
 }
+export type ImportField = "text" | "rating" | "version" | "date" | "source" | "author";
+export type ImportMapping = Partial<Record<ImportField, string | null>>;
+export interface ImportPreview {
+  columns: string[];
+  /** The first rows, as the file has them. */
+  rows: Record<string, string>[];
+  mapping: ImportMapping;
+  total: number | null;
+  would_import: number;
+  skipped: number;
+  /** Plain reason → rows. */
+  reasons: Record<string, number>;
+  problems: { row: number; reason: string }[];
+  undated: number;
+  error: string | null;
+}
+export interface AlertSettings {
+  alerts_enabled: boolean;
+  /** 0–1: a problem at or above this severity is sent at once; below waits for the digest. */
+  alert_instant_min_severity: number;
+  auto_create_issue_on_approve: boolean;
+  slack_connected: boolean;
+  github_connected: boolean;
+}
 export interface CostsSummary {
   stats: {
     spent_today: number;
@@ -962,7 +1063,14 @@ export interface CostsSummary {
     daily_investigations: number;
     per_case_budget: number;
     per_case_wall_min: number;
+    /** Settings → Sensitivity: the strength (z) a spike must reach; 1.0 by default. */
+    detector_min_z?: number;
   };
+  /** This month, per visible product. */
+  by_product?: { product_id: number; product: string; month_to_date: number; investigations: number }[];
+  /** This month's spend ÷ problems looked into this month; null with none. */
+  per_problem?: number | null;
+  investigations_this_month?: number;
   rows: {
     id: string;
     outcome: string;
@@ -1018,6 +1126,7 @@ export interface ThemeCandidate {
   original_statement?: string;
   merged_from?: string[];
   avg_rating?: number | null;
+  category?: SpikeCategory;
 }
 export interface ThemeOverride {
   slug: string;
@@ -1076,6 +1185,13 @@ export interface BrainEdge {
   case_ids: number[];
   trend: "holding" | "weakening";
 }
+export interface TeamRule {
+  id: number; text: string; author: string | null; created_at: string; updated_at: string;
+  status: "active" | "retired"; case_id: number | null; origin: "team" | "correction";
+}
+export interface PlanExportResult {
+  results: { key: number | string; title: string; status: "created" | "existing" | "failed"; url: string | null; error?: string }[];
+}
 export interface ReviewFlag {
   subsystem: string;
   symptom: string;
@@ -1095,6 +1211,11 @@ export interface ChangeReview {
 
 // v11: the quality backlog
 export interface BacklogItem {
+  /** Exact preview input and stable tie order; optional for older servers. */
+  base_value?: number;
+  tie_order?: number;
+  support_level?: string | null;
+  needs_review?: boolean;
   /** v16: absent on older servers; every item without it is a bug finding. */
   kind?: "bug";
   key?: number;
@@ -1128,6 +1249,8 @@ export interface BacklogItem {
 }
 /** v16: a feature-request theme on the plan, keyed by its request slug. */
 export interface RequestPlanItem {
+  base_value?: number;
+  tie_order?: number;
   kind: "request";
   key: string;
   slug: string;
@@ -1237,14 +1360,28 @@ export interface PortfolioProduct {
   health_label: string;
   reasons: PortfolioReason[];
   headline: string;
-  top_problem: { investigation_id: number; summary: string; band: string; sev_score: number } | null;
+  top_problem: {
+    investigation_id: number; summary: string; band: string; sev_score: number;
+    /** What the verdict stamp reads (absent on rows stored before these existed). */
+    status?: string; support_level?: string | null; needs_review?: boolean; fix_status?: string | null;
+    /** Stars this problem is estimated to cost. */
+    rating_impact?: number;
+  } | null;
   open_problems: number;
   regressions: number;
   untriaged: number;
-  negative_rate_pct: number;
+  /** null when the last 7 days are too thin for a rate; see negative_rate_reason. */
+  negative_rate_pct: number | null;
+  negative_rate_reason?: string | null;
   negative_rate_delta_pct: number | null;
   confirmed_fixes: number;
   has_data: boolean;
+  /** Proven by two independent kinds of source and not fixed yet. */
+  confirmed_open?: number;
+  /** Average stars per week for 12 weeks, oldest first; null for a week with no reviews. */
+  rating_weekly?: (number | null)[];
+  /** What people complain about, in their words. */
+  top_topics?: string[];
 }
 export interface TransferStats {
   seeded_cases: number;
@@ -1434,6 +1571,8 @@ export const api = {
       google_enabled: boolean;
       allow_guest: boolean;
       auth_required: boolean;
+      /** True only while a self-service first (admin) account can be created. */
+      signup_open?: boolean;
     }>("/auth/config"),
   me: () => get<AuthUser>("/auth/me"),
   products: () => get<{ products: ProductRow[]; active_product_id: number | null }>("/products"),
@@ -1486,6 +1625,14 @@ export const api = {
     post<{ queued: QueueSelection[]; already: QueueSelection[]; queue: QueueView; summary: string }>(
       "/queue/themes", { slugs, statements, tier, product_id: productId }),
   queue: () => get<QueueView>(scoped("/queue")),
+  /** Fold 2+ new spikes into one problem (the strongest leads) and queue it. */
+  mergeSpikes: (slugs: string[], tier = "quick", productId = getActiveProduct()) =>
+    post<{ lead: string; title: string; merged: string[]; skipped: string[]; deferred: boolean;
+           summary: string }>("/spikes/merge", { slugs, tier, product_id: productId }),
+  /** Dismiss new spikes; each then shows "Dismissed by <you>: <reason>". */
+  dismissSpikes: (slugs: string[], reason: string, productId = getActiveProduct()) =>
+    post<{ dismissed: string[]; skipped: string[]; summary: string }>(
+      "/spikes/dismiss", { slugs, reason, product_id: productId }),
   cancelQueued: (queueId: number) => del<{ cancelled: number }>(scoped(`/queue/${queueId}`)),
   /** Bypass today's cap for ONE deferred item. Recorded on the queue row. */
   runQueuedNow: (queueId: number) =>
@@ -1504,6 +1651,12 @@ export const api = {
   brainAsk: (question: string) =>
     post<{ answer: string; edges: BrainEdge[]; grounded: boolean }>(
       "/brain/ask", { question, product_id: getActiveProduct() }),
+  teamRules: () => get<{ rules: TeamRule[] }>(scoped("/brain/rules")),
+  addTeamRule: (text: string) => post<TeamRule>(scoped("/brain/rules"), { text }),
+  editTeamRule: (id: number, body: { text?: string; status?: "active" | "retired" }) =>
+    patch<TeamRule>(scoped(`/brain/rules/${id}`), body),
+  exportPlan: (tracker: TrackerId, kind: PlanKind, productId = getActiveProduct()) =>
+    post<PlanExportResult>("/backlog/plan/export" + (productId == null ? "" : `?product_id=${productId}`), { tracker, kind }),
   backlogPlan: (capacityDays?: number, kind: PlanKind = "bugs") => {
     const qs = [capacityDays ? `capacity_days=${capacityDays}` : "", kind !== "bugs" ? `kind=${kind}` : ""]
       .filter(Boolean).join("&");
@@ -1514,8 +1667,8 @@ export const api = {
   saveBacklogPlan: (body: {
     included: (number | string)[]; excluded: (number | string)[]; capacity_days?: number;
     overrides?: Record<string, PlanOverride>;
-  }, kind: PlanKind = "bugs") =>
-    put<QuarterPlan>("/backlog/plan", { ...body, kind, product_id: getActiveProduct() }),
+  }, kind: PlanKind = "bugs", productId = getActiveProduct()) =>
+    put<QuarterPlan>("/backlog/plan", { ...body, kind, product_id: productId }),
   /** A Markdown spec for one request theme (template, or a checked LLM rewrite). */
   requestSpec: (slug: string) =>
     get<RequestSpec>(scoped(`/requests/${encodeURIComponent(slug)}/spec`)),
@@ -1615,7 +1768,8 @@ export const api = {
   resume: (id: number) => post(scoped(`/investigations/${id}/resume`)),
   escalate: (id: number) => post(scoped(`/investigations/${id}/escalate`)),
   sources: () => get<SourcesResp>(scoped("/sources")),
-  overview: () => get<Overview>(scoped("/today/overview")),
+  overview: (investigationId?: number) => get<Overview>(scoped("/today/overview" +
+    (investigationId != null ? `?investigation_id=${investigationId}` : ""))),
   // Not scoped: which source types exist is global, not per-product.
   availableSources: () => get<AvailableSourcesResp>("/sources/available"),
   fixwatch: () => get<FixWatchResp>(scoped("/fixwatch")),
@@ -1638,9 +1792,27 @@ export const api = {
   requestReview: (invId: number, note: string) =>
     post<{ request_id: number; status: string }>(
       scoped(`/investigations/${invId}/review-request`), { note }),
-  importReviews: (file: File, product?: string, source = "csv") => {
+  /** A dry run of importReviews: columns, first rows, matching, row problems. */
+  previewImport: (file: File, mapping?: ImportMapping | null, source = "csv") => {
     const fd = new FormData();
     fd.append("file", file);
+    if (mapping) fd.append("mapping", JSON.stringify(mapping));
+    const qs = new URLSearchParams({ source });
+    const pid = getActiveProduct();
+    if (pid != null) qs.set("product_id", String(pid));
+    const path = `/import/reviews/preview?${qs.toString()}`;
+    return timed(path, [], (signal) => writeFetch(path, { method: "POST", body: fd, signal }).then(async (r) => {
+      if (!r.ok) {
+        handle(r.status);
+        throw new Error((await r.json().catch(() => ({})))?.detail || `preview → ${r.status}`);
+      }
+      return r.json() as Promise<ImportPreview>;
+    }));
+  },
+  importReviews: (file: File, product?: string, source = "csv", mapping?: ImportMapping | null) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (mapping) fd.append("mapping", JSON.stringify(mapping));
     const qs = new URLSearchParams({ source });
     if (product) qs.set("product", product);
     // Without a product the importer writes Review(product=None): the rows land
@@ -1659,7 +1831,8 @@ export const api = {
         handle(r.status);
         throw new Error((await r.json().catch(() => ({})))?.detail || `import → ${r.status}`);
       }
-      return r.json() as Promise<{ imported: number; skipped: number; total: number }>;
+      return r.json() as Promise<{ imported: number; skipped: number; total: number;
+                                   undated?: number; reasons?: Record<string, number> }>;
     }));
   },
   // product_id, not just the free-text name. With a blank product the server
@@ -1714,8 +1887,8 @@ export const api = {
   /** Which issue trackers this deployment can file to (booleans, no secrets). */
   trackers: () => get<{ trackers: TrackerInfo[] }>("/integrations/trackers"),
   /** File a finding to GitHub, Linear or Jira — same ticket body everywhere. */
-  createTicket: (findingId: number, tracker: TrackerId) =>
-    post<TicketResult>(scoped(`/findings/${findingId}/ticket?tracker=${tracker}`)),
+  createTicket: (findingId: number, tracker: TrackerId, edits?: { title?: string; body?: string }) =>
+    post<TicketResult>(scoped(`/findings/${findingId}/ticket?tracker=${tracker}`), edits),
   /** Instant look-up of what the wizard is about to connect. Never throws on a
    *  slow store — the server answers `ok: false` with a reason instead. */
   onboardPreview: (q: { play_store?: string; github?: string }) => {
@@ -1726,13 +1899,18 @@ export const api = {
   notifyFinding: (findingId: number) =>
     post<{ routed: string; sent?: string[] }>(scoped(`/findings/${findingId}/notify`)),
   costsSummary: () => get<CostsSummary>(scoped("/costs/summary")),
+  alertSettings: () => get<AlertSettings>("/settings/alerts"),
+  setAlertSettings: (body: Partial<Pick<AlertSettings, "alerts_enabled" | "alert_instant_min_severity" |
+                                       "auto_create_issue_on_approve">>) =>
+    put<AlertSettings>("/settings/alerts", body),
   // Goes through put(): the raw fetch() never checked r.ok, so a rejected save
   // (401, 403, 500) resolved as success and Settings reported "Limit saved."
   // scoped(): the READ comes from costsSummary(), which is product-scoped and
   // layers this product's override on top. An unscoped write landed in the
   // workspace row that the read ignores, so the save appeared to succeed and
   // the number silently reverted.
-  setLimits: (limits: { daily_investigations?: number; per_case_budget?: number; per_case_wall_min?: number }) =>
+  setLimits: (limits: { daily_investigations?: number; per_case_budget?: number; per_case_wall_min?: number;
+                         detector_min_z?: number }) =>
     put<Record<string, number>>(scoped("/settings/limits"), limits),
   // SSE URL for the live trace. No token in it: a JWT in a URL ends up in
   // proxy logs and history. The session cookie authenticates the stream, sent
@@ -1743,4 +1921,104 @@ export const api = {
     const q = qs.toString();
     return `${BASE}/investigations/${id}/trace/stream${q ? `?${q}` : ""}`;
   },
+  // Forensics reads (backend echolens/forensics.py). All product-scoped
+  // except guardsConfig, which is constants only.
+  liveInvestigations: () =>
+    get<{ investigations: LiveInvestigation[] }>(scoped("/investigations/live")),
+  guardsConfig: () => get<GuardConfig>("/guards/config"),
+  guardsStats: () => get<GuardStats>(scoped("/guards/stats")),
+  timeline: (days = 30, investigationId?: number) =>
+    get<ComplaintTimeline>(scoped(`/timeline?days=${days}` +
+      (investigationId != null ? `&investigation_id=${investigationId}` : ""))),
+  citations: (id: number) => get<CitationMap>(scoped(`/investigations/${id}/citations`)),
 };
+
+// ── forensics ─────────────────────────────────────────────────────────────
+
+export type GuardKey = "citation" | "two_source" | "single_source_cap" | "temporal_order" | "speculation";
+export type GuardStatus = "pass" | "capped" | "stripped" | "blocked" | "not_applicable";
+export interface GuardResult {
+  key: GuardKey;
+  label: string;
+  status: GuardStatus;
+  detail: string;
+}
+export interface GuardConfig {
+  two_source: { min_items: number; min_sources: number; support_confidence: number };
+  single_source_cap: number;
+  temporal_order: boolean;
+  claim_grounding: boolean;
+  speculation_label: string;
+  guards: { key: GuardKey; label: string }[];
+}
+export interface GuardStats {
+  as_of: string;
+  /** Cases that stopped running, opened in each window. */
+  cases_checked: { d30: number; d90: number };
+  guards: { key: GuardKey; label: string; interventions: { d30: number; d90: number } }[];
+}
+export interface ChainLink {
+  text: string;
+  evidence_ids: string[];
+}
+export interface CausalChain {
+  trigger: ChainLink | null;
+  mechanism: ChainLink | null;
+  symptom: ChainLink | null;
+  impact: (ChainLink & { affected_pct?: number | null; rating_impact?: number | null }) | null;
+}
+export interface TimelineDay {
+  date: string;
+  negative: number;
+  one_star: number;
+  total: number;
+}
+export interface ReleaseMarker {
+  version: string;
+  date: string;
+  kind: "release" | "hotfix";
+}
+export interface ComplaintTimeline {
+  product: string | null;
+  days: number;
+  start: string;
+  end: string;
+  series: TimelineDay[];
+  releases: ReleaseMarker[];
+  /** Present when requested with an investigation: reviews matching its theme. */
+  theme?: { terms: string[]; series: TimelineDay[] };
+}
+export interface LiveInvestigation {
+  /** Null for queued work that has no investigation yet. */
+  id: number | null;
+  queue_id: number | null;
+  status: "running" | "queued";
+  title: string;
+  started_at: string | null;
+  elapsed_s: number | null;
+  step_count: number;
+  current_step: { kind: string; text: string } | null;
+  cost_usd_so_far: number;
+}
+export interface Citation {
+  id: string;
+  source: string;
+  ref: string;
+  quote: string;
+  url: string | null;
+  /** Hypothesis ids this evidence supports. */
+  supports: string[];
+  /** Indexes into CitationMap.sentences that cite this evidence. */
+  claim_spans: number[];
+  /** The exact substring of the review text the finding quotes, if any. */
+  highlight: string | null;
+  /** The day the source was written or released, when known. */
+  date?: string | null;
+  /** A review's stars. */
+  rating?: number | null;
+}
+export interface CitationMap {
+  investigation_id: number;
+  sentences: string[];
+  citations: Citation[];
+}

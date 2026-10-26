@@ -189,6 +189,19 @@ def historical_fix_days(session: Session, product_id: int | None) -> float | Non
     return round(statistics.median(spans), 1) if spans else None
 
 
+def history_bucket(calendar_days: float) -> str:
+    """Coarse size from how long past fixes took end to end. Elapsed time runs
+    several times the hands-on work, so the thresholds sit well above the
+    bucket sizes themselves."""
+    if calendar_days <= 3:
+        return "trivial"
+    if calendar_days <= 10:
+        return "small"
+    if calendar_days <= 30:
+        return "medium"
+    return "large"
+
+
 _UNSET = object()
 
 
@@ -219,7 +232,13 @@ def estimate_effort(session: Session, finding: Finding,
     if history is None:
         history = historical_fix_days(session, product_id)
     if history is not None:
-        return {"days": history, "basis": f"median past fix took {history:.0f}d",
+        # The track record is CALENDAR time from case to shipped fix — queues,
+        # reviews and release trains included — not engineer-days. Used as days
+        # it made every item bigger than a sprint, so nothing ever fit the plan.
+        # It is a size signal instead: the same coarse buckets labels map to.
+        bucket = history_bucket(history)
+        return {"days": EFFORT_BUCKETS[bucket],
+                "basis": f"median past fix took {history:.0f}d end to end — sized as {bucket}",
                 "known": True}
     return {"days": DEFAULT_EFFORT, "basis": "no effort signal yet", "known": False}
 
@@ -279,6 +298,12 @@ def resolution_rate(session: Session, product_id: int | None) -> float:
     confirmed_ids = {w.investigation_id for w in session.scalars(w_stmt).all()
                      if w.investigation_id in resolved_ids}
     return round(min(1.0, len(confirmed_ids) / len(resolved_ids)), 3)
+
+
+def _plan_round(value: float, digits: int) -> float:
+    """Nonnegative ranking values round half up, matching the local JS preview."""
+    factor = 10 ** digits
+    return math.floor(value * factor + 0.5) / factor
 
 
 def backlog(session: Session, product_id: int | None = None,
@@ -403,8 +428,14 @@ def backlog(session: Session, product_id: int | None = None,
             "summary": finding.summary,
             "status": finding.status,
             "confidence": round(conf, 2),
+            "support_level": (finding.json or {}).get("support_level"),
+            "needs_review": bool((finding.json or {}).get("needs_review")),
             "severity": sev,
             "score": round(score, 2),
+            # Preserve the arithmetic input; rounded display scores cannot be
+            # inverted accurately when the PM previews a different priority.
+            "base_value": score,
+            "tie_order": inv.id,
             "volume": volume,
             "persistence_days": age_days,
             "effort": effort,
@@ -414,7 +445,7 @@ def backlog(session: Session, product_id: int | None = None,
             # unconditionally and silently reordered the backlog on a number
             # nobody supplied.
             # Impact and segment overrides scale the score before the division.
-            "value_per_day": round(
+            "value_per_day": _plan_round(
                 value / max(0.5, effort["days"]) if effort.get("known") else value, 2),
             "impact": {"level": level, "default": default_level,
                        "overridden": "impact" in ov, "factor": round(impact_factor, 3)},
@@ -429,7 +460,7 @@ def backlog(session: Session, product_id: int | None = None,
             "decision": decision_dict(decision, now),
         })
 
-    by_value = sorted(items, key=lambda i: -i["value_per_day"])
+    by_value = sorted(items, key=lambda i: (-i["value_per_day"], i["tie_order"]))
     for rank, item in enumerate(by_value, start=1):
         item["rank"] = rank
     return {
@@ -477,13 +508,15 @@ def load_plan(session: Session, product_id: int | None) -> dict:
             "overrides": clean_overrides(value.get("overrides")),
             "capacity_days": value.get("capacity_days", QUARTER_CAPACITY_DAYS),
             "owned": bool(value.get("owned", False)),
+            "selected": _clean_keys(value.get("selected", value.get("included", []))),
+            "saved_kind": value.get("saved_kind"),
             "updated": value.get("updated")}
 
 
 def save_plan(session: Session, product_id: int | None, *, included: list[int | str],
               excluded: list[int | str], notes: dict | None = None,
               capacity_days: float | None = None,
-              overrides: dict | None = None) -> dict:
+              overrides: dict | None = None, kind: str = "bugs") -> dict:
     """Persist the PM's edits. Once saved the plan is theirs: a later re-rank
     proposes around their decisions rather than reversing them.
 
@@ -508,6 +541,13 @@ def save_plan(session: Session, product_id: int | None, *, included: list[int | 
         session.add(Setting(key=key, value=value))
     else:
         row.value = value
+    session.flush()
+    # Freeze this view's actual selection at Save. Re-ranking before export
+    # could otherwise send a newly detected problem the reviewer never chose.
+    value = {**value, "selected": [i["key"] for i in quarter_plan(
+        session, product_id, kind=kind)["proposed"]], "saved_kind": kind}
+    row = session.get(Setting, key)
+    row.value = value
     session.flush()
     return value
 
@@ -605,7 +645,8 @@ def request_items(session: Session, product_id: int | None, overrides: dict,
     from echolens.intent import count_intents
 
     items = []
-    for t in request_themes(session, product_id, as_of):
+    themes = sorted(request_themes(session, product_id, as_of), key=lambda t: t["slug"])
+    for tie_order, t in enumerate(themes, start=1):
         reviews = t["reviews"]
         demand = request_demand(reviews)
         ov = overrides.get(t["slug"], {})
@@ -638,13 +679,15 @@ def request_items(session: Session, product_id: int | None, overrides: dict,
             "count": demand["requesters"],
             "happy_count": demand["happy"],
             "demand": round(demand["value"], 2),
+            "base_value": demand["value"],
+            "tie_order": tie_order,
             "avg_rating": round(sum(ratings) / len(ratings), 1) if ratings else None,
             "verbatims": quotes,
             "intents": count_intents((r["text"], r["rating"]) for r in reviews),
             "first_seen": dates[0] if dates else None,
             "last_seen": dates[-1] if dates else None,
             "effort": effort,
-            "value_per_day": round(value / max(0.5, effort["days"]), 2),
+            "value_per_day": _plan_round(value / max(0.5, effort["days"]), 2),
             "impact": {"level": level, "default": REQUEST_IMPACT_DEFAULT,
                        "overridden": "impact" in ov, "factor": round(impact_factor, 3)},
             "segment": ({"key": seg_key, "label": seg["label"], "factor": seg["factor"],
@@ -655,7 +698,7 @@ def request_items(session: Session, product_id: int | None, overrides: dict,
             "defence": _request_defence(demand, effort, impact_factor if "impact" in ov else None,
                                         seg),
         })
-    items.sort(key=lambda i: (-i["value_per_day"], i["slug"]))
+    items.sort(key=lambda i: (-i["value_per_day"], i["tie_order"]))
     for rank, item in enumerate(items, start=1):
         item["rank"] = rank
     return items
@@ -681,9 +724,10 @@ def _rank_mixed(bugs: list[dict], requests: list[dict]) -> list[dict]:
     the bug: a broken thing outranks an equally-wanted new one."""
     def rel(items):
         top = max((i["value_per_day"] for i in items), default=0.0) or 1.0
-        return [{**i, "relative_value": round(i["value_per_day"] / top, 3)} for i in items]
+        return [{**i, "relative_value": _plan_round(i["value_per_day"] / top, 3)} for i in items]
     merged = sorted(rel(bugs) + rel(requests),
-                    key=lambda i: (-i["relative_value"], i["kind"] != "bug"))
+                    key=lambda i: (-i["relative_value"], i["kind"] != "bug",
+                                   -i["value_per_day"], i["tie_order"]))
     for rank, item in enumerate(merged, start=1):
         item["rank"] = rank
     return merged
@@ -770,3 +814,117 @@ def quarter_plan(session: Session, product_id: int | None = None,
         "unknown_effort": len([i for i in items if not i["effort"]["known"]]),
         "generated": board["generated"],
     }
+
+
+def export_plan(session: Session, product_id: int, tracker: str, *, kind: str = "bugs",
+                repo: str | None = None, post_fn=None) -> dict:
+    """File only the saved selection, journaling each write before remote IO.
+
+    Successes survive later failures. Pending/uncertain writes are held for
+    inspection because the trackers offer no shared idempotency API; a lost
+    response is not permission to create the same issue twice.
+    """
+    from sqlalchemy import update
+    from sqlalchemy.exc import IntegrityError
+    from echolens.config import settings
+    from echolens.db.models import PlanExport, Product
+    from echolens.exporting import finding_ticket, request_ticket
+    from echolens.integrations.trackers import TRACKERS, configured_trackers, create_ticket, TrackerError
+    from echolens.prd import build_spec, find_request
+
+    if tracker not in TRACKERS or kind not in PLAN_KINDS:
+        raise ValueError("Choose github, linear or jira and bugs, requests or all")
+    saved = load_plan(session, product_id)
+    if not saved["owned"]:
+        raise ValueError("Save the plan before sending it to a tracker")
+    if saved["saved_kind"] is not None and saved["saved_kind"] != kind:
+        raise ValueError("Save this plan view before sending it to a tracker")
+    if not configured_trackers()[tracker]:
+        raise ValueError(f"{tracker.capitalize()} is not configured on this deployment")
+    if tracker == "github" and not repo:
+        raise ValueError("No GitHub repo connected")
+    product = session.get(Product, product_id)
+    if product is None:
+        raise ValueError("No such product")
+    destination = (repo if tracker == "github" else settings.linear_team_id if tracker == "linear"
+                   else f"{settings.jira_base_url.rstrip('/')}/{settings.jira_project_key}")
+    results = []
+    for key in saved["selected"]:
+        is_request = isinstance(key, str)
+        if (kind == "bugs" and is_request) or (kind == "requests" and not is_request):
+            continue
+        finding = None
+        if is_request:
+            theme = find_request(session, product_id, key)
+            ticket = request_ticket(build_spec(theme, product.name)) if theme else None
+        else:
+            inv = session.scalar(select(Investigation).where(
+                Investigation.id == key, Investigation.product_id == product_id))
+            finding = session.scalar(select(Finding).where(Finding.investigation_id == key,
+                Finding.product_id == product_id).order_by(Finding.id.desc())) if inv else None
+            ticket = finding_ticket(session, finding, repo=repo) if finding else None
+        result = {"key": key, "title": ticket["title"] if ticket else str(key),
+                  "status": "failed", "url": None}
+        results.append(result)
+        if ticket is None:
+            result["error"] = "This saved item is no longer available in this product"
+            continue
+        if tracker == "github" and finding is not None:
+            watch = session.scalar(select(FixWatch).where(
+                FixWatch.investigation_id == finding.investigation_id,
+                FixWatch.product_id == product_id, FixWatch.repo == repo,
+                FixWatch.issue_number > 0).order_by(FixWatch.id.desc()))
+            if watch is not None:
+                result.update(status="existing", url=watch.issue_url or None)
+                continue
+        query = select(PlanExport).where(PlanExport.product_id == product_id,
+            PlanExport.tracker == tracker, PlanExport.destination == destination,
+            PlanExport.item_key == str(key))
+        record = session.scalar(query)
+        if record is not None:
+            if record.status == "created":
+                result.update(status="existing", url=record.url)
+                continue
+            if record.status != "failed":
+                result["error"] = "An earlier send may have created this issue. Check the tracker before retrying."
+                continue
+            claimed = session.execute(update(PlanExport).where(
+                PlanExport.id == record.id, PlanExport.status == "failed")
+                .values(status="pending"))
+            if claimed.rowcount != 1:
+                session.rollback()
+                result["error"] = "Another send is already handling this item. Refresh and try again."
+                continue
+        else:
+            record = PlanExport(product_id=product_id, tracker=tracker,
+                                destination=destination, item_key=str(key))
+            session.add(record)
+        try:
+            session.commit()  # durable claim, including uniqueness across workers
+        except IntegrityError:
+            session.rollback()
+            result["error"] = "Another send is already handling this item. Refresh and try again."
+            continue
+        try:
+            issue = create_ticket(tracker, ticket["title"], ticket["body"],
+                                  repo=repo, post_fn=post_fn)
+            if not issue.get("number") or not issue.get("url"):
+                raise RuntimeError("Tracker response did not identify the created issue")
+        except Exception as error:
+            # Only explicit client rejections are known not to have written.
+            # 5xx, transport failures and malformed success responses are ambiguous.
+            definite = isinstance(error, TrackerError) and bool(re.search(
+                r"API 4\d\d\b", str(error)))
+            record.status = "failed" if definite else "uncertain"
+            session.commit()
+            result["error"] = ("The tracker rejected this item. Correct the tracker settings and retry."
+                if definite else "The tracker response was interrupted. Check the tracker before retrying.")
+            continue
+        record.status, record.url, record.number = "created", issue["url"], str(issue["number"])
+        session.commit()  # persist remote identity before optional fix-watch linking
+        result.update(status="created", url=record.url)
+        if tracker == "github" and finding is not None:
+            from echolens.fixwatch import link_issue
+            link_issue(session, finding, repo, int(issue["number"]), issue["url"])
+            session.commit()
+    return {"tracker": tracker, "kind": kind, "results": results}

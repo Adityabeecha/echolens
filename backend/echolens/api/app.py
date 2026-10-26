@@ -15,10 +15,10 @@ from typing import Any
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -316,8 +316,16 @@ def _investigation_dict(session, inv: Investigation) -> dict:
     watch = session.scalars(select(FixWatch).where(
         FixWatch.investigation_id == inv.id).order_by(FixWatch.id.desc())).first()
     case_status, case_why = derive_status(inv, finding, watch)
+    from echolens.forensics import case_guards, causal_chain, hypothesis_dict
+    hyp_dicts = [hypothesis_dict(h) for h in hyps]
+    ev_dicts = [{"id": e.eid, "source": e.source, "ref": e.ref, "snippet": e.snippet,
+                 "retrieved_by": e.retrieved_by, **e.json} for e in evs]
+    fj = finding.json if finding is not None else None
     return {
         "id": inv.id, "anomaly_id": inv.anomaly_id, "status": inv.status,
+        # One {key, label, status, detail} per honesty guard, derived from what
+        # this case stored (see echolens.forensics.guard_results).
+        "guards": case_guards(session, inv, hyp_dicts, fj),
         "case_status": case_status, "case_why": case_why,
         "title": title,
         "opened_by": inv.opened_by, "budget_tier": inv.budget_tier,
@@ -328,14 +336,14 @@ def _investigation_dict(session, inv: Investigation) -> dict:
         # thing that happened somewhere you can no longer see.
         "history": _extension_history(session, inv),
         **_merge_view(session, inv),
-        "hypotheses": [{"id": h.hid, "statement": h.statement, "confidence": h.confidence,
-                        "status": h.status, **h.json} for h in hyps],
-        "evidence": _with_translations(session, inv, [
-            {"id": e.eid, "source": e.source, "ref": e.ref, "snippet": e.snippet,
-             "retrieved_by": e.retrieved_by, **e.json} for e in evs]),
+        "hypotheses": hyp_dicts,
+        "evidence": _with_translations(session, inv, ev_dicts),
         "finding": None if finding is None else {
             "id": finding.id, "status": finding.status, **finding.json,
-            **_finding_extras(session, finding, recs, inv.status)},
+            **_finding_extras(session, finding, recs, inv.status, watch),
+            # trigger → mechanism → symptom → impact, quoted from the case
+            # itself; null unless a hypothesis is supported.
+            "causal_chain": causal_chain(fj, hyp_dicts, ev_dicts)},
         "recommendations": [{"rank": r.rank, "action": r.action, "impact": r.impact,
                              "effort": r.effort, "rationale": r.rationale} for r in recs],
         # v15: the product decision in force (fix now / park / won't fix), and
@@ -393,16 +401,18 @@ def _extension_view(session, inv: Investigation) -> dict | None:
         return None
 
 
-def _finding_extras(session, finding, recs, status: str) -> dict:
+def _finding_extras(session, finding, recs, status: str, watch) -> dict:
     """The decision doc + severity (v4.0) plus the fix-verification status (v6.0),
     so the UI can show What's broken / How bad / What to do and — once a fix
     ships — a confirmed-fix badge with a before/after chart."""
-    from echolens.db.models import FixWatch
+    from echolens.cases import affected_impact
+    from echolens.db.models import Investigation, Product
     from echolens.impact import decision_doc, severity
     fj = finding.json or {}
-    impact = fj.get("impact", {})
-    watch = session.scalars(select(FixWatch).where(
-        FixWatch.finding_id == finding.id).order_by(FixWatch.id.desc())).first()
+    inv = session.get(Investigation, finding.investigation_id)
+    product = session.get(Product, inv.product_id) if inv and inv.product_id else None
+    anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv and inv.anomaly_id else None
+    impact = affected_impact(session, finding, anomaly, product.name if product else None)
     fix = None
     if watch is not None:
         fix = {"status": watch.status, "issue_number": watch.issue_number,
@@ -422,7 +432,6 @@ def _finding_extras(session, finding, recs, status: str) -> dict:
     # carries rather than a claim it makes.
     breadth = None
     try:
-        from echolens.db.models import Investigation, Product
         from echolens.feedback_graph import evidence_breadth
         inv = session.get(Investigation, finding.investigation_id)
         prod = session.get(Product, inv.product_id) if inv and inv.product_id else None
@@ -433,6 +442,7 @@ def _finding_extras(session, finding, recs, status: str) -> dict:
         log.warning("evidence_breadth_failed", finding_id=finding.id, error=str(err))
 
     return {
+        "impact": impact,
         "decision": decision_doc(fj, list(recs), impact, status),
         "severity": severity(float(fj.get("confidence", 0.0)), impact),
         "fix": fix,
@@ -794,12 +804,22 @@ def auth_config() -> dict:
     """What sign-in options this deployment offers, and whether guests are let
     in. Unauthenticated on purpose: the login screen has to read it before a
     token exists. It exposes only the public OAuth client id, which is designed
-    to be embedded in a web page."""
+    to be embedded in a web page.
+
+    `signup_open`: whether /auth/signup would accept a self-service first
+    account right now (dev only, before anyone exists), so the sign-in form
+    offers "Create the admin account" only when it can work."""
+    signup_open = False
+    if not settings.auth_required:
+        from echolens.db.models import User
+        with session_scope() as session:
+            signup_open = session.scalar(select(User.id).limit(1)) is None
     return {
         "google_client_id": settings.google_client_id,
         "google_enabled": bool(settings.google_client_id),
         "allow_guest": settings.allow_guest,
         "auth_required": settings.auth_required,
+        "signup_open": signup_open,
     }
 
 
@@ -1574,6 +1594,56 @@ def brain_view(product_id: int | None = None, include_retired: bool = False,
                 "product": p.name if p else None}
 
 
+class HumanRuleBody(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+    product_id: int | None = None
+
+
+class HumanRulePatch(BaseModel):
+    text: str | None = Field(None, min_length=1, max_length=2000)
+    status: str | None = Field(None, pattern="^(active|retired)$")
+    product_id: int | None = None
+
+
+@app.get("/brain/rules")
+def brain_rules(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
+    from echolens.brain import rules
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        return {"rules": rules(session, p.id) if p else []}
+
+
+@app.post("/brain/rules")
+def brain_rule_add(body: HumanRuleBody, product_id: int | None = None,
+                   user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.brain import add_rule
+    with session_scope() as session:
+        p = _scope(session, product_id if product_id is not None else body.product_id, user)
+        if p is None:
+            raise HTTPException(404, "Choose a product first")
+        try:
+            return add_rule(session, p.id, body.text, user.get("email"))
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
+
+@app.patch("/brain/rules/{rule_id}")
+def brain_rule_update(rule_id: int, body: HumanRulePatch, product_id: int | None = None,
+                      user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.brain import update_rule
+    with session_scope() as session:
+        p = _scope(session, product_id if product_id is not None else body.product_id, user)
+        if p is None:
+            raise HTTPException(404, "No such fact")
+        try:
+            rule = update_rule(session, p.id, rule_id, text=body.text, status=body.status)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        if rule is None:
+            raise HTTPException(404, "No such fact")
+        return rule
+
+
 @app.post("/brain/rebuild")
 def brain_rebuild(product_id: int | None = None,
                   user: dict = Depends(require_role("reviewer"))) -> dict:
@@ -1686,11 +1756,32 @@ def backlog_plan_save(body: PlanBody,
         pid = p.id if p else None
         save_plan(session, pid, included=body.included, excluded=body.excluded,
                   notes=body.notes, capacity_days=body.capacity_days,
-                  overrides=overrides)
+                  overrides=overrides, kind=body.kind)
         return {**quarter_plan(session, pid, kind=body.kind), "product": p.name if p else None}
 
 
 # ── v16: specs from user requests ───────────────────────────────────────
+
+class PlanExportBody(BaseModel):
+    tracker: str = Field(pattern="^(github|linear|jira)$")
+    kind: str = Field("bugs", pattern="^(bugs|requests|all)$")
+    product_id: int | None = None
+
+
+@app.post("/backlog/plan/export")
+def backlog_plan_export(body: PlanExportBody, product_id: int | None = None,
+                        user: dict = Depends(require_role("reviewer"))) -> dict:
+    from echolens.backlog import export_plan
+    with session_scope() as session:
+        p = _scope(session, product_id if product_id is not None else body.product_id, user)
+        if p is None:
+            raise HTTPException(404, "Choose a product first")
+        try:
+            return export_plan(session, p.id, body.tracker, kind=body.kind,
+                               repo=_github_repo(session, p.id))
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
 
 def _request_spec(session, p, slug: str, user: dict | None) -> dict:
     """The spec for one of THIS product's requests, or 404. A live model only
@@ -1908,6 +1999,10 @@ def feed_candidates(request: Request, product_id: int | None = None,
         muted_n = len([o for o in overrides.values() if o.muted])
         out = apply_overrides(out, overrides)
         requests_out = apply_overrides(requests_out, overrides)
+        from echolens.intent import spike_category
+        for th in out + requests_out:
+            th["category"] = spike_category([th["statement"], *th.get("verbatims", [])],
+                                            th.get("intents"))
         return {"candidates": out, "requests": requests_out, "product": prod.name,
                 "engine": result.get("engine"), "cached": result.get("cached", False),
                 "reviews_considered": result.get("reviews_considered", 0),
@@ -1954,7 +2049,9 @@ def queue_themes(request: Request, body: QueueThemes,
 
     if queued:
         _spawn_drain(pid)
-    deferred = len([q for q in view["queued"] if q["status"] == "deferred"])
+    # Deferred from THIS selection, not everything already waiting in the queue.
+    mine = {q.get("queue_id") for q in queued}
+    deferred = len([q for q in view["queued"] if q["status"] == "deferred" and q["queue_id"] in mine])
     parts = []
     if queued:
         parts.append(f"{len(queued)} queued")
@@ -1964,6 +2061,59 @@ def queue_themes(request: Request, body: QueueThemes,
         parts.append(f"{len(already)} already under investigation")
     return {"queued": queued, "already": already, "queue": view,
             "summary": " · ".join(parts) or "nothing to queue"}
+
+
+class SpikeBatch(BaseModel):
+    slugs: list[str] = Field(min_length=1, max_length=100)
+    product_id: int | None = None
+    tier: str = "quick"
+    reason: str = Field("", max_length=300)
+
+
+@app.post("/spikes/merge")
+@limiter.limit("20/minute")
+def spikes_merge(request: Request, body: SpikeBatch,
+                 user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Merge several new spikes into one problem and queue it (inside the
+    daily limit, like any other selection)."""
+    from echolens.orchestrator.queue import enqueue_theme, queue_view
+    from echolens.problems import merge_spikes
+    with session_scope() as session:
+        prod = _scope(session, body.product_id, user)
+        pid = prod.id if prod else None
+        try:
+            merged = merge_spikes(session, pid, body.slugs, user.get("email") or "a reviewer")
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+        res = enqueue_theme(session, product_id=pid, slug=merged["lead"],
+                            statement=merged["title"], tier=body.tier)
+        view = queue_view(session, pid, _daily_limit(session, pid))
+    if res["status"] != "already":
+        _spawn_drain(pid)
+    deferred = any(q["status"] == "deferred" and q.get("queue_id") == res.get("queue_id")
+                   for q in view["queued"])
+    n = len(merged["merged"]) + 1
+    summary = f"{n} spikes merged into one problem" + (
+        " — waiting for tomorrow's budget" if deferred else " and queued")
+    return {**merged, "queue": view, "deferred": deferred, "summary": summary}
+
+
+@app.post("/spikes/dismiss")
+@limiter.limit("30/minute")
+def spikes_dismiss(request: Request, body: SpikeBatch,
+                   user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Dismiss new spikes with a reason; each then shows who and why."""
+    from echolens.problems import dismiss_spikes
+    with session_scope() as session:
+        prod = _scope(session, body.product_id, user)
+        try:
+            out = dismiss_spikes(session, prod.id if prod else None, body.slugs, body.reason,
+                                 user.get("email") or "a reviewer")
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+    n = len(out["dismissed"])
+    return {**out, "summary": f"{n} {'spike' if n == 1 else 'spikes'} dismissed"
+            + (f" · {len(out['skipped'])} already decided" if out["skipped"] else "")}
 
 
 @app.get("/queue")
@@ -2082,9 +2232,47 @@ def _product_intents(session, product: str | None, days: int = 90) -> dict:
     return {"product": product, "days": days, "total": total, "counts": dict(counts)}
 
 
+def _import_mapping(raw: str) -> dict | None:
+    """The column matching from the import screen: JSON {field: column}."""
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        raise HTTPException(422, "the column matching could not be read")
+    if not isinstance(value, dict) or not all(isinstance(v, (str, type(None))) for v in value.values()):
+        raise HTTPException(422, "the column matching could not be read")
+    return value
+
+
+@app.post("/import/reviews/preview")
+async def import_reviews_preview(file: UploadFile = File(...), mapping: str = Form(""),
+                                 product: str = "", source: str = "csv", product_id: int | None = None,
+                                 user: dict = Depends(require_role("admin"))) -> dict:
+    """A dry run of /import/reviews: columns, the first rows, the column
+    matching (guessed unless given), and the rows that would be skipped and why.
+    Writes nothing."""
+    from echolens.importers.csv_reviews import preview_reviews_csv
+    raw = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"file too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)")
+    text = _upload_text(raw, file.filename)
+    with session_scope() as session:
+        name = product or None
+        if product_id is not None:
+            prod = _scope(session, product_id, user)
+            if prod is not None:
+                name = prod.name
+        try:
+            return preview_reviews_csv(session, text, product=name, source=(source or "csv"),
+                                       mapping=_import_mapping(mapping))
+        except ValueError as err:
+            raise HTTPException(422, str(err))
+
+
 @app.post("/import/reviews")
 async def import_reviews(file: UploadFile = File(...), product: str = "", source: str = "csv",
-                        product_id: int | None = None,
+                        product_id: int | None = None, mapping: str = Form(""),
                         user: dict = Depends(require_role("admin"))) -> dict:
     """Import reviews from any export (App Store, Zendesk, spreadsheet) as CSV
     or Excel. Widens the evidence base beyond the live scrapers. Idempotent by
@@ -2110,7 +2298,8 @@ async def import_reviews(file: UploadFile = File(...), product: str = "", source
             if prod is not None:
                 name = prod.name
         try:
-            result = import_reviews_csv(session, text, product=name, source=(source or "csv"))
+            result = import_reviews_csv(session, text, product=name, source=(source or "csv"),
+                                        mapping=_import_mapping(mapping))
         except ValueError as err:
             raise HTTPException(422, str(err))
     return result
@@ -2135,6 +2324,7 @@ def snapshot(product: str | None = None, product_id: int | None = None,
 
 @app.get("/today/overview")
 def today_overview_view(product_id: int | None = None,
+                  investigation_id: int | None = None,
                   user: dict = Depends(current_user)) -> dict:
     """What Today draws around the score: releases inside the charted window,
     the rating-drop breakdown (an estimate), when sources last synced, and the
@@ -2143,8 +2333,93 @@ def today_overview_view(product_id: int | None = None,
     from echolens.overview import overview
     with session_scope() as session:
         p = _scope(session, product_id, user)
+        inv = (_owned(session, Investigation, investigation_id, p.id if p else None)
+               if investigation_id is not None else None)
         fixes = recent_confirmed_fixes(session, p.id, user.get("id")) if p is not None else []
-        return {**overview(session, p), "confirmed_fixes": fixes}
+        return {**overview(session, p), "confirmed_fixes": fixes,
+                "focus": _today_focus(session, p, inv) if p is not None and inv is not None else None}
+
+
+def _today_focus(session, product, inv) -> dict:
+    """The focused problem's measurements, never the whole product's rating loss."""
+    from statistics import mean
+    from echolens.cases import _terms
+    from echolens.detector.detect import reference_now
+    from echolens.intent import BUG, UX_CONFUSION, classify
+    from echolens.textkit import tokenize
+    from echolens.vocab import _norm
+
+    finding = session.scalars(select(Finding).where(Finding.investigation_id == inv.id)
+                              .order_by(Finding.id.desc())).first()
+    fj = (finding.json or {}) if finding else {}
+    anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv.anomaly_id else None
+    needles = [{_norm(w) for w in tokenize(t)} for t in _terms(finding, anomaly)]
+
+    def matches(row):
+        words = {_norm(w) for w in tokenize(row.text_en or row.text)}
+        return row.rating <= 2 and any(n and n <= words for n in needles)
+
+    now = reference_now(session, product.name)
+    rows = list(session.scalars(select(Review).where(Review.product == product.name,
+        Review.created_at > now - timedelta(days=35), Review.created_at <= now)))
+    recent = [r for r in rows if aware_utc(r.created_at) > now - timedelta(days=7)]
+    prior = [r for r in rows if aware_utc(r.created_at) <= now - timedelta(days=7)]
+    drag = None
+    if needles and len(recent) >= 5 and len(prior) >= 5:
+        baseline = mean(r.rating for r in prior)
+        # Change in this theme's pull on the average: share × (rating − prior
+        # overall average), recent 7 days minus prior 28 days. Not additive
+        # across overlapping cases; an estimate, not a causal rating forecast.
+        contribution = (sum(r.rating - baseline for r in recent if matches(r)) / len(recent)
+                        - sum(r.rating - baseline for r in prior if matches(r)) / len(prior))
+        drag = round(max(0.0, -contribution), 2)
+    one_star = [r for r in rows if r.rating == 1
+                and aware_utc(r.created_at) >= now.replace(hour=0, minute=0, second=0, microsecond=0)
+                - timedelta(days=29)]
+    matching = sum(matches(r) for r in one_star)
+    share = {"matching": matching, "total": len(one_star), "days": 30,
+             "pct": round(100 * matching / len(one_star), 1) if needles and len(one_star) >= 5 else None}
+
+    struck = {e.get("eid") for e in fj.get("rejected_evidence") or []}
+    evidence = [e for e in session.scalars(select(EvidenceRow).where(
+        EvidenceRow.investigation_id == inv.id)).all() if e.eid not in struck]
+    hid = fj.get("supported_hypothesis")
+    supporting = [e for e in evidence if hid in (e.json or {}).get("supports", [])] if hid else evidence
+    quote = None
+    for e in supporting:
+        if e.source not in ("play_store", "app_store"):
+            continue
+        review = session.scalar(select(Review).where(Review.product == product.name,
+            Review.source == e.source, Review.ext_id == e.ref))
+        if review is None or classify(review.text, review.rating) not in (BUG, UX_CONFUSION):
+            continue
+        # Evidence may paraphrase a source. The highlighted words must come
+        # from the referenced review itself, with its original wording intact.
+        quote = {"text": review.text, "evidence_id": e.eid, "source": e.source, "ref": e.ref}
+        break
+
+    first = None
+    if needles:
+        # Reach beyond the visible chart: an older complaint must prevent a
+        # later release from looking causal merely because the chart starts late.
+        candidates = session.scalars(select(Review).where(Review.product == product.name,
+            Review.rating <= 2, Review.created_at <= now).order_by(Review.created_at)).yield_per(200)
+        try:
+            first = next((aware_utc(r.created_at) for r in candidates if matches(r)), None)
+        finally:
+            candidates.close()
+    versions = {((e.json or {}).get("meta") or {}).get("version") or
+                e.ref.removeprefix("release:").removeprefix("release ")
+                for e in supporting if e.source == "release_notes"}
+    release = None
+    if first is not None and versions:
+        rel = session.scalar(select(Release).where(Release.product == product.name,
+            Release.version.in_(versions), Release.released_at < first).order_by(Release.released_at.desc()))
+        if rel is not None:
+            release = {"version": rel.version, "date": aware_utc(rel.released_at).date().isoformat(),
+                       "days_after": (first.date() - aware_utc(rel.released_at).date()).days}
+    return {"investigation_id": inv.id, "rating_drag": drag, "one_star_share": share,
+            "quote": quote, "release": release}
 
 
 @app.post("/fixwatch/{watch_id}/dismiss")
@@ -2212,8 +2487,15 @@ def list_cases(product_id: int | None = None, user: dict = Depends(current_user)
         name = p.name if p else None
         # Signals: intent counts, muted themes hidden, related ones grouped into
         # incidents. Members stay in `signals`; incidents only reference them.
+        everything = view["signals"]
         view["signals"], view["incidents"] = incident_view(
-            session, name, view["signals"], muted_word_sets(session, pid))
+            session, name, everything, muted_word_sets(session, pid))
+        # Problems screen: category, strength, and a plain "why" on everything
+        # dismissed — including spikes a muted theme hid.
+        from echolens.problems import annotate_spikes
+        kept = {s["slug"] for s in view["signals"]}
+        view["signals"] = annotate_spikes(session, view["signals"], view["incidents"],
+                                          [s for s in everything if s["slug"] not in kept])
         view["intents"] = _product_intents(session, name)
         # Queued rows past today's cap say so, with the override's estimate.
         limit = _daily_limit(session, pid)
@@ -2241,7 +2523,7 @@ def list_cases(product_id: int | None = None, user: dict = Depends(current_user)
 # as other app mutations; guests keep their views in the browser instead.
 class SavedViewBody(BaseModel):
     name: str = Field(min_length=1, max_length=80)
-    params: dict[str, str] = Field(default_factory=dict, max_length=6)
+    params: dict[str, str] = Field(default_factory=dict, max_length=7)
 
     @field_validator("name")
     @classmethod
@@ -2253,7 +2535,7 @@ class SavedViewBody(BaseModel):
     @field_validator("params")
     @classmethod
     def case_filters(cls, value):
-        if set(value) - {"tab", "sev", "source", "range", "intent", "q"}:
+        if set(value) - {"tab", "sev", "source", "range", "intent", "q", "sort"}:
             raise ValueError("Only Cases filters can be saved")
         if any(len(v) > 500 for v in value.values()):
             raise ValueError("Filter values must be 500 characters or fewer")
@@ -2370,6 +2652,10 @@ def anomalies_triage(request: Request, run: bool = False, product_id: int | None
         pid = p.id if p else None
         # A preview (run=false) must not consume the pending queue — see
         # Orchestrator.triage(persist=...).
+        if p is not None and p.is_demo:
+            return {"decisions": [], "started_investigations": [],
+                    "skipped_already_triaged": 0,
+                    "summary": "Automatic investigations are disabled for the demo."}
         decisions = Orchestrator(session, daily_limit=_daily_limit(session, pid),
                                  product_id=pid).triage(persist=run)
         out = [{"anomaly": d.anomaly.slug, "decision": d.decision, "reason": d.reason,
@@ -2502,11 +2788,90 @@ def list_investigations(product_id: int | None = None, user: dict = Depends(curr
         return {"investigations": out}
 
 
+# ── forensics reads (echolens.forensics) ────────────────────────────────
+# Declared before /investigations/{inv_id} so "live" is not parsed as an id.
+
+@app.get("/investigations/live")
+def live_investigations_view(product_id: int | None = None,
+                             user: dict = Depends(current_user)) -> dict:
+    """Running and queued cases for one product: {investigations: [{id,
+    queue_id, status, title, started_at, elapsed_s, step_count, current_step:
+    {kind, text} | null, cost_usd_so_far}]}. Bounded, grouped queries."""
+    from echolens.forensics import live_investigations
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        return {"investigations": live_investigations(session, p.id if p else None)}
+
+
+@app.get("/guards/config")
+def guards_config_view() -> dict:
+    """The honesty guards in force — constants only, so public like
+    /auth/config: {two_source: {min_items, min_sources, support_confidence},
+    single_source_cap, temporal_order, claim_grounding, speculation_label,
+    guards: [{key, label}]}."""
+    from echolens.forensics import guard_config
+    return guard_config()
+
+
+@app.get("/guards/stats")
+def guards_stats_view(product_id: int | None = None,
+                      user: dict = Depends(current_user)) -> dict:
+    """How often each guard changed an outcome: {as_of, cases_checked: {d30,
+    d90}, guards: [{key, label, interventions: {d30, d90}}]}. An intervention
+    is a case where the guard capped, stripped or blocked something."""
+    from echolens.forensics import guard_stats
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        return guard_stats(session, p.id if p else None)
+
+
+@app.get("/timeline")
+def timeline_view(product_id: int | None = None, days: int = Query(30, ge=1, le=365),
+                  investigation_id: int | None = None,
+                  user: dict = Depends(current_user)) -> dict:
+    """Daily {date, negative, one_star, total} for the product's last `days`
+    days, release markers [{version, date, kind: release|hotfix}], and with
+    `investigation_id` that case's theme-matching series under `theme`
+    ({terms, series}). One grouped query per series."""
+    from echolens.db.models import Product
+    from echolens.forensics import timeline
+    from echolens.impact import theme_terms
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        product = session.get(Product, p.id).name if p else None
+        terms = None
+        if investigation_id is not None:
+            inv = _owned(session, Investigation, investigation_id, p.id if p else None)
+            anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv.anomaly_id else None
+            finding = session.scalars(select(Finding).where(
+                Finding.investigation_id == inv.id).order_by(Finding.id.desc())).first()
+            terms = theme_terms(anomaly, (finding.json or {}) if finding else {})
+        return timeline(session, product, days, theme_terms=terms)
+
+
+@app.get("/investigations/{inv_id}/citations")
+def citations_view(inv_id: int, product_id: int | None = None,
+                   user: dict = Depends(current_user)) -> dict:
+    """Two-way citation map: {investigation_id, sentences: [finding prose
+    sentences], citations: [{id, source, ref, quote, url, supports,
+    claim_spans: [sentence indexes], highlight}]}."""
+    from echolens.db.models import Product
+    from echolens.forensics import citations
+    with session_scope() as session:
+        p = _scope(session, product_id, user)
+        inv = _owned(session, Investigation, inv_id, p.id if p else None)
+        product = session.get(Product, inv.product_id) if inv.product_id else None
+        return citations(session, inv, product.name if product else None)
+
+
 @app.get("/investigations/{inv_id}")
 def get_investigation(inv_id: int, product_id: int | None = None,
                       user: dict = Depends(current_user)) -> dict:
     with session_scope() as session:
         p = _scope(session, product_id, user)
+        if p is not None and p.is_demo and session.get(Investigation, inv_id) is None:
+            return JSONResponse(status_code=404, content={
+                "detail": "no such investigation", "demo_refreshed": True})
         inv = _owned(session, Investigation, inv_id, p.id if p else None)
         return _investigation_dict(session, inv)
 
@@ -3112,7 +3477,17 @@ def public_share(token: str, request: Request) -> dict:
         brief = share_brief(session, finding)
         from echolens.db.models import Product
         prod = session.get(Product, finding.product_id) if finding.product_id else None
-        return {**brief, "product": prod.name if prod else None,
+        # Just enough for the page's verdict stamp to be honest (a hunch never
+        # reads as confirmed): the support level, any open review flag, the
+        # fix outcome and the stated confidence. No ids.
+        fj = finding.json or {}
+        watch = session.scalars(select(FixWatch).where(
+            FixWatch.investigation_id == finding.investigation_id).order_by(FixWatch.id.desc())).first()
+        verdict = {"support_level": fj.get("support_level"),
+                   "needs_review": bool(fj.get("needs_review")),
+                   "confidence": round(float(fj.get("confidence", finding.confidence or 0.0)), 2),
+                   "fix": {"status": watch.status} if watch else None}
+        return {**brief, "product": prod.name if prod else None, "verdict": verdict,
                 "shared_at": aware_utc(link.created_at).isoformat() if link.created_at else None}
 
 
@@ -3246,9 +3621,17 @@ def integrations_trackers(user: dict = Depends(current_user)) -> dict:
                          for t in TRACKERS]}
 
 
+class TicketEdits(BaseModel):
+    """What a person changed in the issue preview. The evidence section is
+    re-attached by exporting.apply_ticket_edits if they removed it."""
+    title: str | None = Field(None, max_length=256)
+    body: str | None = Field(None, max_length=60000)
+
+
 @app.post("/findings/{finding_id}/ticket")
 def finding_ticket_create(finding_id: int, tracker: str = "github",
                           product_id: int | None = None,
+                          edits: TicketEdits | None = None,
                           user: dict = Depends(require_role("reviewer"))) -> dict:
     """File a finding to GitHub, Linear or Jira. Same ticket body everywhere
     (exporting.finding_ticket); only GitHub issues are linked for fix-watch,
@@ -3270,6 +3653,9 @@ def finding_ticket_create(finding_id: int, tracker: str = "github",
         inv = session.get(Investigation, finding.investigation_id)
         ticket = finding_ticket(session, finding, repo=repo,
                                 deep_link=deep_link(inv.id) if inv else None)
+        if edits is not None:
+            from echolens.exporting import apply_ticket_edits
+            ticket = apply_ticket_edits(ticket, edits.title, edits.body)
         try:
             issue = create_ticket(tracker, ticket["title"], ticket["body"], repo=repo)
         except TrackerError as err:
@@ -3320,7 +3706,8 @@ def _do_approve(finding_id: int, note: str) -> dict:
         # so record the channel it came from rather than pretending it was nobody.
         review_mod.approve(session, finding, f"[via Slack] {note}" if note else "[via Slack]")
         result = {"status": "approved", "finding_id": finding.id}
-        if settings.auto_create_issue_on_approve:
+        from echolens.alert_settings import effective_alerts
+        if effective_alerts(session)["auto_create_issue_on_approve"]:
             result["issue"] = _auto_issue(session, finding)
         return result
 
@@ -3619,17 +4006,20 @@ def finding_followup_questions(finding_id: int, product_id: int | None = None,
 def fixwatch_list(product_id: int | None = None, user: dict = Depends(current_user)) -> dict:
     from echolens.db.models import FixWatch
     from echolens.fixwatch import TERMINAL_FIX_STATUSES
+    from echolens.evidence_summary import dismissed_fixes
     with session_scope() as session:
         p = _scope(session, product_id, user)
         stmt = select(FixWatch).order_by(FixWatch.id.desc())
         if p is not None:
             stmt = stmt.where(FixWatch.product_id == p.id)
         rows = session.scalars(stmt).all()
+        hidden = dismissed_fixes(session, user.get("id"))
         return {"watches": [
             {"id": w.id, "finding_id": w.finding_id, "investigation_id": w.investigation_id,
              "repo": w.repo, "issue_number": w.issue_number, "issue_url": w.issue_url,
              "status": w.status, "metric": w.metric, "baseline_rate": w.baseline_rate,
              "post_rate": w.post_rate,
+             "window_days": w.window_days, "dismissed_today": w.id in hidden,
              # before_after() computes this and _confirm/_inconclusive/_reopen
              # persist it, but nothing served it — so the chart existed in the
              # DB and no caller could reach it. Only sent for terminal statuses,
@@ -3822,6 +4212,12 @@ def _chat_respond(body: "ChatBody", user: dict, on_step=None) -> dict:
                             "basis": chat_mod.basis_investigation(inv.id),
                             "text": f"{f.summary} — case #{inv.id}. This was already "
                                     "investigated; start a new one if it's back."}
+
+        if decision.get("type") == "launch" and prod is not None and prod.is_demo and not body.force_investigate:
+            return _chat_finish({"type": "answer", "citations": [],
+                "basis": chat_mod.basis_none(), "can_investigate": True,
+                "text": "Automatic investigations are disabled for the demo. "
+                        "Start a case manually to investigate this question."}, user, message)
 
         if decision.get("type") != "launch":
             # A deterministic answer that already cites cases (or is built from
@@ -4427,7 +4823,8 @@ def sources(product_id: int | None = None, user: dict = Depends(current_user)) -
         from echolens.overview import freshness
         return {"connected": connected, "product": prod.name if prod else None,
                 "last_synced": freshness(session, prod),
-                "available": ["Zendesk export", "Discord community", "In-app feedback"]}
+                # Not collected directly; each can arrive as a CSV import.
+                "available": ["Zendesk", "Intercom", "Discord community", "In-app feedback"]}
 
 
 @app.get("/costs/summary")
@@ -4470,7 +4867,30 @@ def costs_summary(product_id: int | None = None, user: dict = Depends(current_us
                 "time_flagged": bool(c.get("duration_flagged")),
                 "cost": _money(c.get("cost", 0)),
             })
+        # This month, every product the caller may see: what each one spent and
+        # how many problems it looked into. Two grouped queries, whatever the
+        # number of products (spend counts a call through its case, or by tag).
+        from sqlalchemy import func as _f
+        owner = _f.coalesce(Investigation.product_id, LLMCall.product_id)
+        spend = dict(session.execute(
+            select(owner, _f.sum(LLMCall.cost))
+            .outerjoin(Investigation, Investigation.id == LLMCall.investigation_id)
+            .where(LLMCall.created_at >= month_floor).group_by(owner)).all())
+        looked = dict(session.execute(
+            select(Investigation.product_id, _f.count(Investigation.id))
+            .where(Investigation.created_at >= month_floor)
+            .group_by(Investigation.product_id)).all())
+        by_product = [{"product_id": row.id, "product": row.name,
+                       "month_to_date": round(float(spend.get(row.id) or 0.0), 4),
+                       "investigations": int(looked.get(row.id) or 0)}
+                      for row in _visible_products(session, user)]
+        month_invs = (int(looked.get(pid) or 0) if pid is not None
+                      else int(sum(looked.values())))
         return {
+            "by_product": by_product,
+            # This month's spend divided by the problems looked into this month.
+            "per_problem": round(month_to_date / month_invs, 4) if month_invs else None,
+            "investigations_this_month": int(month_invs),
             "stats": {
                 "spent_today": round(spent_today, 4),
                 "avg_per_resolved": avg_resolved,
@@ -4492,6 +4912,31 @@ class LimitsBody(BaseModel):
     per_case_wall_min: int | None = Field(None, ge=1, le=1440)
     daily_cost_budget: float | None = Field(None, ge=0, le=10000)
     monthly_budget: float | None = Field(None, ge=0, le=100000)
+    # Settings → Sensitivity: the strength (z) a spike must reach. 1.0 is the
+    # detector's own floor and the default; read by detector.detect.min_case_z.
+    detector_min_z: float | None = Field(None, ge=1.0, le=3.0)
+
+
+class AlertsBody(BaseModel):
+    alerts_enabled: bool | None = None
+    alert_instant_min_severity: float | None = Field(None, ge=0.0, le=1.0)
+    auto_create_issue_on_approve: bool | None = None
+
+
+@app.get("/settings/alerts")
+def get_alert_settings(user: dict = Depends(current_user)) -> dict:
+    """Alerts on/off, how serious before an instant alert, auto-issue on
+    approve — plus whether Slack and GitHub are connected (booleans only)."""
+    from echolens.alert_settings import channels, effective_alerts
+    with session_scope() as session:
+        return {**effective_alerts(session), **channels()}
+
+
+@app.put("/settings/alerts")
+def put_alert_settings(body: AlertsBody, user: dict = Depends(require_role("admin"))) -> dict:
+    from echolens.alert_settings import channels, save_alerts
+    with session_scope() as session:
+        return {**save_alerts(session, body.model_dump()), **channels()}
 
 
 @app.put("/settings/limits")
@@ -4515,7 +4960,7 @@ def set_limits(body: LimitsBody, product_id: int | None = None,
         # (one field) does not blank the others.
         current = _limits(session, prod.id if prod else None)
         for k in ("daily_investigations", "per_case_budget", "per_case_wall_min",
-                  "daily_cost_budget", "monthly_budget"):
+                  "daily_cost_budget", "monthly_budget", "detector_min_z"):
             v = getattr(body, k)
             if v is not None:
                 current[k] = v

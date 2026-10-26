@@ -1,6 +1,6 @@
-import { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react";
+import { ButtonHTMLAttributes, CSSProperties, Children, ReactNode, useCallback, useRef, useState } from "react";
 import { Icon, IconName } from "./components/Icon";
-import { C, MEASURE, R, S, T, mono } from "./theme";
+import { C, MEASURE, R, S, T, mono, serif } from "./theme";
 import { lastFailure } from "./requestState";
 
 // Small monospace uppercase section label used across the design.
@@ -556,8 +556,9 @@ export function ScreenHeader({
         <h1
           style={{
             margin: 0,
-            fontSize: T.lg,
-            fontWeight: 600,
+            fontSize: "clamp(32px, 4vw, 56px)",
+            fontFamily: serif,
+            fontWeight: 500,
             letterSpacing: "var(--el-ls-tight)",
             lineHeight: "var(--el-lh-tight)",
             color: C.text
@@ -740,11 +741,17 @@ export function ErrorState({
   );
 }
 
-/** Placeholder rows while a list loads, sized like the rows they become. */
+/**
+ * Placeholder rows while a list loads, sized like the rows they become.
+ *
+ * Render it ONLY on a true first load (`loading`, which useAsync keeps false
+ * whenever cached data exists), never on a background refresh. It also waits
+ * ~150ms before appearing (CSS), so a fast answer replaces it without a flash.
+ */
 export function Skeleton({ rows = 3, height = 74 }: { rows?: number; height?: number }) {
   return (
-    <div
-      style={{ display: "flex", flexDirection: "column", gap: S[2], maxWidth: MEASURE }}
+    <div className="el-skeleton"
+      style={{ display: "flex", flexDirection: "column", gap: S[2] }}
       aria-busy="true"
       aria-live="polite"
     >
@@ -756,14 +763,159 @@ export function Skeleton({ rows = 3, height = 74 }: { rows?: number; height?: nu
             height,
             borderRadius: R.card,
             background: C.card,
-            border: `1px solid ${C.border2}`,
-            animation: "elSkeleton 1.6s infinite",
+            border: `1px solid ${C.border}`,
             animationDelay: `${i * 0.12}s`
           }}
         />
       ))}
     </div>
   );
+}
+
+// ── layout primitives ────────────────────────────────────────────────────
+//
+// Full width by default (DESIGN_SYSTEM.md → Layout). Hierarchy comes from
+// elevation, dividers and whitespace — not from boxing every block.
+
+/**
+ * The full-viewport work grid.
+ *
+ * `columns` lays children out in 1, 2 or 3 equal columns. `split` takes
+ * exactly two children: a main pane and a sticky side pane, 60/40 by default,
+ * resizable by dragging the divider or with ←/→ when it is focused (the ratio
+ * is remembered per `storageKey`). Everything stacks to one column under 900px.
+ */
+export function Workbench({ columns = 1, split = false, storageKey, defaultRatio = 60, children, style }: {
+  columns?: 1 | 2 | 3;
+  split?: boolean;
+  /** Remembers a resized split, e.g. "case". */
+  storageKey?: string;
+  /** Main pane share of the width, in percent (default 60). */
+  defaultRatio?: number;
+  children: ReactNode;
+  style?: CSSProperties;
+}) {
+  if (!split) {
+    return <div className={`el-wb el-wb--cols-${columns}`} style={style}>{children}</div>;
+  }
+  return <SplitBench storageKey={storageKey} defaultRatio={defaultRatio} style={style}>{children}</SplitBench>;
+}
+
+const clampRatio = (r: number) => Math.min(75, Math.max(35, r));
+
+function SplitBench({ storageKey, defaultRatio, children, style }: {
+  storageKey?: string; defaultRatio: number; children: ReactNode; style?: CSSProperties;
+}) {
+  const key = storageKey ? `echolens_split_${storageKey}` : null;
+  const [ratio, setRatio] = useState(() => {
+    try {
+      const saved = key ? Number(localStorage.getItem(key)) : NaN;
+      return Number.isFinite(saved) && saved > 0 ? clampRatio(saved) : defaultRatio;
+    } catch {
+      return defaultRatio;
+    }
+  });
+  const root = useRef<HTMLDivElement | null>(null);
+  const save = useCallback((r: number) => {
+    const next = clampRatio(r);
+    setRatio(next);
+    try { if (key) localStorage.setItem(key, String(Math.round(next))); } catch { /* storage may be blocked */ }
+  }, [key]);
+  const [main, side] = Children.toArray(children);
+  return (
+    <div ref={root} className="el-wb el-wb--split"
+         style={{ ...style, ["--el-split" as string]: `${ratio}%` }}>
+      <div className="el-wb__main">{main}</div>
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize panes"
+        aria-valuemin={35}
+        aria-valuemax={75}
+        aria-valuenow={Math.round(ratio)}
+        tabIndex={0}
+        className="el-wb__divider"
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft") { e.preventDefault(); save(ratio - 2); }
+          if (e.key === "ArrowRight") { e.preventDefault(); save(ratio + 2); }
+          if (e.key === "Home") { e.preventDefault(); save(defaultRatio); }
+        }}
+        onPointerDown={(e) => {
+          const box = root.current?.getBoundingClientRect();
+          if (!box) return;
+          e.currentTarget.setPointerCapture(e.pointerId);
+          const move = (ev: PointerEvent) => save(((ev.clientX - box.left) / box.width) * 100);
+          const up = () => {
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", up);
+          };
+          window.addEventListener("pointermove", move);
+          window.addEventListener("pointerup", up);
+        }}
+        onDoubleClick={() => save(defaultRatio)}
+      />
+      <aside className="el-wb__side">{side}</aside>
+    </div>
+  );
+}
+
+/**
+ * A block of a screen. `flat` (default) is just a heading and content —
+ * whitespace does the separating. `raised` lifts it onto a card for the one
+ * thing that must stand out; `inset` sinks secondary detail.
+ */
+export function Panel({ title, eyebrow, actions, tone = "flat", children, style, id }: {
+  title?: ReactNode;
+  /** A small mono label above the title, e.g. "STEP 2". */
+  eyebrow?: string;
+  actions?: ReactNode;
+  tone?: "flat" | "raised" | "inset";
+  children: ReactNode;
+  style?: CSSProperties;
+  id?: string;
+}) {
+  return (
+    <section id={id} className={`el-panel el-panel--${tone}`} style={style}>
+      {(title || eyebrow || actions) && (
+        <header className="el-panel__head">
+          <div style={{ minWidth: 0 }}>
+            {eyebrow && <div className="el-panel__eyebrow">{eyebrow}</div>}
+            {title && <h2 className="el-panel__title">{title}</h2>}
+          </div>
+          {actions && <div className="el-panel__actions">{actions}</div>}
+        </header>
+      )}
+      {children}
+    </section>
+  );
+}
+
+/** A titled group inside a screen or panel, optionally under a hairline. */
+export function Section({ title, description, actions, divider = false, children, style }: {
+  title: ReactNode;
+  description?: ReactNode;
+  actions?: ReactNode;
+  divider?: boolean;
+  children: ReactNode;
+  style?: CSSProperties;
+}) {
+  return (
+    <section className={`el-section${divider ? " el-section--divider" : ""}`} style={style}>
+      <header className="el-section__head">
+        <div style={{ minWidth: 0 }}>
+          <h3 className="el-section__title">{title}</h3>
+          {description && <p className="el-section__desc">{description}</p>}
+        </div>
+        {actions && <div className="el-panel__actions">{actions}</div>}
+      </header>
+      {children}
+    </section>
+  );
+}
+
+/** The 1440–1600px container for public pages (landing, shared briefs). */
+export function PublicContainer({ children, style }: { children: ReactNode; style?: CSSProperties }) {
+  return <div className="el-public" style={style}>{children}</div>;
 }
 
 /**

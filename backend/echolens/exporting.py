@@ -78,6 +78,26 @@ def finding_ticket(session: Session, finding: Finding, repo: str | None = None,
     return {"title": title, "body": "\n".join(body)}
 
 
+EVIDENCE_HEADING = "### Evidence"
+
+
+def apply_ticket_edits(ticket: dict, title: str | None = None, body: str | None = None) -> dict:
+    """A person's edits to the generated ticket, without losing the proof:
+    an edited body that dropped the evidence section gets the generated one
+    appended, so every exhibit is always attached."""
+    out = dict(ticket)
+    if title and title.strip():
+        out["title"] = title.strip()
+    if body and body.strip():
+        edited = body.strip()
+        generated = ticket.get("body") or ""
+        at = generated.find(EVIDENCE_HEADING)
+        if EVIDENCE_HEADING not in edited and at >= 0:
+            edited = edited + "\n\n" + generated[at:]
+        out["body"] = edited
+    return out
+
+
 # ── v15: the shareable brief ────────────────────────────────────────────
 #
 # The ticket above is for an engineer and carries the whole evidence chain.

@@ -14,9 +14,9 @@ type ThemeDocument = {
 export function resolveTheme(storage?: Pick<Storage, "getItem">): ThemeMode {
   try {
     const source = storage ?? (typeof window !== "undefined" ? window.localStorage : undefined);
-    return source?.getItem(THEME_STORAGE_KEY) === "light" ? "light" : "dark";
+    return source?.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light";
   } catch {
-    return "dark";
+    return "light";
   }
 }
 
@@ -29,7 +29,7 @@ export function applyTheme(theme: ThemeMode, target?: ThemeDocument): void {
   doc.documentElement.dataset.theme = theme;
   doc.documentElement.style.colorScheme = theme;
   const meta = doc.querySelector('meta[name="theme-color"]');
-  if (meta) meta.content = theme === "dark" ? "#101816" : "#f6f4ef";
+  if (meta) meta.content = theme === "dark" ? "#0B0B0F" : "#FFFFFF";
 }
 
 export function persistTheme(theme: ThemeMode, storage?: StorageLike): void {

@@ -23,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from echolens.db.models import Review
-from echolens.textkit import tokenize
+from echolens.textkit import theme_label, tokenize
 from echolens.timeutil import aware_utc
 
 # Curated complaint families. Deliberately shallow — these group what detection
@@ -89,12 +89,13 @@ def _norm(token: str) -> str:
     return t
 
 
-def canonical_theme(terms: list[str] | None) -> dict:
+def canonical_theme(terms: list[str] | None, text: str | None = None) -> dict:
     """Map raw complaint terms onto a shared theme.
 
     Returns {"id", "label", "is_family", "terms"} — `terms` are the words to
     measure this theme with, which for a family is the family's whole vocabulary
-    (so the rate means the same thing on every product).
+    (so the rate means the same thing on every product). `text`, the complaint
+    the terms came from, only helps name an emergent theme.
     """
     words = [w for w in (terms or []) if w]
     toks = [t for w in words for t in tokenize(w)] or [w.lower() for w in words]
@@ -116,15 +117,20 @@ def canonical_theme(terms: list[str] | None) -> dict:
         return {"id": fid, "label": label, "is_family": True, "terms": sorted(vocab)}
 
     # Emergent: a stable id from the two most salient terms, order-independent.
+    # The id never changes (overrides and comparisons key on it); the label is a
+    # noun phrase from the terms in salience order, never "Behind Cost".
     uniq = sorted(dict.fromkeys(normed))[:2]
-    return {"id": "-".join(uniq), "label": " ".join(uniq).title(),
+    return {"id": "-".join(uniq), "label": theme_label(toks, text) or "Other",
             "is_family": False, "terms": sorted(dict.fromkeys(normed))[:6]}
 
 
 def theme_of(anomaly, finding_json: dict | None = None) -> dict:
     """The canonical theme of an anomaly/finding pair."""
     from echolens.impact import theme_terms
-    return canonical_theme(theme_terms(anomaly, finding_json or {}))
+    fj = finding_json or {}
+    text = " ".join(filter(None, [getattr(anomaly, "description", "") or "",
+                                  fj.get("summary", ""), (fj.get("prose") or "")[:300]]))
+    return canonical_theme(theme_terms(anomaly, fj), text)
 
 
 def theme_rate(session: Session, theme: dict, product: str | None,

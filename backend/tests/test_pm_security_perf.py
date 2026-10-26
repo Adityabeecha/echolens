@@ -160,7 +160,9 @@ def test_portfolio_board_stays_under_a_fixed_budget(monkeypatch):
     # /portfolio now serves stored rows. The first call (nothing stored yet)
     # computes the board AND reads the fingerprint and writes the rows: one
     # more than the old 15. Every later call reads the stored rows instead.
-    assert counts["/portfolio"] <= 16
+    # +1 for the 12-week rating line on each row: one GROUP BY for every
+    # product at once, not a query per product.
+    assert counts["/portfolio"] <= 17
     assert _counts(monkeypatch, 6, ["/portfolio"], repeat=2)["/portfolio"] <= 10
     assert counts["/portfolio/brief"] <= 25
     assert counts["/portfolio/themes"] <= 6

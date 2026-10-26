@@ -27,6 +27,7 @@ from echolens.db.models import (
     AnomalyEvent, CaseMerge, EvidenceRow, Finding, FindingDecision, FixWatch, Investigation, Product,
     QueuedInvestigation, Review, ReviewFeedback, TraceStep, TriageDecision)
 from echolens.impact import severity
+from echolens.textkit import clean_headline
 from echolens.timeutil import aware_utc
 
 # ── the vocabulary ──────────────────────────────────────────────────────
@@ -81,17 +82,72 @@ def _age_days(when: datetime | None, now: datetime) -> int | None:
 
 def _terms(finding: Finding | None, anomaly: AnomalyEvent | None) -> list[str]:
     """The words this case is about, for the complaint-volume sparkline."""
+    from echolens.impact import _GENERIC
+    from echolens.textkit import tokenize
+
+    # The signal names the theme. Finding prose also contains other hypotheses,
+    # releases and generic words such as "update"; OR-matching those counted
+    # almost the entire negative corpus as affected by several different cases.
+    if anomaly is not None and anomaly.type == "theme_volume_surge":
+        metric = re.split(r"\b(?:share|mentions|complaints|per week|on)\b",
+                          anomaly.metric or "", maxsplit=1)[0]
+        terms = [t for t in tokenize(metric) if t not in _GENERIC]
+        if terms:
+            return [" ".join(terms[:4])]
     if finding is not None:
         impact = (finding.json or {}).get("impact") or {}
-        terms = [t for t in (impact.get("terms") or []) if isinstance(t, str) and len(t) > 2]
+        terms = [t for t in (impact.get("terms") or [])
+                 if isinstance(t, str) and len(t) > 2 and t.lower() not in _GENERIC]
         if terms:
-            return terms[:4]
+            from echolens.vocab import canonical_theme
+            theme = canonical_theme(terms)
+            return theme["terms"] if theme["is_family"] else terms[:4]
     if anomaly is not None:
         metric = (anomaly.metric or "").split(" share of")[0].split(" per week")[0]
         word = re.sub(r"[^a-z ]", " ", metric.lower()).strip()
         if len(word) > 2:
             return [word.split()[0]]
     return []
+
+
+class _AffectedIndex:
+    """One recent negative corpus, shared by every case in a list."""
+
+    def __init__(self, session: Session, product: str | None, now: datetime,
+                 texts: list[str] | None = None):
+        from echolens.textkit import tokenize
+        from echolens.vocab import _norm
+        if texts is None:
+            texts = list(session.scalars(select(Review.text).where(
+                Review.product == product, Review.rating <= 2,
+                Review.created_at > now - timedelta(days=7), Review.created_at <= now))) if product else []
+        self.words = [{_norm(w) for w in tokenize(text)} for text in texts]
+
+    def measure(self, impact: dict, terms: list[str]) -> dict:
+        from echolens.impact import MIN_SHARE_DENOMINATOR
+        from echolens.textkit import tokenize
+        from echolens.vocab import _norm
+        needles = [{_norm(w) for w in tokenize(term)} for term in terms]
+        # Alternatives are ORed, but all words of a compound theme must match.
+        # "sync crashes" must not count "sync drains my battery".
+        count = sum(any(n and n <= row for n in needles) for row in self.words)
+        measurable = len(self.words) >= MIN_SHARE_DENOMINATOR
+        pct = round(100 * count / len(self.words), 1) if measurable else 0.0
+        result = {**impact, "terms": terms, "affected_volume": count,
+                  "recent_negatives": len(self.words), "affected_pct": pct}
+        if measurable:
+            result["measured"] = True
+            result["impact_score"] = round(min(1.0, 0.5 * pct / 100 +
+                0.3 * min(1.0, count / 40) +
+                0.2 * min(1.0, (impact.get("rating_impact") or 0) / 0.6)), 3)
+        return result
+
+
+def affected_impact(session: Session, finding: Finding, anomaly: AnomalyEvent | None,
+                    product: str | None, now: datetime | None = None) -> dict:
+    """Read current, theme-specific share for old findings as well as new ones."""
+    return _AffectedIndex(session, product, now or datetime.now(timezone.utc)).measure(
+        (finding.json or {}).get("impact") or {}, _terms(finding, anomaly))
 
 
 class _SparkIndex:
@@ -203,8 +259,10 @@ def case_title(finding: Finding | None, anomaly: AnomalyEvent | None,
     The old feed used `anomaly.metric` as a title, so cases were called things
     like "battery share of negatives" — a column header, not a problem.
     """
-    if finding is not None and (finding.summary or "").strip():
-        return finding.summary.strip()
+    # Cleaned on read too: findings stored before headlines were cleaned at
+    # write time still carry "[ev_001]" tags and "V3.2.0".
+    if finding is not None and clean_headline(finding.summary):
+        return clean_headline(finding.summary)
     if queued_title and queued_title.strip():
         return queued_title.strip()
     if anomaly is not None:
@@ -304,12 +362,19 @@ def related_evidence(session: Session, inv: Investigation) -> list[dict]:
                 EvidenceRow.investigation_id.in_(related)).order_by(EvidenceRow.id)).all()]
 
 
+def _intent_of(anomaly: AnomalyEvent | None) -> str | None:
+    """A case opened from a users' request theme is a request; the rest carry
+    no intent of their own (their stamp comes from the proof)."""
+    return "feature_request" if anomaly is not None and (anomaly.slug or "").startswith("request-") else None
+
+
 def case_rows(session: Session, product_id: int | None,
               as_of: datetime | None = None) -> list[dict]:
     """Every case for a product, newest first, in the shared card shape."""
     now = as_of or datetime.now(timezone.utc)
     product = session.get(Product, product_id) if product_id is not None else None
     spark = _SparkIndex(session, product.name if product else None, now)
+    affected = _AffectedIndex(session, product.name if product else None, now)
 
     stmt = select(Investigation).where(Investigation.status != "merged",
         Investigation.id.not_in(select(CaseMerge.source_id))).order_by(Investigation.id.desc())
@@ -350,7 +415,7 @@ def case_rows(session: Session, product_id: int | None,
         status, why = derive_status(inv, finding, watch)
 
         fj = (finding.json or {}) if finding is not None else {}
-        impact = fj.get("impact") or {}
+        impact = affected.measure(fj.get("impact") or {}, _terms(finding, anomaly)) if finding else {}
         sev = severity(float(finding.confidence or 0.0), impact) if finding else None
         rows.append({
             "id": inv.id,
@@ -377,6 +442,11 @@ def case_rows(session: Session, product_id: int | None,
             "reopens_investigation_id": inv.reopens_investigation_id,
             "decision": decision_dict(decisions.get(finding.id), now) if finding else None,
             "spark": spark.series(_terms(finding, anomaly)),
+            # What the verdict stamp needs, from rows already loaded above.
+            "support_level": fj.get("support_level") if finding else None,
+            "needs_review": bool(fj.get("needs_review")) if finding else False,
+            "fix_status": watch.status if watch else None,
+            "intent": _intent_of(anomaly),
         })
 
     # Queued work is part of the same lifecycle, so it lives in the same list
@@ -414,13 +484,27 @@ def case_rows(session: Session, product_id: int | None,
             "decision": None,
             "position": position,
             "spark": spark.series(_terms(None, anomaly)),
+            "support_level": None, "needs_review": False, "fix_status": None,
+            "intent": _intent_of(anomaly),
         })
     # Queued work leads the list, IN QUEUE ORDER. This was built with
     # `rows.insert(0, ...)` inside the loop, so each insert pushed the previous
     # one down and the block rendered 3, 2, 1 — while each card's own label
     # correctly read "position 1", "position 2", "position 3". The list
     # contradicted itself.
-    return queued_rows + rows
+    all_rows = queued_rows + rows
+    def decision_key(row):
+        f = latest_finding.get(row.get("id"))
+        fj = (f.json or {}) if f else {}
+        supported = fj.get("support_level") == "supported" and not fj.get("needs_review")
+        return (not supported, -(row.get("severity_score") or 0),
+                -((row.get("impact") or {}).get("affected_pct") or 0),
+                -datetime.fromisoformat(row["opened_at"]).timestamp() if row.get("opened_at") else 0,
+                -(row.get("id") or 0))
+
+    for rank, row in enumerate(sorted(all_rows, key=decision_key), start=1):
+        row["decision_rank"] = rank
+    return all_rows
 
 
 def signal_rows(session: Session, product_id: int | None,
@@ -476,6 +560,9 @@ def signal_rows(session: Session, product_id: int | None,
             "age_days": _age_days(a.created_at, now),
             "dismissed": dismissed,
             "dismissed_reason": (td.reason if dismissed else None),
+            "dismissed_decision": (td.decision if dismissed else None),
+            "merge_into_anomaly_id": (td.merge_into_anomaly_id
+                                      if dismissed and td.decision == "merge" else None),
             "window_start": aware_utc(a.window_start).isoformat() if a.window_start else None,
             "window_end": aware_utc(a.window_end).isoformat() if a.window_end else None,
         })

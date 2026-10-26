@@ -123,6 +123,7 @@ def _incident_contexts(session: Session, findings: list[Finding], *,
     """
     from echolens.cases import _headline
     from echolens.detector.incidents import group
+    from echolens.textkit import clean_headline
 
     products = {f.product_id for f in findings}
     out = []
@@ -202,7 +203,7 @@ def _incident_contexts(session: Session, findings: list[Finding], *,
             out.append({"key": f"{product_id}:{kind}:{min(a.id for a in members) if members else ident}",
                         "product_id": product_id, "members": [a.id for a in members],
                         "finding_ids": [f.id for f in related_findings], "finding": representative,
-                        "title": _headline(lead) if lead else representative.summary,
+                        "title": _headline(lead) if lead else clean_headline(representative.summary),
                         "z": max((a.z or 0. for a in members), default=0.),
                         "member_count": len(members) or 1})
     return out
@@ -258,11 +259,14 @@ def notify_finding(session: Session, finding: Finding, *, force: bool = False,
     Delivery records are flushed in the caller's transaction; caller commits.
     Force bypasses the severity gate, while keeping incident deduplication.
     """
-    if not settings.alerts_enabled and not force:
+    # Settings → Integrations can override the config defaults.
+    from echolens.alert_settings import effective_alerts
+    alerts = effective_alerts(session)
+    if not alerts["alerts_enabled"] and not force:
         return {"routed": "disabled"}
     ctx = _finding_context(session, finding)
     sev = ctx["severity"]
-    if not (force or sev["score"] >= settings.alert_instant_min_severity):
+    if not (force or sev["score"] >= alerts["alert_instant_min_severity"]):
         return {"routed": "digest", "severity": sev}
     now = aware_utc(as_of) or datetime.now(timezone.utc)
     incident = _incident_contexts(session, [finding], finding_window_end=now)[0]

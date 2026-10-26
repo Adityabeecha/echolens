@@ -1,23 +1,23 @@
-import { useEffect, useRef, useState } from "react";
-import { CaseRow, Evidence, Investigation, api, canReview, errorMessage } from "../api";
-import { withToast } from "../components/Toast";
-import { StatusChip, TrustBadge } from "../components/CaseCard";
-import { impactLine } from "../format";
-import { CASE_TABS, CaseTab, CASE_TAB_LABEL, currentLocation, formatRoute, parseRoute } from "../nav";
-import { SEVERITY } from "../status";
-import { C, R, S, T, mono } from "../theme";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { DemoRefreshedError, Evidence, Investigation, api, errorMessage } from "../api";
+import { CaseTab, currentLocation, formatRoute, parseRoute } from "../nav";
 import { Centered, ErrorState } from "../ui";
-import { EngineeringTab } from "./case/EngineeringTab";
-import { EvidenceTab } from "./case/EvidenceTab";
-import { FindingTab } from "./case/FindingTab";
+import { Button } from "../ui";
+import { CitationLetter, LiveDot, PillTabs, ReasonRow, SerifHeadline, Stamp } from "../components/casefile";
+import { EvidenceSheet } from "../components/EvidenceSheet";
+import { useAsync, useDialog, useMediaQuery } from "../hooks";
+import { DecisionChip, ExtendCard } from "./case/CaseActions";
 import { DiscussionTab } from "./case/DiscussionTab";
 import { HistoryTab } from "./case/HistoryTab";
 import { TraceTab } from "./case/TraceTab";
-import { Icon } from "../components/Icon";
-import { EvidenceSheet } from "../components/EvidenceSheet";
-import { useMediaQuery } from "../hooks";
-import { EvidenceDetail, Inspector, InspectorMode } from "./case/Inspector";
-import { DecisionChip } from "./case/CaseActions";
+import { EvidenceDetail } from "./case/Inspector";
+import { ExhibitsRail } from "./case/ExhibitsRail";
+import { MoreTab } from "./case/MoreTab";
+import { FixShippedDialog, IssuePreview, NextStepsBlock, VerdictActions, blockedReason } from "./case/NextSteps";
+import {
+  Exhibit, afterUpdate, buildExhibits, isBlockedDraft, missingFor, notProven, reasonsFor, verdictOf,
+} from "./case/caseFile";
+import "./case/case.css";
 
 interface Props {
   caseId: number;
@@ -32,24 +32,29 @@ interface Props {
   onGoPatterns: () => void;
 }
 
-/** Wide enough for the brief and the Inspector side by side. */
-const SPLIT_QUERY = "(min-width: 1100px)";
+/** Below the fold: the pill tabs, and the URL tab each one keeps alive. */
+type Lower = "steps" | "discussion" | "history" | "more";
+const LOWER_TO_ROUTE: Record<Lower, CaseTab> = { steps: "trace", discussion: "discussion", history: "history", more: "engineering" };
+const ROUTE_TO_LOWER: Partial<Record<CaseTab, Lower>> = { trace: "steps", discussion: "discussion", history: "history", engineering: "more" };
+
+/** Wide enough for the story and the exhibits rail side by side. */
+const RAIL_QUERY = "(min-width: 1024px)";
+
+type Lit = { kind: "ex"; id: string } | { kind: "reason"; id: string } | null;
 
 /**
- * One case, one route, five tabs.
- *
- * A case used to be spread across two screens with their own URLs — the trace
- * at /case/{id} and the answer at /case/{id}/finding — so "send me that case"
- * meant sending one of two halves, and Back could return you to the other half
- * of the same thing. Everything about a case now lives here, with the tab in
- * the URL so a specific view is still linkable.
+ * One problem, as a case file (design/approved/case.html): the verdict, what
+ * happened with lettered proof, why we're sure, what to do next, and the
+ * exhibits beside it. Letters, reasons and exhibits light each other up.
+ * Everything else — every step, discussion, history, and the rest — sits in
+ * quiet tabs below, each still reachable by its old URL (/trace, /history…).
  */
 export function CaseDetail({
-  caseId, tab, productName, onTab, onBack, backLabel, onOpenCase,
-  onReviewed, onGoCalibration, onGoPatterns
+  caseId, tab, productName, onTab, onBack, backLabel, onOpenCase, onReviewed, onGoCalibration, onGoPatterns,
 }: Props) {
   const [inv, setInv] = useState<Investigation | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [demoRefreshed, setDemoRefreshed] = useState(false);
   const [pollGeneration, setPollGeneration] = useState(0);
   useEffect(() => {
     if (inv?.id !== caseId || !inv.merged_into_id) return;
@@ -57,82 +62,43 @@ export function CaseDetail({
     if (!route || route.screen !== "case") return;
     window.location.replace(formatRoute({ ...route, id: inv.merged_into_id }));
   }, [inv?.id, inv?.merged_into_id, caseId]);
-  // v15 split pane. On a wide screen the brief stays on the left and whatever
-  // you click — a citation, or the trace — opens in the Inspector beside it,
-  // instead of sending you to another tab. Narrow screens keep one column and
-  // open a citation as a sheet.
-  const wide = useMediaQuery(SPLIT_QUERY);
-  const [pickedId, setPickedId] = useState<string | null>(null);
-  const [sheetId, setSheetId] = useState<string | null>(null);
-  const [mode, setMode] = useState<InspectorMode>(tab === "trace" ? "trace" : "evidence");
-  // A deep link to /trace (or the Back button landing on it) drives the
-  // Inspector, so #/p/1/cases/1/trace still opens the trace on wide screens.
-  useEffect(() => {
-    if (tab === "trace") setMode("trace");
-  }, [tab]);
 
-  // Monotonic sequence guard, matching the polling effect below. Retry calls
-  // this, and a slow response used to be able to land AFTER a newer poll tick
-  // and overwrite it — the one path in this file without the guard the rest of
-  // it applies.
+  // Monotonic sequence guard shared by load() and the poller: a slow response
+  // can never land after a newer one and overwrite it.
   const loadSeq = useRef(0);
   const load = () => {
     const mine = ++loadSeq.current;
     return api.investigation(caseId)
       .then((d) => { if (mine === loadSeq.current) { setInv(d); setError(null); } })
-      .catch((e) => { if (mine === loadSeq.current) setError(errorMessage(e)); });
+      .catch((e) => { if (mine === loadSeq.current) { setError(errorMessage(e)); setDemoRefreshed(e instanceof DemoRefreshedError); } });
   };
+  const retry = () => { setError(null); setPollGeneration((n) => n + 1); };
 
-  // Restart the polling effect, not just one request. The old Retry called
-  // load() once after the poller had stopped at MAX_FAILURES, so a backend that
-  // was still waking on that exact request left the button permanently stuck.
-  const retry = () => {
-    setError(null);
-    setPollGeneration((n) => n + 1);
-  };
-
-  // Poll while the case is LIVE — which includes queued work that has not
-  // started yet. The interval used to be torn down on the first non-running
-  // tick and never re-established, so opening a queued case froze the screen:
-  // when the queue promoted it to running seconds later the UI never noticed,
-  // and pause/resume left the detail stale until a manual reload.
+  // Poll while the case is LIVE (running, or queued and about to start); stop
+  // after repeated failures instead of hammering a down backend. One request at
+  // a time: the next is scheduled only after this one settles.
   useEffect(() => {
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const settled = (d: Investigation) =>
-      d.status !== "running" && d.case_status !== "queued";
-    // Consecutive failures before giving up. The catch used to set `error` and
-    // keep polling: a deleted case, a case in another product, or a down
-    // backend was hit every 1500ms forever, because the check that stops the
-    // interval only ran on the success path.
+    const settled = (d: Investigation) => d.status !== "running" && d.case_status !== "queued";
     const MAX_FAILURES = 4;
     let failures = 0;
     let finished = false;
-    const stop = () => {
-      finished = true;
-      if (timer) { clearTimeout(timer); timer = null; }
-    };
-    const schedule = () => {
-      if (alive && !finished) timer = setTimeout(() => { void tick(); }, 1500);
-    };
+    const stop = () => { finished = true; if (timer) { clearTimeout(timer); timer = null; } };
+    const schedule = () => { if (alive && !finished) timer = setTimeout(() => { void tick(); }, 1500); };
     const tick = async () => {
       const mine = ++loadSeq.current;
       try {
         const d = await api.investigation(caseId);
         if (!alive || mine !== loadSeq.current) return;
         failures = 0;
-        setInv(d);
-        setError(null);
+        setInv(d); setError(null); setDemoRefreshed(false);
         if (settled(d)) stop();
       } catch (e) {
         if (!alive || mine !== loadSeq.current) return;
-        setError(errorMessage(e));
-        if (++failures >= MAX_FAILURES) stop();   // Retry restarts it
+        setError(errorMessage(e)); setDemoRefreshed(e instanceof DemoRefreshedError);
+        if (++failures >= MAX_FAILURES) stop();
       } finally {
-        // Schedule only AFTER this request finishes. setInterval allowed slow
-        // case responses to overlap; every new request advanced loadSeq before
-        // the previous one landed, so no response was ever accepted and the UI
-        // stayed on "Loading case" while hammering the backend toward a 503.
         if (alive && !finished) schedule();
       }
     };
@@ -140,245 +106,263 @@ export function CaseDetail({
     return () => { alive = false; stop(); };
   }, [caseId, pollGeneration]);
 
-  if (error && !inv) {
+  // The citation map follows the finding: refetch when it, or a struck exhibit, changes.
+  const proofKey = inv ? `${inv.finding?.id ?? 0}:${inv.evidence.length}:${inv.evidence.filter((e) => e.rejected).length}:${inv.status}` : "";
+  const cites = useAsync(() => (inv?.finding ? api.citations(caseId) : Promise.resolve(null)), [caseId, proofKey]);
+  const cfg = useAsync(() => api.guardsConfig(), []);
+  const wide = useMediaQuery(RAIL_QUERY);
+  const [lit, setLit] = useState<Lit>(null);
+  const [issueOpen, setIssueOpen] = useState(false);
+  const [shipOpen, setShipOpen] = useState(false);
+  const [detail, setDetail] = useState<Evidence | null>(null);
+  const [railSheet, setRailSheet] = useState(false);
+  const lower: Lower = ROUTE_TO_LOWER[tab] ?? "steps";
+  const lowerRef = useRef<HTMLElement | null>(null);
+  // A deep link to a lower tab (or /evidence) scrolls there once the case is in.
+  const jumped = useRef(false);
+  useEffect(() => {
+    if (jumped.current || !inv) return;
+    jumped.current = true;
+    if (tab in ROUTE_TO_LOWER && (inv.finding || tab !== "trace")) {
+      requestAnimationFrame(() => lowerRef.current?.scrollIntoView({ block: "start" }));
+    } else if (tab === "evidence") {
+      if (wide) requestAnimationFrame(() => document.querySelector(".cv-rail")?.scrollIntoView({ block: "start" }));
+      else setRailSheet(true);
+    }
+  }, [inv, tab, wide]);
+
+  const built = useMemo(() => inv ? buildExhibits(inv, cites.data ?? null) : { exhibits: [], sentences: [] },
+    [inv, cites.data]);
+  const { exhibits, sentences } = built;
+
+  if (error && (!inv || demoRefreshed)) {
     return (
-      <div style={{ padding: `${S[6]}` }}>
-        <ErrorState title={`Couldn't load case #${caseId}`} detail={error} onRetry={retry} />
+      <div style={{ padding: 24 }}>
+        <ErrorState title={`Couldn't load problem #${caseId}`} detail={error} onRetry={retry} />
+        {demoRefreshed && <Button variant="ghost" onClick={() => {
+          const route = parseRoute(currentLocation());
+          window.location.assign(formatRoute({ screen: "cases", productId: route?.productId }));
+        }}>Go to all problems</Button>}
       </div>
     );
   }
-  if (!inv) return <Centered>Loading case #{caseId}…</Centered>;
-  if (inv.merged_into_id) return <Centered>Opening case #{inv.merged_into_id}…</Centered>;
+  if (!inv) return <Centered>Opening problem #{caseId}…</Centered>;
+  if (inv.merged_into_id) return <Centered>Opening problem #{inv.merged_into_id}…</Centered>;
 
+  const f = inv.finding;
+  const verdict = verdictOf(inv);
+  const hunch = verdict === "hunch";
+  const blockedDraft = isBlockedDraft(inv);
+  const reasons = reasonsFor(inv, exhibits);
+  const missing = hunch ? missingFor(inv, exhibits, cfg.data?.two_source.min_items ?? 2) : [];
+  const unproven = notProven(inv);
+  const current: Lit = lit ?? (reasons[0] ? { kind: "reason", id: reasons[0].id } : null);
+  const litLetters = new Set(current?.kind === "ex" ? [current.id]
+    : current?.kind === "reason" ? reasons.find((r) => r.id === current.id)?.letters ?? [] : []);
+  const order = afterUpdate(inv, exhibits);
+  const impact = f?.impact;
+  const sure = f ? Math.round(f.confidence * 100) : null;
+  const blocked = blockedReason(inv);
+
+  const pickLetter = (letter: string) => {
+    setLit({ kind: "ex", id: letter });
+    if (!wide) setRailSheet(true);
+  };
+  const openDetails = (x: Exhibit) => setDetail(x.evidence);
   const openEvidence = (e: Evidence) => {
-    if (wide) { setPickedId(e.id); setMode("evidence"); if (tab === "trace") onTab("finding"); }
-    else setSheetId(e.id);
+    const x = exhibits.find((y) => y.id === e.id);
+    if (x) pickLetter(x.letter); else setDetail(e);
   };
-  const changeMode = (m: InspectorMode) => {
-    setMode(m);
-    // Keep the URL honest about what is showing, so the view stays linkable.
-    if (m === "trace" && tab === "finding") onTab("trace");
-    if (m === "evidence" && tab === "trace") onTab("finding");
-  };
-  // The trust badge summarises the evidence, so it opens it: the Inspector's
-  // evidence view beside the brief when there is room, the Evidence tab when not.
-  const openTrust = () => {
-    if (wide) { setPickedId(null); changeMode("evidence"); }
-    else onTab("evidence");
-  };
-  const picked = inv.evidence.find((e) => e.id === pickedId) ?? null;
-  const sheetEvidence = inv.evidence.find((e) => e.id === sheetId) ?? null;
-  // On a wide screen the trace lives in the Inspector, so the brief takes its tab.
-  const leftTab: CaseTab = wide && tab === "trace" ? "finding" : tab;
-  const tabs = wide ? CASE_TABS.filter((t) => t !== "trace") : CASE_TABS;
+  const onMerged = (id: number) => { onReviewed(); onOpenCase(id); };
 
-  const finding = inv.finding;
-  const sev = finding?.severity ? SEVERITY[finding.severity.band] : null;
-  const impact = impactLine(finding?.impact ?? null);
-  const running = inv.status === "running";
-
-  // Which tabs are worth offering. A tab that opens onto "nothing yet" is a
-  // dead end; the ones that would be empty say so in the label instead.
-  const counts: Partial<Record<CaseTab, number>> = {
-    evidence: inv.evidence.length,
-    history: inv.history?.length ?? 0
-  };
+  const rail = (inline: boolean) => (
+    <ExhibitsRail inv={inv} exhibits={exhibits} lit={litLetters} onPick={(l) => setLit({ kind: "ex", id: l })}
+      onDetails={openDetails} onReload={load} className={inline ? "is-inline" : ""} heading={inline} />
+  );
 
   return (
-    <div className="el-case-detail" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      {/* persistent header — the same facts whichever tab you're on */}
-      <div className="el-case-dossier-header" style={{ flex: "none", borderBottom: `1px solid ${C.border}`, padding: `${S[3]} ${S[6]} 0` }}>
-        <div style={{ display: "flex", alignItems: "center", gap: S[3], flexWrap: "wrap" }}>
-          <button onClick={onBack} className="el-btn"
-            style={{ color: C.dim, fontSize: T.base, whiteSpace: "nowrap" }}>
-            <Icon name="chevronLeft" size={15} /> Back to Cases
-          </button>
-          <div style={{ width: 1, height: 16, background: C.border2 }} />
-          <span className="el-case-breadcrumb">Case #{caseId}</span>
-          <span style={{ fontFamily: mono, fontSize: T.xs, color: C.faint }}>
-            {productName ? `· ${productName}` : ""}
-          </span>
-          {canReview() && ["needs_review", "needs_human", "resolved", "regressed"].includes(inv.case_status)
-            && !inv.product_decision?.hidden && (
-            <MergeAction key={caseId} caseId={caseId} onMerged={(id) => { onReviewed(); onOpenCase(id); }} />
-          )}
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: S[3], marginTop: S[2],
-                      flexWrap: "wrap" }}>
-          <div style={{ fontSize: T.lg, fontWeight: 600, letterSpacing: "-.01em",
-                        maxWidth: 660, lineHeight: "var(--el-lh-snug)" }}>
-            {inv.title}
+    <div className="cv-screen">
+      <header className="cv-bar">
+        <div className="cv-bar__inner">
+          <button type="button" className="cv-back" onClick={onBack}>← {backLabel}</button>
+          <div className="cv-meta">
+            Problem #{inv.id}{productName ? ` · ${productName}` : ""}
+            {sure != null && !blockedDraft && (
+              <> · <button type="button" onClick={onGoCalibration}
+                title="How well EchoLens's stated certainty has matched your verdicts">we're <b>{sure}% sure</b></button></>
+            )}
           </div>
-          <StatusChip status={inv.case_status} />
           <DecisionChip decision={inv.product_decision} />
-          {sev && (
-            <span style={{ fontFamily: mono, fontSize: T.micro, letterSpacing: ".04em",
-                           padding: `${S[1]} ${S[2]}`, borderRadius: R.sm, color: sev.color,
-                           border: `1px solid ${sev.color}55`, textTransform: "uppercase" }}>
-              {sev.label} severity
-            </span>
-          )}
-          {impact && <span style={{ fontSize: T.sm, color: C.muted }}>{impact}</span>}
-          {finding?.confidence != null && (
-            <button
-              onClick={onGoCalibration}
-              className="el-btn"
-              title="How well EchoLens's stated confidence has matched your verdicts"
-              style={{ fontFamily: mono, fontSize: T.xs, color: C.dim,
-                       textDecoration: "underline dotted", textUnderlineOffset: 3 }}
-            >
-              confidence {finding.confidence.toFixed(2)}
-            </button>
-          )}
-          {finding?.trust && <TrustBadge trust={finding.trust} onClick={openTrust} />}
+          <span className="cv-bar__spacer" />
+          <Button variant="primary" disabled={!!blocked} title={blocked ?? undefined} onClick={() => setIssueOpen(true)}>
+            Send to GitHub</Button>
+          <Button variant="ghost" disabled={!!blocked} title={blocked ?? undefined} onClick={() => setShipOpen(true)}>Fix shipped</Button>
+          {blocked && f && <span className="cv-why-disabled">{blocked}</span>}
         </div>
+      </header>
 
-        {inv.case_why && (
-          <div style={{ fontSize: T.sm, color: C.dim, marginTop: S[1] }}>{inv.case_why}</div>
-        )}
-
-        <div className="el-case-tabs" style={{ display: "flex", gap: S[1], marginTop: S[3] }}>
-          {tabs.map((t) => {
-            const active = t === leftTab;
-            return (
-              <button
-                key={t}
-                onClick={() => onTab(t)}
-                className="el-btn"
-                style={{
-                  background: "transparent", border: "none",
-                  padding: `${S[2]} ${S[3]}`, fontSize: T.base, fontFamily: "inherit",
-                  color: active ? C.text : C.muted,
-                  borderBottom: `2px solid ${active ? C.accent : "transparent"}`
-                }}
-              >
-                {CASE_TAB_LABEL[t]}
-                {counts[t] != null && counts[t]! > 0 && (
-                  <span style={{ fontFamily: mono, fontSize: T.micro, color: C.faint, marginLeft: 6 }}>
-                    {counts[t]}
-                  </span>
-                )}
-                {t === "trace" && running && (
-                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.accent,
-                                 display: "inline-block", marginLeft: 7,
-                                 animation: "elPulse 1.4s infinite" }} />
-                )}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* An error AFTER the first successful load used to be stored and never
-          rendered, so a failed refresh left stale data on screen while a toast
-          said the action had succeeded — the UI contradicting itself. */}
       {error && (
-        <div style={{ flex: "none", margin: "10px 28px 0", padding: `${S[2]} ${S[3]}`,
-                      border: `1px solid ${C.bad}55`, background: `${C.bad}12`,
-                      borderRadius: R.control, fontSize: T.sm, color: C.text3,
-                      display: "flex", alignItems: "center", gap: S[2] }}>
-          <Icon name="warning" size={14} style={{ color: C.bad }} />
-          <span style={{ flex: 1 }}>Couldn't refresh this case — {error}</span>
-          <button onClick={retry} className="el-btn"
-            style={{ color: C.accent }}>Retry</button>
+        <div className="cv-banner" role="alert" style={{ maxWidth: 1136, margin: "12px auto 0" }}>
+          Couldn't refresh this problem — {error}{" "}
+          <button type="button" className="cv-link" onClick={retry}>Try again</button>
         </div>
       )}
 
-      <div className={wide ? "el-case-split" : undefined}
-        style={wide
-          ? { flex: 1, minHeight: 0, overflow: "hidden", display: "grid",
-              gridTemplateColumns: "minmax(0, 3fr) minmax(360px, 2fr)" }
-          : { flex: 1, minHeight: 0, overflow: "hidden", display: "flex" }}>
-        <div style={{ minWidth: 0, minHeight: 0, overflow: "hidden", display: "flex" }}>
-          {leftTab === "finding" && (
-            <FindingTab inv={inv} onOpenEvidence={openEvidence} onReload={load}
-                        onReviewed={onReviewed} onOpenTrace={() => changeMode("trace")}
-                        onOpenCase={onOpenCase} />
-          )}
-          {leftTab === "trace" && (
-            <TraceTab inv={inv} onOpenEvidence={openEvidence} onReload={load} />
-          )}
-          {leftTab === "evidence" && <EvidenceTab inv={inv} onOpenEvidence={openEvidence} />}
-          {leftTab === "engineering" && (
-            <EngineeringTab inv={inv} onReload={load} onGoPatterns={onGoPatterns} />
-          )}
-          {leftTab === "discussion" && <DiscussionTab caseId={caseId} />}
-          {leftTab === "history" && <HistoryTab inv={inv} onOpenCase={onOpenCase} />}
-        </div>
-        {wide && (
-          <Inspector inv={inv} mode={mode} onMode={changeMode} evidence={picked}
-                     onPick={openEvidence} onReload={load} />
-        )}
-      </div>
+      <main className="cv-main">
+        <div className="cv-col">
+          {blockedDraft && <div className="cv-eyebrow">Drafted, not proven — kept apart from the answer</div>}
+          <div className="cv-titlerow">
+            <SerifHeadline as="h1" size="case">{inv.title}</SerifHeadline>
+            {verdict === "live" ? <LiveDot label={inv.case_status === "queued" ? "WAITING" : "LIVE"} />
+              : <Stamp variant={verdict} rotation={-6}
+                  title={hunch ? "Hunch: not proven by two independent kinds of source yet" : undefined} />}
+          </div>
 
-      {!wide && (
-        <EvidenceSheet evidence={sheetEvidence} onClose={() => setSheetId(null)}>
-          {sheetEvidence && <EvidenceDetail evidence={sheetEvidence} inv={inv} onReload={load} />}
-        </EvidenceSheet>
-      )}
+          {f?.needs_review && f.status !== "challenged" && (
+            <div className="cv-banner"><b>Needs another look.</b> {f.needs_review.reason}</div>
+          )}
+          {inv.data_notes?.length > 0 && (
+            <div className="cv-banner">{inv.data_notes.map((n, i) => <div key={i}>{n}</div>)}</div>
+          )}
+
+          {!f ? (
+            <section className="cv-section">
+              <h2 className="cv-label">What's happening</h2>
+              <p className="cv-story">
+                {inv.status === "running" || inv.case_status === "queued"
+                  ? "EchoLens is looking into this now. Every step it takes appears below as it happens."
+                  : `${inv.case_why || "This ended without an answer."} Every step it took is below.`}
+              </p>
+              <ExtendCard inv={inv} onReload={load} />
+            </section>
+          ) : (
+            <>
+              <section className="cv-section" aria-labelledby="cv-what">
+                <h2 id="cv-what" className="cv-label">What happened <span>· tap a letter to see the exhibit</span></h2>
+                <p className="cv-story">
+                  {sentences.map((s, i) => {
+                    const on = s.letters.some((l) => litLetters.has(l));
+                    return (
+                      <span key={i}>
+                        {i > 0 && " "}
+                        <span className={`cv-sentence${on ? " is-lit" : ""}`}>{s.text}</span>
+                        {s.letters.map((l) => (
+                          <CitationLetter key={l} letter={l} selected={current?.kind === "ex" && current.id === l}
+                            onSelect={pickLetter} />
+                        ))}
+                      </span>
+                    );
+                  })}
+                </p>
+                {((impact?.rating_impact && !hunch) || impact?.affected_pct || order) ? (
+                  <div className="cv-chips">
+                    {/* A rating loss is only pinned on a proven cause, never on a hunch. */}
+                    {impact && impact.rating_impact > 0 && !hunch && (
+                      <span title="Estimated rating lost against the usual level"><b className="is-bad">−{impact.rating_impact.toFixed(2)}★</b> rating</span>
+                    )}
+                    {impact && impact.affected_pct > 0 && (
+                      <span title="Share of recent 1–2★ reviews that describe this problem"><b>{Math.round(impact.affected_pct)}%</b> of recent 1–2★ reviews</span>
+                    )}
+                    {order && (
+                      <span title={`Release ${order.release.letter} on ${order.release.date}; first complaint ${order.first.letter} on ${order.first.date}`}>
+                        started <b>{order.days === 0 ? "the same day as" : `${order.days} ${order.days === 1 ? "day" : "days"} after`}</b> the update</span>
+                    )}
+                  </div>
+                ) : null}
+              </section>
+
+              {hunch && (
+                <section className="cv-missing" aria-labelledby="cv-missing">
+                  <h2 id="cv-missing">What's missing</h2>
+                  <p>{blockedDraft
+                    ? "EchoLens drafted a cause but couldn't point to proof for all of it, so it isn't shown as the answer. To confirm it, it needs:"
+                    : "This is a hunch, not a confirmed problem. To confirm it, EchoLens needs:"}</p>
+                  {missing.length > 0 ? <ul>{missing.map((m) => <li key={m}>{m}</li>)}</ul>
+                    : <p>{inv.case_why}</p>}
+                  <ExtendCard inv={inv} onReload={load} />
+                </section>
+              )}
+
+              {unproven.length > 0 && (
+                <section className="cv-unproven" aria-labelledby="cv-unproven">
+                  <h2 id="cv-unproven" className="cv-label">Not proven yet <span>· no exhibit backs these, so they are not part of the answer</span></h2>
+                  {unproven.map((u, i) => <p key={i}>{u}</p>)}
+                </section>
+              )}
+
+              {reasons.length > 0 && (
+                <section className="cv-section" aria-labelledby="cv-why">
+                  <h2 id="cv-why" className="cv-label">
+                    {hunch ? "What we have so far" : <>Why we're sure <span>· our honesty checks</span></>}
+                  </h2>
+                  <div className="cv-reasons">
+                    {reasons.map((r) => (
+                      <ReasonRow key={r.id} letters={r.letters}
+                        selected={current?.kind === "reason" && current.id === r.id}
+                        onSelect={() => setLit({ kind: "reason", id: r.id })}>
+                        <span title={r.tip}>{r.text}</span>
+                      </ReasonRow>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              <section className="cv-section" aria-labelledby="cv-next">
+                <h2 id="cv-next" className="cv-label">What to do next</h2>
+                <NextStepsBlock inv={inv} onSend={() => setIssueOpen(true)} onShipped={() => setShipOpen(true)} />
+                <VerdictActions inv={inv} onReload={load} onReviewed={onReviewed} onOpenCase={onOpenCase} />
+              </section>
+            </>
+          )}
+
+          {!wide && exhibits.length > 0 && (
+            <Button variant="ghost" className="cv-exhibits-btn" onClick={() => setRailSheet(true)}>
+              See the {exhibits.length} {exhibits.length === 1 ? "exhibit" : "exhibits"}</Button>
+          )}
+        </div>
+        {wide && rail(true)}
+      </main>
+
+      <section ref={lowerRef} className="cv-more" aria-label="More about this problem" style={{ scrollMarginTop: 80 }}>
+        <PillTabs label="More about this problem" panelId="cv-lower" value={lower}
+          tabs={[{ id: "steps", label: inv.status === "running" ? "Every step · live" : "Every step" },
+                 { id: "discussion", label: "Discussion" },
+                 { id: "history", label: `History${inv.history?.length ? ` ${inv.history.length}` : ""}` },
+                 { id: "more", label: "More" }]}
+          onChange={(t) => onTab(LOWER_TO_ROUTE[t])} />
+        <div id="cv-lower" role="tabpanel" aria-label={lower} className="cv-more__panel">
+          {lower === "steps" && <div className="cv-trace-frame"><TraceTab inv={inv} onOpenEvidence={openEvidence} onReload={load} /></div>}
+          {lower === "discussion" && <div style={{ display: "flex", minHeight: 320 }}><DiscussionTab caseId={caseId} /></div>}
+          {lower === "history" && <div style={{ display: "flex" }}><HistoryTab inv={inv} onOpenCase={onOpenCase} /></div>}
+          {lower === "more" && <MoreTab inv={inv} onReload={load} onGoPatterns={onGoPatterns}
+            onOpenEvidence={openEvidence} onMerged={onMerged} />}
+        </div>
+      </section>
+
+      {issueOpen && f && <IssuePreview inv={inv} onClose={() => setIssueOpen(false)} onFiled={load} />}
+      {shipOpen && f && <FixShippedDialog inv={inv} onClose={() => setShipOpen(false)} onSaved={load} />}
+      {railSheet && !wide && <RailSheet onClose={() => setRailSheet(false)} count={exhibits.length}>{rail(false)}</RailSheet>}
+      <EvidenceSheet evidence={detail} onClose={() => setDetail(null)}>
+        {detail && <EvidenceDetail evidence={detail} inv={inv} onReload={load} />}
+      </EvidenceSheet>
     </div>
   );
 }
 
-function MergeAction({ caseId, onMerged }: { caseId: number; onMerged: (id: number) => void }) {
-  const [open, setOpen] = useState(false);
-  const [candidates, setCandidates] = useState<CaseRow[]>([]);
-  const [target, setTarget] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const show = async () => {
-    setOpen(true); setBusy(true); setError(null);
-    try {
-      const view = await api.cases();
-      setCandidates(view.cases.filter((c) => c.id != null && c.id !== caseId &&
-        ["needs_review", "needs_human", "resolved", "regressed"].includes(c.status) && !c.decision?.hidden));
-    } catch (e) { setError(errorMessage(e)); }
-    finally { setBusy(false); }
-  };
-  const merge = async () => {
-    if (!target) return;
-    setBusy(true);
-    const result = await withToast(() => api.mergeCase(caseId, Number(target)), {
-      success: "Cases merged — the duplicate's evidence is linked as related.",
-      failure: "Couldn't merge these cases"
-    });
-    setBusy(false);
-    if (result) onMerged(result.merged_into_id);
-  };
+/** Phones: the exhibits rail as a bottom sheet. */
+function RailSheet({ onClose, count, children }: { onClose: () => void; count: number; children: React.ReactNode }) {
+  const ref = useDialog(onClose);
   return (
-    <div style={{ marginLeft: "auto", maxWidth: 480 }}>
-      {!open ? (
-        <button className="el-btn" onClick={show} style={{ fontSize: T.sm, color: C.dim }}>
-          Merge duplicate…
-        </button>
-      ) : (
-        <div style={{ padding: S[3], border: `1px solid ${C.border2}`, borderRadius: R.card, background: C.card }}>
-          <label htmlFor="merge-target" style={{ fontSize: T.sm, color: C.text2 }}>
-            Merge case #{caseId} into an open case on this product
-          </label>
-          <select id="merge-target" value={target} disabled={busy}
-            onChange={(e) => setTarget(e.target.value)}
-            style={{ display: "block", width: "100%", marginTop: S[2], padding: S[2],
-                     background: C.bg, color: C.text2, border: `1px solid ${C.border3}`, borderRadius: R.control }}>
-            <option value="">{busy ? "Loading…" : "Choose a case"}</option>
-            {candidates.map((c) => <option key={c.id} value={c.id!}>#{c.id} · {c.title}</option>)}
-          </select>
-          <div style={{ fontSize: T.xs, color: C.dim, marginTop: S[2] }}>
-            This case leaves open lists. Its evidence stays linked as related; links redirect to the selected case.
-          </div>
-          {error && <div role="alert" style={{ fontSize: T.sm, color: C.bad }}>{error}</div>}
-          {!busy && !error && candidates.length === 0 && (
-            <div style={{ fontSize: T.sm, color: C.muted }}>No other open cases available.</div>
-          )}
-          <div style={{ display: "flex", gap: S[3], marginTop: S[2] }}>
-            <button className="el-btn" onClick={merge} disabled={busy || !target} style={{ color: C.accent }}>
-              {busy ? "Working…" : "Merge into selected case"}
-            </button>
-            <button className="el-btn" onClick={() => setOpen(false)} disabled={busy} style={{ color: C.muted }}>Cancel</button>
-          </div>
+    <>
+      <div className="cv-scrim" onClick={onClose} aria-hidden="true" />
+      <div ref={ref} role="dialog" aria-modal="true" aria-label="Exhibits" className="cv-sheet">
+        <div className="cv-rail__head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <SerifHeadline as="h2" size="section">Exhibits</SerifHeadline>
+          <span style={{ fontSize: 13, color: "var(--el-muted)" }}>{count} {count === 1 ? "piece" : "pieces"}</span>
+          <button type="button" className="cv-close" onClick={onClose} aria-label="Close exhibits">✕</button>
         </div>
-      )}
-    </div>
+        {children}
+      </div>
+    </>
   );
 }

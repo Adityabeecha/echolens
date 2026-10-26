@@ -107,3 +107,68 @@ def primary_intent(counts: dict[str, int] | None) -> str | None:
     if not counts or not any(counts.values()):
         return None
     return max(INTENTS, key=lambda k: (counts.get(k, 0), -INTENTS.index(k)))
+
+
+# ── performance: slow or draining ───────────────────────────────────────
+#
+# A sixth reading used to GROUP spikes on the Problems screen ("Slow or
+# draining"), deliberately kept out of `classify` and INTENTS: the honesty
+# guards and the detector treat a slow or draining app as a bug complaint, and
+# every intent count in the app keeps its five keys. A review that names a
+# crash or an error stays a bug even when it also says "slow".
+
+PERFORMANCE = "performance"
+
+PERFORMANCE_CUES = _cues(
+    r"slow(?:s|er|ly|ness|ed)?", r"lag(?:s|gy|ging)?", r"laggy", r"sluggish",
+    r"freez(?:e|es|ing)", r"froze(?:n)?", r"hang(?:s|ing)?", r"stutter(?:s|ing)?",
+    r"takes? (?:forever|ages)", r"loading (?:forever|takes)",
+    r"battery", r"drain(?:s|ed|ing)?", r"overheat(?:s|ed|ing)?", r"heat(?:s|ing)? up",
+    r"(?:gets?|getting|runs?|running) (?:very |so |really )?hot", r"hot to the touch",
+    r"memory", r"ram", r"storage hog", r"cpu", r"power hungry",
+)
+# What still makes it a bug: something broke rather than ran badly.
+HARD_BUG_CUES = _cues(
+    r"crash(?:es|ed|ing)?", r"doesn'?t work", r"does not work", r"not working",
+    r"stopped working", r"broken", r"error", r"force clos(?:e|es)", r"lost (?:all )?my",
+    r"disappear(?:ed|s)?", r"won'?t (?:open|load|start|sync|work)",
+    r"can'?t (?:log ?in|sign ?in|open)", r"keeps? (?:closing|crashing|logging me out)",
+)
+
+# The four groups a new spike can land in, in triage order.
+SPIKE_CATEGORIES = (BUG, UX_CONFUSION, PERFORMANCE, FEATURE_REQUEST)
+
+
+def is_performance(text: str | None) -> bool:
+    """True when the text is about speed, freezing, heat, battery or memory and
+    names nothing that actually broke."""
+    t = " ".join((text or "").split())
+    return bool(PERFORMANCE_CUES.search(t)) and not HARD_BUG_CUES.search(t)
+
+
+def classify_detail(text: str | None, rating: int | None = None) -> str:
+    """`classify`, with the bugs that are really about performance split out.
+    Only a review `classify` calls a bug can become PERFORMANCE, so every other
+    intent is exactly what `classify` says."""
+    label = classify(text, rating)
+    return PERFORMANCE if label == BUG and is_performance(text) else label
+
+
+def spike_category(texts: Iterable[str | None], counts: dict[str, int] | None = None) -> str:
+    """Which of SPIKE_CATEGORIES a spike or theme belongs to.
+
+    `texts` are what describes it (its title, a theme's quotes); `counts` the
+    intents of the reviews behind it, when known. A spike led by requests is a
+    request and one led by confusion is confusion; otherwise it is about
+    performance when most of its texts are, and a bug by default — a GitHub
+    burst with no reviews behind it is a bug report.
+    """
+    lead = primary_intent(counts)
+    if lead == FEATURE_REQUEST:
+        return FEATURE_REQUEST
+    if lead == UX_CONFUSION:
+        return UX_CONFUSION
+    written = [t for t in texts if t and t.strip()]
+    if written and sum(is_performance(t) for t in written) * 2 >= len(written):
+        return PERFORMANCE
+    return BUG

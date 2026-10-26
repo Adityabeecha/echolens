@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>EchoLens — Landing page (combined)</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500&amp;family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#FFFFFF}
+a{color:#2348C9}a:hover{color:#132E8F}
+</style>
+</helmet>
+<div style="min-height: 1900px; background: #FFFFFF; color: #0B0B0F; font-family: 'Geist', system-ui, sans-serif">
+
+  <header style="max-width: 1280px; margin: 0 auto; padding: 22px 40px; display: flex; flex-wrap: wrap; align-items: center; gap: 28px">
+    <div style="display: flex; align-items: center; gap: 10px">
+      <svg width="30" height="30" viewBox="0 0 34 34" aria-hidden="true">
+        <circle cx="9" cy="17" r="3" fill="#0B0B0F"></circle>
+        <circle cx="9" cy="17" r="8" fill="none" stroke="#0B0B0F" stroke-width="1.4" opacity=".3"></circle>
+        <path d="M18 9 L25 17 L18 25 Z" fill="none" stroke="#0B0B0F" stroke-width="1.8" stroke-linejoin="round"></path>
+        <path d="M25 17 H31" stroke="#C2361F" stroke-width="2.4" stroke-linecap="round"></path>
+      </svg>
+      <span style="font-family: 'Newsreader', Georgia, serif; font-size: 26px; font-weight: 500; letter-spacing: -0.5px">EchoLens</span>
+    </div>
+    <nav aria-label="Page" style="display: flex; gap: 24px; font-size: 15px">
+      <a href="#how" style="color: #5B5F6B; text-decoration: none">How it works</a>
+      <a href="#honest" style="color: #5B5F6B; text-decoration: none">Why you can trust it</a>
+    </nav>
+    <div style="flex: 1 1 auto"></div>
+    <a href="#" style="font-size: 15px; color: #0B0B0F; text-decoration: none">Sign in</a>
+    <a href="D-Today.dc.html" style="font-size: 15px; font-weight: 600; color: #FFFFFF; background: #0B0B0F; text-decoration: none; border-radius: 12px; padding: 11px 18px">Explore the live demo</a>
+  </header>
+
+  <section style="max-width: 1280px; margin: 0 auto; padding: 48px 40px 72px; display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 64px; align-items: center">
+    <div style="display: flex; flex-direction: column; gap: 24px">
+      <div style="font-family: 'Geist Mono', monospace; font-size: 12px; letter-spacing: 3px; color: #C2361F">FEEDBACK FORENSICS FOR APP MAKERS</div>
+      <h1 style="margin: 0; font-family: 'Newsreader', Georgia, serif; font-size: 76px; line-height: 0.98; letter-spacing: -2.5px; font-weight: 500">Find the root cause before the reviews pile up.</h1>
+      <p style="margin: 0; font-size: 20px; line-height: 1.55; color: #3A3C44; max-width: 560px">EchoLens reads your app-store reviews and GitHub issues, notices when something breaks, and finds out why — with proof you can click. Then it tells you if your fix worked.</p>
+      <div style="display: flex; gap: 12px; flex-wrap: wrap">
+        <a href="D-Today.dc.html" style="text-decoration: none; font-size: 17px; font-weight: 600; color: #FFFFFF; background: #0B0B0F; border-radius: 14px; padding: 16px 24px">Explore the live demo</a>
+        <a href="#" style="text-decoration: none; font-size: 17px; color: #0B0B0F; border: 1px solid #D4D4CC; border-radius: 14px; padding: 16px 24px">Connect your app</a>
+      </div>
+      <div style="font-size: 14px; color: #5B5F6B">No sign-up for the demo · works with Google Play, App Store, GitHub and CSV exports</div>
+    </div>
+
+    <article aria-label="Example case" style="position: relative; background: #F6F6F3; border-radius: 28px; padding: 28px; display: flex; flex-direction: column; gap: 18px; transform: rotate(0.8deg)">
+      <div style="position: absolute; right: 26px; top: 22px; transform: rotate(-7deg); border: 3px solid #C2361F; color: #C2361F; font-family: 'Geist Mono', monospace; font-size: 14px; font-weight: 500; letter-spacing: 3px; padding: 5px 12px; border-radius: 4px; background: rgba(246,246,243,.85)">CONFIRMED</div>
+      <div style="font-size: 13px; color: #5B5F6B">Example · Lumo photo app</div>
+      <h2 style="margin: 0 150px 0 0; font-family: 'Newsreader', Georgia, serif; font-size: 32px; line-height: 1.1; font-weight: 500">Battery drain since version 3.2.0</h2>
+      <div style="background: #FFFFFF; border-radius: 18px; padding: 30px 16px 12px; display: flex; flex-direction: column; gap: 8px">
+        <div style="position: relative; height: 96px; display: flex; align-items: flex-end; gap: 3px">
+          <sc-for list="{{bars}}" as="b" hint-placeholder-count="30">
+            <div style="flex: 1 1 0; border-radius: 3px; height: {{b.h}}; background: {{b.c}}"></div>
+          </sc-for>
+          <div style="position: absolute; left: 60%; top: -10px; bottom: 0; border-left: 1.5px solid #2348C9"></div>
+          <div style="position: absolute; right: 41%; top: -28px; font-family: 'Newsreader', Georgia, serif; font-style: italic; font-size: 16px; color: #2348C9; white-space: nowrap">update ships →</div>
+        </div>
+        <div style="font-size: 12px; color: #5B5F6B">1★ reviews per day</div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <div style="display: flex; gap: 12px; align-items: flex-start; background: #FFFFFF; border: 2px solid #0B0B0F; box-shadow: 5px 5px 0 #0B0B0F; border-radius: 14px; padding: 14px; transform: rotate(-0.6deg)">
+          <span style="flex: none; width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid #0B0B0F; background: #FFE96A; display: flex; align-items: center; justify-content: center; font-family: 'Geist Mono', monospace; font-size: 12px">A</span>
+          <span style="font-family: 'Newsreader', Georgia, serif; font-size: 18px; line-height: 1.4"><span style="background: #FFE96A">“Phone dies by 2pm since the update.”</span> <span style="font-family: 'Geist', sans-serif; font-size: 12px; color: #5B5F6B">— Play Store ★1</span></span>
+        </div>
+        <div style="display: flex; gap: 12px; align-items: flex-start; background: #FFFFFF; border: 1px solid #E8E8E3; border-radius: 14px; padding: 14px; transform: rotate(0.5deg)">
+          <span style="flex: none; width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid #0B0B0F; display: flex; align-items: center; justify-content: center; font-family: 'Geist Mono', monospace; font-size: 12px">B</span>
+          <span style="font-family: 'Newsreader', Georgia, serif; font-size: 18px; line-height: 1.4">Wakelock not released when sync retry fails. <span style="font-family: 'Geist', sans-serif; font-size: 12px; color: #5B5F6B">— GitHub #2841</span></span>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <section id="how" style="background: #F6F6F3; padding: 72px 0">
+    <div style="max-width: 1280px; margin: 0 auto; padding: 0 40px; display: flex; flex-direction: column; gap: 32px">
+      <h2 style="margin: 0; font-family: 'Newsreader', Georgia, serif; font-size: 48px; line-height: 1.05; letter-spacing: -1px; font-weight: 500; max-width: 760px">From a pile of reviews to one clear answer.</h2>
+      <div role="tablist" aria-label="How it works" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px">
+        <sc-for list="{{steps}}" as="s" hint-placeholder-count="5">
+          <button type="button" role="tab" aria-selected="{{s.on}}" onClick="{{s.pick}}" style="text-align: left; font-family: inherit; cursor: pointer; border-radius: 18px; padding: 18px; display: flex; flex-direction: column; gap: 8px; color: {{s.fg}}; background: {{s.bg}}; border: 1.5px solid {{s.bd}}">
+            <span style="font-family: 'Geist Mono', monospace; font-size: 12px; opacity: .7">{{s.n}}</span>
+            <span style="font-size: 19px; font-weight: 600">{{s.title}}</span>
+          </button>
+        </sc-for>
+      </div>
+      <div role="tabpanel" style="background: #FFFFFF; border-radius: 24px; padding: 32px; display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 32px; align-items: center">
+        <p style="margin: 0; font-family: 'Newsreader', Georgia, serif; font-size: 26px; line-height: 1.45">{{current.body}}</p>
+        <div style="border: 1px dashed #D4D4CC; border-radius: 18px; padding: 20px; font-size: 15px; color: #3A3C44; line-height: 1.6"><b style="color: #0B0B0F">In the demo:</b> {{current.example}}</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="honest" style="max-width: 1280px; margin: 0 auto; padding: 80px 40px; display: flex; flex-direction: column; gap: 32px">
+    <div style="display: flex; flex-direction: column; gap: 12px; max-width: 760px">
+      <h2 style="margin: 0; font-family: 'Newsreader', Georgia, serif; font-size: 48px; line-height: 1.05; letter-spacing: -1px; font-weight: 500">We'd rather say “not sure” than guess.</h2>
+      <p style="margin: 0; font-size: 18px; color: #3A3C44; line-height: 1.55">Every answer passes the same honesty checks, written in code — not in a prompt. When the proof isn't there, EchoLens says so.</p>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px">
+      <div style="border: 1px solid #E8E8E3; border-radius: 20px; padding: 22px; display: flex; flex-direction: column; gap: 14px">
+        <span style="align-self: flex-start; transform: rotate(-4deg); border: 2px solid #0B0B0F; font-family: 'Geist Mono', monospace; font-size: 11px; letter-spacing: 2px; padding: 3px 8px; border-radius: 3px">EVERY CLAIM CITED</span>
+        <div style="font-size: 16px; line-height: 1.5; color: #3A3C44">A sentence without proof is removed from the answer and shown separately as a hunch.</div>
+      </div>
+      <div style="border: 1px solid #E8E8E3; border-radius: 20px; padding: 22px; display: flex; flex-direction: column; gap: 14px">
+        <span style="align-self: flex-start; transform: rotate(3deg); border: 2px dashed #9A5B00; color: #9A5B00; font-family: 'Geist Mono', monospace; font-size: 11px; letter-spacing: 2px; padding: 3px 8px; border-radius: 3px">TWO WITNESSES</span>
+        <div style="font-size: 16px; line-height: 1.5; color: #3A3C44">One kind of source is only a hunch, capped at 75% sure. Confirming needs two independent kinds.</div>
+      </div>
+      <div style="border: 1px solid #E8E8E3; border-radius: 20px; padding: 22px; display: flex; flex-direction: column; gap: 14px">
+        <span style="align-self: flex-start; transform: rotate(-2deg); border: 2px solid #2348C9; color: #2348C9; font-family: 'Geist Mono', monospace; font-size: 11px; letter-spacing: 2px; padding: 3px 8px; border-radius: 3px">CAUSE CAME FIRST</span>
+        <div style="font-size: 16px; line-height: 1.5; color: #3A3C44">A release can't be blamed for complaints that started before it shipped.</div>
+      </div>
+      <div style="border: 1px solid #E8E8E3; border-radius: 20px; padding: 22px; display: flex; flex-direction: column; gap: 14px">
+        <span style="align-self: flex-start; transform: rotate(4deg); border: 2px solid #C2361F; color: #C2361F; font-family: 'Geist Mono', monospace; font-size: 11px; letter-spacing: 2px; padding: 3px 8px; border-radius: 3px">TRIED TO DISPROVE IT</span>
+        <div style="font-size: 16px; line-height: 1.5; color: #3A3C44">Before confirming, EchoLens looks for evidence against its own answer.</div>
+      </div>
+    </div>
+  </section>
+
+  <section style="max-width: 1280px; margin: 0 auto 80px; padding: 0 40px">
+    <div style="background: #0B0B0F; color: #FFFFFF; border-radius: 32px; padding: 56px; display: flex; flex-wrap: wrap; gap: 32px; align-items: center; justify-content: space-between">
+      <h2 style="margin: 0; font-family: 'Newsreader', Georgia, serif; font-size: 44px; line-height: 1.08; font-weight: 500; max-width: 640px">See it solve a real case. No sign-up.</h2>
+      <a href="D-Today.dc.html" style="text-decoration: none; font-size: 18px; font-weight: 600; color: #0B0B0F; background: #FFFFFF; border-radius: 14px; padding: 18px 28px">Explore the live demo</a>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1900}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { step: 2 };
+  }
+  renderVals() {
+    var self = this;
+    var oneStar = [3,4,3,5,4,3,4,4,5,3,4,3,4,5,4,4,3,4,6,11,15,18,17,19,16,18,20,17,19,18];
+    var bars = oneStar.map(function (v, i) {
+      return { h: Math.round(v / 20 * 100) + '%', c: i >= 18 ? '#C2361F' : '#CFCFC6' };
+    });
+    var raw = [
+      { title: 'Notice', body: 'Every 6 hours EchoLens reads your new reviews and issues, and flags anything that changed: a spike in 1★ reviews, a rating drop, a new complaint.', example: '1★ reviews quadrupled two days after version 3.2.0.' },
+      { title: 'Investigate', body: 'An agent tests competing explanations, step by step, the way an analyst would — and you can watch every step it takes.', example: 'It compared versions, read the release notes and searched GitHub.' },
+      { title: 'Prove', body: 'Each claim points to an exhibit you can open: a review, an issue, a release note. No exhibit, no claim.', example: 'Five exhibits from three kinds of source back up the answer.' },
+      { title: 'Decide', body: 'You approve, push back, or park it. Approving writes the GitHub, Linear or Jira issue for you, with the exhibits attached.', example: 'One click turns the case into a ready-to-file GitHub issue.' },
+      { title: 'Confirm the fix', body: 'After your fix ships, EchoLens watches the reviews for 14 days and stamps it FIX WORKED — or reopens the case.', example: 'The video-crash fix took complaints from 6 a day to zero.' }
+    ];
+    var steps = raw.map(function (s, i) {
+      var on = self.state.step === i;
+      return { n: '0' + (i + 1), title: s.title, on: on, pick: function () { self.setState({ step: i }); },
+        fg: on ? '#FFFFFF' : '#0B0B0F', bg: on ? '#0B0B0F' : '#FFFFFF', bd: on ? '#0B0B0F' : '#E8E8E3' };
+    });
+    return { bars: bars, steps: steps, current: raw[this.state.step] };
+  }
+}
+</script>
+</body>
+</html>

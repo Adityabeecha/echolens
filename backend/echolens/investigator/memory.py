@@ -26,14 +26,14 @@ def digest_for(session: Session, anomaly: AnomalyEvent, exclude_investigation_id
     if not signal:
         return []
 
-    rows = session.scalars(
-        select(Finding).join(Investigation, Finding.investigation_id == Investigation.id)
+    rows = session.execute(
+        select(Finding, Investigation).join(Investigation, Finding.investigation_id == Investigation.id)
         .where(Investigation.status == "resolved", Investigation.product_id == anomaly.product_id,
                Finding.status != "challenged")
     ).all()
 
     scored = []
-    for f in rows:
+    for f, inv in rows:
         if exclude_investigation_id and f.investigation_id == exclude_investigation_id:
             continue
         if not f.json.get("supported_hypothesis") or f.json.get("needs_review"):
@@ -41,12 +41,11 @@ def digest_for(session: Session, anomaly: AnomalyEvent, exclude_investigation_id
         cause_terms = set(terms_of(f.summary))
         score = _overlap(signal, cause_terms)
         if score > 0:
-            scored.append((score, f))
+            scored.append((score, f, inv))
 
     out = []
     scored.sort(key=lambda item: (-item[0], -item[1].id))
-    for score, f in scored[:limit]:
-        inv = session.get(Investigation, f.investigation_id)
+    for score, f, inv in scored[:limit]:
         hyp = session.scalars(select(HypothesisRow).where(
             HypothesisRow.investigation_id == f.investigation_id,
             HypothesisRow.hid == f.json["supported_hypothesis"])).first()
@@ -62,12 +61,13 @@ def digest_for(session: Session, anomaly: AnomalyEvent, exclude_investigation_id
         }))
     from echolens.brain import human_cause_priors
     for prior in human_cause_priors(session, anomaly.product_id):
-        if prior["case_id"] == exclude_investigation_id:
+        if prior["case_id"] is not None and prior["case_id"] == exclude_investigation_id:
             continue
         score = _overlap(signal, set(terms_of(prior["theme"])))
         if score:
-            out.append((score, prior["case_id"], {
-                "case": f"#{prior['case_id']}", "confirmed_cause": prior["cause"],
+            out.append((score, prior["case_id"] or prior.get("rule_id", 0), {
+                "case": f"#{prior['case_id']}" if prior["case_id"] else "Team fact",
+                "confirmed_cause": prior["cause"],
                 "confidence": None, "resolved_at": None,
                 "source": "human_provided", "support": "human_provided",
             }))

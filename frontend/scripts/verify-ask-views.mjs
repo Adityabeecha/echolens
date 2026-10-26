@@ -12,6 +12,7 @@ function harness(file, stubs = {}, globals = {}) {
       return [state[i], x => { state[i] = typeof x === "function" ? x(state[i]) : x; }]; },
     useRef(initial) { const i = cursor++; return state[i] ??= { current: initial }; },
     useCallback(fn) { cursor++; return fn; }, useMemo(fn) { return fn(); },
+    useId() { return "uid"; },
     useEffect(fn, deps) { const i = cursor++, old = effects[i];
       if (!old || deps?.some((d, j) => d !== old.deps?.[j])) {
         old?.cleanup?.(); effects[i] = { deps, fn };
@@ -26,12 +27,15 @@ function harness(file, stubs = {}, globals = {}) {
       if (name === "react") return react;
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx, Fragment: "fragment" };
       if (name in stubs) return stubs[name];
+      // Stylesheets and the SVG chart are not part of what these checks render.
+      if (name.endsWith(".css")) return {};
+      if (name.endsWith("/charts/TimelineChart")) return { TimelineChart: () => null };
       if (name.endsWith("/ui")) return new Proxy({}, { get: () => passthrough });
       if (name.endsWith("/Icon")) return { Icon: () => null };
       if (name.endsWith("/CaseCard")) return { CaseCard: passthrough };
       if (name.endsWith("/Toast")) return { withToast: fn => fn() };
       const base = new URL(name, url);
-      const next = [".ts", ".tsx"].map(ext => new URL(base.href + ext)).find(existsSync);
+      const next = [".ts", ".tsx", "/index.ts", "/index.tsx"].map(ext => new URL(base.href + ext)).find(existsSync);
       if (!next) throw new Error(`Unexpected import ${name}`);
       return load(next);
     };

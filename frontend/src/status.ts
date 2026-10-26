@@ -28,23 +28,25 @@ export interface StatusMeta {
   needsYou?: boolean;
 }
 
-const amber = (label: string, extra: Partial<StatusMeta> = {}): StatusMeta => ({
+// Colours follow the fixed semantics (DESIGN_SYSTEM.md): cyan is the machine
+// working, indigo is "your move", emerald a verified fix, coral a regression.
+const yours = (label: string, extra: Partial<StatusMeta> = {}): StatusMeta => ({
   label, color: C.accent, bg: C.accentBg, border: C.accentLine, ...extra,
 });
 
 export const STATUS: Record<CaseStatus, StatusMeta> = {
   queued: { label: "Queued", color: C.text3, bg: C.hover, border: C.border4 },
-  running: amber("Running", { pulse: true }),
-  needs_review: amber("Needs review", { needsYou: true }),
-  needs_human: amber("Needs human", { needsYou: true }),
+  running: { label: "Running", color: C.live, bg: C.liveBg, border: C.liveLine, pulse: true },
+  needs_review: yours("Needs review", { needsYou: true }),
+  needs_human: yours("Needs your call", { needsYou: true }),
   resolved: {
-    label: "Resolved", color: C.good, bg: C.goodBg, border: C.goodLine,
+    label: "Resolved", color: C.text2, bg: C.hover, border: C.border3,
   },
   verified_fixed: {
-    label: "Verified fixed", color: C.good, bg: C.goodBg, border: C.goodLine,
+    label: "Verified fixed", color: C.verified, bg: C.verifiedBg, border: C.verifiedLine,
   },
   regressed: {
-    label: "Regressed", color: C.bad, bg: C.badBg, border: C.badLine,
+    label: "Regressed", color: C.regress, bg: C.regressBg, border: C.regressLine,
     needsYou: true,
   },
   dismissed: { label: "Dismissed", color: C.muted, bg: C.hover, border: C.border3 },
