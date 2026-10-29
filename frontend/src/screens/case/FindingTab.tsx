@@ -49,9 +49,9 @@ export function DecisionCard({ decision, impact, severity }: {
           <ImpactStat label="AFFECTED" value={pct(impact.affected_pct)}
                       sub={`of recent negative reviews · ${impact.affected_volume} reviews / 7d`}
                       hint="Share of recent negative reviews that match this problem. It is a share of reviews, not of users." />
-          <ImpactStat label="RATING IMPACT" value={`${impact.rating_impact.toFixed(2)}★`}
-                      sub="est. lost vs baseline"
-                      hint="Rating points this problem is estimated to have cost so far. The Plan page shows a separate “recoverable” figure: the part of that loss a fix is expected to win back."
+          <ImpactStat label="APP RATING CHANGE" value={`−${impact.rating_impact.toFixed(2)}★`}
+                      sub="whole app, last 7 days vs before"
+                      hint="How far the whole app's rating fell while this problem was investigated. Other problems can contribute too; this problem's own share is shown at the top of the page."
                       color={impact.rating_impact > 0 ? C.bad : C.muted} />
           {impact.blast_radius.top_cohort && impact.blast_radius.top_cohort !== "unknown" && (
             <ImpactStat

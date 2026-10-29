@@ -36,7 +36,9 @@ def _finding_context(session: Session, finding: Finding) -> dict:
         Recommendation.finding_id == finding.id).order_by(Recommendation.rank)).all()
     impact = fj.get("impact", {})
     status = inv.status if inv else ""
-    decision = decision_doc(fj, list(recs), impact, status)
+    from echolens.exporting import _numbers
+    anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv is not None and inv.anomaly_id else None
+    decision = decision_doc(fj, list(recs), impact, status, _numbers(session, inv, finding, anomaly))
     sev = severity(float(fj.get("confidence", 0.0)), impact)
     return {"fj": fj, "inv": inv, "impact": impact, "decision": decision,
             "severity": sev, "status": status}

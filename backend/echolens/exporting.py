@@ -28,6 +28,19 @@ def _evidence_lines(session: Session, inv_id: int, repo: str | None) -> list[str
     return lines
 
 
+def _numbers(session: Session, inv, finding, anomaly) -> dict | None:
+    """The problem's own numbers, when its product is known (see problem_numbers)."""
+    from echolens.db.models import Product
+    from echolens.impact import problem_numbers
+    prod = session.get(Product, inv.product_id) if inv is not None and inv.product_id else None
+    if prod is None:
+        return None
+    try:
+        return problem_numbers(session, prod.name, finding, anomaly)
+    except Exception:   # a ticket must still be written if the numbers can't be
+        return None
+
+
 def finding_ticket(session: Session, finding: Finding, repo: str | None = None,
                    deep_link: str | None = None) -> dict:
     """Build {title, body} markdown for a finding. `repo` (owner/name) turns
@@ -38,7 +51,8 @@ def finding_ticket(session: Session, finding: Finding, repo: str | None = None,
     recs = session.scalars(select(Recommendation).where(
         Recommendation.finding_id == finding.id).order_by(Recommendation.rank)).all()
     impact = fj.get("impact", {})
-    decision = decision_doc(fj, list(recs), impact, inv.status if inv else "")
+    numbers = _numbers(session, inv, finding, anomaly)
+    decision = decision_doc(fj, list(recs), impact, inv.status if inv else "", numbers)
 
     title = f"[EchoLens] {fj.get('summary') or 'Finding'}"
 
@@ -55,7 +69,7 @@ def finding_ticket(session: Session, finding: Finding, repo: str | None = None,
         decision["whats_broken"],
         "",
         "### How bad",
-        impact_line(impact),
+        decision["how_bad"],
         "",
         "### Root cause",
         fj.get("prose", "").strip() or "(see evidence)",
@@ -184,7 +198,8 @@ def share_brief(session: Session, finding: Finding, link: str | None = None) -> 
                 break
 
     headline = (finding.summary or fj.get("summary") or "Finding").strip()
-    how_bad = impact_line(impact)
+    anomaly = session.get(AnomalyEvent, inv.anomaly_id) if inv is not None and inv.anomaly_id else None
+    how_bad = impact_line(impact, _numbers(session, inv, finding, anomaly))
     why = _plain(fj.get("prose", ""))
     actions = [{"action": r.action.strip(),
                 "impact": _LEVEL.get((r.impact or "").upper(), (r.impact or "").lower()),

@@ -240,7 +240,10 @@ def test_causal_chain_quotes_only_what_the_case_holds():
     assert chain["trigger"] == {"text": "3.2: new background sync", "evidence_ids": ["ev_002"]}
     assert chain["mechanism"]["evidence_ids"] == ["ev_001", "ev_002", "ev_003"]
     assert chain["symptom"] == {"text": "phone hot since update", "evidence_ids": ["ev_003"]}
-    assert chain["impact"]["affected_pct"] == 30.0 and "0.40" in chain["impact"]["text"]
+    # The stored rating figure is the whole app's fall, so the impact text no
+    # longer states it as this problem's loss; the raw value is still carried.
+    assert chain["impact"]["affected_pct"] == 30.0 and "0.40" not in chain["impact"]["text"]
+    assert chain["impact"]["rating_impact"] == 0.4
     finding["impact"] = {"measured": False}
     assert causal_chain(finding, hyps, ev)["impact"] is None
 

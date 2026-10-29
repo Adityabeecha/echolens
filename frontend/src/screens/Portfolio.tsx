@@ -95,19 +95,19 @@ export function Portfolio({ onOpenProduct, onOpenInvestigation, onAddProduct }: 
   );
 }
 
-/** "Start with Lumo — one confirmed problem is costing 0.84★." Only a confirmed
- *  problem is ever said to cost stars; otherwise the server's own verdict. */
+/** "Start with Lumo — one confirmed problem is waiting for a fix." The star
+ *  figure here was the whole app's rating fall, not this problem's cost, so it
+ *  is no longer quoted; the problem page shows the problem's own number. */
 function headline(data: PortfolioData): string {
   const top = data.products[0];
   const tp = top?.top_problem;
   const proven = tp && stampFor({ status: tp.status, support_level: tp.support_level, needs_review: tp.needs_review,
     fix: tp.fix_status ? { status: tp.fix_status } : null }) === "confirmed";
   const n = top?.confirmed_open ?? 0;
-  if (top && top.band !== "healthy" && proven && n > 0 && (tp!.rating_impact ?? 0) > 0) {
-    const cost = `${tp!.rating_impact!.toFixed(2)}★`;
+  if (top && top.band !== "healthy" && proven && n > 0) {
     return n === 1
-      ? `Start with ${top.product} — one confirmed problem is costing ${cost}.`
-      : `Start with ${top.product} — ${n} confirmed problems; the worst is costing ${cost}.`;
+      ? `Start with ${top.product} — one confirmed problem is waiting for a fix.`
+      : `Start with ${top.product} — ${n} confirmed problems are waiting for a fix.`;
   }
   return data.verdict;
 }
