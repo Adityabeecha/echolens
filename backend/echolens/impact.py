@@ -227,14 +227,61 @@ def _pct(x) -> str:
     return f"{x:.0f}%"
 
 
-def impact_line(impact: dict) -> str:
-    """One-line 'how bad' summary for the decision doc, Slack, and tickets."""
+def problem_numbers(session: Session, product: str, finding, anomaly) -> dict:
+    """This problem's own numbers, the ones Today shows: its pull on the rating
+    (last 7 days against the 28 before) and its share of one-star reviews in
+    30 days. One definition for every surface — the GitHub issue used to say
+    "0.89★ lost" (the whole app's rating fall) where Today said 0.23★."""
+    from statistics import mean
+    from echolens.cases import _terms
+    from echolens.textkit import tokenize
+    from echolens.vocab import _norm
+
+    needles = [{_norm(w) for w in tokenize(t)} for t in _terms(finding, anomaly)]
+
+    def matches(row):
+        words = {_norm(w) for w in tokenize(row.text_en or row.text)}
+        return row.rating <= 2 and any(n and n <= words for n in needles)
+
+    now = reference_now(session, product)
+    rows = list(session.scalars(select(Review).where(Review.product == product,
+        Review.created_at > now - timedelta(days=35), Review.created_at <= now)))
+    recent = [r for r in rows if aware_utc(r.created_at) > now - timedelta(days=7)]
+    prior = [r for r in rows if aware_utc(r.created_at) <= now - timedelta(days=7)]
+    drag = None
+    if needles and len(recent) >= 5 and len(prior) >= 5:
+        baseline = mean(r.rating for r in prior)
+        # Change in this theme's pull on the average: share × (rating − prior
+        # overall average), recent 7 days minus prior 28 days. Not additive
+        # across overlapping cases; an estimate, not a causal rating forecast.
+        contribution = (sum(r.rating - baseline for r in recent if matches(r)) / len(recent)
+                        - sum(r.rating - baseline for r in prior if matches(r)) / len(prior))
+        drag = round(max(0.0, -contribution), 2)
+    one_star = [r for r in rows if r.rating == 1
+                and aware_utc(r.created_at) >= now.replace(hour=0, minute=0, second=0, microsecond=0)
+                - timedelta(days=29)]
+    matching = sum(matches(r) for r in one_star)
+    share = {"matching": matching, "total": len(one_star), "days": 30,
+             "pct": round(100 * matching / len(one_star), 1) if needles and len(one_star) >= 5 else None}
+    return {"rating_drag": drag, "one_star_share": share}
+
+
+def impact_line(impact: dict, numbers: dict | None = None) -> str:
+    """One-line 'how bad' summary for the decision doc, Slack, and tickets.
+
+    With `numbers` (problem_numbers) it states the problem's own rating pull
+    and one-star share, matching Today and the problem page. It never states
+    the app's overall rating fall as this problem's loss."""
     bits = []
-    if impact.get("affected_volume"):
+    share = (numbers or {}).get("one_star_share") or {}
+    if share.get("pct"):
+        bits.append(f"{share['pct']:.0f}% of one-star reviews in the last 30 days "
+                    f"({share['matching']} of {share['total']})")
+    elif impact.get("affected_volume"):
         bits.append(f"≈{_pct(impact['affected_pct'])} of recent negative reviews "
                     f"({impact['affected_volume']} in the last {RECENT_DAYS} days)")
-    if impact.get("rating_impact"):
-        bits.append(f"est. {impact['rating_impact']:.2f}★ lost vs baseline")
+    if (numbers or {}).get("rating_drag"):
+        bits.append(f"est. {numbers['rating_drag']:.2f}★ off the rating (last 7 days vs the 28 before)")
     br = impact.get("blast_radius") or {}
     if br.get("top_cohort") and br.get("top_cohort") != "unknown":
         if br.get("exclusive"):
@@ -246,7 +293,8 @@ def impact_line(impact: dict) -> str:
     return "; ".join(bits) or "impact too small to quantify from current data."
 
 
-def decision_doc(finding_json: dict, recommendations: list, impact: dict, status: str) -> dict:
+def decision_doc(finding_json: dict, recommendations: list, impact: dict, status: str,
+                 numbers: dict | None = None) -> dict:
     """The three questions a PM asks, answered above the fold in ≤5 lines.
     What's broken? How bad? What do I do? — evidence stays one click away."""
     top = recommendations[0] if recommendations else None
@@ -258,6 +306,6 @@ def decision_doc(finding_json: dict, recommendations: list, impact: dict, status
         what_to_do = finding_json.get("what_would_settle_it") or "Gather more evidence before acting."
     return {
         "whats_broken": clean_headline(finding_json.get("summary", "")),
-        "how_bad": impact_line(impact),
+        "how_bad": impact_line(impact, numbers),
         "what_to_do": what_to_do,
     }

@@ -402,3 +402,35 @@ def test_older_failed_runs_with_raw_errors_are_also_set_aside_in_plain_words():
         "Investigation could not run: an internal error stopped it (Missing credentials. Please pass an `api_key`)."])
     status, why = derive_status(inv, None, None)
     assert status == DISMISSED and "AI service" in why and "api_key" not in why
+
+
+# --- Round 5: one "how bad" number everywhere ---
+
+def test_how_bad_never_states_the_whole_apps_rating_fall_as_this_problems():
+    from echolens.impact import impact_line
+    impact = {"affected_volume": 15, "affected_pct": 20.0, "rating_impact": 0.89}
+    plain = impact_line(impact)
+    assert "0.89" not in plain and "lost vs baseline" not in plain
+    nums = {"rating_drag": 0.23, "one_star_share": {"pct": 20.3, "matching": 15, "total": 74, "days": 30}}
+    line = impact_line(impact, nums)
+    assert "0.23★" in line and "20% of one-star reviews" in line and "0.89" not in line
+
+
+def test_the_github_issue_uses_the_same_numbers_as_today(monkeypatch):
+    from echolens import impact as impact_mod
+    from echolens.db.models import AnomalyEvent, Finding, Investigation, Product
+    from echolens.exporting import finding_ticket
+    monkeypatch.setattr(impact_mod, "problem_numbers", lambda *a, **k: {
+        "rating_drag": 0.23, "one_star_share": {"pct": 20.3, "matching": 15, "total": 74, "days": 30}})
+    _, Session = _db()
+    with Session() as s:
+        p = Product(name="Lumo"); s.add(p); s.flush()
+        a = AnomalyEvent(slug="a", type="manual", metric="m", delta=0, z=0, window="7d", description="sync crash",
+                         status="closed", product_id=p.id); s.add(a); s.flush()
+        inv = Investigation(anomaly_id=a.id, status="resolved", product_id=p.id); s.add(inv); s.flush()
+        f = Finding(investigation_id=inv.id, summary="Sync crashes", confidence=0.9, status="approved",
+                    json={"summary": "Sync crashes", "impact": {"rating_impact": 0.89, "affected_volume": 15,
+                                                                 "affected_pct": 20.0}}, product_id=p.id)
+        s.add(f); s.commit()
+        body = finding_ticket(s, f)["body"]
+    assert "0.23★" in body and "0.89" not in body

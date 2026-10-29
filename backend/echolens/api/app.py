@@ -2393,9 +2393,9 @@ def today_overview_view(product_id: int | None = None,
 
 def _today_focus(session, product, inv) -> dict:
     """The focused problem's measurements, never the whole product's rating loss."""
-    from statistics import mean
     from echolens.cases import _terms
     from echolens.detector.detect import reference_now
+    from echolens.impact import problem_numbers
     from echolens.intent import BUG, UX_CONFUSION, classify
     from echolens.textkit import tokenize
     from echolens.vocab import _norm
@@ -2411,25 +2411,8 @@ def _today_focus(session, product, inv) -> dict:
         return row.rating <= 2 and any(n and n <= words for n in needles)
 
     now = reference_now(session, product.name)
-    rows = list(session.scalars(select(Review).where(Review.product == product.name,
-        Review.created_at > now - timedelta(days=35), Review.created_at <= now)))
-    recent = [r for r in rows if aware_utc(r.created_at) > now - timedelta(days=7)]
-    prior = [r for r in rows if aware_utc(r.created_at) <= now - timedelta(days=7)]
-    drag = None
-    if needles and len(recent) >= 5 and len(prior) >= 5:
-        baseline = mean(r.rating for r in prior)
-        # Change in this theme's pull on the average: share × (rating − prior
-        # overall average), recent 7 days minus prior 28 days. Not additive
-        # across overlapping cases; an estimate, not a causal rating forecast.
-        contribution = (sum(r.rating - baseline for r in recent if matches(r)) / len(recent)
-                        - sum(r.rating - baseline for r in prior if matches(r)) / len(prior))
-        drag = round(max(0.0, -contribution), 2)
-    one_star = [r for r in rows if r.rating == 1
-                and aware_utc(r.created_at) >= now.replace(hour=0, minute=0, second=0, microsecond=0)
-                - timedelta(days=29)]
-    matching = sum(matches(r) for r in one_star)
-    share = {"matching": matching, "total": len(one_star), "days": 30,
-             "pct": round(100 * matching / len(one_star), 1) if needles and len(one_star) >= 5 else None}
+    nums = problem_numbers(session, product.name, finding, anomaly)
+    drag, share = nums["rating_drag"], nums["one_star_share"]
 
     struck = {e.get("eid") for e in fj.get("rejected_evidence") or []}
     evidence = [e for e in session.scalars(select(EvidenceRow).where(
