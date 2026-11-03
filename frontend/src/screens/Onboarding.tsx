@@ -474,6 +474,9 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
 }) {
   const [status, setStatus] = useState<OnboardStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Failed checks in a row. One slow answer is not an outage: keep showing
+  // progress and say we're retrying; only a run of failures is an error.
+  const [failedChecks, setFailedChecks] = useState(0);
   const [pollAttempt, setPollAttempt] = useState(0);
   const [pollingStopped, setPollingStopped] = useState(false);
   const [retrying, setRetrying] = useState<string | null>(null);
@@ -489,6 +492,7 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
     let timer: number | null = null;
     let failures = 0;
     setPollingStopped(false);
+    setFailedChecks(0);
     const schedule = () => {
       if (alive) timer = window.setTimeout(poll, 1000);
     };
@@ -500,6 +504,7 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
         setStatus(s);
         setErr(null);
         failures = 0;
+        setFailedChecks(0);
         if (s.backfilling) schedule();
       } catch (e) {
         if (!alive) return;
@@ -507,6 +512,7 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
         // Stop after repeated failures instead of polling a dead backend
         // forever behind a frozen snapshot that still looks like progress.
         failures += 1;
+        setFailedChecks(failures);
         if (failures >= 5) {
           setPollingStopped(true);
         } else {
@@ -558,7 +564,7 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
         EchoLens is checking each source and learning what normal looks like. You can go to Today while it runs.
       </Heading>;
 
-  if (err && !status) return (
+  if (err && !status && pollingStopped) return (
     <div className="pub-run">
       {heading()}
       <div role="alert" className="pub-error">We couldn't check setup progress — {err}</div>
@@ -575,7 +581,11 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
         <span className="el-onboarding-spinner" aria-hidden="true" />
         <div style={{ flex: 1 }}>
           <div style={{ fontWeight: 600 }}>Checking your sources…</div>
-          <div className="pub-field__hint">This normally takes only a moment.</div>
+          <div className="pub-field__hint">
+            {failedChecks > 0
+              ? `The server is slow to answer. Still trying (attempt ${failedChecks + 1} of 5); your sources keep reading meanwhile.`
+              : "This normally takes only a moment."}
+          </div>
         </div>
         <Button variant="ghost" className="pub-btn" onClick={onDone}>Continue to Today</Button>
       </div>
@@ -636,12 +646,17 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
           )}
         </div>
 
-        {err && (
+        {err && !pollingStopped && (
+          <div role="status" className="pub-field__hint">
+            The server is slow to answer. Still trying (attempt {failedChecks + 1} of 5); what you see below may be a few seconds old.
+          </div>
+        )}
+        {err && pollingStopped && (
           <div role="alert" className="pub-error">
             We couldn't refresh setup progress — {err}. What you see below may be out of date.
             <span className="el-onboarding-alert__actions">
               <Button size="sm" variant="ghost" onClick={() => setPollAttempt((attempt) => attempt + 1)}>
-                {pollingStopped ? "Check again" : "Refresh now"}
+                Check again
               </Button>
               <Button size="sm" variant="quiet" onClick={onDone}>Continue to Today</Button>
             </span>

@@ -127,6 +127,28 @@ function WorkspaceApp() {
     setActiveProduct(activeId);
   }, [activeId]);
 
+  // The URL names a product the list doesn't have yet: the refresh after adding
+  // a product failed (every refresh swallows its error), so the switcher said
+  // "Choose product" over a screen already showing that product. Re-fetch until
+  // it shows up, backing off, and give up quietly after a few tries.
+  useEffect(() => {
+    if (!booted || activeId == null || activeProduct != null) return;
+    let alive = true;
+    let tries = 0;
+    let timer: number | null = null;
+    const attempt = () => {
+      tries += 1;
+      api.products()
+        .then((r) => { if (alive) setProducts(r.products); })
+        .catch(() => {})
+        .finally(() => {
+          if (alive && tries < 4) timer = window.setTimeout(attempt, 2000 * tries);
+        });
+    };
+    attempt();
+    return () => { alive = false; if (timer !== null) window.clearTimeout(timer); };
+  }, [booted, activeId, activeProduct]);
+
   useEffect(() => {
     if (!authed) { setAskOpen(false); return; }
     const onKey = (event: KeyboardEvent) => {

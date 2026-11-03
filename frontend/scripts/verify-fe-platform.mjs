@@ -79,6 +79,8 @@ test("every call gets a time limit; slow calls get more", () => {
   assert.equal(exports.timeoutFor("/cases?product_id=1"), 15000);
   assert.equal(exports.timeoutFor("/investigations"), 60000);
   assert.equal(exports.timeoutFor("/chat"), 60000);
+  assert.equal(exports.timeoutFor("/onboard"), 60000);
+  assert.equal(exports.timeoutFor("/onboard/status?product=x"), 15000);
   assert.equal(exports.timeoutFor("/collectors/run?product_id=1"), 60000);
   assert.equal(exports.timeoutFor("/investigations/4?product_id=1"), 15000);
 });
