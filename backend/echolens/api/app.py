@@ -1114,7 +1114,9 @@ def delete_product(product_id: int, confirm: str = "",
         return {"deleted": name}
 
 
-@app.get("/health")
+# HEAD too: uptime monitors (UptimeRobot) probe with HEAD by default, and a
+# GET-only route answers them 405 — the ping never reaches the DB query.
+@app.api_route("/health", methods=["GET", "HEAD"])
 def health() -> dict:
     ok = True
     work: dict = {"investigations_run_in": "web" if settings.run_investigations_in_web
