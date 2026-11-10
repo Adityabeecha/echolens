@@ -73,14 +73,43 @@ def _with_driver(url: str) -> str:
     return url
 
 
+def _engine_kwargs(url: str) -> dict:
+    """Pool settings per backend.
+
+    SQLite needs check_same_thread=False so the API's background investigation
+    thread can share the engine.
+
+    Postgres (the Supabase pooler, reached over the internet from Northflank):
+    an idle pooled connection can be dropped silently by a NAT or the pooler.
+    The next request then wrote into a dead socket and hung until the browser
+    gave up — "Request timed out" on every screen, then suddenly fine once the
+    kernel noticed. So: recycle connections before they go stale, ping before
+    use, and let TCP keepalives plus tcp_user_timeout turn a dead socket into a
+    fast error that the pool replaces, instead of a minutes-long hang."""
+    if url.startswith("sqlite"):
+        return {"connect_args": {"check_same_thread": False}}
+    if url.startswith("postgresql"):
+        return {
+            "pool_pre_ping": True,
+            "pool_recycle": 240,
+            "pool_timeout": 20,
+            "connect_args": {
+                "connect_timeout": 10,
+                "keepalives": 1,
+                "keepalives_idle": 30,
+                "keepalives_interval": 10,
+                "keepalives_count": 3,
+                "tcp_user_timeout": 20_000,  # ms; bounds a write into a dead socket
+            },
+        }
+    return {}
+
+
 def get_engine(db_url: str | None = None):
     global _engine, _SessionLocal
     if _engine is None or db_url is not None:
         url = _with_driver(db_url or settings.echolens_db_url)
-        # SQLite needs check_same_thread=False so the API's background
-        # investigation thread can share the engine.
-        kwargs = {"connect_args": {"check_same_thread": False}} if url.startswith("sqlite") else {}
-        _engine = create_engine(url, **kwargs)
+        _engine = create_engine(url, **_engine_kwargs(url))
         _SessionLocal = sessionmaker(bind=_engine, expire_on_commit=False)
     return _engine
 

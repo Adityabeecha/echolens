@@ -35,6 +35,9 @@ const SLOW_PATHS: RegExp[] = [
 ];
 
 export function timeoutFor(path: string): number {
+  // The wait screen's progress check is a plain read polled every second. Under
+  // the slow `onboard` rule one hung check froze the screen for a full minute.
+  if (path.startsWith("/onboard/status")) return DEFAULT_TIMEOUT_MS;
   return SLOW_PATHS.some((re) => re.test(path)) ? SLOW_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
 }
 

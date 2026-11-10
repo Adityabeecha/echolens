@@ -105,3 +105,16 @@ def test_bare_postgres_url_names_the_installed_driver():
     assert _with_driver("postgres://u:p@h/db") == "postgresql+psycopg2://u:p@h/db"
     assert _with_driver("postgresql+psycopg2://u@h/db") == "postgresql+psycopg2://u@h/db"
     assert _with_driver("sqlite://") == "sqlite://"
+
+
+def test_postgres_pool_never_hands_out_a_dead_connection():
+    # A silently dropped pooled connection hung every request until the
+    # browser timed out. Recycle, pre-ping and TCP keepalives prevent that.
+    import psycopg2.extensions
+    from echolens.db.session import _engine_kwargs
+    kw = _engine_kwargs("postgresql+psycopg2://u:p@h:6543/db")
+    assert kw["pool_pre_ping"] is True
+    assert 0 < kw["pool_recycle"] < 300
+    # libpq rejects unknown options, so this proves the bundled one accepts them.
+    psycopg2.extensions.parse_dsn(psycopg2.extensions.make_dsn("host=h", **kw["connect_args"]))
+    assert _engine_kwargs("sqlite://") == {"connect_args": {"check_same_thread": False}}
