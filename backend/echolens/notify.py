@@ -95,8 +95,16 @@ def _send_slack(payload: dict, post_fn=None) -> bool:
     return ok
 
 
-def _send_email(subject: str, body: str, send_fn=None) -> bool:
-    if not settings.smtp_host or not settings.alert_email_to:
+def email_configured() -> bool:
+    """Whether this deployment can send mail at all (to anyone)."""
+    return bool(settings.smtp_host and (settings.alert_email_from or settings.smtp_user))
+
+
+def _send_email(subject: str, body: str, send_fn=None, to: str | None = None) -> bool:
+    """Send one plain-text email. `to` defaults to the alerts address; account
+    mail (reset links, invites) passes the person's own address."""
+    to = to or settings.alert_email_to
+    if not settings.smtp_host or not to:
         return False
     if send_fn is not None:
         return send_fn(subject, body) is not False
@@ -106,7 +114,7 @@ def _send_email(subject: str, body: str, send_fn=None) -> bool:
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = settings.alert_email_from or settings.smtp_user
-    msg["To"] = settings.alert_email_to
+    msg["To"] = to
     msg.set_content(body)
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as s:
         s.starttls()

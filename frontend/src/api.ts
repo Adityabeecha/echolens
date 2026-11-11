@@ -1526,12 +1526,25 @@ export interface ProductRow {
 
 // ── endpoints ────────────────────────────────────────────────────────
 
+export interface TeamMember {
+  id: number;
+  email: string;
+  role: string;
+  /** "invited" = has not set a password from their link yet. */
+  sign_in: "password" | "google" | "invited";
+  created_at: string | null;
+  you: boolean;
+}
+export interface AccessRequestRow { id: number; email: string; app: string; note: string; created_at: string | null }
+export interface TeamMembersView { users: TeamMember[]; access_requests: AccessRequestRow[]; email_enabled: boolean }
 export interface AuthUser {
   id: number | null;
   email: string | null;
   role: string;
   /** True when the server admitted this request with no token at all. */
   guest?: boolean;
+  /** How this account signs in; Settings hides "change password" for Google. */
+  sign_in?: "password" | "google" | "invited";
 }
 
 export const api = {
@@ -1589,6 +1602,25 @@ export const api = {
       signup_open?: boolean;
     }>("/auth/config"),
   me: () => get<AuthUser>("/auth/me"),
+  // ── accounts (Phase 3) ──
+  requestPasswordReset: (email: string) =>
+    post<{ sent: boolean; message: string }>("/auth/password-reset", { email }),
+  /** Set a password from a reset or invite link; signs in on success. */
+  confirmPasswordReset: (token: string, password: string) =>
+    post<{ role: string; csrf_token?: string }>("/auth/password-reset/confirm", { token, password }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    post<{ ok: boolean; csrf_token?: string }>("/auth/password",
+      { current_password: currentPassword, new_password: newPassword }),
+  teamMembers: () => get<TeamMembersView>("/users"),
+  inviteUser: (email: string, role: string) =>
+    post<{ id: number; email: string; role: string; link: string; emailed: boolean }>("/users", { email, role }),
+  setUserRole: (id: number, role: string) => patch<{ id: number; role: string }>(`/users/${id}`, { role }),
+  removeUser: (id: number) => del<{ removed: number }>(`/users/${id}`),
+  resetLink: (id: number) =>
+    post<{ link: string; email: string; purpose: "reset" | "invite" }>(`/users/${id}/reset-link`),
+  requestAccess: (body: { email: string; app?: string; note?: string }) =>
+    post<{ ok: boolean; message: string }>("/access-requests", body),
+  dismissAccessRequest: (id: number) => del<{ dismissed: number }>(`/access-requests/${id}`),
   products: () => get<{ products: ProductRow[]; active_product_id: number | null }>("/products"),
   activateProduct: (id: number) =>
     post<{ active_product_id: number; name: string }>(`/products/${id}/activate`),

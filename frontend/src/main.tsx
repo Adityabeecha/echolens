@@ -11,6 +11,7 @@ initMonitoring();
 // Public share links are rare and never need the signed-in app, so their page
 // is its own chunk rather than weight on every normal visit.
 const SharedBrief = lazy(() => import("./screens/SharedBrief").then((m) => ({ default: m.SharedBrief })));
+const ResetPassword = lazy(() => import("./screens/ResetPassword").then((m) => ({ default: m.ResetPassword })));
 
 // Links from older builds are hash routes (/#/p/2/today, /#/share/<token>):
 // bookmarks, Slack and email notifications, shared briefs. Rewrite them to the
@@ -31,6 +32,11 @@ function Root() {
       window.removeEventListener("hashchange", on);
     };
   }, []);
+  // A reset or invite link: set a password before anything asks you to sign in.
+  if (window.location.pathname === "/reset-password") {
+    const token = new URLSearchParams(window.location.search).get("token") ?? "";
+    return <Suspense fallback={<Centered>Loading…</Centered>}><ResetPassword token={token} /></Suspense>;
+  }
   return share
     ? <Suspense fallback={<Centered>Loading the shared brief…</Centered>}><SharedBrief token={share} /></Suspense>
     : <App />;

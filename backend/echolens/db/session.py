@@ -46,6 +46,7 @@ _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("fix_watches", "product_id", "INTEGER"),
     ("collector_state", "product_id", "INTEGER"),
     ("users", "last_active_product_id", "INTEGER"),
+    ("users", "session_version", "INTEGER"),
     # v9.0 portfolio
     ("investigations", "seeded_from_pattern", "JSON"),
     # daily-cap override audit

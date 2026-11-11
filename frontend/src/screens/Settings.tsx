@@ -9,6 +9,7 @@ import { Button, Centered, ErrorState, Skeleton } from "../ui";
 import { Calibration } from "./Calibration";
 import { Costs } from "./Costs";
 import { CostsSection, HonestySection, IntegrationsSection, SensitivitySection } from "./settings/Sections";
+import { AccountSection, TeamSection } from "./settings/AccountSections";
 import "./settings/ps.css";
 
 interface Props {
@@ -30,6 +31,8 @@ const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "honesty", label: "Honesty checks" },
   { id: "integrations", label: "Integrations" },
   { id: "calibration", label: "How often it's right" },
+  { id: "account", label: "Your account" },
+  { id: "team", label: "Team" },
 ];
 
 /**
@@ -48,6 +51,8 @@ export function Settings({
 
   const body = () => {
     if (section === "honesty") return <HonestySection />;
+    if (section === "account") return <AccountSection />;
+    if (section === "team") return <TeamSection admin={admin} />;
     if (section === "integrations") return <IntegrationsSection admin={admin} why={why} trackers={<TrackersPanel />} />;
     if (section === "calibration") {
       return (
