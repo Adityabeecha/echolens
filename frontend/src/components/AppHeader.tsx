@@ -48,12 +48,12 @@ export function AppHeader({ screen, go, products, productId, onSwitchProduct, on
           options={products.map((p) => {
             const h = board?.products.find((b) => b.product_id === p.id);
             return { value: String(p.id), label: p.is_demo ? p.name.replace(/\s*\(demo\)$/i, "") : p.name,
-              dot: dotColor(h?.band), hint: [p.is_demo ? "Demo" : null, h?.has_data ? `health ${h.health}/100` : null].filter(Boolean).join(" · ") || undefined };
+              dot: dotColor(h?.band), hint: [p.is_demo ? "Demo" : null, h?.has_data ? `health ${Math.round(h.health)}/100` : null].filter(Boolean).join(" · ") || undefined };
           })}
           onChange={(v) => onSwitchProduct(Number(v))}
           renderButton={(chosen) => <>
             <span className="cf-dropdown__dot" style={{ background: dotColor(health?.band) }} role="img"
-              aria-label={health ? `Health ${health.health}/100 — higher is healthier` : "Health not available yet"} />
+              aria-label={health ? `Health ${Math.round(health.health)}/100 — higher is healthier` : "Health not available yet"} />
             <span className="cf-dropdown__value">{chosen?.label ?? "Choose product"}</span>
             {active?.is_demo && <span className="el-product-picker__demo">Demo</span>}
           </>}

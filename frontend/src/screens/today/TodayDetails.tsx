@@ -34,7 +34,7 @@ export function HealthDetails({ product, snapshot, overview, onOpen }: {
   product: PortfolioProduct | null; snapshot: Snapshot | null; overview: Overview | null; onOpen: (id: number) => void;
 }) {
   const breakdown = overview?.rating_breakdown;
-  return <details className="today-details"><summary>Why health is {product?.has_data ? `${product.health}/100` : "waiting for reviews"} · higher is healthier</summary>
+  return <details className="today-details"><summary>Why health is {product?.has_data ? `${Math.round(product.health)}/100` : "waiting for reviews"} · higher is healthier</summary>
     <div className="today-health">
       {!product ? <p className="today-muted">Health isn't available yet. Check your sources and try again.</p>
         : !product.has_data ? <p className="today-muted">Connect feedback so EchoLens can measure how your product is doing.</p>

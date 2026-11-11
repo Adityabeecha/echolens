@@ -98,7 +98,7 @@ export function Login({ onAuthed, onClose, onExplore }: {
             <p className="pub-sheet__lede">
               {signup
                 ? "The first account runs this workspace. You can invite reviewers once you're in."
-                : "Pick up where your investigations left off."}
+                : "Pick up where you left off."}
             </p>
 
             {googleId && !signup && (

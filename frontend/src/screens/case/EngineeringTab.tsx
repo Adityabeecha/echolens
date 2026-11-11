@@ -37,7 +37,7 @@ const FIX_META: Record<string, { label: string; color: string; body: string }> =
   },
   persists_reopened: {
     label: "Fix didn't hold", color: C.bad,
-    body: "The issue closed but the complaints continued at the same rate. The case was re-opened."
+    body: "The issue closed but the complaints continued at the same rate. The problem was re-opened."
   },
   regressed: {
     label: "Regressed", color: C.bad,
@@ -78,7 +78,7 @@ export function EngineeringTab({ inv, onReload, onGoPatterns }: Props) {
       <div style={{ flex: 1, overflow: "auto", padding: `${S[6]} ${S[6]}` }}>
         <EmptyState
           title="Nothing to file yet"
-          body="A case needs a finding before it can become a ticket. Check the Investigation trace to see where this one stands."
+          body="A problem needs a finding before it can become a ticket. Check the Investigation trace to see where this one stands."
         />
       </div>
     );

@@ -162,7 +162,7 @@ export function AskConversation({ onOpenInvestigation, productName, productId, s
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      {showHeader && <ScreenHeader title="Ask" product={productName} subtitle="Answers grounded in your own cases" />}
+      {showHeader && <ScreenHeader title="Ask" product={productName} subtitle="Answers grounded in your own problems" />}
 
       <div ref={scrollRef} style={{ flex: 1, overflow: "auto", padding: `${S[5]} ${S[6]}` }}>
         {turns.length === 0 && (
@@ -265,7 +265,7 @@ function BasisBadge({ basis, onOpen }: { basis: ChatBasis; onOpen: (id: number) 
   if (basis.case_id != null) {
     return (
       <button className="el-btn" onClick={() => onOpen(basis.case_id!)} style={style}
-        title={`Open case #${basis.case_id}`}>
+        title={`Open problem #${basis.case_id}`}>
         <Icon name={icon} size={10} /> {basis.label}
       </button>
     );
@@ -297,7 +297,7 @@ function InvestigateCard({ step, launchedId, queued, launchError, busy, onStart,
           <Icon name="play" size={12} /> Case #{launchedId} is running — watch it live
         </button>
       ) : queued ? (
-        <div role="status" style={{ fontSize: T.sm, color: C.muted }}>Queued for investigation. Track it in Cases.</div>
+        <div role="status" style={{ fontSize: T.sm, color: C.muted }}>Queued. Track it in All problems.</div>
       ) : step.allowed ? (
         <button onClick={onStart} disabled={busy} className="el-btn el-btn--primary"
           style={{ alignSelf: "flex-start", borderRadius: R.control, padding: `${S[2]} ${S[3]}`,

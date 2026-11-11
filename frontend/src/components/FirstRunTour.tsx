@@ -13,10 +13,10 @@ interface Step {
 const STEPS: Step[] = [
   { target: "today", title: "Today is home",
     body: "What needs your call lands here first: findings to review, problems getting worse, fixes to check." },
-  { target: "cases", title: "Cases and signals",
-    body: "Every investigation lives in Cases. Its Signals view lists what EchoLens noticed but hasn't investigated yet, so you can pick what's worth a case." },
-  { title: "A case's finding",
-    body: "Open any finished case to see its finding: what's broken, how sure EchoLens is, and the reviews and issues behind it. You approve or challenge it there." },
+  { target: "cases", title: "All problems and spikes",
+    body: "Every problem lives in All problems, along with new spikes EchoLens noticed but hasn't looked into yet, so you can pick what's worth it." },
+  { title: "A problem's finding",
+    body: "Open any finished problem to see its finding: what's broken, how sure EchoLens is, and the reviews and issues behind it. You approve or challenge it there." },
   { target: "ask", title: "Ask anything",
     body: "Ask a question in plain words, like \"why are 1-star reviews up this week?\", and get an answer drawn from your own feedback." },
 ];

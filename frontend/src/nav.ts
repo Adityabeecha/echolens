@@ -88,6 +88,20 @@ export const SCREEN_LABEL: Record<Screen, string> = {
 };
 
 /**
+ * The browser-tab title. Every page used to be just "EchoLens", so tabs,
+ * history and bookmarks were indistinguishable, and screen readers announced
+ * nothing on navigation (WCAG 2.4.2).
+ */
+export function pageTitle(route: Route, productName: string | null): string {
+  const label = route.screen === "case" && route.id != null
+    ? `Problem #${route.id}`
+    : SCREEN_LABEL[canonicalRoute(route).screen];
+  // Adding a product is not about the one behind the wizard.
+  const product = route.screen === "onboarding" ? null : productName?.replace(/\s*\(demo\)$/i, "");
+  return [label, product, "EchoLens"].filter(Boolean).join(" · ");
+}
+
+/**
  * Which tab of a case to open.
  *
  * A case still running has no answer yet, so it opens the live trace — the most

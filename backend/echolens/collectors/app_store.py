@@ -55,6 +55,20 @@ def _entries(payload) -> list:
     return entries
 
 
+LOOKUP = "https://itunes.apple.com/lookup?id={app_id}&country={country}"
+
+
+def fetch_app_details(app_id: str, country: str = "us", timeout: float = 4.0) -> dict | None:
+    """The store listing (name, developer, ratings) for the onboarding preview,
+    from Apple's public lookup API. None when no app has that id."""
+    import httpx
+
+    resp = httpx.get(LOOKUP.format(app_id=parse_app_id(app_id), country=country), timeout=timeout)
+    resp.raise_for_status()
+    results = resp.json().get("results") or []
+    return results[0] if results else None
+
+
 def _default_fetch(app_id: str, country: str = "us", pages: int = MAX_PAGES) -> list[dict]:
     import httpx
 

@@ -136,7 +136,7 @@ test("Ask queues the named incident through the Cases API", async () => {
   await find(tree, n => n.type === "button" && text(n).trim() === "Start investigation")[0].props.onClick();
   assert.deepEqual(JSON.parse(JSON.stringify(queued)), [[["battery"], { battery: "Battery drain" }, "quick", null]]);
   assert.deepEqual(forced, [false]);
-  assert.ok(text(render()).includes("Queued for investigation"));
+  assert.ok(text(render()).includes("Queued. Track it in All problems."));
 });
 
 test("Ask respects an explicit absence of an investigation target", async () => {

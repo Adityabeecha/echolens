@@ -26,7 +26,7 @@ export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onSt
     setError(null);
     try {
       const r = await api.startInvestigation({ description: desc, tier });
-      toast.ok(`Case #${r.investigation_id} opened — it’s streaming now.`);
+      toast.ok(`Problem #${r.investigation_id} opened — EchoLens is looking into it now.`);
       onStarted(r.investigation_id);
     } catch (e) {
       // surface the reason instead of silently doing nothing
@@ -50,7 +50,7 @@ export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onSt
         ref={ref}
         role="dialog"
         aria-modal="true"
-        aria-label="Open a case"
+        aria-label="Look into a problem"
         style={{
           position: "fixed",
           top: "50%",
@@ -70,7 +70,7 @@ export function NewCaseModal({ onClose, onStarted }: { onClose: () => void; onSt
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: S[2], marginBottom: S[4] }}>
-          <div style={{ fontSize: T.lg, fontWeight: 600 }}>Open a case</div>
+          <div style={{ fontSize: T.lg, fontWeight: 600 }}>Look into a problem</div>
           <button onClick={onClose} aria-label="Close"
                   className="el-btn el-btn--sm"
                   style={{ marginLeft: "auto", color: C.muted }}>

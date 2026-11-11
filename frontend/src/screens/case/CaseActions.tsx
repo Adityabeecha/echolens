@@ -154,7 +154,7 @@ export function ExtendCard({ inv, onReload }: { inv: Investigation; onReload: ()
     setBusy(true);
     const ok = await withToast(() => api.extend(inv.id), {
       success: `Continuing with ${x.steps} more steps — follow it in the trace.`,
-      failure: "Couldn't continue this case"
+      failure: "Couldn't continue this problem"
     });
     setBusy(false);
     if (ok) await onReload();

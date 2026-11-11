@@ -214,3 +214,25 @@
   .pub-sheet { animation:none; }
   .pub-step, .pub-input { transition:none; }
 }
+
+/* Ready screen: day-one findings, what happens next, folded sources. */
+.ob-findings { display:flex; flex-direction:column; gap:12px; }
+.ob-findings__list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
+.ob-finding { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px 16px; align-items:start;
+  border:1px solid var(--el-line); border-radius:14px; padding:14px 16px; background:var(--el-paper); }
+.ob-finding__head { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 10px; min-width:0; font-size:15px; }
+.ob-finding__count { font:12px var(--el-mono); color:var(--el-muted); }
+.ob-finding__quote { grid-column:1; font-size:14px; line-height:1.5; color:var(--el-body); overflow-wrap:anywhere; }
+.ob-finding__action { grid-column:2; grid-row:1 / span 2; align-self:center; }
+.ob-finding--loading { height:74px; background:var(--el-soft); border-color:transparent;
+  animation:elPulse 1.4s ease-in-out infinite; }
+.ob-next { display:flex; flex-direction:column; gap:6px; border-left:3px solid var(--el-ink); padding:4px 0 4px 14px; }
+.ob-next b { font-size:15px; }
+.ob-next p { margin:0; font-size:14px; line-height:1.5; color:var(--el-body); }
+.ob-sources > summary { cursor:pointer; font-size:14px; color:var(--el-muted); padding:4px 0; }
+.ob-sources[open] > summary { margin-bottom:10px; }
+@media (max-width:560px) {
+  .ob-finding { grid-template-columns:1fr; }
+  .ob-finding__action { grid-column:1; grid-row:auto; }
+}
+@media (prefers-reduced-motion:reduce) { .ob-finding--loading { animation:none; } }

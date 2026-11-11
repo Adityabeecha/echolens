@@ -386,6 +386,7 @@ def seed_demo_story(session: Session) -> dict:
             _rewrite_after_fix(session, demo.name, t["fix"]["match"], t["fix"]["after"], fixed)
 
     findings: dict[str, Finding] = {}
+    rechecked: dict[str, Investigation] = {}
     for t in topics:
         opened = today - timedelta(days=t["days_ago"])
         anomaly = _anomaly(session, demo, t, opened)
@@ -414,6 +415,7 @@ def seed_demo_story(session: Session) -> dict:
                 github=c.get("github"), summary=c["summary"], prose=c["prose"],
                 settle=c.get("settle"))))
             _backdate(session, child, opened + timedelta(days=1))
+            rechecked[t["key"]] = child
             out["cases"] += 1
             out["verdicts"] += 1
             child_f = _finding(session, child)
@@ -448,6 +450,16 @@ def seed_demo_story(session: Session) -> dict:
         _judge(session, watch, demo.name, closed)
     out["fixes_confirmed"] = sum(1 for t in topics if t.get("fix") and t["key"] in findings
                                  and _watch_status(session, findings[t["key"]]) == "confirmed")
+
+    # The re-check of "metered uploads" found the battery spike's wakelock bug
+    # again. Left as its own case, the demo listed one bug as two confirmed
+    # problems; a reviewer would merge it, so the story does. Before the
+    # battery issue is linked below: only open, finished cases can be merged.
+    if "battery" in findings and "metered" in rechecked:
+        from echolens.cases import merge_cases
+        battery_case = session.get(Investigation, findings["battery"].investigation_id)
+        merge_cases(session, rechecked["metered"], battery_case)
+        out["merged"] = 1
 
     # The battery fix is in flight: its issue is open, nothing verified yet.
     if "battery" in findings:
@@ -522,9 +534,11 @@ def seed_demo(session: Session) -> dict:
     return counts
 
 
-# A demo whose newest review is older than this reads as abandoned: every
-# "last 7 days" number on Today goes quiet. Weekly is the rhythm it is judged on.
-STALE_DAYS = 7
+# A demo whose newest review is older than this reads as abandoned. At 7 days
+# visitors saw a chart ending a week ago and Today's "this week" going quiet.
+# A fresh seed's newest review is dated later the same day, so 1 day re-dates
+# it about daily on the 6-hourly collect job, never on every run.
+STALE_DAYS = 1
 
 
 def demo_is_stale(session: Session, now: datetime | None = None) -> bool:

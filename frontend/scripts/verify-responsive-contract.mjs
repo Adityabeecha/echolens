@@ -41,7 +41,7 @@ assert.ok(header.includes("Workspace menu"), "Secondary destinations must remain
 assert.ok(!app.includes("<Sidebar"), "The shell must not mount a left rail");
 assert.ok(today.includes("<FocusProblem"), "Today must expose the approved first decision card");
 assert.ok(today.includes("Reading today's reviews"), "Today must not claim a settled state while loading");
-assert.ok(today.includes('loading ? "Checking investigations"'), "Today header must keep activity unknown while loading");
+assert.ok(today.includes('loading ? "Checking problems…"'), "Today header must keep activity unknown while loading");
 assert.ok(evidence.includes('aria-label="Close evidence"'), "Evidence sheet close control needs an accessible name");
 assert.ok(newCase.includes("useDialog(onClose, true, !busy)"), "New Case must keep focus contained while busy");
 assert.ok(deleteProduct.includes("useDialog(onClose, true, !busy)"), "Delete Product must keep focus contained while busy");
