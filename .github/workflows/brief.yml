@@ -53,5 +53,18 @@ jobs:
           TOKEN=$(echo "$body" | sed '$d' | python3 -c "import sys,json;print(json.load(sys.stdin)['token'])")
           fi
 
-          echo "→ brief"; curl -sf --max-time 120 -X POST "$API/brief/send" -H "Authorization: Bearer $TOKEN"
+          auth="Authorization: Bearer $TOKEN"
+          # Every call says what went wrong. `curl -sf` hid the status, so a
+          # rejected token and a timeout looked the same in the log.
+          call() {  # METHOD URL [MAX_SECONDS]; prints the body, or the HTTP status and error
+            local out code
+            out=$(curl -s --max-time "${3:-120}" -X "$1" "$2" -H "$auth" -w '\n%{http_code}') \
+              || { echo "  no answer within ${3:-120}s (network error or timeout)"; return 1; }
+            code=$(echo "$out" | tail -n1)
+            if [ "$code" -ge 400 ]; then
+              echo "  HTTP $code: $(echo "$out" | sed '$d' | head -c 300)"; return 1
+            fi
+            echo "$out" | sed '$d'
+          }
+          echo "→ brief"; call POST "$API/brief/send" || exit 1
           echo "done"
