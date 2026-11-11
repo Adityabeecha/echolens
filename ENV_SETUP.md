@@ -15,6 +15,17 @@ Copy-Item backend\.env.example backend\.env
 | `ECHOLENS_DB_URL` | `sqlite:///echolens.db` | SQLAlchemy database URL. Use a PostgreSQL pooler URL in production. |
 | `ECHOLENS_ENV` | `dev` | `dev` disables authentication; `staging` and `production` require it. Set it explicitly on every deployment; never publish a `dev` deployment. |
 
+## Error tracking (optional)
+
+Leave these empty and nothing is sent anywhere. With a [Sentry](https://sentry.io) DSN, crashes and every logged error reach Sentry, grouped by event name. Review text, cookies, headers and request bodies are never included.
+
+| Where | Variable | Purpose |
+|---|---|---|
+| Northflank (API and worker) | `SENTRY_DSN` | The DSN of a Sentry **Python** project. |
+| Northflank | `SENTRY_TRACES_SAMPLE_RATE` | Share of requests traced for performance, `0` to `1`. Default `0` (errors only). |
+| Vercel (build env) | `VITE_SENTRY_DSN` | The DSN of a Sentry **Browser/React** project. Read at build time, so redeploy after setting it. Without it the Sentry code is not even downloaded. |
+| Vercel (build env) | `VITE_SENTRY_ENVIRONMENT` | Optional label such as `production`. Defaults to the build mode. |
+
 ## Database and search
 
 | Variable | Default | Purpose |

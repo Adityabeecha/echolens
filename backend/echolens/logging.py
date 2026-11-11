@@ -32,11 +32,14 @@ def _configure() -> None:
             if os.getenv("ECHOLENS_LOG_JSON", "1") == "1"
             else structlog.dev.ConsoleRenderer()
         )
+        from echolens.observability import forward_errors
+
         structlog.configure(
             processors=[
                 structlog.contextvars.merge_contextvars,
                 structlog.processors.add_log_level,
                 structlog.processors.TimeStamper(fmt="iso"),
+                forward_errors,  # no-op unless SENTRY_DSN is set
                 renderer,
             ],
             wrapper_class=structlog.make_filtering_bound_logger(getattr(logging, level, logging.INFO)),

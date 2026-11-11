@@ -26,6 +26,8 @@ dependencies = [
     "python-multipart>=0.0.9",
     # v2.0: .xlsx uploads, converted to CSV and fed to the existing importers
     "openpyxl>=3.1",
+    # error tracking; inert unless SENTRY_DSN is set (echolens/observability.py)
+    "sentry-sdk[fastapi]>=2.73",
 ]
 
 [project.optional-dependencies]

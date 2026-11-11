@@ -166,7 +166,10 @@ def _translate_draft(llm, base: str, lang_name: str) -> str | None:
             {"type": "object", "properties": {"reply": {"type": "string"}}, "required": ["reply"]},
             "reply_translator")
         text = " ".join(str((res.parsed or {}).get("reply", "")).split())
-    except Exception:
+    except Exception as err:
+        from echolens.logging import get_logger
+        get_logger("replies").warning("reply_translation_failed", lang=lang_name,
+                                      error=f"{type(err).__name__}: {err}")
         return None
     if not text or len(text) > REPLY_MAX_CHARS or text == base or _PROMISE.search(text):
         return None

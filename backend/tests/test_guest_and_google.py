@@ -450,7 +450,8 @@ def test_trace_stream_is_product_scoped_for_guests(monkeypatch):
 
     # A signed-in admin still reaches both.
     tok = ids["token"]
-    assert tc.get(f"/investigations/{real_iid}/trace/stream?product_id={real_pid}&token={tok}").status_code == 200
+    assert tc.get(f"/investigations/{real_iid}/trace/stream?product_id={real_pid}",
+                  headers={"Authorization": f"Bearer {tok}"}).status_code == 200
 
 
 def test_trace_stream_still_401s_when_guests_are_off(monkeypatch):

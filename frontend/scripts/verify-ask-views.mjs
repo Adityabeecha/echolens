@@ -32,7 +32,6 @@ function harness(file, stubs = {}, globals = {}) {
       if (name.endsWith("/charts/TimelineChart")) return { TimelineChart: () => null };
       if (name.endsWith("/ui")) return new Proxy({}, { get: () => passthrough });
       if (name.endsWith("/Icon")) return { Icon: () => null };
-      if (name.endsWith("/CaseCard")) return { CaseCard: passthrough };
       if (name.endsWith("/Toast")) return { withToast: fn => fn() };
       const base = new URL(name, url);
       const next = [".ts", ".tsx", "/index.ts", "/index.tsx"].map(ext => new URL(base.href + ext)).find(existsSync);

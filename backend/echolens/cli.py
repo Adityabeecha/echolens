@@ -242,6 +242,8 @@ def cmd_watchdog(_args) -> int:
 def cmd_worker(args) -> int:
     """Claim and run investigations from the DB until stopped (see worker.py)."""
     init_db()
+    from echolens.observability import init_sentry
+    init_sentry("worker")
     from echolens.worker import run_worker, worker_name
     name = args.name or worker_name()
     console.print(f"[green]Worker[/] {name} polling every {args.poll}s — Ctrl-C to stop")

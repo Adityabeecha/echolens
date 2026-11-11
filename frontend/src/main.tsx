@@ -3,7 +3,10 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { currentLocation, legacyHashTarget, shareToken } from "./nav";
 import { Centered } from "./ui";
+import { initMonitoring } from "./monitor";
 import "./tokens.css";
+
+initMonitoring();
 
 // Public share links are rare and never need the signed-in app, so their page
 // is its own chunk rather than weight on every normal visit.

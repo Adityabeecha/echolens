@@ -37,7 +37,10 @@ def _numbers(session: Session, inv, finding, anomaly) -> dict | None:
         return None
     try:
         return problem_numbers(session, prod.name, finding, anomaly)
-    except Exception:   # a ticket must still be written if the numbers can't be
+    except Exception as err:   # a ticket must still be written if the numbers can't be
+        from echolens.logging import get_logger
+        get_logger("exporting").warning("ticket_numbers_failed", finding_id=finding.id,
+                                        error=f"{type(err).__name__}: {err}")
         return None
 
 

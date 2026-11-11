@@ -1,4 +1,5 @@
-import { Component, ReactNode } from "react";
+import { Component, ErrorInfo, ReactNode } from "react";
+import { reportError } from "../monitor";
 import { C, R, S, T, mono } from "../theme";
 
 interface Props {
@@ -19,6 +20,10 @@ export class ErrorBoundary extends Component<Props, State> {
 
   static getDerivedStateFromError(error: Error): State {
     return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    reportError(error, { where: "screen", componentStack: info.componentStack });
   }
 
   componentDidUpdate(prev: Props) {

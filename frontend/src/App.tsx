@@ -24,6 +24,7 @@ import { ThemeToggle } from "./components/ThemeToggle";
 import { FirstRunTour } from "./components/FirstRunTour";
 import { markTourSeen, tourSeen } from "./tourState";
 import { ThemeMode, applyTheme, persistTheme, resolveTheme } from "./themeMode";
+import { reportAs } from "./monitor";
 
 // Route-level code splitting. Today, Cases and the case detail are where
 // nearly every visit starts and stays, so they ship in the main bundle; the
@@ -140,7 +141,7 @@ function WorkspaceApp() {
       tries += 1;
       api.products()
         .then((r) => { if (alive) setProducts(r.products); })
-        .catch(() => {})
+        .catch(reportAs("products: refetch missing product"))
         .finally(() => {
           if (alive && tries < 4) timer = window.setTimeout(attempt, 2000 * tries);
         });
@@ -220,7 +221,7 @@ function WorkspaceApp() {
         if (fromUrl != null && fromUrl !== r.active_product_id) {
           // Deep link into another product: make the server agree, so the next
           // plain load comes back here too.
-          api.activateProduct(fromUrl).catch(() => {});
+          api.activateProduct(fromUrl).catch(reportAs("activate product from link"));
         }
       })
       .catch(() => {
@@ -528,8 +529,8 @@ function WorkspaceApp() {
                   // Scope everything to the new product straight away.
                   createdProductRef.current = id;
                   setActiveProduct(id);
-                  api.products().then((r) => setProducts(r.products)).catch(() => {});
-                  api.activateProduct(id).catch(() => {});
+                  api.products().then((r) => setProducts(r.products)).catch(reportAs("products: after create"));
+                  api.activateProduct(id).catch(reportAs("activate new product"));
                 }}
                 onCancel={() => {
                   closeOnboarding();
@@ -592,13 +593,13 @@ function WorkspaceApp() {
     const created = createdProductRef.current;
     if (created != null) {
       setActiveProduct(created);
-      api.activateProduct(created).catch(() => {});
+      api.activateProduct(created).catch(reportAs("activate created product"));
       bumpReload();
       navigate({ screen: target, productId: created, params: extra }, { replace: true });
       api.products().then((r) => {
         setProducts(r.products);
         if (r.products.length === 1 && !tourSeen()) setTourOpen(true);
-      }).catch(() => {});
+      }).catch(reportAs("products: finish onboarding"));
       return;
     }
     api.products().then((r) => {
@@ -610,7 +611,7 @@ function WorkspaceApp() {
         String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")) || b.id - a.id)[0];
       if (!newest) return;
       setActiveProduct(newest.id);
-      api.activateProduct(newest.id).catch(() => {});
+      api.activateProduct(newest.id).catch(reportAs("activate newest product"));
       bumpReload();
       navigate({ screen: target, productId: newest.id, params: extra }, { replace: true });
       if (r.products.length === 1 && !tourSeen()) setTourOpen(true);

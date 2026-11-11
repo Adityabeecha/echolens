@@ -6,9 +6,10 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential libpq-dev && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml ./
+COPY pyproject.toml constraints.txt ./
 COPY echolens ./echolens
-RUN pip install --no-cache-dir -e .
+# Pinned: the image gets exactly the versions the tests passed with.
+RUN pip install --no-cache-dir -c constraints.txt -e .
 
 ENV ECHOLENS_ENV=production
 EXPOSE 8000
