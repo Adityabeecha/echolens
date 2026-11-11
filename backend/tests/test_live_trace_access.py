@@ -81,7 +81,7 @@ def test_steps_stream_while_the_case_is_still_running(env):
 
     async def collect():
         threading.Thread(target=emit, daemon=True).start()
-        resp = await stream_trace(iid, FakeReq(), product_id=None, token=None)
+        resp = await stream_trace(iid, FakeReq(), product_id=None)
         t0 = time.time()
         arrivals = []
         async for chunk in resp.body_iterator:

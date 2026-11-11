@@ -107,6 +107,10 @@ class Settings(BaseSettings):
     # collector schedule (cron-ish): hours between runs
     collector_interval_hours: int = 6
 
+    # error tracking (optional): a Sentry DSN turns it on; empty sends nothing
+    sentry_dsn: str = ""
+    sentry_traces_sample_rate: float = 0.0
+
     # auth
     jwt_secret: str = "dev-insecure-change-me"
     jwt_algorithm: str = "HS256"

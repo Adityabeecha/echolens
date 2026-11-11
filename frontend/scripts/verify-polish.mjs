@@ -28,7 +28,6 @@ function harness(file, stubs = {}) {
       if (name.endsWith("/charts/TimelineChart")) return { TimelineChart: () => null };
       if (name.endsWith("/ui")) return new Proxy({}, { get: () => passthrough });
       if (name.endsWith("/components/Icon")) return { Icon: () => null };
-      if (name.endsWith("/components/CaseCard")) return { CaseCard: passthrough };
       if (name.endsWith("/components/Toast")) return { withToast: fn => fn() };
       if (name === "./TraceTab") return { TraceRow: () => null };
       const base = new URL(name, url);

@@ -51,6 +51,7 @@ from echolens.db.models import (
 )
 from echolens.db.session import init_db, session_scope
 from echolens.logging import get_logger
+from echolens.observability import init_sentry
 from echolens.timeutil import aware_utc
 
 @asynccontextmanager
@@ -171,7 +172,20 @@ def _bootstrap() -> None:
 
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["240/minute"])
-app = FastAPI(title="EchoLens API", version="1.0.0", lifespan=lifespan)
+init_sentry("api")
+
+
+def docs_urls(env: str) -> dict:
+    """The interactive docs map all ~130 routes for anyone who finds the API
+    host. Handy locally; not something a deployment should publish."""
+    public = env == "dev"
+    return {"docs_url": "/docs" if public else None,
+            "redoc_url": "/redoc" if public else None,
+            "openapi_url": "/openapi.json" if public else None}
+
+
+app = FastAPI(title="EchoLens API", version="1.0.0", lifespan=lifespan,
+              **docs_urls(settings.echolens_env))
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 log = get_logger("api")
@@ -3252,27 +3266,21 @@ def _sse(event: str, payload: dict) -> str:
 
 
 @app.get("/investigations/{inv_id}/trace/stream")
-async def stream_trace(inv_id: int, request: Request, product_id: int | None = None,
-                       token: str | None = None) -> StreamingResponse:
+async def stream_trace(inv_id: int, request: Request,
+                       product_id: int | None = None) -> StreamingResponse:
     """SSE tail of the trace_steps table until the investigation stops running.
 
     Auth: the Authorization header, else the session cookie (the browser opens
     the stream with `new EventSource(url, {withCredentials: true})`, which sends
-    it), else — DEPRECATED, for one release — `?token=`. A JWT in the query
-    string lands in proxy and access logs and browser history, so the frontend
-    no longer sends one; any caller still doing so is logged.
+    it). `?token=` is no longer accepted: a JWT in the query string lands in
+    proxy and access logs and browser history.
     """
-    # This route authenticates by hand (the token may still arrive in the query
-    # string), so there is no `user` dependency to hand to _scope. Build the
-    # same principal shape those dependencies produce, so guest scoping and the
-    # role-from-DB lookup apply here too.
+    # This route authenticates by hand, so there is no `user` dependency to hand
+    # to _scope. Build the same principal shape those dependencies produce, so
+    # guest scoping and the role-from-DB lookup apply here too.
     user: dict = dict(GUEST)
     if settings.auth_required:
         raw, _via_cookie = session_token(request)
-        if raw is None and token:
-            log.warning("deprecated_query_token", route="trace/stream",
-                        detail="?token= is deprecated; use the session cookie or a Bearer header")
-            raw = token
         ok = False
         if raw:
             try:

@@ -354,25 +354,23 @@ def test_trace_stream_authenticates_with_the_cookie(prod_client):
     assert r.status_code == 200 and "event: done" in r.text
 
 
-def test_trace_stream_query_token_still_works_but_is_logged(prod_client, monkeypatch):
-    import echolens.api.app as app_mod
+def test_trace_stream_refuses_a_token_in_the_query_string(prod_client):
+    # A JWT in the URL lands in proxy logs and browser history; only the header
+    # or the session cookie authenticates the stream.
     token = _login(prod_client).json()["token"]
     prod_client.cookies.clear()
-    warnings = []
-
-    class Log:
-        def warning(self, event, **kw):
-            warnings.append(event)
-
-        def __getattr__(self, _name):
-            return lambda *a, **k: None
-
-    monkeypatch.setattr(app_mod, "log", Log())
     iid = _resolved_case()
-    r = prod_client.get(f"/investigations/{iid}/trace/stream?product_id=1&token={token}")
+    assert prod_client.get(f"/investigations/{iid}/trace/stream?product_id=1&token={token}").status_code == 401
+    r = prod_client.get(f"/investigations/{iid}/trace/stream?product_id=1",
+                        headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200
-    assert "deprecated_query_token" in warnings
-    assert prod_client.get(f"/investigations/{iid}/trace/stream?product_id=1").status_code == 401
+
+
+def test_only_dev_publishes_the_api_docs():
+    from echolens.api.app import docs_urls
+    assert docs_urls("dev")["openapi_url"] == "/openapi.json"
+    for env in ("production", "staging"):
+        assert set(docs_urls(env).values()) == {None}
 
 
 def test_api_sends_security_headers(prod_client):
