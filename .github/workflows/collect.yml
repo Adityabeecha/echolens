@@ -83,29 +83,42 @@ jobs:
           TOKEN=$(echo "$body" | sed '$d' | python3 -c "import sys,json;print(json.load(sys.stdin)['token'])")
           fi
           auth="Authorization: Bearer $TOKEN"
+          # Every call says what went wrong. `curl -sf` hid the status, so a
+          # rejected token and a timeout looked the same in the log.
+          call() {  # METHOD URL [MAX_SECONDS]; prints the body, or the HTTP status and error
+            local out code
+            out=$(curl -s --max-time "${3:-120}" -X "$1" "$2" -H "$auth" -w '\n%{http_code}') \
+              || { echo "  no answer within ${3:-120}s (network error or timeout)"; return 1; }
+            code=$(echo "$out" | tail -n1)
+            if [ "$code" -ge 400 ]; then
+              echo "  HTTP $code: $(echo "$out" | sed '$d' | head -c 300)"; return 1
+            fi
+            echo "$out" | sed '$d'
+          }
 
           echo "→ collect (all sources)"
-          curl -sf --max-time 300 -X POST "$API/collectors/run" -H "$auth" || echo "  collect failed (non-fatal)"
+          call POST "$API/collectors/run" 300 >/dev/null || echo "  collect failed (non-fatal)"
 
           # Since v8.0 every scan/triage is product-scoped: with no product_id the
           # API falls back to the first product, so a bare call would only ever
           # scan one. Enumerate and run each.
-          products=$(curl -sf --max-time 60 "$API/products" -H "$auth" \
+          plist=$(call GET "$API/products" 60) || { echo "::error::couldn't list products —$plist"; exit 1; }
+          products=$(echo "$plist" \
             | python3 -c "import sys,json;print(' '.join(str(p['id']) for p in json.load(sys.stdin)['products']))")
           if [ -z "$products" ]; then echo "::warning::no products configured"; fi
 
           for pid in $products; do
-            echo "→ product $pid: scan";   curl -sf --max-time 300 -X POST "$API/anomalies/scan?product_id=$pid" -H "$auth" || echo "  scan failed"
+            echo "→ product $pid: scan";   call POST "$API/anomalies/scan?product_id=$pid" 300 >/dev/null || echo "  scan failed"
             # run=true actually OPENS cases. Without it this is only a preview —
             # the scheduled job would review anomalies and start nothing.
-            echo "→ product $pid: triage"; curl -sf --max-time 300 -X POST "$API/anomalies/triage?run=true&product_id=$pid" -H "$auth" || echo "  triage failed"
+            echo "→ product $pid: triage"; call POST "$API/anomalies/triage?run=true&product_id=$pid" 300 >/dev/null || echo "  triage failed"
           done
 
-          echo "→ digest";   curl -sf --max-time 120 -X POST "$API/alerts/digest?hours=24" -H "$auth" || echo "  digest failed"
-          echo "→ fixwatch"; curl -sf --max-time 120 -X POST "$API/fixwatch/evaluate" -H "$auth" || echo "  fixwatch failed"
+          echo "→ digest";   call POST "$API/alerts/digest?hours=24" >/dev/null || echo "  digest failed"
+          echo "→ fixwatch"; call POST "$API/fixwatch/evaluate" >/dev/null || echo "  fixwatch failed"
           # Off unless RETENTION_DAYS is set on the API; then deletes raw feedback older than that.
-          echo "→ retention"; curl -sf --max-time 120 -X POST "$API/retention/apply" -H "$auth" || echo "  retention failed"
+          echo "→ retention"; call POST "$API/retention/apply" || echo "  retention failed"
           # Last, because it rebuilds the demo product in the background: a no-op
           # until the demo's newest review is a week old, then it re-dates it.
-          echo "→ demo";     curl -sf --max-time 60 -X POST "$API/demo/refresh" -H "$auth" || echo "  demo refresh failed"
+          echo "→ demo";     call POST "$API/demo/refresh" 60 || echo "  demo refresh failed"
           echo "done"
