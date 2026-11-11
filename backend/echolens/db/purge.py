@@ -85,3 +85,28 @@ def purge_product_data(session: Session, product: Product) -> None:
         for row in session.scalars(select(model).where(model.product == name)).all():
             session.delete(row)
     session.flush()
+
+
+# Raw feedback older than this can be deleted on a schedule (RETENTION_DAYS).
+# The floor keeps every analysis whole: spike detection compares against up to
+# ~10 weeks, the review charts show 12, and a fix is judged on the weeks around
+# it. Evidence quoted in a case keeps its own copy, so old cases keep their
+# proof after the reviews behind them are gone.
+MIN_RETENTION_DAYS = 180
+
+
+def purge_old_feedback(session: Session, days: int, now=None) -> dict:
+    """Delete reviews, issues, posts and imported feedback older than `days`.
+    Returns the counts. `days` below the floor is raised to it; 0 is a no-op."""
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import delete
+    if days <= 0:
+        return {}
+    days = max(days, MIN_RETENTION_DAYS)
+    cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=days)
+    out = {}
+    for model in (Review, Issue, Post, FeedbackEntry):
+        result = session.execute(delete(model).where(model.created_at < cutoff))
+        out[model.__tablename__] = result.rowcount or 0
+    return {"days": days, "deleted": out}

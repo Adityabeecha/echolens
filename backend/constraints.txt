@@ -3,6 +3,7 @@
 # so a new upstream release can't change a build silently (it has before:
 # SQLAlchemy 2.1 broke the Postgres driver). To upgrade: bump here, run the
 # tests, commit. Regenerate with: pip freeze --exclude-editable
+alembic==1.20.1
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.14.2
@@ -31,13 +32,15 @@ jsonpatch==1.33
 jsonpointer==3.1.1
 langchain-core==1.4.9
 langchain-protocol==0.0.18
-langgraph==1.2.9
 langgraph-checkpoint==4.1.1
 langgraph-prebuilt==1.1.0
 langgraph-sdk==0.4.2
+langgraph==1.2.9
 langsmith==0.10.5
 limits==5.8.0
+Mako==1.4.3
 markdown-it-py==4.2.0
+MarkupSafe==3.0.4
 mdurl==0.1.2
 openai==2.46.0
 openpyxl==3.1.5
@@ -49,8 +52,8 @@ pluggy==1.6.0
 psycopg2-binary==2.9.12
 pyasn1==0.6.4
 pycparser==3.0
-pydantic==2.13.4
 pydantic-settings==2.14.2
+pydantic==2.13.4
 pydantic_core==2.46.4
 Pygments==2.20.0
 PyJWT==2.15.1
@@ -59,8 +62,8 @@ python-dotenv==1.2.2
 python-jose==3.5.0
 python-multipart==0.0.32
 PyYAML==6.0.3
-requests==2.34.2
 requests-toolbelt==1.0.0
+requests==2.34.2
 rich==15.0.0
 rsa==4.9.1
 sentry-sdk==2.73.0

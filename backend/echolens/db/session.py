@@ -117,6 +117,8 @@ def get_engine(db_url: str | None = None):
 
 def init_db(db_url: str | None = None) -> None:
     engine = get_engine(db_url)
+    # Before create_all: did this database exist already? (see migrations.apply)
+    existed_before = inspect(engine).has_table("users")
     Base.metadata.create_all(engine)
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
@@ -141,6 +143,8 @@ def init_db(db_url: str | None = None) -> None:
         from echolens.logging import get_logger
         get_logger("db").error("product_backfill_failed", error=str(err))
     _tidy_legacy_finding_summaries(engine)
+    from echolens.db.migrations import apply as apply_migrations
+    apply_migrations(engine, existed_before)
 
 
 def _tidy_legacy_finding_summaries(engine) -> None:

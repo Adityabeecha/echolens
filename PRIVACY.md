@@ -42,7 +42,7 @@ These carry finding summaries and deep links (`APP_BASE_URL`) to the destination
 
 ## Retention and deletion
 
-There is no automatic expiry. Data is kept until a product is deleted. `DELETE /products/{id}` (admin only, requires typing the exact product name) removes:
+By default there is no automatic expiry. With `RETENTION_DAYS` set, each scheduled run deletes raw feedback (reviews, issues, posts and imported feedback) older than that many days (minimum 180). Quotes already cited as evidence in a problem are kept with it. Everything else is kept until a product is deleted. `DELETE /products/{id}` (admin only, requires typing the exact product name) removes:
 
 - the product's corpus: reviews, issues, posts, releases and feedback entries (matched by product name)
 - investigations with their hypotheses, evidence, trace steps, findings, recommendations, reviewer feedback and LLM ledger rows linked to those investigations or tagged with the product (chat, triage, theme discovery)

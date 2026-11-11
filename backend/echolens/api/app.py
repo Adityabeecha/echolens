@@ -4204,6 +4204,19 @@ async def github_webhook(request: Request) -> dict:
     return {"ok": True, "ignored": event or "unknown"}
 
 
+@app.post("/retention/apply")
+def retention_apply(user: dict = Depends(require_role("reviewer"))) -> dict:
+    """Delete raw feedback older than RETENTION_DAYS (scheduled; see collect.yml).
+    Off unless configured: nothing is deleted with the default of 0."""
+    from echolens.db.purge import purge_old_feedback
+    if settings.retention_days <= 0:
+        return {"enabled": False}
+    with session_scope() as session:
+        out = purge_old_feedback(session, settings.retention_days)
+    log.info("retention_applied", **out)
+    return {"enabled": True, **out}
+
+
 @app.post("/fixwatch/evaluate")
 def fixwatch_evaluate(product_id: int | None = None,
                       user: dict = Depends(require_role("reviewer"))) -> dict:

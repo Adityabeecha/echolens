@@ -4,8 +4,10 @@
 # so the "watch feedback → investigate" loop runs without you.
 #
 # Setup: in the repo settings → Secrets and variables → Actions, add:
-#   ECHOLENS_API   = https://<your-service>.code.run   (no trailing slash)
-#   ECHOLENS_EMAIL / ECHOLENS_PASSWORD = a dedicated reviewer login (for the token)
+#   ECHOLENS_API              = https://<your-service>.code.run   (no trailing slash)
+#   ECHOLENS_AUTOMATION_TOKEN = the same 32+ character value as AUTOMATION_TOKEN on the API
+# The older ECHOLENS_EMAIL / ECHOLENS_PASSWORD (a reviewer login) still work while
+# no automation token is set, but a token is not anyone's password: prefer it.
 #
 # SECURITY: use a dedicated, low-privilege REVIEWER account for automation (not
 # an admin and not a personal login), with a unique password stored only in
@@ -25,13 +27,15 @@ jobs:
       - name: Check the secrets exist
         env:
           API: ${{ secrets.ECHOLENS_API }}
+          AUTO: ${{ secrets.ECHOLENS_AUTOMATION_TOKEN }}
           EMAIL: ${{ secrets.ECHOLENS_EMAIL }}
           PASSWORD: ${{ secrets.ECHOLENS_PASSWORD }}
         run: |
           missing=""
-          [ -n "$API" ]      || missing="$missing ECHOLENS_API"
-          [ -n "$EMAIL" ]    || missing="$missing ECHOLENS_EMAIL"
-          [ -n "$PASSWORD" ] || missing="$missing ECHOLENS_PASSWORD"
+          [ -n "$API" ] || missing="$missing ECHOLENS_API"
+          if [ -z "$AUTO" ] && { [ -z "$EMAIL" ] || [ -z "$PASSWORD" ]; }; then
+            missing="$missing ECHOLENS_AUTOMATION_TOKEN"
+          fi
           if [ -n "$missing" ]; then
             echo "::error::Missing repo secret(s):$missing"
             echo "Add them under Settings → Secrets and variables → Actions."
@@ -58,11 +62,16 @@ jobs:
       - name: Log in and run the pipeline for every product
         env:
           API: ${{ secrets.ECHOLENS_API }}
+          AUTO: ${{ secrets.ECHOLENS_AUTOMATION_TOKEN }}
           EMAIL: ${{ secrets.ECHOLENS_EMAIL }}
           PASSWORD: ${{ secrets.ECHOLENS_PASSWORD }}
         run: |
           set -euo pipefail
 
+          if [ -n "$AUTO" ]; then
+            TOKEN="$AUTO"
+          else
+          echo "::warning::Signing in with ECHOLENS_EMAIL/PASSWORD. Set ECHOLENS_AUTOMATION_TOKEN instead."
           body=$(curl -s --max-time 60 -w '\n%{http_code}' -X POST "$API/auth/login" \
             -H "Content-Type: application/json" \
             -d "$(python3 -c 'import json,os;print(json.dumps({"email":os.environ["EMAIL"],"password":os.environ["PASSWORD"]}))')")
@@ -72,6 +81,7 @@ jobs:
             exit 1
           fi
           TOKEN=$(echo "$body" | sed '$d' | python3 -c "import sys,json;print(json.load(sys.stdin)['token'])")
+          fi
           auth="Authorization: Bearer $TOKEN"
 
           echo "→ collect (all sources)"
@@ -93,6 +103,8 @@ jobs:
 
           echo "→ digest";   curl -sf --max-time 120 -X POST "$API/alerts/digest?hours=24" -H "$auth" || echo "  digest failed"
           echo "→ fixwatch"; curl -sf --max-time 120 -X POST "$API/fixwatch/evaluate" -H "$auth" || echo "  fixwatch failed"
+          # Off unless RETENTION_DAYS is set on the API; then deletes raw feedback older than that.
+          echo "→ retention"; curl -sf --max-time 120 -X POST "$API/retention/apply" -H "$auth" || echo "  retention failed"
           # Last, because it rebuilds the demo product in the background: a no-op
           # until the demo's newest review is a week old, then it re-dates it.
           echo "→ demo";     curl -sf --max-time 60 -X POST "$API/demo/refresh" -H "$auth" || echo "  demo refresh failed"

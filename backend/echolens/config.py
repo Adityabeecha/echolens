@@ -107,6 +107,14 @@ class Settings(BaseSettings):
     # collector schedule (cron-ish): hours between runs
     collector_interval_hours: int = 6
 
+    # scheduled jobs (GitHub Actions) authenticate with this instead of a
+    # person's password; 32+ random characters, or it is ignored
+    automation_token: str = ""
+
+    # delete raw feedback (reviews, issues, posts) older than this many days on
+    # each scheduled run; 0 keeps everything, anything below 180 is raised to 180
+    retention_days: int = 0
+
     # error tracking (optional): a Sentry DSN turns it on; empty sends nothing
     sentry_dsn: str = ""
     sentry_traces_sample_rate: float = 0.0

@@ -26,6 +26,13 @@ Leave these empty and nothing is sent anywhere. With a [Sentry](https://sentry.i
 | Vercel (build env) | `VITE_SENTRY_DSN` | The DSN of a Sentry **Browser/React** project. Read at build time, so redeploy after setting it. Without it the Sentry code is not even downloaded. |
 | Vercel (build env) | `VITE_SENTRY_ENVIRONMENT` | Optional label such as `production`. Defaults to the build mode. |
 
+## Scheduled jobs and data retention
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AUTOMATION_TOKEN` | empty | Lets the scheduled GitHub workflows call the API as a reviewer without anyone's password. Use 32+ random characters (shorter values are ignored); put the same value in the `ECHOLENS_AUTOMATION_TOKEN` Actions secret. Change it to revoke the jobs. |
+| `RETENTION_DAYS` | `0` | Delete raw feedback (reviews, issues, posts, imported feedback) older than this many days on each scheduled run. `0` keeps everything; values below `180` are raised to `180` so spike detection and charts keep their history. Quotes already cited in a problem are kept. |
+
 ## Database and search
 
 | Variable | Default | Purpose |
@@ -112,8 +119,8 @@ The scheduled workflows use repository settings rather than `backend/.env`:
 | Setting | Kind | Used by |
 |---|---|---|
 | `ECHOLENS_API` | Actions secret | Scheduled collection and weekly brief. |
-| `ECHOLENS_EMAIL` | Actions secret | Account used by scheduled workflows. |
-| `ECHOLENS_PASSWORD` | Actions secret | Password used by scheduled workflows. |
+| `ECHOLENS_AUTOMATION_TOKEN` | Actions secret | How scheduled workflows sign in: the same value as `AUTOMATION_TOKEN` on the API. |
+| `ECHOLENS_EMAIL` / `ECHOLENS_PASSWORD` | Actions secrets | Older alternative: a reviewer login. Used only while no automation token is set. |
 | `ECHOLENS_API` | Actions variable | Post-deployment health verification. |
 
 Use the same backend origin for both `ECHOLENS_API` entries. The duplicate name is intentional because GitHub stores secrets and variables separately.
