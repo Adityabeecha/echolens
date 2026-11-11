@@ -201,6 +201,37 @@ class User(Base):
     # v8.0: which product this user was last looking at (server-side, so a refresh
     # lands them back on it instead of re-showing the wizard)
     last_active_product_id: Mapped[int | None] = mapped_column(nullable=True)
+    # Bumped when the password changes. Every token carries the version it was
+    # issued under, so a reset ends sessions everywhere instead of leaving a
+    # stolen token valid for its full lifetime. NULL (rows from before) == 0.
+    session_version: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class PasswordReset(Base):
+    """A single-use link to set a password: a reset, or an invite to a new
+    account. Only the token's SHA-256 is stored, so a database read cannot be
+    turned into a working link."""
+    __tablename__ = "password_resets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    purpose: Mapped[str] = mapped_column(String(16), default="reset")   # reset|invite
+    expires_at: Mapped[datetime] = mapped_column()
+    used_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    created_by_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class AccessRequest(Base):
+    """Someone without an account asking to use EchoLens ("Request access")."""
+    __tablename__ = "access_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(256), index=True)
+    app: Mapped[str] = mapped_column(String(256), default="")
+    note: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 

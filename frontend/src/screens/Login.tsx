@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useId, useState } from "react";
+import { FormEvent, ReactElement, ReactNode, cloneElement, isValidElement, useId, useState } from "react";
 import { api, errorMessage, setGuest, setRole, startSession } from "../api";
 import { useAsync, useDialog } from "../hooks";
 import { Button } from "../ui";
@@ -23,9 +23,13 @@ export function Login({ onAuthed, onClose, onExplore }: {
   /** Into the read-only demo, when this deployment allows guests. */
   onExplore?: () => void;
 }) {
-  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [mode, setMode] = useState<"login" | "signup" | "forgot" | "request">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [app, setApp] = useState("");
+  const [note, setNote] = useState("");
+  // The server's answer after "Email me a link" / "Request access".
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ref = useDialog(onClose);
@@ -40,6 +44,8 @@ export function Login({ onAuthed, onClose, onExplore }: {
   // wasn't required (dev). The server still refuses a signup it won't allow.
   const signupOpen = cfg.data ? (cfg.data.signup_open ?? !cfg.data.auth_required) : false;
   const signup = mode === "signup" && signupOpen;
+  const forgot = mode === "forgot";
+  const request = mode === "request";
 
   const finish = (r: { role: string; csrf_token?: string }) => {
     setGuest(false);
@@ -50,6 +56,25 @@ export function Login({ onAuthed, onClose, onExplore }: {
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if ((forgot || request) && !email.trim()) {
+      setError("Enter your email address.");
+      return;
+    }
+    if (forgot || request) {
+      setBusy(true);
+      setError(null);
+      try {
+        const r = forgot
+          ? await api.requestPasswordReset(email.trim())
+          : await api.requestAccess({ email: email.trim(), app: app.trim(), note: note.trim() });
+        setNotice(r.message);
+      } catch (err) {
+        setError(plainAuthError(err, true, forgot ? "We couldn't send that. Try again." : "We couldn't send your request. Try again."));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     if (!email.trim() || !password) {
       setError(!email.trim() ? "Enter your email address." : "Enter your password.");
       return;
@@ -77,10 +102,12 @@ export function Login({ onAuthed, onClose, onExplore }: {
     }
   };
 
-  const switchMode = () => {
-    setMode(signup ? "login" : "signup");
+  const go = (next: typeof mode) => {
+    setMode(next);
     setError(null);
+    setNotice(null);
   };
+  const switchMode = () => go(signup ? "login" : "signup");
 
   return (
     <>
@@ -93,13 +120,50 @@ export function Login({ onAuthed, onClose, onExplore }: {
             </div>
 
             <SerifHeadline as="h2" size="card" id={titleId}>
-              {signup ? "Create the admin account" : "Sign in"}
+              {signup ? "Create the admin account" : forgot ? "Reset your password"
+                : request ? "Request access" : "Sign in"}
             </SerifHeadline>
-            <p className="pub-sheet__lede">
+            {/* Once the answer shows, the promise above it ("We'll email you…")
+                may no longer be true, so it goes. */}
+            {!notice && <p className="pub-sheet__lede">
               {signup
                 ? "The first account runs this workspace. You can invite reviewers once you're in."
+                : forgot ? "We'll email you a link to choose a new one."
+                : request ? "EchoLens is in beta. Tell us who you are and we'll set up an account for you."
                 : "Pick up where you left off."}
-            </p>
+            </p>}
+
+            {notice ? (
+              <>
+                <div role="status" className="pub-notice">{notice}</div>
+                <button type="button" className="pub-text-btn" onClick={() => go("login")}>← Back to sign in</button>
+              </>
+            ) : (forgot || request) ? (
+              <form className="pub-form" onSubmit={submit} noValidate>
+                <Field label="Email">
+                  <input className="pub-input" type="email" name="email" autoComplete="email" autoFocus
+                    value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com"
+                    aria-invalid={!!error && !email.trim()} aria-describedby={error ? errorId : undefined} />
+                </Field>
+                {request && (
+                  <>
+                    <Field label="Your app or company" hint="Optional">
+                      <input className="pub-input" name="organization" autoComplete="organization"
+                        value={app} onChange={(e) => setApp(e.target.value)} placeholder="e.g. Acme Photos" />
+                    </Field>
+                    <Field label="Anything we should know?" hint="Optional">
+                      <textarea className="pub-input" rows={3} value={note} onChange={(e) => setNote(e.target.value)}
+                        placeholder="Where your feedback comes from, how big the team is…" />
+                    </Field>
+                  </>
+                )}
+                {error && <div id={errorId} role="alert" className="pub-error">{error}</div>}
+                <Button type="submit" variant="primary" loading={busy} className="pub-btn pub-btn--lg pub-wide">
+                  {busy ? "Sending…" : forgot ? "Email me a link" : "Request access"}
+                </Button>
+                <button type="button" className="pub-text-btn" onClick={() => go("login")}>← Back to sign in</button>
+              </form>
+            ) : (<>
 
             {googleId && !signup && (
               <>
@@ -116,7 +180,8 @@ export function Login({ onAuthed, onClose, onExplore }: {
                   value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com"
                   aria-invalid={!!error && !email.trim()} aria-describedby={error ? errorId : undefined} />
               </Field>
-              <Field label="Password" hint={signup ? "At least 10 characters." : undefined}>
+              <Field label="Password" hint={signup ? "At least 10 characters." : undefined}
+                aside={!signup ? <button type="button" className="pub-text-btn" onClick={() => go("forgot")}>Forgot it?</button> : undefined}>
                 <input className="pub-input" type="password" name="password"
                   autoComplete={signup ? "new-password" : "current-password"}
                   value={password} onChange={(e) => setPassword(e.target.value)}
@@ -136,7 +201,10 @@ export function Login({ onAuthed, onClose, onExplore }: {
             {!signup && (
               <p className="pub-sheet__note" style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: "var(--el-muted)" }}>
                 EchoLens is in beta. Accounts are set up by your workspace admin{googleId ? " or with an allowed Google account" : ""};
-                no card is needed, and AI spend is capped each month in Settings. The demo needs no account at all.
+                no card is needed, and AI spend is capped each month in Settings. No account yet?{" "}
+                <button type="button" className="pub-text-btn" style={{ display: "inline" }} onClick={() => go("request")}>
+                  Request access
+                </button>
               </p>
             )}
 
@@ -151,13 +219,14 @@ export function Login({ onAuthed, onClose, onExplore }: {
 
             {onExplore && !signup && (
               <div className="pub-foot">
-                No account?{" "}
+                Just looking?{" "}
                 <button type="button" className="pub-text-btn" style={{ display: "inline" }} onClick={onExplore}>
                   Explore the live demo
                 </button>
                 {" "}— read-only, every screen.
               </div>
             )}
+            </>)}
           </div>
         </div>
         {/* Last in the DOM so focus opens on the first field, not on Close. */}
@@ -184,7 +253,18 @@ function plainAuthError(err: unknown, signup: boolean, fallback?: string): strin
   return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+function Field({ label, hint, aside, children }: { label: string; hint?: string; aside?: ReactNode; children: ReactNode }) {
+  // `aside` (e.g. "Forgot it?") sits beside the label, outside the <label>, so
+  // clicking it does not focus the input instead.
+  if (aside) return (
+    <div className="pub-field">
+      <span style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+        <label className="pub-field__label" htmlFor={`f-${label}`}>{label}</label>{aside}
+      </span>
+      {withId(children, `f-${label}`)}
+      {hint && <span className="pub-field__hint">{hint}</span>}
+    </div>
+  );
   return (
     <label className="pub-field">
       <span className="pub-field__label">{label}</span>
@@ -192,4 +272,8 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
       {hint && <span className="pub-field__hint">{hint}</span>}
     </label>
   );
+}
+
+function withId(node: ReactNode, id: string): ReactNode {
+  return isValidElement(node) ? cloneElement(node as ReactElement<{ id?: string }>, { id }) : node;
 }

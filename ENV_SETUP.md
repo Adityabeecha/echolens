@@ -78,16 +78,16 @@ Play Store collection requires no credential. Configure sources through the UI o
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `APP_BASE_URL` | empty | Public frontend origin used for deep links in notifications and tickets. |
+| `APP_BASE_URL` | empty | Public frontend origin used for deep links in notifications and tickets, and in emailed password-reset and invite links. Without it, emailed links are relative and will not open from an email client. |
 | `ALERTS_ENABLED` | `true` | Enables alert and digest delivery. |
 | `ALERT_INSTANT_MIN_SEVERITY` | `0.5` | Severity threshold from `0` to `1` for immediate alerts. |
 | `SLACK_WEBHOOK_URL` | empty | Secret Slack incoming-webhook URL for alerts and digests. |
 | `SLACK_ACTION_TOKEN` | empty | Shared secret protecting Slack reply-to-act requests. |
-| `SMTP_HOST` | empty | SMTP server; leaving it empty disables email delivery. |
+| `SMTP_HOST` | empty | SMTP server; leaving it empty disables email delivery. Without email, "Forgot it?" tells people to ask their admin, and Settings → Team shows invite and reset links for the admin to send by hand. |
 | `SMTP_PORT` | `587` | SMTP port. |
 | `SMTP_USER` | empty | SMTP username. |
 | `SMTP_PASSWORD` | empty | Secret SMTP password. |
-| `ALERT_EMAIL_FROM` | empty | Sender address for email alerts. |
+| `ALERT_EMAIL_FROM` | empty | Sender address for email alerts, invites and password resets. |
 | `ALERT_EMAIL_TO` | empty | Recipient address or addresses for email alerts. |
 
 ## Logging

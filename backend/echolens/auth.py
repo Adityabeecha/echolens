@@ -50,7 +50,8 @@ def verify_password(pw: str, hashed: str) -> bool:
 
 def create_token(user: User) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
-    payload = {"sub": str(user.id), "email": user.email, "role": user.role, "exp": expire}
+    payload = {"sub": str(user.id), "email": user.email, "role": user.role, "exp": expire,
+               "sv": user.session_version or 0}
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
@@ -285,17 +286,21 @@ def principal_for(uid: int, payload: dict) -> dict:
     deleted kept their old powers until the token expired (24h by default)."""
     cache = _principal_cache()
     key = _principal_key(uid)
-    hit = cache.get(key)
-    if hit is not None:
-        return dict(hit)
-    from echolens.db.session import session_scope
-    with session_scope() as session:
-        user = session.get(User, uid)
-        if user is None:
-            raise HTTPException(401, "account no longer exists")
-        principal = {"id": user.id, "email": user.email, "role": user.role}
-    cache.set(key, principal)
-    return dict(principal)
+    principal = cache.get(key)
+    if principal is None:
+        from echolens.db.session import session_scope
+        with session_scope() as session:
+            user = session.get(User, uid)
+            if user is None:
+                raise HTTPException(401, "account no longer exists")
+            principal = {"id": user.id, "email": user.email, "role": user.role,
+                         "_sv": user.session_version or 0}
+        cache.set(key, principal)
+    # A token from before the last password change is spent, wherever it is.
+    # Tokens minted before versions existed carry none: version 0.
+    if int(payload.get("sv") or 0) != principal["_sv"]:
+        raise HTTPException(401, "your password was changed — sign in again")
+    return {k: v for k, v in principal.items() if k != "_sv"}
 
 
 def _watch_user_writes() -> None:
