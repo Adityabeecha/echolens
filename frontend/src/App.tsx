@@ -2,7 +2,7 @@ import { ReactNode, Suspense, lazy, useCallback, useEffect, useRef, useState } f
 import { ProductRow, api, canReview, endSession, isAdmin, isAuthed, isGuest, onAuthError, setActiveProduct,
          setGuest, setRole } from "./api";
 import { CaseTab, GLOBAL_SCREENS, LEARNED_VIEWS, LearnedView, SETTINGS_SECTIONS, Screen,
-         SettingsSection, caseTabFor } from "./nav";
+         SettingsSection, caseTabFor, pageTitle } from "./nav";
 import { useRouter } from "./router";
 import { clearAsyncCache, useWorkWatcher } from "./hooks";
 import { C, T, sans } from "./theme";
@@ -122,6 +122,10 @@ function WorkspaceApp() {
   useEffect(() => {
     if (route.screen === "sources" && route.params?.import) setParams({ import: null });
   }, [route.screen, route.params?.import, setParams]);
+
+  useEffect(() => {
+    document.title = authed ? pageTitle(route, productName) : "EchoLens";
+  }, [authed, route, productName]);
 
   // Keep the api client's scope in step with the URL, before any screen fetches.
   useEffect(() => {
@@ -288,7 +292,7 @@ function WorkspaceApp() {
     // Already watching it: no toast, and no navigation that would reset the
     // trace scroll under someone who is reading it.
     if (route.screen === "case" && route.id === id) return;
-    toast.action(`Case #${id} is running now.`, "Watch live",
+    toast.action(`Problem #${id} is being looked into now.`, "Watch live",
                  () => openCase(id, "running"));
   }, [route.screen, route.id, openCase]);
 
@@ -437,7 +441,7 @@ function WorkspaceApp() {
               productName={productName}
               onTab={setCaseTab}
               onBack={back}
-              backLabel={backTarget?.label ?? "Cases"}
+              backLabel={backTarget?.label ?? "All problems"}
               onOpenCase={openCase}
               onReviewed={bumpReload}
               onGoCalibration={() => go("calibration")}
@@ -482,7 +486,7 @@ function WorkspaceApp() {
             <ScreenChunk>
               <Backlog key={key} onOpenInvestigation={openCase} onBack={back}
                        onGoCases={() => go("cases")}
-                       backLabel={backTarget?.label ?? "Cases"} />
+                       backLabel={backTarget?.label ?? "All problems"} />
             </ScreenChunk>
           )}
           {/* Intelligence: the learned-patterns map and proven fixes, with

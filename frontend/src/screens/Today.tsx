@@ -117,15 +117,16 @@ export function Today({ productName, onOpenCase, onGoCases, onGoSources, onGoPla
     <div className="today-v2__content">
       <div className="today-intro" aria-busy={loading}>
         <div className="today-greeting">{greeting} · {product} · {date.toLocaleDateString(undefined, { weekday:"long", month:"long", day:"numeric" })} · health{" "}
-          <strong>{me?.has_data ? me.health : "—"}</strong>/100{readingFirst ? " (measured after the first read)" : ""}
+          {me?.has_data ? <><strong>{Math.round(me.health)}</strong>/100</> : loading ? "…" : "not measured yet"}
+          {readingFirst ? " (measured after the first read)" : ""}
           <span title="Health is higher when fewer problems and review spikes need attention."> · higher is healthier</span></div>
         <SerifHeadline>{loading ? "Reading today's reviews…" : cases.error ? "Your problems couldn't be loaded."
           : headline({ focus, count:problems.length, drag:metrics?.rating_drag, hasData,
             spikes, stale:stale.length, readingFirst, product })}</SerifHeadline>
         <div className="today-summary">
-          {loading ? "Checking investigations" : <>
+          {loading ? "Checking problems…" : <>
             <Button variant="quiet" onClick={() => onGoCases("needs-review")}>{decisions} {plural(decisions, "decision")} waiting</Button>
-            <span>{running.length} {plural(running.length, "investigation")} running{queued.length > 0 ? ` · ${queued.length} waiting to start` : ""}</span>
+            <span>{running.length} being looked into{queued.length > 0 ? ` · ${queued.length} waiting to start` : ""}</span>
           </>}
         </div>
       </div>

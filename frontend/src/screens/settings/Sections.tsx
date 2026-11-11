@@ -36,7 +36,7 @@ export function CostsSection({ data, children }: { data: CostsSummary; children?
           aria-valuemin={0} aria-valuemax={data.budget} aria-valuenow={data.month_to_date}>
           <span style={{ width: `${pctOf(data.month_to_date, data.budget)}%` }} />
         </div>
-        <span className="ps-muted">Each problem stops at its own spending cap (in Limits), so one runaway case can't use up the month.</span>
+        <span className="ps-muted">Each problem stops at its own spending cap (in Limits), so one runaway problem can't use up the month.</span>
       </div>
       {rows.length > 1 && (
         <section className="ps-section" aria-labelledby="ps-by-product">

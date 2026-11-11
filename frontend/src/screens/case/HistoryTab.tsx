@@ -38,7 +38,7 @@ export function HistoryTab({ inv, onOpenCase }: {
     return (
       <div style={{ flex: 1, overflow: "auto", padding: `${S[6]} ${S[6]}` }}>
         <EmptyState
-          title="Nothing has happened to this case yet"
+          title="Nothing has happened to this problem yet"
           body="Reviews, challenges, re-opens, filed issues and verified fixes all appear here as they happen."
         />
       </div>
@@ -100,7 +100,7 @@ export function HistoryTab({ inv, onOpenCase }: {
         })}
         {(inv.related_evidence?.length ?? 0) > 0 && (
           <div style={{ marginTop: S[4], padding: S[4], border: `1px solid ${C.border2}`, borderRadius: R.card }}>
-            <div style={{ fontSize: T.base, color: C.text2 }}>Related evidence from merged cases</div>
+            <div style={{ fontSize: T.base, color: C.text2 }}>Related evidence from merged problems</div>
             <div style={{ fontSize: T.sm, color: C.dim, marginTop: S[1] }}>
               Linked to the original record. This does not add support to this case's finding.
             </div>

@@ -914,7 +914,7 @@ export interface SourcePreview {
   ok: boolean;
   kind?: "invalid" | "not_found" | "timeout" | "unavailable";
   reason?: string;
-  source?: "play_store" | "github";
+  source?: "play_store" | "app_store" | "github";
   identifier?: string;
   title?: string;
   developer?: string | null;
@@ -964,6 +964,7 @@ export interface SourceHealth {
 }
 export interface OnboardStatus {
   product: string;
+  product_id: number | null;
   backfilling: boolean;
   sources: SourceHealth[];
   progress?: {
@@ -1635,8 +1636,12 @@ export const api = {
   patterns: () => get<{ patterns: Pattern[]; product?: string | null }>(scoped("/patterns")),
   // v9.0 — deliberately NOT scoped: this is the screen you open before you know
   // which product to open.
-  feedCandidates: (refresh = false) =>
-    get<CandidatesResp>(scoped(`/feed/candidates${refresh ? "?refresh=true" : ""}`)),
+  /** `productId` overrides the active product: the add-product wizard asks
+   *  about the NEW product while the one behind it is still the active scope. */
+  feedCandidates: (refresh = false, productId?: number) =>
+    get<CandidatesResp>(productId != null
+      ? `/feed/candidates?product_id=${productId}${refresh ? "&refresh=true" : ""}`
+      : scoped(`/feed/candidates${refresh ? "?refresh=true" : ""}`)),
   queueThemes: (slugs: string[], statements: Record<string, string>, tier = "quick", productId = getActiveProduct()) =>
     post<{ queued: QueueSelection[]; already: QueueSelection[]; queue: QueueView; summary: string }>(
       "/queue/themes", { slugs, statements, tier, product_id: productId }),
@@ -1876,10 +1881,10 @@ export const api = {
   }>(scoped("/collectors/run")),
   embed: () => post<{ embedded: Record<string, number> }>(scoped("/search/embed")),
   onboard: (body: {
-    play_store: string; github?: string; github_sources?: string[]; product?: string;
+    play_store?: string; github?: string; github_sources?: string[]; product?: string;
     app_store?: string; chrome_web_store?: string; hacker_news?: string; stack_overflow?: string;
   }) =>
-    post<{ status: string; product: string; product_id: number; play_store: string;
+    post<{ status: string; product: string; product_id: number; play_store: string | null;
            github: string | null; github_sources: string[]; additional_sources: string[] }>(
       "/onboard", body),
   onboardStatus: (product: string) =>
@@ -1907,10 +1912,10 @@ export const api = {
     post<TicketResult>(scoped(`/findings/${findingId}/ticket?tracker=${tracker}`), edits),
   /** Instant look-up of what the wizard is about to connect. Never throws on a
    *  slow store — the server answers `ok: false` with a reason instead. */
-  onboardPreview: (q: { play_store?: string; github?: string }) => {
+  onboardPreview: (q: { play_store?: string; app_store?: string; github?: string }) => {
     const qs = Object.entries(q).filter(([, v]) => v && v.trim())
       .map(([k, v]) => `${k}=${encodeURIComponent(v!.trim())}`).join("&");
-    return get<{ play_store?: SourcePreview; github?: SourcePreview }>(`/onboard/preview?${qs}`);
+    return get<{ play_store?: SourcePreview; app_store?: SourcePreview; github?: SourcePreview }>(`/onboard/preview?${qs}`);
   },
   notifyFinding: (findingId: number) =>
     post<{ routed: string; sent?: string[] }>(scoped(`/findings/${findingId}/notify`)),

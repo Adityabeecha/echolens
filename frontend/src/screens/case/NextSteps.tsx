@@ -198,7 +198,8 @@ export function NextStepsBlock({ inv, onSend, onShipped }: {
         { id: "watch", automatic: true,
           text: <>We watch the reviews for 14 days, then stamp it <b style={{ color: "var(--el-green)" }}>FIX WORKED</b> — or reopen it</> },
       ]} />
-      {blocked && <div style={{ fontSize: 13, color: "var(--el-muted)", marginTop: 8 }}>{blocked}</div>}
+      {/* The reason is already printed under the header's buttons; repeating it
+          here put the same sentence twice on one screen. */}
     </div>
   );
 }

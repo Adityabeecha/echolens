@@ -217,7 +217,7 @@ function InspectorTrace({ inv, onPick }: { inv: Investigation; onPick: (e: Evide
         ))}
         {steps.length === 0 && (
           <div style={{ color: C.dim, fontSize: T.sm }}>
-            {running ? "Waiting for the first reasoning step…" : "No trace was recorded for this case."}
+            {running ? "Waiting for the first reasoning step…" : "No trace was recorded for this problem."}
           </div>
         )}
       </div>
@@ -283,7 +283,7 @@ function EvidenceIndex({ inv, onPick }: { inv: Investigation; onPick: (e: Eviden
       <div style={{ fontSize: T.sm, color: C.dim, lineHeight: "var(--el-lh-normal)" }}>
         {inv.status === "running"
           ? "No evidence yet — citations appear here as the investigation retrieves them."
-          : "This case reached its verdict without citable evidence. Switch to the trace to see what was tried."}
+          : "This problem reached its verdict without citable evidence. Switch to the trace to see what was tried."}
       </div>
     );
   }

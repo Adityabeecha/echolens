@@ -1467,7 +1467,9 @@ def _onboard_bg(product: str, product_id: int | None = None) -> None:
 
 
 class OnboardBody(BaseModel):
-    play_store: str
+    # Optional: an iPhone-only, web or open-source product has no Play Store
+    # listing. Any one real source is enough (checked in onboard()).
+    play_store: str | None = None
     github: str | None = None
     # Keep the old API behaviour (issues + releases only) when this field is
     # omitted. The onboarding UI sends all three when the user chooses "All".
@@ -1490,9 +1492,11 @@ def onboard(body: OnboardBody, user: dict = Depends(require_role("admin"))) -> d
     from echolens.collectors.registry import add_source
     from echolens.onboarding.validate import normalize_github_repo, validate_play_store_package
 
-    err = validate_play_store_package(body.play_store)
-    if err:
-        raise HTTPException(422, err)
+    play_store = (body.play_store or "").strip()
+    if play_store:
+        err = validate_play_store_package(play_store)
+        if err:
+            raise HTTPException(422, err)
     repo, gerr = normalize_github_repo(body.github)
     if gerr:
         raise HTTPException(422, gerr)
@@ -1522,16 +1526,29 @@ def onboard(body: OnboardBody, user: dict = Depends(require_role("admin"))) -> d
             parse_app_id(body.app_store)
         except ValueError as err:
             raise HTTPException(422, str(err))
-    product = (body.product or "").strip() or body.play_store.strip()
+    from echolens.collectors.registry import UNAVAILABLE_SOURCES
+    readable = [s for s, v in (("app_store", body.app_store), ("hacker_news", body.hacker_news),
+                               ("stack_overflow", body.stack_overflow))
+                if v and v.strip() and s not in UNAVAILABLE_SOURCES]
+    if not (play_store or repo or readable):
+        raise HTTPException(422, "Add at least one place to read feedback from: a Play Store or "
+                                 "App Store app, a GitHub repo, a Hacker News search or a Stack Overflow tag.")
+    # The name defaults to the most recognisable identifier given. A search term
+    # or numeric App Store id makes a poor name, so those need one typed in.
+    product = ((body.product or "").strip() or play_store
+               or (repo.split("/", 1)[1] if repo else ""))
+    if not product:
+        raise HTTPException(422, "Give the product a name.")
     with session_scope() as session:
         from echolens.db.models import Product
         prod = session.scalars(select(Product).where(Product.name == product)).first()
         if prod is None:
-            prod = Product(name=product, package_name=body.play_store.strip(), github_repo=repo)
+            prod = Product(name=product, package_name=play_store or None, github_repo=repo)
             session.add(prod)
             session.flush()
         pid = prod.id
-        add_source(session, "play_store", body.play_store.strip(), product, pid)
+        if play_store:
+            add_source(session, "play_store", play_store, product, pid)
         if repo:
             for source in github_sources:
                 add_source(session, source, repo, product, pid)
@@ -1542,7 +1559,6 @@ def onboard(body: OnboardBody, user: dict = Depends(require_role("admin"))) -> d
             "stack_overflow": body.stack_overflow,
         }
         connected_additional = []
-        from echolens.collectors.registry import UNAVAILABLE_SOURCES
         for source, identifier in additional.items():
             if identifier and identifier.strip():
                 if source in UNAVAILABLE_SOURCES:
@@ -1563,7 +1579,7 @@ def onboard(body: OnboardBody, user: dict = Depends(require_role("admin"))) -> d
     threading.Thread(target=_onboard_bg, args=(product, pid), daemon=True).start()
     threading.Thread(target=_onboard_watchdog, args=(pid,), daemon=True).start()
     return {"status": "backfilling", "product": product, "product_id": pid,
-            "play_store": body.play_store.strip(), "github": repo,
+            "play_store": play_store or None, "github": repo,
             "github_sources": github_sources if repo else [],
             "additional_sources": connected_additional,
             "skipped_sources": skipped_sources}
@@ -1572,15 +1588,18 @@ def onboard(body: OnboardBody, user: dict = Depends(require_role("admin"))) -> d
 @app.get("/onboard/preview")
 @limiter.limit("30/minute")  # each call reaches out to Google Play / GitHub
 def onboard_preview(request: Request, play_store: str | None = None,
-                    github: str | None = None,
+                    github: str | None = None, app_store: str | None = None,
                     user: dict = Depends(require_role("admin"))) -> dict:
-    """What the wizard is about to connect, before it connects it: the Play
-    Store listing's title and ratings, or the repo's name and open issues.
+    """What the wizard is about to connect, before it connects it: a store
+    listing's title and ratings, or the repo's name and open issues.
     Short timeout, never an error status — a slow store just says so."""
-    from echolens.onboarding.preview import preview_github, preview_play_store
+    from echolens.onboarding.preview import (preview_app_store, preview_github,
+                                             preview_play_store)
     out: dict = {}
     if play_store is not None and play_store.strip():
         out["play_store"] = preview_play_store(play_store)
+    if app_store is not None and app_store.strip():
+        out["app_store"] = preview_app_store(app_store)
     if github is not None and github.strip():
         out["github"] = preview_github(github)
     return out

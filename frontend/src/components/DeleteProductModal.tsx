@@ -44,7 +44,7 @@ export function DeleteProductModal({ product, onClose, onDeleted }: Props) {
   const rows: [string, number][] = preview
     ? [
         ["Reviews & feedback", preview.reviews],
-        ["Cases", preview.cases],
+        ["Problems", preview.cases],
         ["Findings", preview.findings],
         ["Signals", preview.anomalies],
         ["Connected sources", preview.sources],

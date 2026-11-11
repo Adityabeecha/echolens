@@ -14,6 +14,7 @@ import {
   sourceProgressLabel,
   sourceErrorView,
 } from "../onboardingProgress";
+import { FirstFindings } from "./onboarding/FirstFindings";
 import "./landing/public.css";
 
 interface Props {
@@ -199,8 +200,15 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
   // Look before you leap: the listing / repo behind what was typed, so a typo
   // shows up as "that's not my app" before a 90-day backfill starts.
   const pkgPreview = useSourcePreview("play_store", pkg, admin);
+  const appPreview = useSourcePreview("app_store", additional.app_store, admin);
   const repoPreview = useSourcePreview("github", repo, admin);
-  const storeTitle = pkgPreview.data?.ok ? pkgPreview.data.title : undefined;
+  // The name a product gets when none is typed: a store listing's title, else
+  // the Play Store package or the repo's name (the server applies the same).
+  const storeTitle = (pkgPreview.data?.ok ? pkgPreview.data.title : undefined)
+    ?? (appPreview.data?.ok ? appPreview.data.title : undefined);
+  const defaultName = storeTitle || pkg || repo.trim().replace(/\.git\/?$|\/$/g, "").split("/").pop() || "";
+  const hasSource = !!(pkg || additional.app_store.trim() || repo.trim()
+    || additional.hacker_news.trim() || additional.stack_overflow.trim());
   const titleRef = useRef<HTMLHeadingElement>(null);
 
   const selectedGithub = (): string[] => githubMode === "all"
@@ -209,8 +217,11 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
 
   /** Each step's own check; null means it may move on. */
   const problem = (at: number): string | null => {
-    if (at === 0 && !pkg) return "Paste your app's Play Store link, or its package name.";
     if (at === 1 && repo.trim() && selectedGithub().length === 0) return "Select at least one GitHub data type.";
+    if (at === 2 && !hasSource) {
+      return "Add at least one place to read feedback from: an app store, a GitHub repo, Hacker News or Stack Overflow.";
+    }
+    if (at === 2 && !name.trim() && !defaultName) return "Give the product a name.";
     return null;
   };
 
@@ -230,7 +241,7 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
 
   const submit = async () => {
     if (!admin) return;
-    for (const at of [0, 1]) {
+    for (const at of [0, 1, 2]) {
       const p = problem(at);
       if (p) { setStep(at); setError(p); return; }
     }
@@ -238,7 +249,7 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
     setError(null);
     try {
       const r = await api.onboard({
-        play_store: pkg,
+        play_store: pkg || undefined,
         github: repo.trim() || undefined,
         github_sources: repo.trim() ? selectedGithub() : undefined,
         product: name.trim() || storeTitle || undefined,
@@ -262,7 +273,7 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
   return (
     <div className="pub-run">
       <Heading title="Point EchoLens at your app">
-        Three quick questions. Only the first one is required.
+        Three quick questions. Answer whichever apply: one source is enough.
       </Heading>
 
       <div className="pub-progress" aria-label={`Question ${step + 1} of 3`}>
@@ -278,16 +289,25 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
         </h2>
 
         {step === 0 && (
-          <Field label="Play Store link or package"
-            hint="Paste the link to your app's store page, or the package name after id= (for example com.spotify.music).">
-            <input autoFocus className="pub-input" value={store} onChange={(e) => { setStore(e.target.value); setError(null); }}
-              onKeyDown={onEnter} placeholder="https://play.google.com/store/apps/details?id=…"
-              aria-invalid={!!error} spellCheck={false} autoCapitalize="off" />
-            {pkg && pkg !== store.trim() && (
-              <span className="pub-field__hint">Package: <code>{pkg}</code></span>
-            )}
-            <PreviewLine state={pkgPreview} />
-          </Field>
+          <>
+            <Field label="Play Store link or package"
+              hint="Paste the link to your app's store page, or the package name after id= (for example com.spotify.music).">
+              <input autoFocus className="pub-input" value={store} onChange={(e) => { setStore(e.target.value); setError(null); }}
+                onKeyDown={onEnter} placeholder="https://play.google.com/store/apps/details?id=…"
+                aria-invalid={!!error} spellCheck={false} autoCapitalize="off" />
+              {pkg && pkg !== store.trim() && (
+                <span className="pub-field__hint">Package: <code>{pkg}</code></span>
+              )}
+              <PreviewLine state={pkgPreview} />
+            </Field>
+            <Field label="App Store link or ID" hint="The link to your app's App Store page, or the number after id in it.">
+              <input className="pub-input" value={additional.app_store} placeholder="https://apps.apple.com/… or 324684580"
+                onKeyDown={onEnter} spellCheck={false} autoCapitalize="off"
+                onChange={(e) => { setAdditional((current) => ({ ...current, app_store: e.target.value })); setError(null); }} />
+              <PreviewLine state={appPreview} />
+            </Field>
+            <span className="pub-field__hint">Fill in one, both, or neither. Not in an app store? Skip this: GitHub, Hacker News or Stack Overflow work on their own.</span>
+          </>
         )}
 
         {step === 1 && (
@@ -324,10 +344,6 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
         {step === 2 && (
           <>
             <div className="pub-grid2">
-              <Field label="App Store link or ID" hint="Optional">
-                <input className="pub-input" value={additional.app_store} placeholder="apps.apple.com/… or 324684580" onKeyDown={onEnter}
-                  onChange={(e) => setAdditional((current) => ({ ...current, app_store: e.target.value }))} />
-              </Field>
               <Field label="Hacker News search" hint="Optional">
                 <input className="pub-input" value={additional.hacker_news} placeholder="your product or company name" onKeyDown={onEnter}
                   onChange={(e) => setAdditional((current) => ({ ...current, hacker_news: e.target.value }))} />
@@ -339,9 +355,9 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
             </div>
             <span className="pub-field__hint">Chrome Web Store reviews aren't available right now — Google stopped sharing them. You can import them as a CSV from Sources later.</span>
             <Field label="What should we call it?"
-              hint={storeTitle ? `Optional — defaults to the store listing's name, ${storeTitle}.` : "Optional — defaults to the package name."}>
-              <input className="pub-input" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={onEnter}
-                placeholder={storeTitle ?? "e.g. Spotify"} />
+              hint={defaultName ? `Optional: defaults to ${defaultName}.` : "Needed: there's no store listing or repo to take a name from."}>
+              <input className="pub-input" value={name} onChange={(e) => { setName(e.target.value); setError(null); }} onKeyDown={onEnter}
+                placeholder={defaultName || "e.g. Spotify"} aria-invalid={!!error && !name.trim() && !defaultName} />
             </Field>
           </>
         )}
@@ -352,7 +368,8 @@ function OnboardForm({ onStarted, canSkip, onCancel }: { onStarted: (product: st
           <Button type="submit" variant="primary" className="pub-btn" loading={busy} disabled={!admin}
             title={admin ? undefined : "You need admin access to connect a product."}>
             {step === 2 ? (busy ? "Starting…" : "Start reading reviews")
-              : step === 1 && !repo.trim() ? "Skip — no GitHub" : "Next"}
+              : step === 1 && !repo.trim() ? "Skip — no GitHub"
+              : step === 0 && !pkg && !additional.app_store.trim() ? "Skip — not in an app store" : "Next"}
           </Button>
           {step > 0 && (
             <Button type="button" variant="ghost" className="pub-btn" onClick={() => go(step - 1)} disabled={busy}>
@@ -397,6 +414,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 const compact = (n: number) => new Intl.NumberFormat("en", { notation: "compact" }).format(n);
 
 const PKG_SHAPE = /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/;
+const APP_STORE_SHAPE = /^(id)?\d{6,}$|^(https?:\/\/)?apps\.apple\.com\/.+\/id\d+/i;
 const REPO_SHAPE = /^(https?:\/\/)?(www\.)?(github\.com\/)?[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(\.git)?\/?$/;
 
 interface PreviewState { data: SourcePreview | null; loading: boolean }
@@ -407,13 +425,14 @@ interface PreviewState { data: SourcePreview | null; loading: boolean }
  * every keystroke — and drops answers that arrive after the input changed.
  * Purely advisory: a failure leaves the form exactly as usable as before.
  */
-function useSourcePreview(kind: "play_store" | "github", raw: string, enabled: boolean): PreviewState {
+function useSourcePreview(kind: "play_store" | "app_store" | "github", raw: string, enabled: boolean): PreviewState {
   const [state, setState] = useState<PreviewState>({ data: null, loading: false });
   const seq = useRef(0);
   useEffect(() => {
     const value = raw.trim();
     const id = ++seq.current;
-    const shaped = kind === "play_store" ? PKG_SHAPE.test(value) : REPO_SHAPE.test(value);
+    const shaped = kind === "play_store" ? PKG_SHAPE.test(value)
+      : kind === "app_store" ? APP_STORE_SHAPE.test(value) : REPO_SHAPE.test(value);
     if (!enabled || !shaped) {
       setState({ data: null, loading: false });
       return;
@@ -439,7 +458,7 @@ function PreviewLine({ state }: { state: PreviewState }) {
     if (data.ok) {
       tone = " is-ok";
       icon = "check";
-      const facts = data.source === "play_store"
+      const facts = data.source !== "github"
         ? [data.developer, data.ratings != null ? `${compact(data.ratings)} ratings` : null,
            data.score != null ? `${data.score.toFixed(1)}★` : null]
         : [data.open_issues != null ? `${compact(data.open_issues)} open ${plural(data.open_issues, "issue")}` : null,
@@ -628,9 +647,91 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
   const collected = status.sources.reduce((total, source) => total + (source.items_last_run || 0), 0);
   const okSources = status.sources.filter((source) => source.status === "healthy").length;
   const itemsLine = `${collected.toLocaleString()} ${plural(collected, "item")} from ${okSources} ${plural(okSources, "source")}`;
-  const spikesLine = found > 0 ? `found ${found} ${plural(found, "spike")}` : "no spikes yet";
-  const plain = ready ? `Read ${itemsLine} — ${spikesLine}.` : `Reading… ${itemsLine} so far, ${spikesLine}`;
-  const recentLine = `${snap.reviews.toLocaleString()} store ${plural(snap.reviews, "review")} are from the last 90 days — EchoLens watches those for spikes.`;
+  // Spikes are not the headline on day one: they need history, so "no spikes
+  // yet" read as "nothing found" over hundreds of reviews. Recurring
+  // complaints (FirstFindings) are what a first read can actually show.
+  const plain = ready
+    ? `Read ${itemsLine}.`
+    : `Reading… ${itemsLine} so far${found > 0 ? `, ${found} ${plural(found, "spike")} found` : ""}`;
+
+  const emptyNotice = (
+    <div className="pub-notice">
+      {emptyBackfillMessage({
+        backfilling: status.backfilling,
+        failedSources: progress.failed_sources,
+        githubItems,
+      })}
+    </div>
+  );
+  // Without recurring complaints (too few reviews, GitHub-only, or the lookup
+  // failed) the old word counts are still a useful glance.
+  const findingsFallback = () => snap.top_themes.length > 0 ? (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <SerifHeadline as="h2" size="section">What people mention most</SerifHeadline>
+      <div className="pub-themes">
+        {snap.top_themes.slice(0, 6).map((t) => (
+          <span key={t.label}>{t.label}<small>{t.count}</small></span>
+        ))}
+      </div>
+    </div>
+  ) : null;
+
+  const sourcesList = (
+    <div className="el-onboarding-source-list" aria-label="Connected source activity">
+      {status.sources.map((s) => {
+        const color = s.status === "error" ? C.stampRed : s.status === "healthy" ? C.green : C.pencil;
+        const label = sourceProgressLabel(s);
+        const retryKey = `${s.source}:${s.identifier}`;
+        const running = s.status !== "error" && s.status !== "healthy";
+        return (
+          <article key={s.source + s.identifier}
+            className={`el-onboarding-source el-onboarding-source--${s.status}`}>
+            <div className="el-onboarding-source__identity">
+              <div className="el-onboarding-source__header">
+                <Dot color={color} pulse={status.backfilling && running} />
+                <span style={{ fontSize: 15, fontWeight: 600 }}>
+                  {SOURCE_LABELS[s.source] || s.source}
+                </span>
+              </div>
+              <div className="el-onboarding-source__identifier" title={s.identifier}>
+                {s.identifier}
+              </div>
+            </div>
+            <div className="el-onboarding-source__result">
+              <span style={{ fontSize: 14, color: s.status === "error" ? "var(--el-ink)" : "var(--el-body)" }}>
+                {running ? `Fetching and processing · ${activeElapsed}` : label}
+              </span>
+              {s.status === "error" && (() => {
+                const view = sourceErrorView(s.last_error);
+                return (
+                  <>
+                    <span className="el-onboarding-source__guidance">{view.guidance}</span>
+                    {s.last_error && (
+                      <details className="el-onboarding-source__technical">
+                        <summary>Technical details</summary>
+                        <code>{s.last_error}</code>
+                      </details>
+                    )}
+                    <div className="el-onboarding-source__actions">
+                      {view.canRetry && (
+                        <Button size="sm" variant="ghost" onClick={() => retrySource(s.source, s.identifier)}
+                          loading={retrying === retryKey}>
+                          {retrying === retryKey ? "Retrying…" : "Retry source"}
+                        </Button>
+                      )}
+                      <Button size="sm" variant="quiet" onClick={onManageSources}>
+                        Review connection
+                      </Button>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
 
   return (
     <div className="pub-run">
@@ -638,12 +739,6 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
       <div className="el-onboarding-backfill" style={{ display: "flex", flexDirection: "column" }}>
         <div className="pub-reading" style={{ borderTop: 0, paddingTop: 0 }}>
           <div className="pub-reading__line" aria-live="polite">{plain}</div>
-          {ready && hasReviews && <div className="pub-reading__sub">{recentLine}</div>}
-          {ready && found === 0 && hasReviews && (
-            <div className="pub-reading__sub">
-              That's normal on day one: EchoLens needs a few days of history before it can tell a surge from noise.
-            </div>
-          )}
         </div>
 
         {err && !pollingStopped && (
@@ -663,151 +758,71 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
           </div>
         )}
 
-        <section className={`el-onboarding-progress${status.backfilling ? " is-active" : ""}`}
-          aria-label="Backfill progress">
-          <div className="el-sr-only" role="status" aria-live="polite">
-            {ready
-              ? progress.failed_sources > 0
-                ? `Setup finished with ${progress.failed_sources} ${plural(progress.failed_sources, "source")} needing attention.`
-                : "Product setup finished."
-              : progressView.countLabel}
-          </div>
-          <div className="el-onboarding-progress__summary">
-            <div>
-              <div style={{ fontSize: 17, fontWeight: 600 }}>
-                {ready
-                  ? progress.failed_sources > 0
-                    ? `Finished, with ${progress.failed_sources} ${plural(progress.failed_sources, "source")} needing attention`
-                    : "Your product is ready"
-                  : "Checking your sources"}
-              </div>
-              <div className="pub-field__hint" style={{ marginTop: 4 }}>
-                {ready
-                  ? progress.failed_sources > 0
-                    ? "Working sources and what they collected are ready to use."
-                    : "Every connected source has been checked."
-                  : "Collection keeps going safely if you leave this screen."}
-              </div>
+        {!ready && (
+          <>
+          <section className="el-onboarding-progress is-active"
+            aria-label="Backfill progress">
+            <div className="el-sr-only" role="status" aria-live="polite">
+              {progressView.countLabel}
             </div>
-            <div className="el-onboarding-progress__measure">
-              <div className="el-onboarding-progress__count">{progressView.countLabel}</div>
-              <div className="el-onboarding-progress__timing">
-                {progressView.elapsedLabel && <span>{progressView.elapsedLabel}</span>}
-                <span>{progressView.expectedLabel}</span>
+            <div className="el-onboarding-progress__summary">
+              <div>
+                <div style={{ fontSize: 17, fontWeight: 600 }}>
+                  Checking your sources
+                </div>
+                <div className="pub-field__hint" style={{ marginTop: 4 }}>
+                  Collection keeps going safely if you leave this screen.
+                </div>
               </div>
-            </div>
-            {status.backfilling && (
+              <div className="el-onboarding-progress__measure">
+                <div className="el-onboarding-progress__count">{progressView.countLabel}</div>
+                <div className="el-onboarding-progress__timing">
+                  {progressView.elapsedLabel && <span>{progressView.elapsedLabel}</span>}
+                  <span>{progressView.expectedLabel}</span>
+                </div>
+              </div>
               <div className="el-onboarding-progress__primary-action">
                 <Button variant="primary" className="pub-btn" onClick={onDone}>Continue to Today</Button>
                 <span>Collection keeps running</span>
               </div>
-            )}
-          </div>
-          <div className="el-onboarding-progress__track" role="progressbar"
-            aria-label={progressView.countLabel} aria-valuemin={0}
-            aria-valuemax={progress.total_sources} aria-valuenow={progress.checked_sources}>
-            <span style={{ width: `${progressView.percent}%` }} />
-          </div>
-          <div className="el-onboarding-progress__activity">
-            <span className="el-onboarding-live-dot" aria-hidden="true" />
-            <span>{activityLabel}</span>
-            {status.backfilling && <span className="el-onboarding-progress__cutoff">
-              {progressView.cutoffLabel}
-            </span>}
-          </div>
-          <details className="el-onboarding-progress__details">
-            <summary>How live collection works</summary>
-            <p>Sources run independently. Each one updates as soon as it responds;
-              one slow or failed connection does not hold up the others.</p>
-          </details>
-        </section>
-
-        {/* source health */}
-        <div className="el-onboarding-source-list" aria-label="Connected source activity">
-          {status.sources.map((s) => {
-            const color = s.status === "error" ? C.stampRed : s.status === "healthy" ? C.green : C.pencil;
-            const label = sourceProgressLabel(s);
-            const retryKey = `${s.source}:${s.identifier}`;
-            const running = s.status !== "error" && s.status !== "healthy";
-            return (
-              <article key={s.source + s.identifier}
-                className={`el-onboarding-source el-onboarding-source--${s.status}`}>
-                <div className="el-onboarding-source__identity">
-                  <div className="el-onboarding-source__header">
-                    <Dot color={color} pulse={status.backfilling && running} />
-                    <span style={{ fontSize: 15, fontWeight: 600 }}>
-                      {SOURCE_LABELS[s.source] || s.source}
-                    </span>
-                  </div>
-                  <div className="el-onboarding-source__identifier" title={s.identifier}>
-                    {s.identifier}
-                  </div>
-                </div>
-                <div className="el-onboarding-source__result">
-                  <span style={{ fontSize: 14, color: s.status === "error" ? "var(--el-ink)" : "var(--el-body)" }}>
-                    {running ? `Fetching and processing · ${activeElapsed}` : label}
-                  </span>
-                  {s.status === "error" && (() => {
-                    const view = sourceErrorView(s.last_error);
-                    return (
-                      <>
-                        <span className="el-onboarding-source__guidance">{view.guidance}</span>
-                        {s.last_error && (
-                          <details className="el-onboarding-source__technical">
-                            <summary>Technical details</summary>
-                            <code>{s.last_error}</code>
-                          </details>
-                        )}
-                        <div className="el-onboarding-source__actions">
-                          {view.canRetry && (
-                            <Button size="sm" variant="ghost" onClick={() => retrySource(s.source, s.identifier)}
-                              loading={retrying === retryKey}>
-                              {retrying === retryKey ? "Retrying…" : "Retry source"}
-                            </Button>
-                          )}
-                          <Button size="sm" variant="quiet" onClick={onManageSources}>
-                            Review connection
-                          </Button>
-                        </div>
-                      </>
-                    );
-                  })()}
-                </div>
-              </article>
-            );
-          })}
-        </div>
-
-        {hasReviews ? (
-          <SnapshotView snap={snap} />
-        ) : (
-          <div className="pub-notice">
-            {emptyBackfillMessage({
-              backfilling: status.backfilling,
-              failedSources: progress.failed_sources,
-              githubItems,
-            })}
-          </div>
-        )}
-
-        {/* What people mention most — a summary and a handoff, not a third
-            place to triage. Triage happens in one place: All problems. */}
-        {ready && snap.top_themes.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <SerifHeadline as="h2" size="section">What people mention most</SerifHeadline>
-            <div className="pub-themes">
-              {snap.top_themes.slice(0, 6).map((t) => (
-                <span key={t.label}>{t.label}<small>{t.count}</small></span>
-              ))}
             </div>
-            {found > 0 && (
-              <div className="pub-field__hint">
-                {found === 1 ? "The spike is" : `The ${found} spikes are`} waiting in All problems. Pick what's worth
-                investigating — nothing is lost by not choosing now.
-              </div>
-            )}
+            <div className="el-onboarding-progress__track" role="progressbar"
+              aria-label={progressView.countLabel} aria-valuemin={0}
+              aria-valuemax={progress.total_sources} aria-valuenow={progress.checked_sources}>
+              <span style={{ width: `${progressView.percent}%` }} />
+            </div>
+            <div className="el-onboarding-progress__activity">
+              <span className="el-onboarding-live-dot" aria-hidden="true" />
+              <span>{activityLabel}</span>
+              <span className="el-onboarding-progress__cutoff">{progressView.cutoffLabel}</span>
+            </div>
+            <details className="el-onboarding-progress__details">
+              <summary>How live collection works</summary>
+              <p>Sources run independently. Each one updates as soon as it responds;
+                one slow or failed connection does not hold up the others.</p>
+            </details>
+          </section>
+            {sourcesList}
+          </>
+        )}
+
+        {ready && status.product_id != null && (
+          <FirstFindings productId={status.product_id} onOpenProblems={onReviewSignals} onFallback={findingsFallback} />
+        )}
+        {ready && status.product_id == null && findingsFallback()}
+
+        {ready && (
+          <div className="ob-next">
+            <b>What happens next</b>
+            <p>
+              EchoLens reads {okSources === 1 ? "this source" : `these ${okSources} sources`} again every few hours on its own.
+              When complaints jump above normal, you'll see a spike on Today
+              {found > 0 ? <> — it has already found {found}.</> : <>. Spotting spikes takes a few days of history, so expect the first ones later this week.</>}
+            </p>
           </div>
         )}
+
+        {hasReviews ? <SnapshotView snap={snap} /> : emptyNotice}
 
         {/* data-quality disclosures */}
         {(snap.data_quality.note || snap.data_quality.non_english_note) && (
@@ -817,18 +832,24 @@ function Backfilling({ product, onDone, onReviewSignals, onManageSources }: {
           </div>
         )}
 
+        {/* The sources did their job; fold them away unless one needs attention. */}
+        {ready && (
+          <details className="ob-sources" open={progress.failed_sources > 0}>
+            <summary>
+              {progress.failed_sources > 0
+                ? `Sources · ${progress.failed_sources} of ${progress.total_sources} need attention`
+                : `Sources · all ${progress.total_sources} read`}
+            </summary>
+            {sourcesList}
+          </details>
+        )}
+
         {ready && (
           <div className="pub-run__nav">
             <Button variant="primary" className="pub-btn" onClick={onDone}>Go to Today</Button>
             {found > 0 && (
               <Button variant="ghost" className="pub-btn" onClick={onReviewSignals}>
                 Review {found} {plural(found, "spike")}
-              </Button>
-            )}
-            {/* No spike to review, but the reviews are worth exploring. */}
-            {found === 0 && snap.top_themes.length > 0 && (
-              <Button variant="ghost" className="pub-btn" onClick={onReviewSignals}>
-                Explore the reviews
               </Button>
             )}
           </div>

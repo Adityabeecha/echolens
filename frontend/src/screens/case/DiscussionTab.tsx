@@ -49,7 +49,7 @@ export function DiscussionTab({ caseId }: { caseId: number }) {
           title="No discussion yet"
           body={mayPost
             ? "Add a comment to record what you think of this conclusion. Mention a teammate with @their-name to pull them in."
-            : "Nobody has commented on this case yet."}
+            : "Nobody has commented on this problem yet."}
         />
       )}
 

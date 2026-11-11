@@ -207,7 +207,11 @@ def test_every_screen_has_content_through_the_api(monkeypatch, no_live_llm):
     c = TestClient(app)
     q = f"?product_id={pid}"
     cases = c.get(f"/cases{q}").json()["cases"]
-    assert len(cases) == len(inv_ids)
+    # The re-checked "metered uploads" case is merged into the battery problem
+    # (it found the same wakelock bug), so the list shows one fewer; the merged
+    # case still opens by id below.
+    assert len(cases) == len(inv_ids) - 1
+    assert not any("not metered uploads" in (row.get("title") or "") for row in cases)
     for inv_id in inv_ids:                                # every case shows its steps
         trace = c.get(f"/investigations/{inv_id}/trace{q}").json()
         assert trace["steps"], inv_id

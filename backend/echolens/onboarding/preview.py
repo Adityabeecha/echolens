@@ -62,6 +62,45 @@ def preview_play_store(package: str, fetch_fn=None, timeout: float = DEFAULT_TIM
     }
 
 
+# Apple's lookup answers in ~0.2 s once warm but took 7.5 s on a first request
+# for an app (measured); at the shared 4 s cap the preview mostly said "slow".
+APP_STORE_TIMEOUT_S = 9.0
+
+
+def preview_app_store(value: str, fetch_fn=None, timeout: float = APP_STORE_TIMEOUT_S) -> dict:
+    """An iPhone-only app has no Play Store title to name the product after, so
+    the App Store listing supplies it the same way."""
+    from echolens.collectors.app_store import parse_app_id
+    try:
+        app_id = parse_app_id(value)
+    except ValueError as err:
+        return {"ok": False, "kind": "invalid", "reason": str(err)}
+    if fetch_fn is None:
+        from echolens.collectors.app_store import fetch_app_details
+        fetch_fn = lambda i: fetch_app_details(i, timeout=timeout)  # noqa: E731
+    try:
+        info = _bounded(lambda: fetch_fn(app_id), timeout + 0.5)
+    except _Timeout:
+        return {"ok": False, "kind": "timeout",
+                "reason": "The App Store is slow to answer — you can still continue."}
+    except Exception:  # noqa: BLE001
+        return {"ok": False, "kind": "unavailable",
+                "reason": "Couldn't reach the App Store to check — you can still continue."}
+    if not info:
+        return {"ok": False, "kind": "not_found",
+                "reason": f"No App Store app with the id {app_id}. Check the number after id in its link."}
+    rating = info.get("averageUserRating")
+    return {
+        "ok": True,
+        "source": "app_store",
+        "identifier": app_id,
+        "title": info.get("trackName") or app_id,
+        "developer": info.get("artistName"),
+        "ratings": info.get("userRatingCount"),
+        "score": round(float(rating), 2) if rating is not None else None,
+    }
+
+
 def preview_github(value: str, fetch_fn=None, timeout: float = DEFAULT_TIMEOUT_S) -> dict:
     repo, err = normalize_github_repo(value)
     if err or not repo:

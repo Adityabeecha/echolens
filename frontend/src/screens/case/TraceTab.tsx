@@ -57,7 +57,7 @@ export function TraceTab({ inv, onOpenEvidence, onReload }: Props) {
   inv.evidence.forEach((e) => sourcesTouched.set(e.source, (sourcesTouched.get(e.source) ?? 0) + 1));
 
   const control = async (label: string, fn: () => Promise<unknown>, success: string) => {
-    await withToast(fn, { success, failure: `Couldn't ${label} this case` });
+    await withToast(fn, { success, failure: `Couldn't ${label} this problem` });
     await onReload();
   };
 
@@ -139,7 +139,7 @@ export function TraceTab({ inv, onOpenEvidence, onReload }: Props) {
           ))}
           {steps.length === 0 && (
             <div style={{ color: C.dim, fontSize: T.base }}>
-              {running ? "Waiting for the first reasoning step…" : "No trace was recorded for this case."}
+              {running ? "Waiting for the first reasoning step…" : "No trace was recorded for this problem."}
             </div>
           )}
         </div>
@@ -208,7 +208,7 @@ export function TraceTab({ inv, onOpenEvidence, onReload }: Props) {
               <SecondaryBtn
                 active={inv.escalated}
                 onClick={() => control("escalate", () => api.escalate(inv.id),
-                  "Escalated — this case now runs on a bigger budget.")}>
+                  "Escalated — this problem now runs on a bigger budget.")}>
                 {inv.escalated ? <><Icon name="check" size={12} /> Escalated</> : "Escalate"}
               </SecondaryBtn>
             </div>

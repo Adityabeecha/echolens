@@ -43,7 +43,7 @@ export function Costs({ onGoSettings, embedded = false }: {
     { label: "AVG PER RESOLVED CASE", value: money(st.avg_per_resolved), color: C.good },
     { label: "SPENT ON DEAD ENDS", value: money(st.dead_end_spend), color: C.accent },
     { label: "EST. ANALYST HOURS SAVED", value: `${Math.round(Number(st.analyst_hours_saved) * 10) / 10}h`, color: C.info,
-      hint: "Assumes about 3 analyst hours of manual research per resolved case. It is a rough planning figure, not a measurement." },
+      hint: "Assumes about 3 analyst hours of manual research per resolved problem. It is a rough planning figure, not a measurement." },
   ];
 
   return (
@@ -52,7 +52,7 @@ export function Costs({ onGoSettings, embedded = false }: {
         <ScreenHeader
           title="Costs"
           product={data.product}
-          subtitle="What every case cost to run"
+          subtitle="What every problem cost to look into"
           right={onGoSettings && (
             <button onClick={onGoSettings} className="el-btn"
               style={{ fontSize: T.sm, color: C.dim }}>
@@ -85,7 +85,7 @@ export function Costs({ onGoSettings, embedded = false }: {
         <Label style={{ margin: "26px 0 10px" }}>COST PER CASE</Label>
         {data.rows.length === 0 ? (
           <EmptyState
-            title={`No cases have run yet for ${data.product ?? "this product"}`}
+            title={`No problems have been looked into yet for ${data.product ?? "this product"}`}
             body="Every investigation records its tokens, tool calls, wall-clock time and dollar cost here as it runs."
           />
         ) : (
