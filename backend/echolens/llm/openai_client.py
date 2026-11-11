@@ -11,6 +11,7 @@ from echolens.llm.client import (
     LLMFormatError,
     LLMResult,
     LLMServiceError,
+    UNTRUSTED_TEXT_RULE,
     coerce_to_schema,
 )
 from echolens.logging import get_logger
@@ -143,6 +144,9 @@ class OpenAIClient:
     def complete_json(self, system: str, user: str, json_schema: dict, agent: str) -> LLMResult:
         last_err: Exception | None = None
         prompt = user
+        # One choke point for every agent: whatever the caller's prompt, the
+        # feedback it embeds is data, never instructions.
+        system = f"{system}\n\n{UNTRUSTED_TEXT_RULE}"
         deadline = time.monotonic() + self._max_total_s
         for _attempt in range(2):  # one retry specifically for malformed JSON
             start = time.monotonic()

@@ -33,6 +33,15 @@ DEV_ADMIN = {"id": 0, "email": "dev@localhost", "role": "admin"}
 # silently attribute it to user 0.
 GUEST = {"id": None, "email": None, "role": "viewer", "guest": True}
 
+# The scheduled GitHub workflows (collect, weekly brief). They used to sign in
+# with a stored email and password for a real reviewer account; a leaked secret
+# was then a person's login. AUTOMATION_TOKEN is a random string set on the API
+# and in the repo's secrets; rotating it revokes the jobs at once. Reviewer,
+# because that is exactly what the jobs need: collect, scan, triage, send.
+AUTOMATION = {"id": None, "email": "automation", "role": "reviewer", "automation": True}
+# Shorter than this is a guessable token, not a secret; it is ignored.
+MIN_AUTOMATION_TOKEN = 32
+
 
 # ── password + token helpers ────────────────────────────────────────────
 
@@ -226,7 +235,16 @@ def current_user(request: Request) -> dict:
         raise HTTPException(401, "missing bearer token")
     if via_cookie:
         check_csrf(request)
+    if not via_cookie and is_automation_token(raw):
+        return dict(AUTOMATION)
     return principal_from_token(raw)
+
+
+def is_automation_token(raw: str | None) -> bool:
+    import hmac
+    expected = settings.automation_token
+    return bool(raw and len(expected) >= MIN_AUTOMATION_TOKEN
+                and hmac.compare_digest(raw.encode(), expected.encode()))
 
 
 def principal_from_token(raw: str) -> dict:

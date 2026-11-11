@@ -126,8 +126,9 @@ The live trace (`/investigations/{id}/trace/stream`) authenticates with the cook
 In GitHub Settings, add these Actions secrets:
 
 - `ECHOLENS_API`: Northflank backend origin.
-- `ECHOLENS_EMAIL`: reviewer or administrator account used by automation.
-- `ECHOLENS_PASSWORD`: password for that account.
+- `ECHOLENS_AUTOMATION_TOKEN`: a random string of 32+ characters. Set the **same value** as `AUTOMATION_TOKEN` on the Northflank service. The jobs then call the API as a reviewer without anyone's password; change the value to revoke them.
+
+Older setups used `ECHOLENS_EMAIL` / `ECHOLENS_PASSWORD` (a reviewer login). Those still work while no automation token is set; once the token is in place, delete them and that account's password from the repository.
 
 Also add an Actions variable named `ECHOLENS_API` with the same backend origin. The secret is used by scheduled jobs; the variable is used by the post-deployment health workflow.
 
@@ -186,7 +187,7 @@ Notes:
 - Set `GITHUB_WEBHOOK_SECRET` if GitHub webhooks are used, and the same value in the webhook config.
 - Restrict Google sign-in with `GOOGLE_ALLOWED_DOMAINS` (comma-separated email domains). If empty, only emails in `GOOGLE_ADMIN_EMAILS` or existing users can sign in. `GOOGLE_DEFAULT_ROLE` defaults to `viewer`.
 - In the Google OAuth client, add the frontend origin (and `http://localhost:5173` for local development) to Authorized JavaScript origins.
-- Use a dedicated low-privilege reviewer account for `ECHOLENS_EMAIL`/`ECHOLENS_PASSWORD`, not an admin.
+- Use `AUTOMATION_TOKEN` for the scheduled workflows rather than a person's login. It only has reviewer access.
 - Keep `GUEST_DEMO_ONLY=true` for public demos, and run `python -m echolens.cli preflight` before deploying.
 
 ## Verify the deployment
@@ -218,4 +219,4 @@ Inspect startup logs and verify `ECHOLENS_DB_URL` uses a reachable PostgreSQL po
 
 ### Scheduled workflows return `401`
 
-Verify `ECHOLENS_EMAIL` and `ECHOLENS_PASSWORD` match an active account and `ECHOLENS_API` points to the backend origin without an extra path.
+Verify `ECHOLENS_AUTOMATION_TOKEN` exactly matches `AUTOMATION_TOKEN` on the API (32+ characters), or, on the older setup, that `ECHOLENS_EMAIL` and `ECHOLENS_PASSWORD` match an active account. Check that `ECHOLENS_API` points to the backend origin without an extra path.
