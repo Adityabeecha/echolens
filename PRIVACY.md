@@ -6,19 +6,22 @@ EchoLens is self-hosted. Whoever runs a deployment is the data controller. This 
 
 | Data | Source | Notes |
 |---|---|---|
-| App store reviews | Google Play Store collector | Review text, ratings and metadata as published (`reviews` table). |
+| App store reviews | Google Play and App Store collectors | Review text, ratings and metadata as published (`reviews` table). |
+| Public posts | Hacker News and Stack Overflow collectors, when connected | Post text and metadata as published (`posts` table). |
 | GitHub issues, releases, discussions | GitHub collector (`GITHUB_TOKEN` optional) | `issues`, `releases` and `feedback_entries` tables. |
 | Other feedback | Imported CSV/XLSX files; other v2 sources land in `feedback_entries` | Whatever columns you import are stored as feedback text and metadata. |
 | User accounts | Signup, CLI, bootstrap admin, Google sign-in | Email, role (`admin`/`reviewer`/`viewer`), and either a bcrypt password hash or the marker `!sso-google` for Google accounts. Also the last product the user viewed. No Google profile data beyond the verified email is stored (`users` table). |
 | Investigation records | Investigations | Hypotheses, evidence snippets, trace steps (`content_json`), findings, recommendations, reviewer feedback. |
 | Comments and mentions | Team discussion on cases | Free text written by users. |
+| Password reset and invite links | "Forgot it?", Settings → Team | Only a SHA-256 hash of each link is stored, with its expiry and whether it was used (`password_resets`). |
+| Access requests | "Request access" on the sign-in screen | The email address, app or company, and note the visitor typed (`access_requests`). Removed when the person is invited or the request is dismissed. |
 | LLM call ledger | Every LLM call | Agent name, model, tokens in/out, cost, latency, and product/investigation id. No prompt or response bodies are stored in `llm_calls` (verified in `db/models.py`). Note that trace steps and evidence may contain excerpts of reviews. |
 
-TODO: confirm whether `trace_steps.content_json` ever stores full prompt text; the model comments describe it as step content, not raw prompts.
+Trace steps (`trace_steps.content_json`) never store the full prompt or response. They hold the model's short reasoning note for each step, previews of tool results (which can quote reviews and issues), evidence snippets and check results (see `_trace` calls in `investigator/graph.py`).
 
 ## Where it is stored
 
-In the database named by `ECHOLENS_DB_URL`: SQLite for local development, Postgres in production (Supabase in the documented deployment, see `DEPLOY.md`). EchoLens does not add its own encryption at rest. Rely on your database provider for that. TODO: confirm provider region and encryption settings for your Supabase project.
+In the database named by `ECHOLENS_DB_URL`: SQLite for local development, Postgres in production (Supabase in the documented deployment, see `DEPLOY.md`). EchoLens does not add its own encryption at rest; it relies on the database provider. The documented deployment uses a Supabase project in a US region, and Supabase encrypts its databases at rest. Connections use TLS through the Supabase pooler. If you self-host, check your own provider's region and encryption.
 
 ## What is sent to OpenAI
 
@@ -56,7 +59,11 @@ Not removed by product deletion:
 
 ## Requesting deletion or export
 
-Contact PRIVACY_CONTACT (placeholder, replace with your address). The operator can delete a product through the API/UI, delete user rows directly in the database, and export data with database tooling. TODO: confirm whether a built-in export endpoint covers all data.
+Open an issue at https://github.com/Adityabeecha/echolens/issues titled "Privacy request". **Do not put personal details in the issue**, since issues are public; the maintainer will reply there and arrange a private way to continue.
+
+What the operator can do:
+- **Delete** a product and everything it owns from the UI (Settings, admin only) or `DELETE /products/{id}`; remove a person from Settings → Team (their comments stay, attributed to a removed user); remove old raw feedback on a schedule with `RETENTION_DAYS`.
+- **Export**: there is no built-in "export everything" endpoint. The operator exports with database tooling (for Postgres, `pg_dump`, optionally limited to the tables or rows for one product or person).
 
 ## Guest / demo mode
 
