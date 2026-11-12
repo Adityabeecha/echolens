@@ -15,6 +15,9 @@
 .pub-top__spacer { flex:1 1 auto; }
 .pub-top__signin { font:15px var(--el-font); color:var(--el-ink); background:none; border:0; padding:8px 4px; cursor:pointer; }
 .pub-top__signin:hover { text-decoration:underline; text-underline-offset:3px; }
+.pub-top__github { display:inline-flex; align-items:center; gap:6px; min-height:40px; padding:8px 4px; font:15px var(--el-font);
+  color:var(--el-ink); text-decoration:none; }
+.pub-top__github:hover { color:var(--el-ink); text-decoration:underline; text-underline-offset:3px; }
 /* Sizes for the shared Button (ui.tsx) at the canvas's measurements. */
 .el-btn.pub-btn { font:600 15px/1.2 var(--el-font); border-radius:12px; padding:11px 18px; min-height:0; }
 .el-btn.pub-btn--lg { font-size:17px; border-radius:14px; padding:16px 24px; }
@@ -177,6 +180,9 @@
   .pub-top { gap:8px; flex-wrap:nowrap; padding-top:16px; padding-bottom:16px; padding-right:66px; }
   .pub-top .el-logo-lockup__name { font-size:22px; }
   .pub-top__signin { padding:8px 2px; white-space:nowrap; }
+  /* The mark alone on phones; the link keeps its name for screen readers. */
+  .pub-top__github { padding:8px 6px; min-width:40px; justify-content:center; }
+  .pub-top__github-label { display:none; }
   .pub-top__nav { display:none; }
   .pub-top .pub-btn { padding:9px 11px; font-size:14px; white-space:nowrap; }
   .pub-top .pub-top__demo-long { display:none; }
